@@ -2030,6 +2030,60 @@ main {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.remote-intervention-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.remote-task-card .approval-card {
+  margin: 0;
+  padding: 12px;
+  box-shadow: none;
+}
+.remote-task-card .approval-title {
+  align-items: flex-start;
+}
+.remote-task-card .approval-title strong,
+.remote-question-card h3 {
+  font-size: 10px;
+}
+.remote-task-card .approval-title p,
+.remote-task-card .approval-footer,
+.remote-question-card label,
+.remote-question-card small {
+  font-size: 9px;
+}
+.remote-task-card .approval-card pre {
+  max-height: 116px;
+  font-size: 9px;
+  overflow: auto;
+}
+.remote-question-card form {
+  display: grid;
+  gap: 10px;
+}
+.remote-question-card label {
+  display: grid;
+  gap: 5px;
+  color: #4e6256;
+}
+.remote-question-card small {
+  color: #7a887f;
+  line-height: 1.5;
+}
+.remote-question-card input {
+  width: 100%;
+  border: 1px solid #d7e0d6;
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px 9px;
+  color: #385247;
+  font: inherit;
+}
+.remote-question-card input:focus {
+  border-color: #8caf97;
+  outline: 2px solid #8caf9720;
+}
 .remote-task-lease {
   display: inline-flex;
   align-items: center;

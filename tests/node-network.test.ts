@@ -31,6 +31,7 @@ import {
 import {
   RemoteTaskStore,
   validRemoteTaskCancel,
+  validRemoteTaskControl,
   validRemoteTaskExecution,
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
@@ -329,6 +330,11 @@ test('remote task invitations persist and apply idempotent offer and response me
         'executionState',
         'executionSequence',
         'executionSummary',
+        'remoteApprovals',
+        'remoteQuestions',
+        'pendingControl',
+        'incomingControls',
+        'appliedControlIDs',
       ])
         delete task[key];
     writeFileSync(legacyPath, JSON.stringify(legacyValue, null, 2));
@@ -336,7 +342,7 @@ test('remote task invitations persist and apply idempotent offer and response me
     migrated.load();
     assert.equal(migrated.list()[0].executionStatus, 'unprepared');
     assert.equal(migrated.list()[0].automaticEligible, false);
-    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 3);
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 4);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',
@@ -378,7 +384,59 @@ test('remote task invitations persist and apply idempotent offer and response me
     const runningExecution = target.message(executing.id);
     assert(validRemoteTaskExecution(runningExecution));
     assert.equal(owner.receiveExecution(runningExecution), true);
+    target.markDelivered(executing.id, runningExecution);
     assert.equal(owner.list().find((task) => task.id === executing.id)?.executionState, 'running');
+    target.updateLocalExecution(localTaskID, 'waiting_approval', '等待归属 Brain 审批。', [
+      { id: 'permission-1', permission: 'edit', patterns: ['<project>/RESULT.txt'], metadata: {} },
+    ]);
+    const approvalExecution = target.message(executing.id);
+    assert(validRemoteTaskExecution(approvalExecution));
+    assert.equal(owner.receiveExecution(approvalExecution), true);
+    target.markDelivered(executing.id, approvalExecution);
+    const approvalSnapshot = owner.list().find((task) => task.id === executing.id)!;
+    assert.equal(approvalSnapshot.remoteApprovals[0]?.patterns[0], '<project>/RESULT.txt');
+    owner.requestControl(executing.id, approvalSnapshot.executionSequence, {
+      kind: 'permission',
+      requestID: 'permission-1',
+      reply: 'once',
+    });
+    const approvalControl = owner.message(executing.id);
+    assert(validRemoteTaskControl(approvalControl));
+    assert.equal(target.receiveControl(approvalControl), true);
+    assert.equal(target.receiveControl(approvalControl), false);
+    owner.markDelivered(executing.id, approvalControl);
+    assert.equal(target.pendingIncomingControls()[0]?.control.controlID, approvalControl.controlID);
+    assert(target.finishIncomingControl(executing.id, approvalControl.controlID));
+    assert.equal(target.pendingIncomingControls().length, 0);
+    owner.requestControl(executing.id, approvalSnapshot.executionSequence, {
+      kind: 'permission',
+      requestID: 'permission-1',
+      reply: 'reject',
+    });
+    const ownerStorePath = join(roots[0], 'remote-task-invites.json');
+    const staleControlStore = JSON.parse(readFileSync(ownerStorePath, 'utf8'));
+    const staleControlTask = staleControlStore.tasks.find(
+      (task: { id: string }) => task.id === executing.id,
+    );
+    staleControlTask.pendingControl.issuedAt = new Date(
+      Date.now() - 24 * 60 * 60_000 - 1000,
+    ).toISOString();
+    writeFileSync(ownerStorePath, JSON.stringify(staleControlStore, null, 2));
+    const staleControlReload = new RemoteTaskStore(roots[0]);
+    staleControlReload.load();
+    const staleControlSnapshot = staleControlReload
+      .list()
+      .find((task) => task.id === executing.id)!;
+    assert.equal(staleControlSnapshot.controlPending, false);
+    assert.equal(staleControlSnapshot.deliveryPending, false);
+    assert.match(staleControlSnapshot.deliveryError || '', /已过期/);
+    assert.throws(
+      () =>
+        owner.requestControl(executing.id, approvalSnapshot.executionSequence - 1, {
+          kind: 'stop',
+        }),
+      /状态已经更新/,
+    );
     assert.throws(() => owner.cancel(executing.id), /停止操作/);
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });

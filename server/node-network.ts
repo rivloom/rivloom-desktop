@@ -6,8 +6,10 @@ import { createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import type {
+  Approval,
   NodeNetwork as NodeNetworkSnapshot,
   NodePairing,
+  Question,
   RivloomNode,
   TaskState,
 } from '../shared/types.ts';
@@ -50,10 +52,12 @@ import {
 import {
   RemoteTaskStore,
   validRemoteTaskCancel,
+  validRemoteTaskControl,
   validRemoteTaskExecution,
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
   validRemoteTaskResponse,
+  type RemoteTaskControlAction,
   type RemoteTaskMessage,
 } from './remote-tasks.ts';
 
@@ -140,7 +144,7 @@ export class NodeNetworkError extends Error {
 }
 
 const serviceType = 'rivloom';
-const capabilities = ['brain', 'executor', 'human-ui', 'remote-execution-v1'];
+const capabilities = ['brain', 'executor', 'human-ui', 'remote-execution-v1', 'remote-control-v1'];
 const maximumHelloBytes = 16 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
@@ -786,6 +790,7 @@ export class NodeNetwork extends EventEmitter {
     }
     let changed = false;
     let receivedOfferID: string | null = null;
+    let receivedControl: { taskID: string; controlID: string } | null = null;
     try {
       if (validRemoteTaskOffer(message)) {
         if (
@@ -824,6 +829,16 @@ export class NodeNetwork extends EventEmitter {
         )
           throw new Error('远端执行状态路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveExecution(message);
+      } else if (validRemoteTaskControl(message)) {
+        if (
+          message.ownerNodeID !== node.id ||
+          message.targetNodeID !== this.identity!.nodeID ||
+          !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
+          message.targetBrainID !== this.identity!.brainID
+        )
+          throw new Error('远程控制路由与当前节点不匹配。');
+        changed = this.remoteTasks.receiveControl(message);
+        if (changed) receivedControl = { taskID: message.taskID, controlID: message.controlID };
       } else if (validRemoteTaskCancel(message)) {
         if (
           message.ownerNodeID !== node.id ||
@@ -844,6 +859,10 @@ export class NodeNetwork extends EventEmitter {
     if (receivedOfferID) {
       const taskID = receivedOfferID;
       queueMicrotask(() => this.emit('remote-task-offer', { taskID }));
+    }
+    if (receivedControl) {
+      const control = receivedControl;
+      queueMicrotask(() => this.emit('remote-task-control', control));
     }
     return null;
   }
@@ -1517,12 +1536,56 @@ export class NodeNetwork extends EventEmitter {
     return this.remoteTask(taskID);
   }
 
-  async publishRemoteTaskExecution(localTaskID: string, state: TaskState, summary: string) {
-    const updated = this.remoteTasks.updateLocalExecution(localTaskID, state, summary);
+  async publishRemoteTaskExecution(
+    localTaskID: string,
+    state: TaskState,
+    summary: string,
+    approvals: Approval[] = [],
+    questions: Question[] = [],
+  ) {
+    const updated = this.remoteTasks.updateLocalExecution(
+      localTaskID,
+      state,
+      summary,
+      approvals,
+      questions,
+    );
     if (!updated) return null;
     this.update();
     await this.flushRemoteTask(updated.id);
     return updated;
+  }
+
+  async requestRemoteTaskControl(
+    taskID: string,
+    expectedExecutionSequence: number,
+    action: RemoteTaskControlAction,
+  ) {
+    const current = this.remoteTasks.record(taskID);
+    const peer = current ? this.nodes.get(current.targetNodeID) : null;
+    if (!peer?.capabilities.includes('remote-control-v1'))
+      throw new NodeNetworkError(409, '对方版本尚不支持远程人工介入。');
+    try {
+      this.remoteTasks.requestControl(taskID, expectedExecutionSequence, action);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '远程人工操作当前不可用。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
+    return this.remoteTask(taskID);
+  }
+
+  pendingRemoteTaskControls() {
+    return this.remoteTasks.pendingIncomingControls();
+  }
+
+  finishRemoteTaskControl(taskID: string, controlID: string) {
+    const changed = this.remoteTasks.finishIncomingControl(taskID, controlID);
+    if (changed) this.update();
+    return changed;
   }
 
   private async probe(service: MdnsService) {

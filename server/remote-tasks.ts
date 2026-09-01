@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { RemoteTaskInvite, TaskState } from '../shared/types.ts';
+import type { Approval, Question, RemoteTaskInvite, TaskState } from '../shared/types.ts';
 
 export type RemoteTaskOfferMessage = {
   type: 'remote-task-offer';
@@ -80,7 +80,29 @@ export type RemoteTaskExecutionMessage = {
   sequence: number;
   state: TaskState;
   summary: string;
+  approvals: Approval[];
+  questions: Question[];
   statusAt: string;
+};
+
+export type RemoteTaskControlAction =
+  | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
+  | { kind: 'question'; requestID: string; answers: string[][] }
+  | { kind: 'stop' };
+
+export type RemoteTaskControlMessage = {
+  type: 'remote-task-control';
+  version: 1;
+  taskID: string;
+  idempotencyKey: string;
+  ownerNodeID: string;
+  ownerBrainID: string;
+  targetNodeID: string;
+  targetBrainID: string;
+  controlID: string;
+  expectedExecutionSequence: number;
+  action: RemoteTaskControlAction;
+  issuedAt: string;
 };
 
 export type RemoteTaskMessage =
@@ -88,10 +110,16 @@ export type RemoteTaskMessage =
   | RemoteTaskResponseMessage
   | RemoteTaskCancelMessage
   | RemoteTaskPreparationMessage
-  | RemoteTaskExecutionMessage;
+  | RemoteTaskExecutionMessage
+  | RemoteTaskControlMessage;
 
-type StoredRemoteTask = RemoteTaskInvite & { idempotencyKey: string };
-type StoredRemoteTasks = { version: 3; tasks: StoredRemoteTask[] };
+type StoredRemoteTask = Omit<RemoteTaskInvite, 'controlPending'> & {
+  idempotencyKey: string;
+  pendingControl: RemoteTaskControlMessage | null;
+  incomingControls: RemoteTaskControlMessage[];
+  appliedControlIDs: string[];
+};
+type StoredRemoteTasks = { version: 4; tasks: StoredRemoteTask[] };
 
 const nodePattern = /^[A-Za-z0-9_-]{32}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -113,6 +141,93 @@ const taskStates = [
 
 function validDate(value: unknown) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function validApproval(value: unknown): value is Approval {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === 'string' &&
+    item.id.length >= 1 &&
+    item.id.length <= 200 &&
+    typeof item.permission === 'string' &&
+    item.permission.length >= 1 &&
+    item.permission.length <= 100 &&
+    Array.isArray(item.patterns) &&
+    item.patterns.length <= 30 &&
+    item.patterns.every((pattern) => typeof pattern === 'string' && pattern.length <= 2000) &&
+    !!item.metadata &&
+    typeof item.metadata === 'object' &&
+    !Array.isArray(item.metadata) &&
+    Object.keys(item.metadata).length === 0
+  );
+}
+
+function validQuestion(value: unknown): value is Question {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === 'string' &&
+    item.id.length >= 1 &&
+    item.id.length <= 200 &&
+    Array.isArray(item.questions) &&
+    item.questions.length >= 1 &&
+    item.questions.length <= 10 &&
+    item.questions.every((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const question = entry as Record<string, unknown>;
+      return (
+        typeof question.header === 'string' &&
+        question.header.length <= 120 &&
+        typeof question.question === 'string' &&
+        question.question.length >= 1 &&
+        question.question.length <= 4000 &&
+        (question.multiple === undefined || typeof question.multiple === 'boolean') &&
+        Array.isArray(question.options) &&
+        question.options.length <= 20 &&
+        question.options.every((option) => {
+          if (!option || typeof option !== 'object') return false;
+          const candidate = option as Record<string, unknown>;
+          return (
+            typeof candidate.label === 'string' &&
+            candidate.label.length <= 200 &&
+            typeof candidate.description === 'string' &&
+            candidate.description.length <= 1000
+          );
+        })
+      );
+    })
+  );
+}
+
+function validControlAction(value: unknown): value is RemoteTaskControlAction {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  if (item.kind === 'stop') return Object.keys(item).length === 1;
+  if (
+    item.kind === 'permission' &&
+    typeof item.requestID === 'string' &&
+    item.requestID.length >= 1 &&
+    item.requestID.length <= 200 &&
+    (item.reply === 'once' || item.reply === 'reject')
+  )
+    return true;
+  return (
+    item.kind === 'question' &&
+    typeof item.requestID === 'string' &&
+    item.requestID.length >= 1 &&
+    item.requestID.length <= 200 &&
+    Array.isArray(item.answers) &&
+    item.answers.length >= 1 &&
+    item.answers.length <= 10 &&
+    item.answers.every(
+      (answers) =>
+        Array.isArray(answers) &&
+        answers.length >= 1 &&
+        answers.length <= 20 &&
+        answers.every((answer) => typeof answer === 'string' && answer.length <= 4000),
+    )
+  );
 }
 
 function validBase(value: Record<string, unknown>) {
@@ -222,8 +337,37 @@ export function validRemoteTaskExecution(value: unknown): value is RemoteTaskExe
     taskStates.includes(item.state as TaskState) &&
     typeof item.summary === 'string' &&
     item.summary.length <= 12_000 &&
+    Array.isArray(item.approvals) &&
+    item.approvals.length <= 30 &&
+    item.approvals.every(validApproval) &&
+    Array.isArray(item.questions) &&
+    item.questions.length <= 10 &&
+    item.questions.every(validQuestion) &&
     validDate(item.statusAt) &&
     Date.parse(String(item.statusAt)) <= Date.now() + 60_000
+  );
+}
+
+function validRemoteTaskControlRecord(value: unknown): value is RemoteTaskControlMessage {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.type === 'remote-task-control' &&
+    validBase(item) &&
+    typeof item.controlID === 'string' &&
+    uuidPattern.test(item.controlID) &&
+    Number.isSafeInteger(item.expectedExecutionSequence) &&
+    Number(item.expectedExecutionSequence) > 0 &&
+    validControlAction(item.action) &&
+    validDate(item.issuedAt) &&
+    Date.parse(String(item.issuedAt)) <= Date.now() + 60_000
+  );
+}
+
+export function validRemoteTaskControl(value: unknown): value is RemoteTaskControlMessage {
+  return (
+    validRemoteTaskControlRecord(value) &&
+    Date.parse(value.issuedAt) >= Date.now() - maximumLifetimeMilliseconds
   );
 }
 
@@ -274,10 +418,30 @@ function validStored(value: unknown): value is StoredRemoteTask {
     Number(item.executionSequence) >= 0 &&
     typeof item.executionSummary === 'string' &&
     item.executionSummary.length <= 12_000 &&
+    Array.isArray(item.remoteApprovals) &&
+    item.remoteApprovals.length <= 30 &&
+    item.remoteApprovals.every(validApproval) &&
+    Array.isArray(item.remoteQuestions) &&
+    item.remoteQuestions.length <= 10 &&
+    item.remoteQuestions.every(validQuestion) &&
+    (item.pendingControl === null || validRemoteTaskControlRecord(item.pendingControl)) &&
+    Array.isArray(item.incomingControls) &&
+    item.incomingControls.length <= 20 &&
+    item.incomingControls.every(validRemoteTaskControlRecord) &&
+    Array.isArray(item.appliedControlIDs) &&
+    item.appliedControlIDs.length <= 100 &&
+    item.appliedControlIDs.every(
+      (controlID) => typeof controlID === 'string' && uuidPattern.test(controlID),
+    ) &&
+    (item.direction === 'outgoing'
+      ? item.incomingControls.length === 0
+      : item.pendingControl === null) &&
     ((item.executionSequence === 0 &&
       item.executionState === 'not_started' &&
       item.executionSummary === '' &&
-      item.localTaskID === null) ||
+      item.localTaskID === null &&
+      item.remoteApprovals.length === 0 &&
+      item.remoteQuestions.length === 0) ||
       (Number(item.executionSequence) > 0 &&
         item.status === 'accepted' &&
         item.executionState !== 'not_started' &&
@@ -312,6 +476,15 @@ function validStored(value: unknown): value is StoredRemoteTask {
 function normalizeStored(value: unknown): StoredRemoteTask | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Record<string, unknown>;
+  const pendingControl = item.pendingControl ?? null;
+  const incomingControls = item.incomingControls ?? [];
+  const cutoff = Date.now() - maximumLifetimeMilliseconds;
+  const stalePendingControl =
+    validRemoteTaskControlRecord(pendingControl) && Date.parse(pendingControl.issuedAt) < cutoff;
+  const retainedIncomingControls =
+    Array.isArray(incomingControls) && incomingControls.every(validRemoteTaskControlRecord)
+      ? incomingControls.filter((control) => Date.parse(control.issuedAt) >= cutoff)
+      : incomingControls;
   const normalized = {
     ...item,
     automaticEligible: item.automaticEligible ?? false,
@@ -325,15 +498,29 @@ function normalizeStored(value: unknown): StoredRemoteTask | null {
     executionState: item.executionState ?? 'not_started',
     executionSequence: item.executionSequence ?? 0,
     executionSummary: item.executionSummary ?? '',
-    deliveryPending: item.automaticEligible === undefined ? false : item.deliveryPending,
-    deliveryError: item.deliveryError ?? null,
+    remoteApprovals: item.remoteApprovals ?? [],
+    remoteQuestions: item.remoteQuestions ?? [],
+    pendingControl: stalePendingControl ? null : pendingControl,
+    incomingControls: retainedIncomingControls,
+    appliedControlIDs: item.appliedControlIDs ?? [],
+    deliveryPending:
+      item.automaticEligible === undefined || stalePendingControl ? false : item.deliveryPending,
+    deliveryError: stalePendingControl
+      ? '远程人工操作已过期，请根据最新状态重试。'
+      : (item.deliveryError ?? null),
   };
   return validStored(normalized) ? normalized : null;
 }
 
 function publicTask(task: StoredRemoteTask): RemoteTaskInvite {
-  const { idempotencyKey: _idempotencyKey, ...value } = task;
-  return { ...value };
+  const {
+    idempotencyKey: _idempotencyKey,
+    pendingControl,
+    incomingControls: _incomingControls,
+    appliedControlIDs: _appliedControlIDs,
+    ...value
+  } = task;
+  return { ...value, controlPending: pendingControl !== null };
 }
 
 function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
@@ -359,7 +546,8 @@ function sameRoute(
     | RemoteTaskResponseMessage
     | RemoteTaskCancelMessage
     | RemoteTaskPreparationMessage
-    | RemoteTaskExecutionMessage,
+    | RemoteTaskExecutionMessage
+    | RemoteTaskControlMessage,
 ) {
   return (
     task.id === message.taskID &&
@@ -392,7 +580,10 @@ export class RemoteTaskStore {
       throw new Error('远端任务邀请记录无效；节点网络保持关闭。');
     const stored = value as Record<string, unknown>;
     if (
-      (stored.version !== 1 && stored.version !== 2 && stored.version !== 3) ||
+      (stored.version !== 1 &&
+        stored.version !== 2 &&
+        stored.version !== 3 &&
+        stored.version !== 4) ||
       !Array.isArray(stored.tasks) ||
       stored.tasks.length > 500
     )
@@ -403,7 +594,8 @@ export class RemoteTaskStore {
     if (new Set(normalizedTasks.map((task) => task.id)).size !== normalizedTasks.length)
       throw new Error('远端任务邀请记录存在冲突；节点网络保持关闭。');
     for (const task of normalizedTasks) this.values.set(task.id, { ...task });
-    if (stored.version !== 3) this.save();
+    if (stored.version !== 4 || JSON.stringify(normalizedTasks) !== JSON.stringify(stored.tasks))
+      this.save();
   }
 
   list() {
@@ -448,11 +640,16 @@ export class RemoteTaskStore {
       executionState: 'not_started',
       executionSequence: 0,
       executionSummary: '',
+      remoteApprovals: [],
+      remoteQuestions: [],
+      pendingControl: null,
+      incomingControls: [],
+      appliedControlIDs: [],
       deliveryPending: true,
       deliveryError: null,
       createdAt,
       updatedAt: createdAt,
-      expiresAt: new Date(Date.now() + maximumLifetimeMilliseconds).toISOString(),
+      expiresAt: new Date(Date.parse(createdAt) + maximumLifetimeMilliseconds).toISOString(),
     };
     this.values.set(task.id, task);
     this.save();
@@ -490,6 +687,11 @@ export class RemoteTaskStore {
       executionState: 'not_started',
       executionSequence: 0,
       executionSummary: '',
+      remoteApprovals: [],
+      remoteQuestions: [],
+      pendingControl: null,
+      incomingControls: [],
+      appliedControlIDs: [],
       deliveryPending: false,
       deliveryError: null,
       createdAt: message.createdAt,
@@ -637,17 +839,37 @@ export class RemoteTaskStore {
     return publicTask(task);
   }
 
-  updateLocalExecution(localTaskID: string, state: TaskState, summary: string) {
+  updateLocalExecution(
+    localTaskID: string,
+    state: TaskState,
+    summary: string,
+    approvals: Approval[] = [],
+    questions: Question[] = [],
+  ) {
     const task = [...this.values.values()].find(
       (candidate) => candidate.direction === 'incoming' && candidate.localTaskID === localTaskID,
     );
     if (!task || task.status !== 'accepted') return null;
     const normalizedSummary = summary.slice(0, 12_000);
-    if (task.executionState === state && task.executionSummary === normalizedSummary)
+    if (
+      approvals.length > 30 ||
+      !approvals.every(validApproval) ||
+      questions.length > 10 ||
+      !questions.every(validQuestion)
+    )
+      throw new Error('远端人工介入快照无效。');
+    if (
+      task.executionState === state &&
+      task.executionSummary === normalizedSummary &&
+      JSON.stringify(task.remoteApprovals) === JSON.stringify(approvals) &&
+      JSON.stringify(task.remoteQuestions) === JSON.stringify(questions)
+    )
       return publicTask(task);
     task.executionState = state;
     task.executionSequence += 1;
     task.executionSummary = normalizedSummary;
+    task.remoteApprovals = structuredClone(approvals);
+    task.remoteQuestions = structuredClone(questions);
     task.deliveryPending = true;
     task.deliveryError = null;
     task.updatedAt = new Date().toISOString();
@@ -665,19 +887,138 @@ export class RemoteTaskStore {
       throw new Error('远端执行状态时间无效。');
     if (message.sequence < task.executionSequence) return false;
     if (message.sequence === task.executionSequence) {
-      if (task.executionState === message.state && task.executionSummary === message.summary)
+      if (
+        task.executionState === message.state &&
+        task.executionSummary === message.summary &&
+        JSON.stringify(task.remoteApprovals) === JSON.stringify(message.approvals) &&
+        JSON.stringify(task.remoteQuestions) === JSON.stringify(message.questions)
+      )
         return false;
       throw new Error('远端执行状态序号冲突。');
     }
     task.executionState = message.state;
     task.executionSequence = message.sequence;
     task.executionSummary = message.summary;
+    task.remoteApprovals = structuredClone(message.approvals);
+    task.remoteQuestions = structuredClone(message.questions);
     task.localTaskID = null;
     task.deliveryPending = false;
     task.deliveryError = null;
     task.updatedAt = message.statusAt;
     this.save();
     return true;
+  }
+
+  requestControl(
+    taskID: string,
+    expectedExecutionSequence: number,
+    action: RemoteTaskControlAction,
+  ) {
+    const task = this.values.get(taskID);
+    if (!task || task.direction !== 'outgoing' || task.status !== 'accepted')
+      throw new Error('可控制的远端任务不存在。');
+    if (
+      task.executionSequence !== expectedExecutionSequence ||
+      !Number.isSafeInteger(expectedExecutionSequence) ||
+      expectedExecutionSequence <= 0
+    )
+      throw new Error('远端任务状态已经更新，请刷新后重试。');
+    if (task.pendingControl || task.deliveryPending)
+      throw new Error('上一项远程操作仍在同步，请稍后重试。');
+    this.requireControlMatchesTask(task, action);
+    const message: RemoteTaskControlMessage = {
+      type: 'remote-task-control',
+      version: 1,
+      taskID: task.id,
+      idempotencyKey: task.idempotencyKey,
+      ownerNodeID: task.ownerNodeID,
+      ownerBrainID: task.ownerBrainID,
+      targetNodeID: task.targetNodeID,
+      targetBrainID: task.targetBrainID,
+      controlID: randomUUID(),
+      expectedExecutionSequence,
+      action: structuredClone(action),
+      issuedAt: new Date().toISOString(),
+    };
+    if (!validRemoteTaskControl(message)) throw new Error('远程控制内容无效。');
+    task.pendingControl = message;
+    task.deliveryPending = true;
+    task.deliveryError = null;
+    task.updatedAt = message.issuedAt;
+    this.save();
+    return publicTask(task);
+  }
+
+  receiveControl(message: RemoteTaskControlMessage) {
+    const task = this.values.get(message.taskID);
+    if (!task || task.direction !== 'incoming' || !sameRoute(task, message))
+      throw new Error('远程控制与原任务不匹配。');
+    if (task.status !== 'accepted' || !task.localTaskID)
+      throw new Error('远端任务尚未进入可控制状态。');
+    const existing = task.incomingControls.find(
+      (control) => control.controlID === message.controlID,
+    );
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(message))
+        throw new Error('远程控制幂等内容冲突。');
+      return false;
+    }
+    if (task.appliedControlIDs.includes(message.controlID)) return false;
+    if (task.executionSequence !== message.expectedExecutionSequence)
+      throw new Error('远端任务状态已经更新。');
+    if (task.incomingControls.length >= 20) throw new Error('待处理远程控制数量已达上限。');
+    if (
+      task.incomingControls.some(
+        (control) => JSON.stringify(control.action) === JSON.stringify(message.action),
+      )
+    )
+      throw new Error('相同的远程控制已经等待处理。');
+    this.requireControlMatchesTask(task, message.action);
+    task.incomingControls.push(structuredClone(message));
+    task.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  pendingIncomingControls() {
+    return [...this.values.values()].flatMap((task) =>
+      task.incomingControls.map((control) => ({
+        taskID: task.id,
+        localTaskID: task.localTaskID!,
+        control: structuredClone(control),
+      })),
+    );
+  }
+
+  finishIncomingControl(taskID: string, controlID: string) {
+    const task = this.values.get(taskID);
+    if (!task || task.direction !== 'incoming') return false;
+    const index = task.incomingControls.findIndex((control) => control.controlID === controlID);
+    if (index < 0) return task.appliedControlIDs.includes(controlID);
+    task.incomingControls.splice(index, 1);
+    task.appliedControlIDs.push(controlID);
+    task.appliedControlIDs = task.appliedControlIDs.slice(-100);
+    task.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  private requireControlMatchesTask(task: StoredRemoteTask, action: RemoteTaskControlAction) {
+    if (action.kind === 'permission') {
+      if (!task.remoteApprovals.some((approval) => approval.id === action.requestID))
+        throw new Error('审批请求已经失效。');
+      return;
+    }
+    if (action.kind === 'question') {
+      const question = task.remoteQuestions.find((item) => item.id === action.requestID);
+      if (!question || action.answers.length !== question.questions.length)
+        throw new Error('AI 问题已经失效或答案数量不正确。');
+      return;
+    }
+    if (
+      !['running', 'waiting_approval', 'waiting_input', 'interrupted'].includes(task.executionState)
+    )
+      throw new Error('远端任务当前没有运行。');
   }
 
   taskForLocalTask(localTaskID: string) {
@@ -745,6 +1086,8 @@ export class RemoteTaskStore {
       targetNodeID: task.targetNodeID,
       targetBrainID: task.targetBrainID,
     };
+    if (task.direction === 'outgoing' && task.pendingControl)
+      return structuredClone(task.pendingControl);
     if (task.direction === 'outgoing' && task.status === 'pending')
       return {
         ...base,
@@ -768,6 +1111,8 @@ export class RemoteTaskStore {
         sequence: task.executionSequence,
         state: task.executionState,
         summary: task.executionSummary,
+        approvals: structuredClone(task.remoteApprovals),
+        questions: structuredClone(task.remoteQuestions),
         statusAt: task.updatedAt,
       };
     if (
@@ -802,6 +1147,7 @@ export class RemoteTaskStore {
     const task = this.values.get(taskID);
     const current = this.message(taskID);
     if (!task || !current || JSON.stringify(current) !== JSON.stringify(message)) return false;
+    if (message.type === 'remote-task-control') task.pendingControl = null;
     task.deliveryPending = false;
     task.deliveryError = null;
     task.updatedAt = new Date().toISOString();
@@ -812,6 +1158,7 @@ export class RemoteTaskStore {
   markDeliveryFailed(taskID: string, message: string) {
     const task = this.values.get(taskID);
     if (!task?.deliveryPending) return false;
+    task.pendingControl = null;
     task.deliveryPending = false;
     task.deliveryError = message.slice(0, 200);
     task.updatedAt = new Date().toISOString();
@@ -888,7 +1235,7 @@ export class RemoteTaskStore {
   private save() {
     mkdirSync(dirname(this.path), { recursive: true });
     const value: StoredRemoteTasks = {
-      version: 3,
+      version: 4,
       tasks: [...this.values.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     };
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;

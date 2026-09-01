@@ -1,7 +1,8 @@
 // Verifies the node network page inside an already-running Tauri WebView2 instance.
 // A second isolated NodeNetwork supplies a real signed LAN discovery advertisement.
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -173,15 +174,130 @@ try {
   await remoteTaskCard.getByText('已接受', { exact: true }).waitFor();
   assert.equal(remoteTask()?.status, 'accepted');
 
+  const simulatedLocalTaskID = randomUUID();
+  await peer.bindRemoteTaskExecution(remoteTask()!.id, simulatedLocalTaskID);
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'waiting_input',
+    '等待任务发起者补充验收偏好。',
+    [],
+    [
+      {
+        id: 'remote-question-verification',
+        questions: [
+          {
+            header: '输出格式',
+            question: '结果应使用哪种格式？',
+            options: [
+              { label: '纯文本', description: '只生成一个文本文件' },
+              { label: 'Markdown', description: '生成带标题的 Markdown 文件' },
+            ],
+          },
+        ],
+      },
+    ],
+  );
+  await remoteTaskCard.getByLabel('结果应使用哪种格式？').fill('纯文本');
+  await remoteTaskCard.getByRole('button', { name: '回复 AI' }).click();
+  let simulatedControlsDeadline = Date.now() + 5000;
+  while (Date.now() < simulatedControlsDeadline && peer.pendingRemoteTaskControls().length === 0)
+    await wait(100);
+  let simulatedControl = peer.pendingRemoteTaskControls()[0];
+  assert.equal(simulatedControl?.control.action.kind, 'question');
+  assert.deepEqual(
+    simulatedControl?.control.action.kind === 'question'
+      ? simulatedControl.control.action.answers
+      : null,
+    [['纯文本']],
+  );
+  assert(peer.finishRemoteTaskControl(remoteTask()!.id, simulatedControl!.control.controlID));
+
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'waiting_approval',
+    '等待任务发起者批准一次文件修改。',
+    [
+      {
+        id: 'remote-approval-verification',
+        permission: 'edit',
+        patterns: ['<project>/SIMULATED.txt'],
+        metadata: {},
+      },
+    ],
+    [],
+  );
+  await remoteTaskCard.getByRole('button', { name: '拒绝', exact: true }).click();
+  simulatedControlsDeadline = Date.now() + 5000;
+  while (Date.now() < simulatedControlsDeadline && peer.pendingRemoteTaskControls().length === 0)
+    await wait(100);
+  simulatedControl = peer.pendingRemoteTaskControls()[0];
+  assert.equal(simulatedControl?.control.action.kind, 'permission');
+  assert.equal(
+    simulatedControl?.control.action.kind === 'permission'
+      ? simulatedControl.control.action.reply
+      : null,
+    'reject',
+  );
+  assert(peer.finishRemoteTaskControl(remoteTask()!.id, simulatedControl!.control.controlID));
+
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'running',
+    '验证发起方可以停止远端执行。',
+  );
+  await remoteTaskCard.getByText('验证发起方可以停止远端执行。', { exact: true }).waitFor();
+  page.once('dialog', (dialog: any) => dialog.accept());
+  await remoteTaskCard.getByRole('button', { name: '停止远端执行' }).click();
+  simulatedControlsDeadline = Date.now() + 5000;
+  while (Date.now() < simulatedControlsDeadline && peer.pendingRemoteTaskControls().length === 0)
+    await wait(100);
+  simulatedControl = peer.pendingRemoteTaskControls()[0];
+  assert.equal(simulatedControl?.control.action.kind, 'stop');
+  assert(peer.finishRemoteTaskControl(remoteTask()!.id, simulatedControl!.control.controlID));
+  await peer.publishRemoteTaskExecution(simulatedLocalTaskID, 'stopped', '任务已由发起方停止。');
+  await remoteTaskCard.getByText('已停止', { exact: true }).waitFor();
+
   const policyForm = page.locator('.execution-policy-form');
-  await policyForm.getByLabel('AI 审批模式').selectOption('auto');
+  await policyForm.getByLabel('AI 审批模式').selectOption('ask');
   await policyForm.getByLabel('本机项目').selectOption({ label: '远端自动执行验证项目' });
   await policyForm.getByLabel('执行模型').selectOption(verificationModel.id);
   await policyForm.locator('.remote-preparation-confirmation input').check();
   await policyForm.getByRole('button', { name: '开启执行能力' }).click();
   await page.getByText('已按本机设置开放').waitFor();
 
-  const incomingTitle = '真实自动执行跨设备任务';
+  const stoppedTitle = '验证真实远程停止';
+  await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
+    title: stoppedTitle,
+    description:
+      '在当前普通项目文件夹新增 SHOULD_NOT_EXIST.txt，内容为 should be stopped。不要修改其他文件。',
+    criteria: '在文件修改获批前由任务发起者停止，文件不得出现。',
+  });
+  const stoppedTask = () => peer.snapshot().remoteTasks.find((task) => task.title === stoppedTitle);
+  let stoppedDeadline = Date.now() + 600_000;
+  while (
+    Date.now() < stoppedDeadline &&
+    !['waiting_approval', 'waiting_input'].includes(stoppedTask()?.executionState || '')
+  ) {
+    if (['failed', 'interrupted', 'review'].includes(stoppedTask()?.executionState || ''))
+      throw new Error(
+        `Remote stop fixture reached ${stoppedTask()?.executionState} before approval: ${stoppedTask()?.executionSummary}`,
+      );
+    await wait(500);
+  }
+  assert(
+    ['waiting_approval', 'waiting_input'].includes(stoppedTask()?.executionState || ''),
+    'Remote task did not reach a human intervention point',
+  );
+  await peer.requestRemoteTaskControl(stoppedTask()!.id, stoppedTask()!.executionSequence, {
+    kind: 'stop',
+  });
+  stoppedDeadline = Date.now() + 30_000;
+  while (Date.now() < stoppedDeadline && stoppedTask()?.executionState !== 'stopped')
+    await wait(250);
+  assert.equal(stoppedTask()?.executionState, 'stopped');
+  assert.equal(existsSync(join(projectRoot, 'SHOULD_NOT_EXIST.txt')), false);
+
+  const incomingTitle = '真实人工批准跨设备任务';
   await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
     title: incomingTitle,
     description:
@@ -208,6 +324,8 @@ try {
 
   incomingDeadline = Date.now() + 600_000;
   let localRemoteTask: any = null;
+  const approvedRemoteRequests = new Set<string>();
+  const answeredRemoteQuestions = new Set<string>();
   while (Date.now() < incomingDeadline && peerTask()?.executionState !== 'review') {
     localRemoteTask = await page.evaluate(async (remoteTaskID: string) => {
       const bootstrap = await (
@@ -219,12 +337,31 @@ try {
       );
     }, peerTask()!.id);
     if (localRemoteTask) runningLocalTaskID = localRemoteTask.id;
-    if (localRemoteTask?.state === 'waiting_approval')
-      throw new Error(
-        `帮我批准模式仍产生本机审批请求：${localRemoteTask.approvals
-          .map((approval: any) => approval.permission)
-          .join(', ')}`,
+    for (const approval of peerTask()?.remoteApprovals || []) {
+      assert(
+        !approval.patterns.join('\n').includes(projectRoot),
+        'Remote approval exposed the executor project path',
       );
+      assert.deepEqual(approval.metadata, {});
+      if (!approvedRemoteRequests.has(approval.id)) {
+        await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
+          kind: 'permission',
+          requestID: approval.id,
+          reply: 'once',
+        });
+        approvedRemoteRequests.add(approval.id);
+      }
+    }
+    for (const request of peerTask()?.remoteQuestions || []) {
+      if (!answeredRemoteQuestions.has(request.id)) {
+        await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
+          kind: 'question',
+          requestID: request.id,
+          answers: request.questions.map(() => ['请严格按任务说明和验收标准继续。']),
+        });
+        answeredRemoteQuestions.add(request.id);
+      }
+    }
     if (['failed', 'interrupted', 'stopped'].includes(localRemoteTask?.state))
       throw new Error(
         `Remote OpenCode execution ended as ${localRemoteTask.state}: ${localRemoteTask.error}`,
@@ -233,6 +370,7 @@ try {
   }
   assert.equal(peerTask()?.executionState, 'review');
   assert((peerTask()?.executionSequence || 0) >= 3);
+  assert(approvedRemoteRequests.size > 0, 'Remote OpenCode task did not request an approval');
   assert.equal(
     readFileSync(join(projectRoot, 'RESULT.txt'), 'utf8').trim(),
     'rivloom remote execution verified',
@@ -252,7 +390,7 @@ try {
     const response = await fetch('/api/network/execution-policy', { credentials: 'same-origin' });
     return response.json();
   });
-  assert.equal(localPolicy.approvalMode, 'auto');
+  assert.equal(localPolicy.approvalMode, 'ask');
   assert.equal(localPolicy.projectID, String(projectResult.body.id));
   assert(typeof localPolicy.model === 'string');
 
@@ -292,6 +430,8 @@ try {
   page.once('dialog', (dialog: any) => dialog.accept());
   await syntheticCard.getByRole('button', { name: '撤销信任' }).click();
   await syntheticCard.getByText('签名身份已验证，尚未配对授权').waitFor();
+  const revokeDeadline = Date.now() + 5000;
+  while (Date.now() < revokeDeadline && peerViewOfDesktop()?.trusted) await wait(100);
   assert.equal(peerViewOfDesktop()?.trusted, false);
   const proof = join(verificationDirectory, 'desktop-node-network.json');
   writeFileSync(
@@ -316,9 +456,14 @@ try {
           'Mutually authenticated X25519 and AES-GCM channel synchronized the Brain directory',
           'An encrypted cross-device collaboration task arrived without project, model, or credential fields',
           'A trusted task was automatically accepted while local execution capability was disabled and did not start a session',
-          'The target stored one reusable local capability policy with the selected help-me-approve AI mode',
+          'The source UI answered a remote AI question through the authenticated encrypted channel',
+          'The source UI rejected a remote operation request through the authenticated encrypted channel',
+          'The source UI sent a remote stop request through the authenticated encrypted channel',
+          'The target stored one reusable local capability policy with the selected request-approval AI mode',
           'The target automatically accepted a matching task without per-task project or model selection',
-          'The packaged OpenCode engine created a real session and executed local file operations without a manual approval prompt',
+          'A real packaged OpenCode task was stopped remotely at a human-intervention point before the test file was written',
+          'The packaged OpenCode engine created a real session and resumed after one remote operation approval',
+          'The remote approval snapshot exposed neither the executor project directory nor approval metadata',
           'The owner received monotonic execution states without local project, model, task ID, or credential values',
           'The resulting file content was verified directly in the ordinary-folder fixture',
           'The existing project concurrency guard rejected a second task while remote results awaited review',
@@ -327,7 +472,8 @@ try {
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
-          'Approvals are still handled on the executor device; remote approval, stop, artifacts and acceptance are the next slice.',
+          'The AI question branch was exercised with a protocol-level execution snapshot rather than a model-triggered question.',
+          'Remote requirement supplements, artifacts, diffs, and acceptance remain the next slice.',
         ],
         screenshot,
         pairingScreenshot,

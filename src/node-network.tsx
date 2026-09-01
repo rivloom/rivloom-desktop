@@ -45,6 +45,14 @@ type NetworkActions = {
     input: { title: string; description: string; criteria: string },
   ): void;
   cancelRemoteTask(taskID: string): void;
+  controlRemoteTask(
+    taskID: string,
+    expectedExecutionSequence: number,
+    action:
+      | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
+      | { kind: 'question'; requestID: string; answers: string[][] }
+      | { kind: 'stop' },
+  ): void;
   saveExecutionPolicy(input: {
     enabled: boolean;
     approvalMode: ApprovalMode;
@@ -448,6 +456,115 @@ function RemoteTaskCard({
           </p>
         </div>
       )}
+      {task.direction === 'outgoing' && task.remoteApprovals.length > 0 && (
+        <div className="remote-intervention-list">
+          {task.remoteApprovals.map((approval) => (
+            <section className="approval-card remote-approval-card" key={approval.id}>
+              <div className="approval-title">
+                <span>
+                  <ShieldCheck size={20} />
+                </span>
+                <div>
+                  <strong>执行节点请求操作批准</strong>
+                  <p>
+                    {approval.permission === 'edit'
+                      ? '修改文件'
+                      : approval.permission === 'bash'
+                        ? '执行命令'
+                        : approval.permission}
+                  </p>
+                </div>
+              </div>
+              <pre>{approval.patterns.join('\n') || '未提供可展示的操作内容'}</pre>
+              <div className="approval-footer">
+                <small>本机项目根目录已显示为 &lt;project&gt;。只授权这一项请求。</small>
+                {actions.owner && (
+                  <div className="action-group">
+                    <button
+                      className="button compact"
+                      disabled={actions.busy || task.controlPending || task.deliveryPending}
+                      onClick={() =>
+                        actions.controlRemoteTask(task.id, task.executionSequence, {
+                          kind: 'permission',
+                          requestID: approval.id,
+                          reply: 'reject',
+                        })
+                      }
+                    >
+                      拒绝
+                    </button>
+                    <button
+                      className="button primary compact"
+                      disabled={actions.busy || task.controlPending || task.deliveryPending}
+                      onClick={() =>
+                        actions.controlRemoteTask(task.id, task.executionSequence, {
+                          kind: 'permission',
+                          requestID: approval.id,
+                          reply: 'once',
+                        })
+                      }
+                    >
+                      <Check size={14} />
+                      仅本次允许
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+      {task.direction === 'outgoing' && task.remoteQuestions.length > 0 && (
+        <div className="remote-intervention-list">
+          {task.remoteQuestions.map((request) => (
+            <section className="approval-card remote-question-card" key={request.id}>
+              <h3>执行节点上的 AI 需要补充信息</h3>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  actions.controlRemoteTask(task.id, task.executionSequence, {
+                    kind: 'question',
+                    requestID: request.id,
+                    answers: request.questions.map((_, index) => [
+                      String(form.get(`remote-answer-${index}`) || ''),
+                    ]),
+                  });
+                }}
+              >
+                {request.questions.map((question, index) => (
+                  <label key={`${request.id}-${index}`}>
+                    <span>{question.question}</span>
+                    {question.options.length > 0 && (
+                      <small>
+                        {question.options
+                          .map((option) => `${option.label}：${option.description}`)
+                          .join('；')}
+                      </small>
+                    )}
+                    <input
+                      name={`remote-answer-${index}`}
+                      required
+                      maxLength={4000}
+                      placeholder="输入给 AI 的答案"
+                      disabled={!actions.owner}
+                    />
+                  </label>
+                ))}
+                {actions.owner && (
+                  <button
+                    className="button primary compact"
+                    type="submit"
+                    disabled={actions.busy || task.controlPending || task.deliveryPending}
+                  >
+                    回复 AI
+                  </button>
+                )}
+              </form>
+            </section>
+          ))}
+        </div>
+      )}
       {task.automaticEligible && task.status === 'accepted' && task.executionSequence === 0 && (
         <p className="remote-task-boundary">
           {task.direction === 'incoming'
@@ -455,6 +572,25 @@ function RemoteTaskCard({
             : '对方已接受任务，正在等待其本机执行能力和项目可用。'}
         </p>
       )}
+      {actions.owner &&
+        task.direction === 'outgoing' &&
+        ['running', 'waiting_approval', 'waiting_input', 'interrupted'].includes(
+          task.executionState,
+        ) && (
+          <div className="remote-task-buttons">
+            <button
+              className="button danger compact"
+              disabled={actions.busy || task.controlPending || task.deliveryPending}
+              onClick={() =>
+                actions.controlRemoteTask(task.id, task.executionSequence, { kind: 'stop' })
+              }
+            >
+              <X size={14} />
+              停止远端执行
+            </button>
+            <small>停止不会回滚执行节点已经完成的修改。</small>
+          </div>
+        )}
       {actions.owner &&
         task.direction === 'outgoing' &&
         task.executionSequence === 0 &&
@@ -487,6 +623,7 @@ export function NodeNetworkView({
   onRevokeTrust,
   onCreateRemoteTask,
   onCancelRemoteTask,
+  onControlRemoteTask,
   onSaveExecutionPolicy,
 }: {
   network: NodeNetwork;
@@ -505,6 +642,14 @@ export function NodeNetworkView({
     input: { title: string; description: string; criteria: string },
   ): void;
   onCancelRemoteTask(taskID: string): void;
+  onControlRemoteTask(
+    taskID: string,
+    expectedExecutionSequence: number,
+    action:
+      | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
+      | { kind: 'question'; requestID: string; answers: string[][] }
+      | { kind: 'stop' },
+  ): void;
   onSaveExecutionPolicy(input: {
     enabled: boolean;
     approvalMode: ApprovalMode;
@@ -524,6 +669,7 @@ export function NodeNetworkView({
     revokeTrust: onRevokeTrust,
     createRemoteTask: onCreateRemoteTask,
     cancelRemoteTask: onCancelRemoteTask,
+    controlRemoteTask: onControlRemoteTask,
     saveExecutionPolicy: onSaveExecutionPolicy,
   };
   return (
@@ -671,9 +817,10 @@ export function NodeNetworkView({
       <div className="collaboration-note network-boundary">
         <ShieldCheck size={25} />
         <div>
-          <h3>本机策略决定如何调用</h3>
+          <h3>设备信任与 AI 审批分开管理</h3>
           <p>
-            默认可在信任建立后自动调用，也可以限制到指定节点或改为每项确认。执行节点只回传任务状态和必要结果，不发送本机项目路径、模型凭据或通用
+            受信任务会自动接收，本机执行开关决定是否开始，AI
+            审批模式决定哪些操作询问。远程审批和回答只经过加密任务通道，不开放本机项目路径、模型凭据或通用
             OpenCode 接口。
           </p>
         </div>

@@ -122,6 +122,9 @@ export type RemoteTaskInvite = {
   executionState: 'not_started' | TaskState;
   executionSequence: number;
   executionSummary: string;
+  remoteApprovals: Approval[];
+  remoteQuestions: Question[];
+  controlPending: boolean;
   deliveryPending: boolean;
   deliveryError: string | null;
   createdAt: string;

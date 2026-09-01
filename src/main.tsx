@@ -1313,6 +1313,20 @@ function App() {
                 if (globalThis.confirm('确定取消这条跨设备任务邀请吗？'))
                   void action(() => api(`/network/tasks/${taskID}/cancel`, { confirmed: true }));
               }}
+              onControlRemoteTask={(taskID, expectedExecutionSequence, controlAction) => {
+                if (
+                  controlAction.kind === 'stop' &&
+                  !globalThis.confirm('确定停止执行节点上的任务吗？已经完成的修改不会回滚。')
+                )
+                  return;
+                void action(() =>
+                  api(`/network/tasks/${taskID}/control`, {
+                    expectedExecutionSequence,
+                    action: controlAction,
+                    confirmed: true,
+                  }),
+                );
+              }}
               onSaveExecutionPolicy={(input) =>
                 void action(() => api('/network/execution-policy', { ...input, confirmed: true }))
               }

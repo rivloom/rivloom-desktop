@@ -52,7 +52,13 @@ import {
 import { validateProject, redact } from './artifacts.ts';
 import { dataRoot } from './engine.ts';
 import { acquireDataLock } from './process-lock.ts';
-import { activeStates, stateLabels, type Task } from '../shared/types.ts';
+import {
+  activeStates,
+  stateLabels,
+  type Approval,
+  type Question,
+  type Task,
+} from '../shared/types.ts';
 import {
   modelSettings,
   defaultModel,
@@ -286,6 +292,38 @@ app.post('/api/network/tasks/:id/cancel', async (req, res) => {
   z.object({ confirmed: z.literal(true) }).parse(req.body);
   res.json(await nodeNetwork.cancelRemoteTask(remoteTaskID(req)));
 });
+app.post('/api/network/tasks/:id/control', async (req, res) => {
+  requireNetworkOwner(req);
+  const input = z
+    .object({
+      expectedExecutionSequence: z.number().int().positive(),
+      action: z.discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('permission'),
+          requestID: z.string().min(1).max(200),
+          reply: z.enum(['once', 'reject']),
+        }),
+        z.object({
+          kind: z.literal('question'),
+          requestID: z.string().min(1).max(200),
+          answers: z
+            .array(z.array(z.string().max(4000)).min(1).max(20))
+            .min(1)
+            .max(10),
+        }),
+        z.object({ kind: z.literal('stop') }),
+      ]),
+      confirmed: z.literal(true),
+    })
+    .parse(req.body);
+  res.json(
+    await nodeNetwork.requestRemoteTaskControl(
+      remoteTaskID(req),
+      input.expectedExecutionSequence,
+      input.action,
+    ),
+  );
+});
 app.post('/api/network/tasks/:id/prepare', async (req, res) => {
   requireNetworkOwner(req);
   const input = z
@@ -332,6 +370,7 @@ app.post('/api/network/tasks/:id/preparation/revoke', async (req, res) => {
 });
 
 const processingRemoteTasks = new Set<string>();
+const processingRemoteControls = new Set<string>();
 
 function remoteExecutionSummary(value: Task) {
   if (value.state === 'review') {
@@ -347,6 +386,46 @@ function remoteExecutionSummary(value: Task) {
   return stateLabels[value.state];
 }
 
+function remoteSafeText(value: string, directory: string, maximum: number) {
+  let result = redact(value);
+  for (const variant of [
+    directory,
+    directory.replaceAll('\\', '/'),
+    directory.replaceAll('/', '\\'),
+  ]) {
+    if (!variant) continue;
+    const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(escaped, 'gi'), '<project>');
+  }
+  return result.slice(0, maximum);
+}
+
+function remoteApprovals(value: Task, directory: string): Approval[] {
+  return value.approvals.slice(0, 30).map((approval) => ({
+    id: approval.id.slice(0, 200),
+    permission: approval.permission.slice(0, 100),
+    patterns: approval.patterns
+      .slice(0, 30)
+      .map((pattern) => remoteSafeText(pattern, directory, 2000)),
+    metadata: {},
+  }));
+}
+
+function remoteQuestions(value: Task, directory: string): Question[] {
+  return value.questions.slice(0, 10).map((request) => ({
+    id: request.id.slice(0, 200),
+    questions: request.questions.slice(0, 10).map((question) => ({
+      header: remoteSafeText(question.header, directory, 120),
+      question: remoteSafeText(question.question, directory, 4000),
+      ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
+      options: question.options.slice(0, 20).map((option) => ({
+        label: remoteSafeText(option.label, directory, 200),
+        description: remoteSafeText(option.description, directory, 1000),
+      })),
+    })),
+  }));
+}
+
 async function publishRemoteExecution(taskID: string) {
   let value: Task;
   try {
@@ -355,8 +434,15 @@ async function publishRemoteExecution(taskID: string) {
     return;
   }
   if (!value.remoteOrigin) return;
+  const directory = project(value.projectID).directory;
   await nodeNetwork
-    .publishRemoteTaskExecution(value.id, value.state, remoteExecutionSummary(value))
+    .publishRemoteTaskExecution(
+      value.id,
+      value.state,
+      remoteExecutionSummary(value),
+      remoteApprovals(value, directory),
+      remoteQuestions(value, directory),
+    )
     .catch(() => {});
 }
 
@@ -508,6 +594,66 @@ async function processRemoteTasks() {
 nodeNetwork.on('remote-task-offer', (value: { taskID: string }) => {
   void processRemoteTask(value.taskID);
 });
+
+async function processRemoteControl(taskID: string, controlID: string) {
+  if (processingRemoteControls.has(controlID)) return;
+  processingRemoteControls.add(controlID);
+  let localTaskID: string | null = null;
+  try {
+    const pending = nodeNetwork
+      .pendingRemoteTaskControls()
+      .find(
+        (candidate) => candidate.taskID === taskID && candidate.control.controlID === controlID,
+      );
+    const remote = nodeNetwork.remoteTask(taskID);
+    if (
+      !pending ||
+      !remote ||
+      remote.direction !== 'incoming' ||
+      remote.ownerNodeID !== pending.control.ownerNodeID ||
+      !nodeNetwork.isTrustedNode(remote.ownerNodeID)
+    )
+      return;
+    localTaskID = pending.localTaskID;
+    const localTask = task(localTaskID);
+    requireThat(localTask.remoteOrigin?.remoteTaskID === taskID, 409, '远程控制任务绑定不匹配。');
+    const localOwner = users().find((candidate) => candidate.owner) || users()[0];
+    requireThat(localOwner, 409, '执行节点没有可处理远程操作的本机所有者。');
+    const action = pending.control.action;
+    if (action.kind === 'permission')
+      await replyPermission(localTask.id, localOwner, action.requestID, action.reply);
+    else if (action.kind === 'question')
+      await replyQuestion(localTask.id, localOwner, action.requestID, action.answers);
+    else await stopTask(localTask.id, localOwner);
+    activity(
+      localTask.id,
+      localOwner.id,
+      'remote_control',
+      action.kind === 'permission'
+        ? `归属 Brain 远程${action.reply === 'once' ? '批准' : '拒绝'}权限请求。`
+        : action.kind === 'question'
+          ? '归属 Brain 远程回答 AI 问题。'
+          : '归属 Brain 远程请求停止任务。',
+    );
+  } catch (error) {
+    console.error(
+      `远程控制 ${controlID} 处理失败：${error instanceof Error ? error.message : '未知错误'}`,
+    );
+  } finally {
+    nodeNetwork.finishRemoteTaskControl(taskID, controlID);
+    if (localTaskID) await publishRemoteExecution(localTaskID);
+    processingRemoteControls.delete(controlID);
+  }
+}
+
+async function processRemoteControls() {
+  for (const pending of nodeNetwork.pendingRemoteTaskControls())
+    await processRemoteControl(pending.taskID, pending.control.controlID);
+}
+
+nodeNetwork.on('remote-task-control', (value: { taskID: string; controlID: string }) => {
+  void processRemoteControl(value.taskID, value.controlID);
+});
 async function stopExecutionsForRevokedNode(nodeID: string) {
   const localOwner = users().find((candidate) => candidate.owner) || users()[0];
   if (!localOwner) return;
@@ -540,7 +686,10 @@ const onTrustRevoked = (value: { nodeID: string }) => {
   void stopExecutionsForRevokedNode(value.nodeID);
 };
 nodeNetwork.on('trust-revoked', onTrustRevoked);
-const remoteTaskProcessor = setInterval(() => void processRemoteTasks(), 2_000);
+const remoteTaskProcessor = setInterval(() => {
+  void processRemoteTasks();
+  void processRemoteControls();
+}, 2_000);
 remoteTaskProcessor.unref();
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
