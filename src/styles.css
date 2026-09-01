@@ -1838,7 +1838,8 @@ main {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.remote-task-form {
+.remote-task-form,
+.remote-preparation-form {
   display: grid;
   gap: 11px;
   margin-top: 13px;
@@ -1847,28 +1848,33 @@ main {
   border-radius: 9px;
   background: #f8fbf6;
 }
-.remote-task-form > div:first-child {
+.remote-task-form > div:first-child,
+.remote-preparation-form > div:first-child {
   display: grid;
   gap: 4px;
 }
-.remote-task-form strong {
+.remote-task-form strong,
+.remote-preparation-form strong {
   color: #3f604f;
   font-size: 12px;
 }
-.remote-task-form p {
+.remote-task-form p,
+.remote-preparation-form p {
   margin: 0;
   color: #738078;
   font-size: 9px;
   line-height: 1.6;
 }
-.remote-task-form label {
+.remote-task-form label,
+.remote-preparation-form label {
   display: grid;
   gap: 5px;
   color: #63756a;
   font-size: 9px;
 }
 .remote-task-form input,
-.remote-task-form textarea {
+.remote-task-form textarea,
+.remote-preparation-form select {
   width: 100%;
   border: 1px solid #dce5da;
   border-radius: 6px;
@@ -1881,7 +1887,8 @@ main {
   resize: vertical;
 }
 .remote-task-form input:focus,
-.remote-task-form textarea:focus {
+.remote-task-form textarea:focus,
+.remote-preparation-form select:focus {
   border-color: #8caf97;
   outline: 2px solid #8caf9720;
 }
@@ -1987,6 +1994,31 @@ main {
   color: #4f745c;
   font-size: 9px;
   line-height: 1.6;
+}
+.remote-task-lease {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 0 0;
+  color: #708174;
+  font-size: 9px;
+}
+.remote-preparation-form {
+  margin-top: 13px;
+  padding: 13px;
+  border: 1px solid #dce5da;
+  border-radius: 9px;
+  background: #f8fbf6;
+}
+.remote-preparation-confirmation {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 8px !important;
+  line-height: 1.5;
+}
+.remote-preparation-confirmation input {
+  width: auto;
+  margin-top: 2px;
 }
 .remote-task-error {
   margin: 11px 0 0;

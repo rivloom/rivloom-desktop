@@ -1272,6 +1272,8 @@ function App() {
             <NodeNetworkView
               network={network}
               owner={user.owner}
+              projects={projects}
+              models={engine.models}
               busy={busy}
               onRequestPairing={(nodeID) => void action(() => api('/network/pairings', { nodeID }))}
               onConfirmPairing={(pairingID) =>
@@ -1311,6 +1313,27 @@ function App() {
               onCancelRemoteTask={(taskID) => {
                 if (globalThis.confirm('确定取消这条跨设备任务邀请吗？'))
                   void action(() => api(`/network/tasks/${taskID}/cancel`, { confirmed: true }));
+              }}
+              onPrepareRemoteTask={(taskID, projectID, model) =>
+                void action(() =>
+                  api(`/network/tasks/${taskID}/prepare`, {
+                    projectID,
+                    model,
+                    confirmedProject: true,
+                    confirmedModel: true,
+                    confirmedLease: true,
+                  }),
+                )
+              }
+              onRevokeRemoteTaskPreparation={(taskID) => {
+                if (
+                  globalThis.confirm(
+                    '撤销后会立即释放本机项目，并通知发起方执行准备已取消。确定继续吗？',
+                  )
+                )
+                  void action(() =>
+                    api(`/network/tasks/${taskID}/preparation/revoke`, { confirmed: true }),
+                  );
               }}
             />
           )}

@@ -4,6 +4,7 @@ import {
   Check,
   Clock3,
   Fingerprint,
+  FolderGit2,
   Inbox,
   Link2,
   Radio,
@@ -13,7 +14,13 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import type { NodeNetwork, NodePairing, RemoteTaskInvite, RivloomNode } from '../shared/types';
+import type {
+  NodeNetwork,
+  NodePairing,
+  Project,
+  RemoteTaskInvite,
+  RivloomNode,
+} from '../shared/types';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -36,6 +43,8 @@ type NetworkActions = {
   ): void;
   respondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   cancelRemoteTask(taskID: string): void;
+  prepareRemoteTask(taskID: string, projectID: string, model: string): void;
+  revokeRemoteTaskPreparation(taskID: string): void;
 };
 
 function NodeCard({
@@ -258,16 +267,29 @@ const remoteTaskStatus: Record<RemoteTaskInvite['status'], string> = {
 function RemoteTaskCard({
   task,
   network,
+  projects,
+  models,
   actions,
 }: {
   task: RemoteTaskInvite;
   network: NodeNetwork;
+  projects: Project[];
+  models: { id: string; name: string }[];
   actions: NetworkActions;
 }) {
+  const [preparing, setPreparing] = useState(false);
   const peerID = task.direction === 'incoming' ? task.ownerNodeID : task.targetNodeID;
   const peer = network.nearby.find((node) => node.id === peerID);
   const brainID = task.direction === 'incoming' ? task.ownerBrainID : task.targetBrainID;
   const brain = peer?.brains.find((item) => item.id === brainID);
+  const localProject = projects.find((project) => project.id === task.localProjectID);
+  const localModel = models.find((model) => model.id === task.localModel);
+  const submitPreparation = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const value = Object.fromEntries(new FormData(event.currentTarget));
+    actions.prepareRemoteTask(task.id, String(value.projectID || ''), String(value.model || ''));
+    setPreparing(false);
+  };
   return (
     <article className={`remote-task-card ${task.direction} status-${task.status}`}>
       <div className="remote-task-heading">
@@ -302,7 +324,21 @@ function RemoteTaskCard({
       {task.deliveryError && <p className="remote-task-error">{task.deliveryError}</p>}
       {task.status === 'accepted' && (
         <p className="remote-task-boundary">
-          双方已确认任务范围；尚未绑定本机项目、模型或启动 AI。
+          {task.executionStatus === 'ready'
+            ? task.direction === 'incoming'
+              ? `已在本机保留 ${localProject?.name || '可信项目'}，模型为 ${localModel?.name || task.localModel || '已选模型'}。这仍不会自动启动 AI。`
+              : '对方已在本机授权项目和模型；项目路径与凭据没有发送给本机，AI 尚未启动。'
+            : task.executionStatus === 'expired'
+              ? '执行准备授权已过期；对方需要在自己的设备上重新选择项目和模型。'
+              : task.executionStatus === 'revoked'
+                ? '执行准备已撤销；双方仍保留已接受的任务范围。'
+                : '双方已确认任务范围；尚未绑定本机项目、模型或启动 AI。'}
+        </p>
+      )}
+      {task.executionStatus === 'ready' && task.executionLeaseExpiresAt && (
+        <p className="remote-task-lease">
+          <Clock3 size={13} />
+          执行准备保留至 {new Date(task.executionLeaseExpiresAt).toLocaleString('zh-CN')}
         </p>
       )}
       {actions.owner && task.direction === 'incoming' && task.status === 'pending' && (
@@ -326,6 +362,91 @@ function RemoteTaskCard({
         </div>
       )}
       {actions.owner &&
+        task.direction === 'incoming' &&
+        task.status === 'accepted' &&
+        task.executionStatus !== 'ready' &&
+        !task.deliveryPending &&
+        (preparing ? (
+          <form className="remote-preparation-form" onSubmit={submitPreparation}>
+            <div>
+              <span className="eyebrow">LOCAL EXECUTION PREPARATION</span>
+              <strong>只在本机选择执行资源</strong>
+              <p>对方只会看到“准备就绪”和期限，不会收到项目名称、路径、模型标识或凭据。</p>
+            </div>
+            <label>
+              <span>可信本机项目</span>
+              <select name="projectID" required defaultValue={projects[0]?.id || ''}>
+                {!projects.length && <option value="">请先添加本地项目</option>}
+                {projects.map((project) => (
+                  <option value={project.id} key={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>本机执行模型</span>
+              <select name="model" required defaultValue={models[0]?.id || ''}>
+                {!models.length && <option value="">请先连接本机模型</option>}
+                {models.map((model) => (
+                  <option value={model.id} key={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="checkbox remote-preparation-confirmation">
+              <input type="checkbox" required />
+              我已检查这个本机项目，确认模型请求可能发送任务和代码，并同意保留 30
+              分钟；期间普通任务不能在该项目启动。
+            </label>
+            <div className="remote-task-buttons">
+              <button
+                className="button primary compact"
+                type="submit"
+                disabled={actions.busy || !projects.length || !models.length}
+              >
+                <FolderGit2 size={14} />
+                确认本机执行准备
+              </button>
+              <button
+                className="button compact"
+                type="button"
+                disabled={actions.busy}
+                onClick={() => setPreparing(false)}
+              >
+                取消
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="remote-task-buttons">
+            <button
+              className="button primary compact"
+              disabled={actions.busy || !projects.length || !models.length}
+              onClick={() => setPreparing(true)}
+            >
+              <FolderGit2 size={14} />
+              选择本机项目与模型
+            </button>
+          </div>
+        ))}
+      {actions.owner &&
+        task.direction === 'incoming' &&
+        task.status === 'accepted' &&
+        task.executionStatus === 'ready' && (
+          <div className="remote-task-buttons">
+            <button
+              className="button danger compact"
+              disabled={actions.busy || task.deliveryPending}
+              onClick={() => actions.revokeRemoteTaskPreparation(task.id)}
+            >
+              <X size={14} />
+              撤销执行准备
+            </button>
+          </div>
+        )}
+      {actions.owner &&
         task.direction === 'outgoing' &&
         (task.status === 'pending' || task.status === 'accepted') && (
           <div className="remote-task-buttons">
@@ -346,6 +467,8 @@ function RemoteTaskCard({
 export function NodeNetworkView({
   network,
   owner,
+  projects,
+  models,
   busy,
   onRequestPairing,
   onConfirmPairing,
@@ -354,9 +477,13 @@ export function NodeNetworkView({
   onCreateRemoteTask,
   onRespondRemoteTask,
   onCancelRemoteTask,
+  onPrepareRemoteTask,
+  onRevokeRemoteTaskPreparation,
 }: {
   network: NodeNetwork;
   owner: boolean;
+  projects: Project[];
+  models: { id: string; name: string }[];
   busy: boolean;
   onRequestPairing(nodeID: string): void;
   onConfirmPairing(pairingID: string): void;
@@ -369,6 +496,8 @@ export function NodeNetworkView({
   ): void;
   onRespondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   onCancelRemoteTask(taskID: string): void;
+  onPrepareRemoteTask(taskID: string, projectID: string, model: string): void;
+  onRevokeRemoteTaskPreparation(taskID: string): void;
 }) {
   const online = network.status === 'online';
   const onlineNearby = network.nearby.filter((node) => node.online);
@@ -383,6 +512,8 @@ export function NodeNetworkView({
     createRemoteTask: onCreateRemoteTask,
     respondRemoteTask: onRespondRemoteTask,
     cancelRemoteTask: onCancelRemoteTask,
+    prepareRemoteTask: onPrepareRemoteTask,
+    revokeRemoteTaskPreparation: onRevokeRemoteTaskPreparation,
   };
   return (
     <>
@@ -496,7 +627,14 @@ export function NodeNetworkView({
         {network.remoteTasks.length ? (
           <div className="remote-task-grid">
             {network.remoteTasks.map((task) => (
-              <RemoteTaskCard task={task} network={network} actions={actions} key={task.id} />
+              <RemoteTaskCard
+                task={task}
+                network={network}
+                projects={projects}
+                models={models}
+                actions={actions}
+                key={task.id}
+              />
             ))}
           </div>
         ) : (

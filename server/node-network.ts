@@ -50,6 +50,7 @@ import {
   RemoteTaskStore,
   validRemoteTaskCancel,
   validRemoteTaskOffer,
+  validRemoteTaskPreparation,
   validRemoteTaskResponse,
   type RemoteTaskMessage,
 } from './remote-tasks.ts';
@@ -801,6 +802,15 @@ export class NodeNetwork extends EventEmitter {
         )
           throw new Error('远端任务回复路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveResponse(message);
+      } else if (validRemoteTaskPreparation(message)) {
+        if (
+          message.ownerNodeID !== this.identity!.nodeID ||
+          message.targetNodeID !== node.id ||
+          message.ownerBrainID !== this.identity!.brainID ||
+          !node.brains.some((brain) => brain.id === message.targetBrainID)
+        )
+          throw new Error('远端执行准备路由与当前节点不匹配。');
+        changed = this.remoteTasks.receivePreparation(message);
       } else if (validRemoteTaskCancel(message)) {
         if (
           message.ownerNodeID !== node.id ||
@@ -928,7 +938,7 @@ export class NodeNetwork extends EventEmitter {
     this.deliveringRemoteTasks.add(taskID);
     try {
       await this.sendChannelEvent(node, message);
-      if (this.remoteTasks.markDelivered(taskID, task.status)) this.update();
+      if (this.remoteTasks.markDelivered(taskID, message)) this.update();
     } catch (error) {
       if (
         error instanceof NodeNetworkError &&
@@ -1405,6 +1415,56 @@ export class NodeNetwork extends EventEmitter {
     this.update();
     await this.flushRemoteTask(taskID);
     return this.snapshot();
+  }
+
+  async prepareRemoteTask(taskID: string, projectID: string, model: string) {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const current = this.remoteTasks.record(taskID);
+    if (
+      !current ||
+      current.direction !== 'incoming' ||
+      current.targetNodeID !== this.identity.nodeID ||
+      current.targetBrainID !== this.identity.brainID
+    )
+      throw new NodeNetworkError(404, '可准备执行的远端任务不存在。');
+    try {
+      this.remoteTasks.prepare(taskID, projectID, model);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '远端任务当前不能准备执行。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
+    return this.snapshot();
+  }
+
+  async revokeRemoteTaskPreparation(taskID: string) {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const current = this.remoteTasks.record(taskID);
+    if (
+      !current ||
+      current.direction !== 'incoming' ||
+      current.targetNodeID !== this.identity.nodeID ||
+      current.targetBrainID !== this.identity.brainID
+    )
+      throw new NodeNetworkError(404, '可撤销的执行准备不存在。');
+    try {
+      this.remoteTasks.revokePreparation(taskID);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '执行准备当前不能撤销。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
+    return this.snapshot();
+  }
+
+  projectLeased(projectID: string) {
+    return this.remoteTasks.projectLeased(projectID);
   }
 
   private async probe(service: MdnsService) {

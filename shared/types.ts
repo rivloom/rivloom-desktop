@@ -105,6 +105,12 @@ export type RemoteTaskInvite = {
   description: string;
   criteria: string;
   status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+  executionStatus: 'unprepared' | 'ready' | 'revoked' | 'expired';
+  executionLeaseID: string | null;
+  executionLeaseExpiresAt: string | null;
+  executionUpdatedAt: string | null;
+  localProjectID: string | null;
+  localModel: string | null;
   deliveryPending: boolean;
   deliveryError: string | null;
   createdAt: string;

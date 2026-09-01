@@ -32,6 +32,7 @@ import {
   RemoteTaskStore,
   validRemoteTaskCancel,
   validRemoteTaskOffer,
+  validRemoteTaskPreparation,
   validRemoteTaskResponse,
 } from '../server/remote-tasks.ts';
 
@@ -84,6 +85,26 @@ async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) 
       (network) =>
         network.snapshot().remoteTasks.length === 1 &&
         network.snapshot().remoteTasks[0]?.status === status &&
+        !network.snapshot().remoteTasks[0]?.deliveryPending,
+    ),
+  );
+}
+
+async function waitForRemoteExecutionStatus(networks: NodeNetwork[], status: string) {
+  const deadline = Date.now() + 5000;
+  while (
+    Date.now() < deadline &&
+    networks.some(
+      (network) =>
+        network.snapshot().remoteTasks[0]?.executionStatus !== status ||
+        network.snapshot().remoteTasks[0]?.deliveryPending,
+    )
+  )
+    await wait(50);
+  assert(
+    networks.every(
+      (network) =>
+        network.snapshot().remoteTasks[0]?.executionStatus === status &&
         !network.snapshot().remoteTasks[0]?.deliveryPending,
     ),
   );
@@ -217,6 +238,7 @@ test('remote task invitations persist and apply idempotent offer and response me
   const roots = [
     mkdtempSync(join(tmpdir(), 'rivloom-remote-task-owner-')),
     mkdtempSync(join(tmpdir(), 'rivloom-remote-task-target-')),
+    mkdtempSync(join(tmpdir(), 'rivloom-remote-task-legacy-')),
   ];
   try {
     const owner = new RemoteTaskStore(roots[0]);
@@ -231,24 +253,82 @@ test('remote task invitations persist and apply idempotent offer and response me
     assert.equal(target.receiveOffer(offer), true);
     assert.equal(target.receiveOffer(offer), false);
     assert.throws(() => target.receiveOffer({ ...offer, title: '冲突标题' }), /冲突/);
-    assert(owner.markDelivered(created.id, 'pending'));
+    assert(owner.markDelivered(created.id, offer));
 
     target.decide(created.id, 'accepted');
     const response = target.message(created.id);
     assert(validRemoteTaskResponse(response));
     assert.equal(owner.receiveResponse(response), true);
     assert.equal(owner.receiveResponse(response), false);
-    assert(target.markDelivered(created.id, 'accepted'));
+    assert(target.markDelivered(created.id, response));
     assert.equal(owner.list()[0].status, 'accepted');
     assert.equal(target.list()[0].status, 'accepted');
     assert.equal('idempotencyKey' in owner.list()[0], false);
+
+    const projectID = randomUUID();
+    target.prepare(created.id, projectID, 'opencode/mimo-v2.5-free');
+    const preparation = target.message(created.id);
+    assert(validRemoteTaskPreparation(preparation));
+    assert.equal(owner.receivePreparation(preparation), true);
+    assert.equal(owner.receivePreparation(preparation), false);
+    assert(target.markDelivered(created.id, preparation));
+    assert.equal(target.projectLeased(projectID), true);
+    assert.equal(owner.list()[0].executionStatus, 'ready');
+    assert.equal(owner.list()[0].localProjectID, null);
+    assert.equal(target.list()[0].localProjectID, projectID);
+
+    target.revokePreparation(created.id);
+    const revokedPreparation = target.message(created.id);
+    assert(validRemoteTaskPreparation(revokedPreparation));
+    assert.equal(owner.receivePreparation(revokedPreparation), true);
+    assert(target.markDelivered(created.id, revokedPreparation));
+    assert.equal(target.projectLeased(projectID), false);
+
+    target.prepare(created.id, projectID, 'opencode/mimo-v2.5-free');
+    const renewedPreparation = target.message(created.id);
+    assert(validRemoteTaskPreparation(renewedPreparation));
+    assert.equal(owner.receivePreparation(renewedPreparation), true);
+    assert(target.markDelivered(created.id, renewedPreparation));
+    const expiring = target.record(created.id)!;
+    expiring.executionLeaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    assert(target.expire());
+    const expiredPreparation = target.message(created.id);
+    assert(validRemoteTaskPreparation(expiredPreparation));
+    assert.equal(owner.receivePreparation(expiredPreparation), true);
+    assert(target.markDelivered(created.id, expiredPreparation));
+    assert.equal(target.projectLeased(projectID), false);
 
     const reloadedOwner = new RemoteTaskStore(roots[0]);
     const reloadedTarget = new RemoteTaskStore(roots[1]);
     reloadedOwner.load();
     reloadedTarget.load();
-    assert.equal(reloadedOwner.list()[0].status, 'accepted');
-    assert.equal(reloadedTarget.list()[0].status, 'accepted');
+    assert.equal(reloadedOwner.list()[0].executionStatus, 'expired');
+    assert.equal(reloadedTarget.list()[0].executionStatus, 'expired');
+
+    const legacy = new RemoteTaskStore(roots[2]);
+    legacy.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
+      title: '旧版本邀请',
+      description: '验证第一切片的持久记录可以安全迁移。',
+      criteria: '迁移不改变任务路由和文本。',
+    });
+    const legacyPath = join(roots[2], 'remote-task-invites.json');
+    const legacyValue = JSON.parse(readFileSync(legacyPath, 'utf8'));
+    legacyValue.version = 1;
+    for (const task of legacyValue.tasks)
+      for (const key of [
+        'executionStatus',
+        'executionLeaseID',
+        'executionLeaseExpiresAt',
+        'executionUpdatedAt',
+        'localProjectID',
+        'localModel',
+      ])
+        delete task[key];
+    writeFileSync(legacyPath, JSON.stringify(legacyValue, null, 2));
+    const migrated = new RemoteTaskStore(roots[2]);
+    migrated.load();
+    assert.equal(migrated.list()[0].executionStatus, 'unprepared');
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 2);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',
@@ -258,7 +338,7 @@ test('remote task invitations persist and apply idempotent offer and response me
     const cancelledOffer = owner.message(cancelled.id);
     assert(validRemoteTaskOffer(cancelledOffer));
     target.receiveOffer(cancelledOffer);
-    owner.markDelivered(cancelled.id, 'pending');
+    owner.markDelivered(cancelled.id, cancelledOffer);
     owner.cancel(cancelled.id);
     const cancellation = owner.message(cancelled.id);
     assert(validRemoteTaskCancel(cancellation));
@@ -448,6 +528,18 @@ test(
       assert.equal(snapshots[0].remoteTasks[0].id, snapshots[1].remoteTasks[0].id);
       await networks[1].respondRemoteTask(snapshots[1].remoteTasks[0].id, 'accepted');
       await waitForRemoteTaskStatus(networks, 'accepted');
+      const leasedProjectID = randomUUID();
+      await networks[1].prepareRemoteTask(
+        snapshots[1].remoteTasks[0].id,
+        leasedProjectID,
+        'opencode/mimo-v2.5-free',
+      );
+      await waitForRemoteExecutionStatus(networks, 'ready');
+      snapshots = networks.map((network) => network.snapshot());
+      assert.equal(snapshots[0].remoteTasks[0].localProjectID, null);
+      assert.equal(snapshots[0].remoteTasks[0].localModel, null);
+      assert.equal(snapshots[1].remoteTasks[0].localProjectID, leasedProjectID);
+      assert(networks[1].projectLeased(leasedProjectID));
 
       await Promise.all(networks.map((network) => network.stop()));
       networks = roots.map((root) => new NodeNetwork(root, true));
@@ -458,6 +550,8 @@ test(
       assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
       assert(snapshots.every((snapshot) => snapshot.nearby[0].channelReady));
       assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.status === 'accepted'));
+      assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.executionStatus === 'ready'));
+      assert(networks[1].projectLeased(leasedProjectID));
 
       const initiatorIndex =
         snapshots[0].local!.id.localeCompare(snapshots[1].local!.id) < 0 ? 0 : 1;

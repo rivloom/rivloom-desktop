@@ -257,6 +257,50 @@ app.post('/api/network/tasks/:id/cancel', async (req, res) => {
   z.object({ confirmed: z.literal(true) }).parse(req.body);
   res.json(await nodeNetwork.cancelRemoteTask(remoteTaskID(req)));
 });
+app.post('/api/network/tasks/:id/prepare', async (req, res) => {
+  requireNetworkOwner(req);
+  const input = z
+    .object({
+      projectID: z.string().uuid(),
+      model: z.string().min(3).max(200),
+      confirmedProject: z.literal(true),
+      confirmedModel: z.literal(true),
+      confirmedLease: z.literal(true),
+    })
+    .parse(req.body);
+  project(input.projectID);
+  requireThat(
+    engineStatus.models.some((candidate) => candidate.id === input.model),
+    400,
+    '所选模型当前不可用，请先在本机模型设置中连接。',
+  );
+  res.json(
+    await exclusive(`project:${input.projectID}`, async () => {
+      requireThat(
+        !nodeNetwork.projectLeased(input.projectID),
+        409,
+        '该项目已为另一项远端任务保留。',
+      );
+      requireThat(
+        !tasks().some(
+          (candidate) =>
+            candidate.projectID === input.projectID &&
+            (activeStates.includes(candidate.state) ||
+              candidate.state === 'review' ||
+              candidate.state === 'interrupted'),
+        ),
+        409,
+        '该项目已有执行中、待验收或未确认中断的任务。',
+      );
+      return nodeNetwork.prepareRemoteTask(remoteTaskID(req), input.projectID, input.model);
+    }),
+  );
+});
+app.post('/api/network/tasks/:id/preparation/revoke', async (req, res) => {
+  requireNetworkOwner(req);
+  z.object({ confirmed: z.literal(true) }).parse(req.body);
+  res.json(await nodeNetwork.revokeRemoteTaskPreparation(remoteTaskID(req)));
+});
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z
@@ -390,7 +434,14 @@ app.post('/api/tasks/:id/run', async (req, res) => {
   res.json(
     await exclusive('engine-settings', async () => {
       assertCanStartTask();
-      return exclusive(`project:${t.projectID}`, () => runTask(t.id, who(req), body.addition));
+      return exclusive(`project:${t.projectID}`, () => {
+        requireThat(
+          !nodeNetwork.projectLeased(t.projectID),
+          409,
+          '该项目已由本机所有者暂时保留给一项跨设备任务；请先撤销或等待准备授权过期。',
+        );
+        return runTask(t.id, who(req), body.addition);
+      });
     }),
   );
 });
