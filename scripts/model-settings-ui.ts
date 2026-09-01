@@ -1,5 +1,5 @@
 // Verifies the model settings page inside an already-running Tauri WebView2 instance.
-// Authentication is seeded through the loopback API; this does not automate a password dialog.
+// The desktop app itself establishes the local operator session before this check.
 import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -21,33 +21,15 @@ try {
   const page = context.pages().find((candidate: any) => candidate.url().startsWith(runtime.url));
   assert(page, 'Rivloom WebView2 page not found');
   page.setDefaultTimeout(15_000);
-
-  const response = await fetch(`${runtime.url}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
-    body: JSON.stringify({
-      username: 'desktop_test',
-      password: 'Rivloom-desktop-synthetic-test-2026',
-    }),
-  });
-  assert.equal(response.status, 200, await response.text());
-  const cookiePair = response.headers.get('set-cookie')!.split(';')[0];
-  const separator = cookiePair.indexOf('=');
-  await context.addCookies([
-    {
-      name: cookiePair.slice(0, separator),
-      value: cookiePair.slice(separator + 1),
-      url: runtime.url,
-    },
-  ]);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.getByText('协作工作区').waitFor();
+
+  await page.getByRole('button', { name: /任务工作台/ }).waitFor();
   await page.getByRole('button', { name: /模型与额度/ }).click();
   await page.getByRole('heading', { name: '模型与额度.' }).waitFor();
 
-  const settings = (await fetch(`${runtime.url}/api/model-settings`, {
-    headers: { Cookie: cookiePair },
-  }).then((result) => result.json())) as ModelSettings;
+  const settings = (await page.evaluate(() =>
+    fetch('/api/model-settings').then((result) => result.json()),
+  )) as ModelSettings;
   assert.equal(settings.credentialState, 'unconfigured');
   assert(settings.models.some((model) => model.id === 'opencode/mimo-v2.5-free'));
   assert.equal(await page.getByText('DeepSeek 官方 API').count(), 1);

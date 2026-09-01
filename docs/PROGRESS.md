@@ -12,13 +12,13 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 
 运行状态：用户要求关闭网页端后，`127.0.0.1:4310` 的内部 Web 调试服务及其引擎子进程已于 2026-09-01 停止。本轮所有隔离后端、桌面、安装和引擎测试进程也已停止；不会作为产品入口常驻。
 
-产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD 发现、随机挑战签名验证、受限公开端点和桌面节点页，并通过同机双实例 Release 验证。Brain 任务归属、设备配对和委派仍待后续；OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
+产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。桌面首次启动现已取消工作区/账号表单，通过启动期本机令牌自动建立操作者，直接进入任务界面并发现节点。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD 发现、随机挑战签名验证、受限公开端点和桌面节点页。Brain 任务归属、设备配对和委派仍待后续；OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
 
 ## 阶段状态
 
 | 阶段                   | 状态                                                                          |
 | ---------------------- | ----------------------------------------------------------------------------- |
-| M0 真实引擎与任务闭环  | 新 Release 桌面包内真实回归 10 组通过                                         |
+| M0 真实引擎与任务闭环  | 新 Release 桌面包内真实回归 11 组通过，包含桌面无表单自动身份                 |
 | M1 模型设置与 DeepSeek | 功能已实现并完成无 Key 验证；真实 DeepSeek 调用待用户在客户端本机填入有效 Key |
 | M2 Windows 安装包      | 开发机安装/启动/卸载通过；干净机、升级矩阵和签名待发行阶段                    |
 | M3 自发现节点与 Brain  | M3.1 代码及同机 Release 验证完成；物理双机、配对/撤销和跨 Brain 委派待做      |
@@ -27,6 +27,10 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 
 ## 本轮交付
 
+- `server/index.ts`、`server/auth.ts`：桌面启动期随机令牌、常量时间校验、自动创建/恢复本机操作者和令牌清理；业务接口仍需 HttpOnly 会话。
+- `src-tauri/src/main.rs`、`src/desktop.ts`：只有当前 Tauri 主窗口和精确本机 origin 能取得启动令牌；不写入 WebView 持久化。
+- `src/main.tsx`：桌面无工作区/账号初始化页，直接进入任务工作台；侧栏显示本机 Brain 和自动发现状态。
+- `scripts/desktop-ui.ts`、`scripts/integration.ts`：全新目录直达工作台验证，以及错误/正确原生令牌与真实任务闭环回归。
 - `server/model-settings.ts`：安全读取本地状态；DeepSeek 凭据设置/移除；状态失效；真实连接测试的超时、停止和清理；10 分钟 3 次限频；任务与设置互斥。
 - `server/store.ts`：schema 3，增加只含操作人、操作类型、模型、结果和时间的 `model_operations`，不保存 Key 或测试回复。
 - `src/model-settings.tsx`：桌面内“模型与额度”页面。创建者可保存/替换/移除凭据、确认后测试连接和设置默认模型；成员只读。
@@ -43,12 +47,13 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `.data/verification/model-settings.json`：6 项官方 OpenCode 凭据/模型接口检查通过；看到 3 个 DeepSeek 模型；无真实模型请求。
 - `.data/verification/desktop-model-settings.json`：5 项实际 Release WebView2 模型设置页面检查通过。
 - `.data/verification/desktop-model-settings.png`：模型设置桌面页面截图。
-- `.data/verification/desktop-integration.json`：最终 Release 使用 `opencode/mimo-v2.5-free` 的 10 组真实闭环检查通过；任务 `0a0084e9-5eaf-484d-ab23-c3346de86835`，引擎会话 `ses_fa564ffa1ffeQ43AqzV4XtjQ1c`。
+- `.data/verification/desktop-integration.json`：最终 Release 使用 `opencode/mimo-v2.5-free` 的 11 组真实闭环检查通过；任务 `46dd767c-ae19-401d-890a-e65ba5bfef59`，引擎会话 `ses_fa4bf8155ffe1Iq2eD7Uzu9sz2`。
+- `.data/verification/desktop-ui.json` 与 `desktop-direct-start.png`：全新数据目录无账号/工作区表单，自动建立本机操作者并直达任务工作台，发现已启动。
 - `.data/verification/desktop-install.json`：当前安装包开发机隔离安装/启动/卸载通过。
 - `.data/verification/desktop-node-network.json` 与 `.png`：5 项实际 Release 节点页检查通过；第二个隔离实例通过真实 mDNS、nonce 和 Ed25519 签名被发现，保持未授权。
 - 本地检查：TypeScript/生产构建通过；9 项测试通过；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
 
-安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,004,533 字节，SHA-256 `48ef221a2320eaf4402c26930b7f80bbc29489b909d3f3faa20036b4ad801b72`。这是未签名内测包。
+安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,021,448 字节，SHA-256 `5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`。这是未签名内测包。
 
 ## 下一次恢复工作时
 

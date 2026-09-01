@@ -96,13 +96,19 @@ async function stop() {
 class Client {
   cookie = '';
   user!: User;
-  async call<T>(path: string, body?: unknown, expected = 200): Promise<T> {
+  async call<T>(
+    path: string,
+    body?: unknown,
+    expected = 200,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const response = await fetch(`${base}/api${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Rivloom-Request': '1',
         Cookie: this.cookie,
+        ...extraHeaders,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -141,12 +147,22 @@ try {
   });
   assert.equal(csrf.status, 403);
   pass('Cross-origin mutations rejected');
-  owner.user = await owner.call('/auth/setup', {
-    username: 'owner',
-    name: '林 · 发起与审批',
-    password,
-    code: readFileSync(join(directory, 'setup-code.txt'), 'utf8'),
-  });
+  if (desktopExecutable) {
+    await owner.call('/auth/desktop', {}, 403);
+    owner.user = await owner.call('/auth/desktop', {}, 200, {
+      'X-Rivloom-Desktop-Token': readFileSync(
+        join(directory, 'desktop-auth-token.txt'),
+        'utf8',
+      ).trim(),
+    });
+    pass('Desktop local operator requires the native launch token and needs no onboarding form');
+  } else
+    owner.user = await owner.call('/auth/setup', {
+      username: 'owner',
+      name: '林 · 发起与审批',
+      password,
+      code: readFileSync(join(directory, 'setup-code.txt'), 'utf8'),
+    });
   const invite = await owner.call<{ code: string }>('/invitations', {});
   member.user = await member.call('/auth/join', {
     username: 'partner',

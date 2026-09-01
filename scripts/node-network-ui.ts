@@ -27,35 +27,9 @@ try {
   const page = context.pages().find((candidate: any) => candidate.url().startsWith(runtime.url));
   assert(page, 'Rivloom WebView2 page not found');
   page.setDefaultTimeout(20_000);
-
-  const setup = await fetch(`${runtime.url}/api/auth/state`).then((response) => response.json());
-  const response = await fetch(
-    `${runtime.url}/api/auth/${setup.setupRequired ? 'setup' : 'login'}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
-      body: JSON.stringify({
-        username: 'node_ui_test',
-        name: '节点界面测试',
-        password: 'Rivloom-node-ui-synthetic-test-2026',
-        ...(setup.setupRequired
-          ? { code: readFileSync(join(dataDirectory, 'setup-code.txt'), 'utf8').trim() }
-          : {}),
-      }),
-    },
-  );
-  assert.equal(response.status, 200, await response.text());
-  const cookiePair = response.headers.get('set-cookie')!.split(';')[0];
-  const separator = cookiePair.indexOf('=');
-  await context.addCookies([
-    {
-      name: cookiePair.slice(0, separator),
-      value: cookiePair.slice(separator + 1),
-      url: runtime.url,
-    },
-  ]);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.getByText('协作工作区').waitFor();
+
+  await page.getByRole('button', { name: /任务工作台/ }).waitFor();
   await page.getByRole('button', { name: /节点与 Brain/ }).click();
   await page.getByRole('heading', { name: '节点与 Brain.' }).waitFor();
   await page.getByText('本机身份已由 Windows DPAPI 保护').waitFor();

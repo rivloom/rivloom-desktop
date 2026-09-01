@@ -1,5 +1,5 @@
 // Test harness for an already-running, explicitly isolated desktop instance.
-// It seeds a synthetic account through HTTP instead of automating an auth dialog.
+// The native app must establish its local operator and open the task UI without onboarding.
 import { createRequire } from 'node:module';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -20,47 +20,23 @@ try {
   const page = context.pages().find((candidate: any) => candidate.url().startsWith(runtime.url));
   assert(page, 'Rivloom WebView2 page not found');
   page.setDefaultTimeout(15_000);
+  await page.reload({ waitUntil: 'domcontentloaded' });
   const initialInputs = await page
     .locator('input')
     .evaluateAll((inputs: Element[]) =>
       inputs.map((input: Element) => (input as HTMLInputElement).name),
     );
   assert(
-    !initialInputs.includes('code'),
-    'Desktop setup must not ask the user to read a terminal code',
+    !initialInputs.some((name: string) => ['code', 'name', 'username', 'password'].includes(name)),
+    'Desktop startup must not ask for workspace or account fields',
   );
-  const setup = await fetch(`${runtime.url}/api/auth/state`).then((response) => response.json());
-  const response = await fetch(
-    `${runtime.url}/api/auth/${setup.setupRequired ? 'setup' : 'login'}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
-      body: JSON.stringify({
-        username: 'desktop_test',
-        name: '桌面验收测试',
-        password: 'Rivloom-desktop-synthetic-test-2026',
-        ...(setup.setupRequired
-          ? { code: readFileSync(join(dataDirectory, 'setup-code.txt'), 'utf8').trim() }
-          : {}),
-      }),
-    },
-  );
-  assert.equal(response.status, 200, await response.text());
-  const cookiePair = response.headers.get('set-cookie')!.split(';')[0];
-  const separator = cookiePair.indexOf('=');
-  await context.addCookies([
-    {
-      name: cookiePair.slice(0, separator),
-      value: cookiePair.slice(separator + 1),
-      url: runtime.url,
-    },
-  ]);
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 15_000 });
-  await page.getByText('协作工作区').waitFor();
-  assert.equal(await page.getByText('WINDOWS DESKTOP').count(), 1);
+  await page.getByRole('button', { name: /任务工作台/ }).waitFor();
+  assert.equal(await page.getByText('自动发现已启动').count(), 1);
+  mkdirSync(resolve('.data', 'verification'), { recursive: true });
+  const directScreenshot = resolve('.data', 'verification', 'desktop-direct-start.png');
+  await page.screenshot({ path: directScreenshot, fullPage: true });
   await page.getByRole('button', { name: '添加本地项目' }).first().click();
   await page.getByRole('button', { name: '浏览本机文件夹' }).waitFor();
-  mkdirSync(resolve('.data', 'verification'), { recursive: true });
   await page.screenshot({
     path: resolve('.data', 'verification', 'desktop-workbench.png'),
     fullPage: true,
@@ -74,10 +50,12 @@ try {
         desktopPID: runtime.desktopPID,
         backendPID: runtime.backendPID,
         url: runtime.url,
+        directScreenshot,
         assertions: [
           'Actual WebView2 page loaded in the Tauri process',
-          'Native setup bridge removed the terminal-only setup-code field',
-          'Synthetic authenticated owner reached the desktop workspace',
+          'First launch showed no workspace, display-name, username, password, or setup-code form',
+          'Native launch token established the local operator and opened the task workbench directly',
+          'LAN node discovery was already active in the ordinary workbench',
           'Desktop-only native directory action is visible',
         ],
       },
@@ -85,9 +63,7 @@ try {
       2,
     ),
   );
-  console.log(
-    'PASS actual Tauri WebView2, native setup bridge, desktop workspace and native directory action',
-  );
+  console.log('PASS actual Tauri WebView2 direct-to-workbench startup and native directory action');
   process.exit(0);
 } finally {
   // CDP is attached to the app-owned WebView2 process. Do not call

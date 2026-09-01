@@ -70,7 +70,7 @@ struct DesktopState {
 struct DesktopInfo {
     version: String,
     data_directory: String,
-    setup_code: Option<String>,
+    desktop_token: String,
 }
 
 fn authorize(window: &WebviewWindow, state: &DesktopState) -> Result<(), String> {
@@ -90,9 +90,10 @@ fn desktop_info(
     Ok(DesktopInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         data_directory: state.data_dir.display().to_string(),
-        setup_code: fs::read_to_string(state.data_dir.join("setup-code.txt"))
-            .ok()
-            .map(|s| s.trim().into()),
+        desktop_token: fs::read_to_string(state.data_dir.join("desktop-auth-token.txt"))
+            .map_err(|_| "桌面认证信息不可用，请重启客户端")?
+            .trim()
+            .into(),
     })
 }
 

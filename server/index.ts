@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { readFile } from 'node:fs/promises';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { z } from 'zod';
 import {
@@ -33,6 +34,7 @@ import {
   token,
   hash,
   sessionToken,
+  sameToken,
   type AuthRequest,
 } from './auth.ts';
 import {
@@ -73,6 +75,14 @@ const nodeNetwork = new NodeNetwork(dataRoot);
 const port = Number(process.env.PORT || 4310);
 const dev = process.argv.includes('--dev');
 const desktop = process.env.RIVLOOM_DESKTOP === '1';
+const desktopToken = desktop ? token() : null;
+const desktopTokenPath = join(dataRoot, 'desktop-auth-token.txt');
+if (desktopToken)
+  writeFileSync(desktopTokenPath, desktopToken, { encoding: 'utf8', mode: 0o600, flag: 'w' });
+const removeDesktopToken = () => {
+  if (desktopToken && existsSync(desktopTokenPath)) unlinkSync(desktopTokenPath);
+};
+process.once('exit', removeDesktopToken);
 const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
 const origins = new Set([...allowedHosts].map((h) => `http://${h}`));
 app.disable('x-powered-by');
@@ -125,6 +135,22 @@ app.post('/api/auth/login', rateLimit, (req, res) => {
   );
   login(res, found.id as string);
   res.json(user(found.id as string));
+});
+app.post('/api/auth/desktop', rateLimit, (req, res) => {
+  requireThat(desktop && desktopToken, 404, '接口不存在');
+  const provided = req.headers['x-rivloom-desktop-token'];
+  requireThat(
+    typeof provided === 'string' && sameToken(provided, desktopToken),
+    403,
+    '桌面身份校验失败',
+  );
+  let local = users().find((candidate) => candidate.owner) || users()[0];
+  if (!local) {
+    local = createUser('local_owner', '本机操作者', token(), true);
+    finishSetup();
+  }
+  login(res, local.id);
+  res.json(local);
 });
 app.post('/api/auth/join', rateLimit, (req, res) => {
   const body = registration.extend({ code: z.string().min(1).max(128) }).parse(req.body);
@@ -467,6 +493,7 @@ export async function shutdown() {
   closing = true;
   const deadline = setTimeout(() => process.exit(1), 6000);
   deadline.unref();
+  removeDesktopToken();
   await nodeNetwork.stop();
   await shutdownEngine();
   server.close();

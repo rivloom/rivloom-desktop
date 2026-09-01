@@ -8,6 +8,12 @@ import type { User } from '../shared/types.ts';
 export type AuthRequest = Request & { user: User };
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const token = () => randomBytes(32).toString('base64url');
+export function sameToken(left: string, right: string) {
+  return timingSafeEqual(
+    createHash('sha256').update(left).digest(),
+    createHash('sha256').update(right).digest(),
+  );
+}
 export function passwordHash(password: string) {
   const salt = token();
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;

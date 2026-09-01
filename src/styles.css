@@ -389,6 +389,9 @@ nav button.active > span {
   margin-top: 4px;
   color: #909f88;
 }
+.user-row.local-user {
+  cursor: default;
+}
 .avatar {
   height: 32px;
   width: 32px;

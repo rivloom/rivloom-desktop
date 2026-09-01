@@ -19,7 +19,8 @@
 2. **M1 模型设置：无 Key 范围完成。** 桌面端已有“模型与额度”页；工作区创建者可保存/替换/移除 DeepSeek Key、确认后做真实连接测试、设置默认模型；普通成员只读。操作审计不保存 Key 或模型回复。
 3. **M2 Windows 桌面交付：开发机完成。** Tauri 原生窗口、原生文件夹选择、随包 Node/OpenCode、随机 loopback 服务、进程生命周期、单实例和 NSIS 安装包已验证。
 4. **M3.1 节点身份与自发现：实现完成、同机双实例 Release 验证通过。** 每个实例有 DPAPI 保护的稳定 Ed25519 身份；通过 `_rivloom._tcp.local` 自动发现，随机挑战签名校验，桌面节点页明确显示未配对状态。它不代表物理双机、授权或 Brain 任务协作已经完成。
-5. 独立账号、一次性邀请、发起/接受/审批/验收角色已由服务端协议测试验证。它是后续业务权限基础，当前还没有跨节点传输。
+5. **桌面直接启动：已实现。** 首次打开不再创建“工作区”或询问显示名称、用户名、密码；Tauri 启动期随机令牌自动建立/恢复本机操作者，直接进入任务界面并开始发现。内部 Web 调试仍保留显式登录。
+6. 独立账号、一次性邀请、发起/接受/审批/验收角色已由服务端协议测试验证。它是后续业务权限基础，当前还没有跨节点传输。
 
 架构仍保持单一执行引擎：官方、未修改的 OpenCode 1.18.25 和匹配 SDK。没有 fork OpenCode，没有自研 Agent 循环、上下文管理、模型调用或工具执行器，也没有提前建设多引擎框架。
 
@@ -37,15 +38,15 @@ M3 产品方向已修正：每个 Rivloom 安装实例都是节点，同网段�
 最终内测安装包：
 
 - 路径：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`
-- 大小：71,004,533 字节
-- SHA-256：`48ef221a2320eaf4402c26930b7f80bbc29489b909d3f3faa20036b4ad801b72`
+- 大小：71,021,448 字节
+- SHA-256：`5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`
 - 状态：未签名内测包；开发机隔离安装、随包引擎启动、进程清理和卸载通过。
 
 客户安装 Rivloom 后不需要另装 OpenCode 或本产品所需的 Node。Git、项目语言工具链和 WebView2 仍是环境前提。
 
 ## 最终验证基线
 
-- 最终 Release 桌面程序真实闭环：10 项通过；模型 `opencode/mimo-v2.5-free`；任务 `0a0084e9-5eaf-484d-ab23-c3346de86835`；OpenCode 会话 `ses_fa564ffa1ffeQ43AqzV4XtjQ1c`。
+- 最终 Release 桌面程序真实闭环：11 项通过；模型 `opencode/mimo-v2.5-free`；任务 `46dd767c-ae19-401d-890a-e65ba5bfef59`；OpenCode 会话 `ses_fa4bf8155ffe1Iq2eD7Uzu9sz2`。新增项验证桌面本机令牌与无表单自动身份。
 - 官方 OpenCode 模型设置接口：6 项通过。测试字符串经 `auth.set/remove` 和 `provider.list` 完成保存、刷新、重启恢复与移除；看到 3 个 DeepSeek 模型；没有发送模型请求。
 - Release Tauri WebView2 模型页面：5 项通过；验证无 Key 状态、密码输入、额度确认、默认模型与审计界面。
 - 当前 NSIS：安装/启动/卸载烟雾测试通过。
@@ -55,6 +56,7 @@ M3 产品方向已修正：每个 Rivloom 安装实例都是节点，同网段�
 机器报告位于被 Git 忽略的 `.data/verification`。它们用于本机核对，不应直接提交或公开：
 
 - `desktop-integration.json`
+- `desktop-ui.json` 与 `desktop-direct-start.png`
 - `model-settings.json`
 - `desktop-model-settings.json` 与 `desktop-model-settings.png`
 - `desktop-install.json`

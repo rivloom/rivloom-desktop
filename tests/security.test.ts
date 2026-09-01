@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 process.env.RIVLOOM_DATA_DIR = mkdtempSync(join(tmpdir(), 'rivloom-security-'));
 const { captureArtifacts, redact } = await import('../server/artifacts.ts');
-const { passwordHash, verifyPassword } = await import('../server/auth.ts');
+const { passwordHash, sameToken, verifyPassword } = await import('../server/auth.ts');
 const { createExample } = await import('../scripts/example.ts');
 const { connectionFailure, parsePreferences } = await import('../server/model-settings.ts');
 test('a workspace rejects a second process and recovers a lock after abrupt exit', async () => {
@@ -55,6 +55,8 @@ test('passwords are salted and cannot be verified with another password', () => 
   assert.notEqual(first, passwordHash('a-real-long-password'));
   assert(verifyPassword('a-real-long-password', first));
   assert(!verifyPassword('incorrect-password', first));
+  assert(sameToken('native-launch-secret', 'native-launch-secret'));
+  assert(!sameToken('native-launch-secret', 'different-launch-secret'));
 });
 test('common secret formats are redacted', () => {
   assert(!redact('key sk-123456789abcdefghijklmnop').includes('sk-12345'));

@@ -4,17 +4,17 @@
 
 ## Windows 桌面端（2026-09-01 更新）
 
-`RIVLOOM_TEST_DESKTOP_EXECUTABLE=...Rivloom.exe node scripts/integration.ts`：**安装包对应的真实桌面可执行程序 10 组检查全部通过**。
+`RIVLOOM_TEST_DESKTOP_EXECUTABLE=...Rivloom.exe node scripts/integration.ts`：**安装包对应的真实桌面可执行程序 11 组检查全部通过**。
 
 - Tauri 进程自动启动随包 Node.js、本地服务和未修改的官方 OpenCode 1.18.25；使用随机 loopback 端口。
 - 从桌面进程完成真实模型编辑、SSE 流输出、编辑/命令人工审批、Git 产物、人工验收、持久化重启、补充要求停止和异常退出恢复。
-- 最终安装包重新构建后，真实任务 `0a0084e9-5eaf-484d-ab23-c3346de86835`、官方引擎会话 `ses_fa564ffa1ffeQ43AqzV4XtjQ1c` 再次通过；2 次审批，1 个变更产物。
+- 最终安装包重新构建后，真实任务 `46dd767c-ae19-401d-890a-e65ba5bfef59`、官方引擎会话 `ses_fa4bf8155ffe1Iq2eD7Uzu9sz2` 再次通过；4 次审批，1 个变更产物。新增检查确认缺失桌面启动令牌返回 403，而原生令牌可自动建立本机操作者且无需初始化表单。
 - 强制结束桌面父进程后，随包 Node 和 OpenCode 进程均被清理；下次启动任务转为 `interrupted`，没有自动继续或写入。
 - 机器报告：`.data/verification/desktop-integration.json`。
 
-真实 Windows 窗口检查：**通过**。在隔离测试目录启动 Release 可执行程序，通过实际 WebView2 创建合成测试账号并进入任务工作台；首次页面没有要求用户打开终端读取初始化码；桌面标签和原生目录操作存在。模型设置完成后，再次通过 Release Tauri WebView2 检查“模型与额度”页面、无 Key 状态、密码输入、额度确认、默认模型和审计界面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-model-settings.json`、`.data/verification/desktop-workbench.png` 和 `.data/verification/desktop-model-settings.png`。
+真实 Windows 窗口检查：**通过**。在全新隔离测试目录启动 Release 可执行程序，实际 WebView2 通过启动期原生令牌自动建立本机操作者并直接进入任务工作台；首次页面没有工作区、显示名称、用户名、密码或终端初始化码表单，节点发现已经启动，原生目录操作可用。缺失令牌返回 403，正确令牌返回 200；关闭桌面后令牌文件和后台进程均被清理。随后通过 Release Tauri WebView2 检查节点页和“模型与额度”页面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-direct-start.png`、`.data/verification/desktop-node-network.json`、`.data/verification/desktop-model-settings.json` 及对应截图。
 
-当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。安装包 71,004,533 字节，SHA-256：`48ef221a2320eaf4402c26930b7f80bbc29489b909d3f3faa20036b4ad801b72`。
+当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。安装包 71,021,448 字节，SHA-256：`5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
@@ -69,7 +69,7 @@
 
 ## 完整应用与独立账号
 
-`npm run test:integration` 最后一次完整运行：**10 组检查通过**。
+独立服务基线的 `npm run test:integration`：**10 组检查通过**；最终 Release 在相同闭环外增加原生启动令牌检查，共 11 组通过。
 
 使用同一真实应用服务、两个独立账号/不同会话 cookie（另加非参与者账号），不是前端角色切换，也不是 mock。
 

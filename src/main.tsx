@@ -13,7 +13,6 @@ import {
   Play,
   Square,
   ChevronRight,
-  ChevronDown,
   CircleCheck,
   CircleDot,
   GitBranch,
@@ -32,7 +31,7 @@ import {
   Network,
 } from 'lucide-react';
 import { api } from './api';
-import { desktop, desktopInfo, chooseProjectDirectory } from './desktop';
+import { authenticateDesktop, desktop, chooseProjectDirectory } from './desktop';
 import { ModelSettingsView } from './model-settings';
 import { NodeNetworkView } from './node-network';
 import {
@@ -134,22 +133,16 @@ function Auth({ onLogin }: { onLogin: () => void }) {
   const [join, setJoin] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [nativeSetupCode, setNativeSetupCode] = useState('');
   useEffect(() => {
     api<{ setupRequired: boolean }>('/auth/state')
       .then((s) => setSetup(s.setupRequired))
       .catch((e) => setError(e.message));
-    if (desktop)
-      void desktopInfo()
-        .then((info) => setNativeSetupCode(info.setupCode || ''))
-        .catch(() => setError('桌面初始化信息读取失败，请重启客户端。'));
   }, []);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
     setError('');
     const body = Object.fromEntries(new FormData(e.currentTarget));
-    if (setup && desktop) body.code = nativeSetupCode;
     try {
       await api(`/auth/${setup ? 'setup' : join ? 'join' : 'login'}`, body);
       onLogin();
@@ -211,7 +204,7 @@ function Auth({ onLogin }: { onLogin: () => void }) {
                 : '登录后继续你的任务，而不仅仅是一段对话。'}
           </p>
           <form onSubmit={submit}>
-            {((setup && !desktop) || join) && (
+            {(setup || join) && (
               <Field
                 label={setup ? '本机初始化码' : '邀请人提供的一次性邀请码'}
                 hint={
@@ -252,11 +245,7 @@ function Auth({ onLogin }: { onLogin: () => void }) {
                 {error}
               </p>
             )}
-            <Button
-              type="submit"
-              disabled={busy || (desktop && setup && !nativeSetupCode)}
-              variant="primary wide"
-            >
+            <Button type="submit" disabled={busy} variant="primary wide">
               {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{' '}
               {setup ? '创建工作区' : join ? '加入工作区' : '进入工作区'}
             </Button>
@@ -306,7 +295,15 @@ function App() {
     try {
       setData(await api<Bootstrap>('/bootstrap'));
     } catch (e) {
-      if ((e as Error).message.includes('登录')) setData(null);
+      if (desktop && (e as Error).message.includes('登录')) {
+        try {
+          await authenticateDesktop();
+          setData(await api<Bootstrap>('/bootstrap'));
+        } catch (desktopError) {
+          setData(null);
+          setError((desktopError as Error).message);
+        }
+      } else if ((e as Error).message.includes('登录')) setData(null);
       else setError((e as Error).message);
     } finally {
       setLoading(false);
@@ -377,6 +374,18 @@ function App() {
         <p>正在打开任务空间…</p>
       </div>
     );
+  if (!data && desktop)
+    return (
+      <div className="loading">
+        <Mark />
+        <p>{error || '正在建立本机身份…'}</p>
+        {error && (
+          <Button variant="secondary" onClick={() => void refresh()}>
+            重试
+          </Button>
+        )}
+      </div>
+    );
   if (!data) return <Auth onLogin={() => void refresh()} />;
   const { user, users, projects, tasks, engine, network } = data;
   const name = (uid: string | null) => users.find((u) => u.id === uid)?.name || 'OpenCode';
@@ -432,13 +441,13 @@ function App() {
           rivloom
         </a>
         <div className="workspace-label">
-          <span className="workspace-icon">R</span>
+          <span className="workspace-icon">B</span>
           <div>
-            协作工作区<small>{desktop ? 'WINDOWS DESKTOP' : 'INTERNAL WEB DEBUG'}</small>
+            {network.local?.brains[0]?.name || '本机 Brain'}
+            <small>{desktop ? '自动发现已启动' : 'INTERNAL WEB DEBUG'}</small>
           </div>
-          <ChevronDown size={15} />
         </div>
-        <span className="nav-heading">工作空间</span>
+        <span className="nav-heading">任务与节点</span>
         <nav>
           <button className={view === 'tasks' ? 'active' : ''} onClick={() => go('tasks')}>
             <LayoutDashboard size={18} />
@@ -483,29 +492,39 @@ function App() {
               <small>{engine.ready ? '本机引擎已连接' : '引擎尚未就绪'}</small>
             </div>
           </div>
-          <button
-            className="user-row"
-            onClick={() =>
-              void action(async () => {
-                await api('/auth/logout', {});
-                setData(null);
-              })
-            }
-            title="退出登录"
-          >
-            <span className="avatar">{user.name.slice(0, 1)}</span>
-            <div>
-              {user.name}
-              <small>{user.owner ? '工作区创建者' : '协作成员'}</small>
+          {desktop ? (
+            <div className="user-row local-user" title="当前 Windows 用户的本机身份">
+              <span className="avatar">{user.name.slice(0, 1)}</span>
+              <div>
+                {user.name}
+                <small>本机操作者</small>
+              </div>
             </div>
-            <LogOut size={16} />
-          </button>
+          ) : (
+            <button
+              className="user-row"
+              onClick={() =>
+                void action(async () => {
+                  await api('/auth/logout', {});
+                  setData(null);
+                })
+              }
+              title="退出登录"
+            >
+              <span className="avatar">{user.name.slice(0, 1)}</span>
+              <div>
+                {user.name}
+                <small>{user.owner ? '工作区创建者' : '协作成员'}</small>
+              </div>
+              <LogOut size={16} />
+            </button>
+          )}
         </div>
       </aside>
       <div className="main-shell">
         <header className="topbar">
           <div>
-            工作空间
+            Rivloom
             <ChevronRight size={14} />
             <strong>
               {view === 'tasks'
