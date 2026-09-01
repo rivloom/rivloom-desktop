@@ -88,6 +88,33 @@ export type Bootstrap = {
     error: string | null;
   };
   defaultModel: string;
+  network: NodeNetwork;
+};
+export type BrainSummary = {
+  id: string;
+  name: string;
+};
+export type RivloomNode = {
+  id: string;
+  name: string;
+  fingerprint: string;
+  protocolVersion: number;
+  addresses: string[];
+  port: number;
+  online: boolean;
+  local: boolean;
+  trusted: boolean;
+  verified: boolean;
+  lastSeen: string;
+  capabilities: string[];
+  brains: BrainSummary[];
+};
+export type NodeNetwork = {
+  status: 'starting' | 'online' | 'degraded' | 'disabled';
+  serviceType: string;
+  local: RivloomNode | null;
+  nearby: RivloomNode[];
+  error: string | null;
 };
 export type ModelCheck = {
   status: 'testing' | 'passed' | 'failed' | 'interrupted';

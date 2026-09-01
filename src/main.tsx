@@ -29,10 +29,12 @@ import {
   Copy,
   RefreshCw,
   Settings2,
+  Network,
 } from 'lucide-react';
 import { api } from './api';
 import { desktop, desktopInfo, chooseProjectDirectory } from './desktop';
 import { ModelSettingsView } from './model-settings';
+import { NodeNetworkView } from './node-network';
 import {
   stateLabels,
   activeStates,
@@ -283,7 +285,7 @@ function Auth({ onLogin }: { onLogin: () => void }) {
 function App() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'tasks' | 'projects' | 'team' | 'models'>('tasks');
+  const [view, setView] = useState<'tasks' | 'projects' | 'team' | 'network' | 'models'>('tasks');
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -329,6 +331,7 @@ function App() {
       update();
     });
     feed.addEventListener('update', update);
+    feed.addEventListener('network', update);
     feed.addEventListener('delta', (e) => {
       const value = JSON.parse((e as MessageEvent).data);
       if (value.taskID === selectedRef.current)
@@ -375,7 +378,7 @@ function App() {
       </div>
     );
   if (!data) return <Auth onLogin={() => void refresh()} />;
-  const { user, users, projects, tasks, engine } = data;
+  const { user, users, projects, tasks, engine, network } = data;
   const name = (uid: string | null) => users.find((u) => u.id === uid)?.name || 'OpenCode';
   const counts = {
     active: tasks.filter((t) => activeStates.includes(t.state)).length,
@@ -449,6 +452,10 @@ function App() {
             <Users size={18} />
             协作成员<span>{users.length}</span>
           </button>
+          <button className={view === 'network' ? 'active' : ''} onClick={() => go('network')}>
+            <Network size={18} />
+            节点与 Brain<span>{network.nearby.length + (network.local ? 1 : 0)}</span>
+          </button>
           <button className={view === 'models' ? 'active' : ''} onClick={() => go('models')}>
             <Settings2 size={18} />
             模型与额度<span>{engine.models.length}</span>
@@ -507,7 +514,9 @@ function App() {
                   ? '本地项目'
                   : view === 'team'
                     ? '协作成员'
-                    : '模型与额度'}
+                    : view === 'network'
+                      ? '节点与 Brain'
+                      : '模型与额度'}
             </strong>
             {current && (
               <>
@@ -1221,10 +1230,10 @@ function App() {
               <div className="collaboration-note">
                 <Users size={25} />
                 <div>
-                  <h3>真正协作，从第二个独立登录开始</h3>
+                  <h3>独立账号是 Brain 权限的基础</h3>
                   <p>
-                    邀请码和独立账号协议已经就绪，但第二台设备的伙伴客户端接入尚未交付。当前结果不能当作两个真人跨设备协作已经完成；M3
-                    将用两台设备和两位真实参与者验收。
+                    当前邀请码用于本 Brain 的账号协议。附近设备会在“节点与
+                    Brain”中自动出现，但发现不会直接授予成员或项目权限；设备配对完成后再把独立身份带入跨节点任务。
                   </p>
                 </div>
               </div>
@@ -1237,6 +1246,7 @@ function App() {
               onChanged={() => void refresh()}
             />
           )}
+          {view === 'network' && <NodeNetworkView network={network} />}
         </main>
         <footer className="app-footer">
           <span>RIVLOOM · 人与 AI 的任务空间</span>
@@ -1397,13 +1407,13 @@ function App() {
       {modal === 'invite' && (
         <Modal
           title="邀请一位协作伙伴"
-          subtitle="邀请码仅可使用一次，有效期为 24 小时。请私下交给可信的人。"
+          subtitle="当前邀请码属于本 Brain，仅可使用一次，有效期为 24 小时。"
           close={() => setModal(null)}
         >
           <div className="invite-code">{invite}</div>
           <p>
-            待伙伴客户端接入完成后，对方会在自己的 Rivloom
-            客户端粘贴邀请码并自行设置密码。当前生成能力用于独立账号协议测试，不代表跨设备接入已完成。
+            这项能力已经验证独立账号和任务角色，但尚未连接附近节点。后续设备配对会把成员加入请求送到对应
+            Brain，不会依靠共享本机页面或切换用户视角。
           </p>
           <div className="notice">这里只生成邀请码，不会代你发送邀请或公开应用。</div>
           <div className="modal-actions">

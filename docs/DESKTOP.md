@@ -8,6 +8,8 @@
 - 原生文件夹选择器，用于选择本机已审核的 Git 项目。选择目录仍需确认信任，不能代替沙箱。
 - 启动时自动运行随包 Node.js 24.19.0、本地业务服务、官方 OpenCode 1.18.25；无需客户另装 OpenCode 或 Node。
 - 业务服务使用随机 loopback 端口；引擎也只监听 loopback，另有私有随机密码。前端不接触引擎地址和密码。
+- 每个 Windows 用户/数据目录生成稳定 Ed25519 节点身份，私钥由 Windows DPAPI CurrentUser 加密。桌面“节点与 Brain”页显示本机身份、Brain、局域网发现状态和通过签名验证的附近节点。
+- `_rivloom._tcp.local` 自动发现使用独立的最小节点端点，只发布公开身份和能力，不暴露业务服务或 OpenCode。发现节点默认未配对、无任务权限。
 - 首次启动在客户端内设置工作区账号，不必打开终端读取初始化码。账号及审批确认仍保留。
 - 客户端内置“模型与额度”页面。工作区创建者通过官方 OpenCode API 管理 DeepSeek 凭据、确认后执行真实连接测试、设置新任务默认模型；其他成员只读。
 - 默认数据目录：`%LOCALAPPDATA%\com.rivloom.desktop\workspace`。独立 SQLite、引擎数据和 WebView2 配置保存在这里；不会自动迁移此前 `.data` 或个人 OpenCode 账号。
@@ -16,7 +18,7 @@
 
 ## 启动和构建
 
-对内测试安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`。安装后从开始菜单启动 Rivloom。当前产物为 70,998,334 字节，SHA-256：`2ec2a07c782e3842f09cac0a32ca17ca286f26dc9d1935db1f95b4eb34256dd3`。
+对内测试安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`。安装后从开始菜单启动 Rivloom。当前产物为 71,004,533 字节，SHA-256：`48ef221a2320eaf4402c26930b7f80bbc29489b909d3f3faa20036b4ad801b72`。
 
 开发者使用：
 
@@ -50,10 +52,11 @@ node scripts/integration.ts
 
 # 不使用真实 Key，验证官方 OpenCode 凭据生命周期和当前安装包
 npm.cmd run test:model-settings
+npm.cmd run test:node-network-ui
 npm.cmd run test:installer
 ```
 
-第二个命令会打开真实桌面窗口，在独立测试目录创建账号、调用真实模型、验证审批/验收/重启，并模拟异常退出。不会操作个人工作区。两组测试客户端不等于两个真人或跨设备已验证。
+真实模型回归命令会打开桌面窗口，在独立测试目录创建账号、调用真实模型、验证审批/验收/重启，并模拟异常退出。节点网络命令也打开实际 Release WebView2，同时启动第二个隔离的真实 Rivloom 节点，通过 mDNS、HTTP 随机挑战和 Ed25519 签名完成发现验证。不会操作个人工作区；同机双实例不等于两个真人或两台物理设备已验证。
 
 内部 Web 调试需显式使用 `npm run server:dev` 或 `npm run server:start`，默认 `127.0.0.1:4310`。桌面和内部 Web 不要共用数据目录运行。
 
@@ -63,6 +66,7 @@ npm.cmd run test:installer
 - WebView2 已安装的机器可直接使用；缺失时 NSIS 使用 Microsoft 的联网 bootstrapper，不承诺离线安装。配置依据 [Tauri Windows 安装器文档](https://v2.tauri.app/distribute/windows-installer/) 和 [配置参考](https://v2.tauri.app/reference/config/)。
 - 编程项目所需 Git 和语言工具链仍需本机准备。随包 Node 可以执行 Node 测试，不代表任意项目无需环境配置。
 - 模型配置界面已完成；DeepSeek 真实回复仍要等创建者在客户端本机填入有效 Key 后验证。ChatGPT 登录和两台设备的伙伴客户端接入仍是后续里程碑。
+- M3.1 已验证同机双实例自动发现和身份签名；两台物理 Windows 设备、防火墙差异、配对/撤销、加密业务通信和任务委派仍待后续里程碑。专用网络首次发现可能出现 Windows 防火墙提示。
 - Windows 当前用户下的本地进程仍可能读取本地文件；不是防恶意本机用户的隔离系统。已运行的命令可能有不可撤销副作用，脱离进程树的外部进程不在停止保证内。
 - 退出会停止执行，不支持关闭窗口后继续无人值守运行。暂无托盘、开机启动或分布式执行。
 

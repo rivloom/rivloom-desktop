@@ -14,9 +14,21 @@
 
 真实 Windows 窗口检查：**通过**。在隔离测试目录启动 Release 可执行程序，通过实际 WebView2 创建合成测试账号并进入任务工作台；首次页面没有要求用户打开终端读取初始化码；桌面标签和原生目录操作存在。模型设置完成后，再次通过 Release Tauri WebView2 检查“模型与额度”页面、无 Key 状态、密码输入、额度确认、默认模型和审计界面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-model-settings.json`、`.data/verification/desktop-workbench.png` 和 `.data/verification/desktop-model-settings.png`。
 
-当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。安装包 70,998,334 字节，SHA-256：`2ec2a07c782e3842f09cac0a32ca17ca286f26dc9d1935db1f95b4eb34256dd3`。
+当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。安装包 71,004,533 字节，SHA-256：`48ef221a2320eaf4402c26930b7f80bbc29489b909d3f3faa20036b4ad801b72`。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
+
+## M3.1 节点身份与局域网自发现
+
+`npm run test:node-network-ui`：**5 项实际 Release 桌面检查通过**。测试启动安装包对应的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock。
+
+- 两个实例各自生成稳定 Ed25519 身份；私钥 PKCS#8 只以 Windows DPAPI CurrentUser 密文保存在节点身份文件中，重载后 Node ID 不变。
+- 两个实例在本机真实 mDNS/DNS-SD 网络栈发布和发现 `_rivloom._tcp.local`，使用不同数据目录、Node ID、Brain ID 和端口。
+- 发现方连接对方独立的 `/v1/hello` 端点，发送随机 nonce，并核对公钥派生 Node ID、指纹、响应时间与 Ed25519 签名。
+- 实际 Tauri WebView2 “节点与 Brain”页显示本机节点、Brain 和附近节点；对方明确保持“签名已验证、尚未配对授权”。
+- 节点端点拒绝畸形请求，业务路径返回 404；React 业务服务与 OpenCode 没有暴露到局域网。
+
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`。这是同一台 Windows 上的双实例网络验证，尚未覆盖两台物理设备、不同防火墙/网卡环境。配对、撤销、加密业务通信和任务委派属于 M3.2 以后范围；不能把“签名身份已验证”写成“设备已信任”。
 
 ## 模型设置与 DeepSeek 公共接口
 
@@ -84,10 +96,10 @@
 
 - `npm run typecheck`：通过（strict、noUnusedLocals、noUnusedParameters）。
 - `npm run build`：通过，生成 React 生产构建。
-- `npm test`：6 项通过（单实例锁与异常退出后锁恢复、加盐密码验证、常见秘密脱敏、真实 Git 新增/修改/删除及指纹变化、敏感文件不展示内容、模型配置损坏回退及错误脱敏）。
+- `npm test`：9 项通过；在原有安全检查外，新增私有地址过滤、Windows DPAPI 稳定身份，以及两个隔离节点的真实 mDNS 发现/随机挑战/签名校验/未授权边界。
 - `npm audit --offline --omit=dev`：当日 0 个已知漏洞；不是安全认证。
 - `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`：通过。
-- 官方版本、npm integrity、二进制 SHA-256、MIT 原文及 114 个已安装依赖的许可证元数据已保存。
+- 官方版本、npm integrity、二进制 SHA-256、MIT 原文及 123 个已安装依赖的许可证元数据已保存。
 
 ## 浏览器与启动验收
 
@@ -99,7 +111,7 @@
 
 ## 尚未验证或不包含
 
-- 两台设备/两个真人协作、节点自发现、设备配对、单/多 Brain 委派和跨网络运行。
+- 两台物理设备/两个真人协作、不同局域网环境的发现兼容性、设备配对与撤销、加密节点业务通信、单/多 Brain 任务委派和跨网络运行。同机双实例自发现与签名校验已经验证。
 - DeepSeek 有效凭据的真实连接回复和完整编程任务；ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

@@ -60,6 +60,7 @@ import {
   cancelConnectionCheck,
   assertCanStartTask,
 } from './model-settings.ts';
+import { NodeNetwork } from './node-network.ts';
 
 try {
   acquireDataLock();
@@ -68,6 +69,7 @@ try {
   process.exit(1);
 }
 const app = express();
+const nodeNetwork = new NodeNetwork(dataRoot);
 const port = Number(process.env.PORT || 4310);
 const dev = process.argv.includes('--dev');
 const desktop = process.env.RIVLOOM_DESKTOP === '1';
@@ -162,9 +164,11 @@ app.get('/api/bootstrap', (req, res) =>
     tasks: tasks().filter((t) => participant(t, who(req))),
     engine: engineStatus,
     defaultModel: defaultModel(),
+    network: nodeNetwork.snapshot(),
   }),
 );
 app.get('/api/model-settings', (_req, res) => res.json(modelSettings()));
+app.get('/api/network', (_req, res) => res.json(nodeNetwork.snapshot()));
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z
@@ -388,8 +392,10 @@ app.get('/api/events', (req, res) => {
   const onDelta = (value: { taskID: string }) => {
     if (visible(value.taskID)) send('delta', value);
   };
+  const onNetwork = () => send('network', { changed: true });
   updates.on('update', onUpdate);
   updates.on('delta', onDelta);
+  nodeNetwork.on('update', onNetwork);
   send('connected', { ok: true });
   const heartbeat = setInterval(() => {
     if (
@@ -404,6 +410,7 @@ app.get('/api/events', (req, res) => {
     clearInterval(heartbeat);
     updates.off('update', onUpdate);
     updates.off('delta', onDelta);
+    nodeNetwork.off('update', onNetwork);
   });
 });
 app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
@@ -451,6 +458,7 @@ const server = app.listen(port, '127.0.0.1', (error?: Error) => {
   console.log(desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
   if (!users().length && !desktop)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
+  void nodeNetwork.start();
   void initializeEngine();
 });
 let closing = false;
@@ -459,6 +467,7 @@ export async function shutdown() {
   closing = true;
   const deadline = setTimeout(() => process.exit(1), 6000);
   deadline.unref();
+  await nodeNetwork.stop();
   await shutdownEngine();
   server.close();
   setTimeout(() => process.exit(0), 1000).unref();

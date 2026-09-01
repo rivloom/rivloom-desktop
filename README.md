@@ -88,7 +88,9 @@ npm.cmd start
 
 这是当前单节点内已经验证的权限协议：共享本节点数据库，但使用独立账号/会话和服务端鉴权。角色不由前端切换决定。非参与者看不到任务或事件；接受人负责启动，审批人负责权限决策，验收人负责交付确认。
 
-现阶段只完成自动化的独立账号协议验证，**尚未实现节点自发现或由两个真人在两台设备上完成内测**。M3 将使每个安装实例成为自发现节点，并支持一个或多个 Brain 按任务归属协作；不要求先开启协作空间。当前应用和 OpenCode 均只监听 `127.0.0.1`；后续只为 Rivloom 节点协议开放受限端点，OpenCode 仍不开放到局域网或公网，也不提供通用 API 代理。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md)。
+M3.1 已使每个安装实例成为自发现节点：稳定节点身份由 Windows DPAPI 保护，实例通过 mDNS/DNS-SD 发现同网段 Rivloom，并用随机挑战和 Ed25519 签名验证对方身份。桌面“节点与 Brain”页会显示本机 Brain 和附近节点。当前已用同一台 Windows 上两个完全隔离的真实实例验证，**尚未由两个真人在两台物理设备上完成内测，也尚未实现配对授权和任务委派**。
+
+自动发现不等于自动信任。M3.1 开放的局域网端点只返回签名公开身份，不包含业务接口；React 业务服务和 OpenCode 仍只监听 `127.0.0.1`，OpenCode 不开放到局域网或公网，也不提供通用 API 代理。后续 M3.2 将增加双方确认、信任记录和撤销，再实现一个或多个 Brain 按任务归属协作；不要求用户先开启“协作空间”。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md)。
 
 ## 验证命令
 
@@ -97,6 +99,7 @@ npm.cmd test                  # 密码、脱敏、产物完整性等本地检查
 npm.cmd run typecheck
 npm.cmd run build
 npm.cmd run test:model-settings  # 官方 OpenCode 凭据/模型接口；测试字符串，不调用模型
+npm.cmd run test:node-network-ui # Release 桌面节点页和真实双实例 mDNS/签名验证
 npm.cmd run engine:probe      # 真实官方引擎探针，会调用模型
 npm.cmd run test:integration  # 真实应用、独立账号、审批、验收、重启、停止
 npm.cmd run test:installer    # 当前 NSIS 的隔离安装、随包引擎启动和卸载
