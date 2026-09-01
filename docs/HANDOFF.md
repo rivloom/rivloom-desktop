@@ -2,16 +2,16 @@
 
 更新时间：2026-09-01。工作目录：`C:\project\rivloom-opencode`。
 
-这份文件用于后续初始化 Git、开启新会话或继续里程碑。事实明细见 [实施进度](PROGRESS.md)，测试记录见 [验证报告](VERIFICATION.md)，长期范围见 [实施计划](plans/2026-08-31-mvp-delivery.md)。
+这份文件用于后续开启新会话或继续里程碑。事实明细见 [实施进度](PROGRESS.md)，测试记录见 [验证报告](VERIFICATION.md)，长期范围见 [实施计划](plans/2026-08-31-mvp-delivery.md)。
 
 ## 仓库状态
 
-- 当前目录**尚未初始化 Git**，没有分支、提交或远程地址。
-- 用户会在之后提供或初始化 Git；在此之前不要自行创建远程仓库、提交历史或虚构 commit。
+- 当前目录已初始化 Git；`main` 跟踪私有远程仓库 `https://github.com/rivloom/rivloom_desktop.git`。
+- 远程原有的 Apache 2.0 `LICENSE` 初始提交已保留；MVP 源码提交为 `22eaa3c`（`feat: establish Rivloom desktop MVP`）。
 - 旧项目 `C:\project\opencohive` 只读参考过产品文档，没有复制其 Codex monorepo，也没有修改旧项目。
 - `.gitignore` 已排除依赖、构建产物、运行数据、凭据和测试输出：`node_modules/`、`dist/`、`.data/`、`src-tauri/target/`、`src-tauri/resources/runtime/`、`.env*` 等。
 
-初始化 Git 时应提交应用源代码、文档、锁文件和许可证资料；不要强制加入上述忽略目录。尤其不能提交 `.data`，其中包含本地账号、SQLite、引擎状态、测试仓库和运行证据。安装包属于可重建产物，也位于被忽略的 `src-tauri/target`。
+后续提交应继续包含应用源代码、文档、锁文件和许可证资料；不要强制加入上述忽略目录。尤其不能提交 `.data`，其中包含本地账号、SQLite、引擎状态、测试仓库和运行证据。安装包属于可重建产物，也位于被忽略的 `src-tauri/target`。
 
 ## 已完成产品范围
 
@@ -75,9 +75,9 @@
 - 不把工作目录限制、人工审批或可信成员当作安全沙箱。
 - 不把独立测试客户端冒充两个真人协作，不把未签名包宣传成商业发行完成。
 
-## Git 初始化后的建议检查
+## Git 日常建议检查
 
-Git 建好后，先审阅待提交文件和忽略规则，再运行：
+重要提交前先审阅待提交文件和忽略规则，再运行：
 
 ```powershell
 npm.cmd ci
