@@ -15,12 +15,14 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  NodeExecutionPolicy,
   NodeNetwork,
   NodePairing,
   Project,
   RemoteTaskInvite,
   RivloomNode,
 } from '../shared/types';
+import { stateLabels } from '../shared/types';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -43,8 +45,13 @@ type NetworkActions = {
   ): void;
   respondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   cancelRemoteTask(taskID: string): void;
-  prepareRemoteTask(taskID: string, projectID: string, model: string): void;
-  revokeRemoteTaskPreparation(taskID: string): void;
+  saveExecutionPolicy(input: {
+    enabled: boolean;
+    mode: NodeExecutionPolicy['mode'];
+    projectID: string | null;
+    model: string | null;
+    allowedNodeIDs: string[];
+  }): void;
 };
 
 function NodeCard({
@@ -159,10 +166,9 @@ function NodeCard({
                 <form className="remote-task-form" onSubmit={submitRemoteTask}>
                   <div>
                     <span className="eyebrow">ENCRYPTED TASK INVITE</span>
-                    <strong>向 {node.brains[0]?.name} 发出任务邀请</strong>
+                    <strong>交给 {node.brains[0]?.name} 协作执行</strong>
                     <p>
-                      先由对方人工接受；此步骤不会传项目路径、选择模型或启动
-                      AI。不要填写密码、密钥或生产敏感信息。
+                      对方会按本机策略自动执行、有限调用或逐项确认。不要填写密码、密钥或生产敏感信息。
                     </p>
                   </div>
                   <label>
@@ -184,7 +190,7 @@ function NodeCard({
                       type="submit"
                     >
                       <Send size={14} />
-                      加密发送邀请
+                      加密发送任务
                     </button>
                     <button
                       className="button compact"
@@ -264,32 +270,165 @@ const remoteTaskStatus: Record<RemoteTaskInvite['status'], string> = {
   expired: '已过期',
 };
 
-function RemoteTaskCard({
-  task,
+function ExecutionPolicyCard({
+  policy,
   network,
   projects,
   models,
   actions,
 }: {
-  task: RemoteTaskInvite;
+  policy: NodeExecutionPolicy;
   network: NodeNetwork;
   projects: Project[];
   models: { id: string; name: string }[];
   actions: NetworkActions;
 }) {
-  const [preparing, setPreparing] = useState(false);
+  const [mode, setMode] = useState<NodeExecutionPolicy['mode']>(policy.mode);
+  const knownNodes = new Map(network.nearby.map((node) => [node.id, node]));
+  const selectableNodeIDs = [
+    ...new Set([
+      ...network.nearby.filter((node) => node.trusted).map((node) => node.id),
+      ...policy.allowedNodeIDs,
+    ]),
+  ];
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    actions.saveExecutionPolicy({
+      enabled: true,
+      mode,
+      projectID: String(data.get('projectID') || '') || null,
+      model: String(data.get('model') || '') || null,
+      allowedNodeIDs: data.getAll('allowedNodeIDs').map(String),
+    });
+  };
+  return (
+    <article className="remote-preparation-form execution-policy-form">
+      <div>
+        <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
+        <strong>{policy.enabled ? '本机执行能力已开放' : '配置本机执行能力'}</strong>
+        <p>
+          项目路径、模型凭据只保留在本机。任务匹配策略后可直接创建本机任务，不再逐项选择资源或等待准备租约。
+        </p>
+      </div>
+      <form onSubmit={submit}>
+        <label>
+          <span>调用方式</span>
+          <select
+            name="mode"
+            value={mode}
+            onChange={(event) => setMode(event.target.value as NodeExecutionPolicy['mode'])}
+          >
+            <option value="automatic">自动调用（默认）</option>
+            <option value="limited">仅指定受信节点自动调用</option>
+            <option value="confirm">每项任务确认</option>
+          </select>
+        </label>
+        <label>
+          <span>本机项目</span>
+          <select
+            name="projectID"
+            required
+            defaultValue={policy.projectID || projects[0]?.id || ''}
+          >
+            {!projects.length && <option value="">请先添加本地项目</option>}
+            {projects.map((project) => (
+              <option value={project.id} key={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>执行模型</span>
+          <select name="model" required defaultValue={policy.model || models[0]?.id || ''}>
+            {!models.length && <option value="">请先连接本机模型</option>}
+            {models.map((model) => (
+              <option value={model.id} key={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {mode === 'limited' && (
+          <fieldset className="execution-policy-peers">
+            <legend>允许自动调用的节点</legend>
+            {selectableNodeIDs.length ? (
+              selectableNodeIDs.map((nodeID) => (
+                <label className="checkbox" key={nodeID}>
+                  <input
+                    type="checkbox"
+                    name="allowedNodeIDs"
+                    value={nodeID}
+                    defaultChecked={policy.allowedNodeIDs.includes(nodeID)}
+                  />
+                  {knownNodes.get(nodeID)?.name || `Node ${nodeID.slice(0, 8)}`}
+                </label>
+              ))
+            ) : (
+              <p>请先与至少一台设备建立信任。</p>
+            )}
+          </fieldset>
+        )}
+        <label className="checkbox remote-preparation-confirmation">
+          <input type="checkbox" required />
+          我确认该项目可用于可信协作；模型请求可能包含任务说明和项目代码，命令与修改仍按本机审批规则处理。
+        </label>
+        <div className="remote-task-buttons">
+          <button
+            className="button primary compact"
+            type="submit"
+            disabled={
+              actions.busy ||
+              !projects.length ||
+              !models.length ||
+              (mode === 'limited' && !selectableNodeIDs.length)
+            }
+          >
+            <FolderGit2 size={14} />
+            {policy.enabled ? '保存调用策略' : '开启执行能力'}
+          </button>
+          {policy.enabled && (
+            <button
+              className="button danger compact"
+              type="button"
+              disabled={actions.busy}
+              onClick={() =>
+                actions.saveExecutionPolicy({
+                  enabled: false,
+                  mode: 'automatic',
+                  projectID: null,
+                  model: null,
+                  allowedNodeIDs: [],
+                })
+              }
+            >
+              停止接受新调用
+            </button>
+          )}
+        </div>
+      </form>
+    </article>
+  );
+}
+
+function RemoteTaskCard({
+  task,
+  network,
+  policy,
+  actions,
+}: {
+  task: RemoteTaskInvite;
+  network: NodeNetwork;
+  policy: NodeExecutionPolicy;
+  actions: NetworkActions;
+}) {
   const peerID = task.direction === 'incoming' ? task.ownerNodeID : task.targetNodeID;
   const peer = network.nearby.find((node) => node.id === peerID);
   const brainID = task.direction === 'incoming' ? task.ownerBrainID : task.targetBrainID;
   const brain = peer?.brains.find((item) => item.id === brainID);
-  const localProject = projects.find((project) => project.id === task.localProjectID);
-  const localModel = models.find((model) => model.id === task.localModel);
-  const submitPreparation = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const value = Object.fromEntries(new FormData(event.currentTarget));
-    actions.prepareRemoteTask(task.id, String(value.projectID || ''), String(value.model || ''));
-    setPreparing(false);
-  };
+  const policyAllowsPeer =
+    policy.mode !== 'limited' || policy.allowedNodeIDs.includes(task.ownerNodeID);
   return (
     <article className={`remote-task-card ${task.direction} status-${task.status}`}>
       <div className="remote-task-heading">
@@ -298,12 +437,18 @@ function RemoteTaskCard({
         </span>
         <div>
           <span className="eyebrow">
-            {task.direction === 'incoming' ? 'INCOMING TASK INVITE' : 'OUTGOING TASK INVITE'}
+            {task.direction === 'incoming'
+              ? 'INCOMING COLLABORATION TASK'
+              : 'OUTGOING COLLABORATION TASK'}
           </span>
           <h3>{task.title}</h3>
         </div>
         <span className={`remote-task-status status-${task.status}`}>
-          {task.deliveryPending ? '等待发送' : remoteTaskStatus[task.status]}
+          {task.executionSequence > 0 && task.executionState !== 'not_started'
+            ? stateLabels[task.executionState]
+            : task.deliveryPending
+              ? '正在同步'
+              : remoteTaskStatus[task.status]}
         </span>
       </div>
       <p className="remote-task-description">{task.description}</p>
@@ -322,132 +467,59 @@ function RemoteTaskCard({
         </span>
       </div>
       {task.deliveryError && <p className="remote-task-error">{task.deliveryError}</p>}
-      {task.status === 'accepted' && (
+      {!task.automaticEligible && (
         <p className="remote-task-boundary">
-          {task.executionStatus === 'ready'
-            ? task.direction === 'incoming'
-              ? `已在本机保留 ${localProject?.name || '可信项目'}，模型为 ${localModel?.name || task.localModel || '已选模型'}。这仍不会自动启动 AI。`
-              : '对方已在本机授权项目和模型；项目路径与凭据没有发送给本机，AI 尚未启动。'
-            : task.executionStatus === 'expired'
-              ? '执行准备授权已过期；对方需要在自己的设备上重新选择项目和模型。'
-              : task.executionStatus === 'revoked'
-                ? '执行准备已撤销；双方仍保留已接受的任务范围。'
-                : '双方已确认任务范围；尚未绑定本机项目、模型或启动 AI。'}
+          这是旧版准备流程记录，只保留用于迁移和审计，不会按新策略自动执行。
         </p>
       )}
-      {task.executionStatus === 'ready' && task.executionLeaseExpiresAt && (
-        <p className="remote-task-lease">
-          <Clock3 size={13} />
-          执行准备保留至 {new Date(task.executionLeaseExpiresAt).toLocaleString('zh-CN')}
-        </p>
-      )}
-      {actions.owner && task.direction === 'incoming' && task.status === 'pending' && (
-        <div className="remote-task-buttons">
-          <button
-            className="button primary compact"
-            disabled={actions.busy || task.deliveryPending}
-            onClick={() => actions.respondRemoteTask(task.id, 'accepted')}
-          >
-            <Check size={14} />
-            接受任务邀请
-          </button>
-          <button
-            className="button compact"
-            disabled={actions.busy || task.deliveryPending}
-            onClick={() => actions.respondRemoteTask(task.id, 'declined')}
-          >
-            <X size={14} />
-            拒绝
-          </button>
+      {task.executionSequence > 0 && (
+        <div className="remote-task-boundary">
+          <strong>执行节点状态 · #{task.executionSequence}</strong>
+          <p>
+            {task.executionSummary ||
+              stateLabels[task.executionState === 'not_started' ? 'ready' : task.executionState]}
+          </p>
         </div>
       )}
+      {task.automaticEligible && task.status === 'accepted' && task.executionSequence === 0 && (
+        <p className="remote-task-boundary">
+          {task.direction === 'incoming'
+            ? '任务已接受，正在等待本机项目空闲、模型就绪和加密通道可用；满足条件后会自动启动一次。'
+            : '对方已接受任务，正在按其本机调用策略分配执行能力。'}
+        </p>
+      )}
       {actions.owner &&
+        task.automaticEligible &&
         task.direction === 'incoming' &&
-        task.status === 'accepted' &&
-        task.executionStatus !== 'ready' &&
-        !task.deliveryPending &&
-        (preparing ? (
-          <form className="remote-preparation-form" onSubmit={submitPreparation}>
-            <div>
-              <span className="eyebrow">LOCAL EXECUTION PREPARATION</span>
-              <strong>只在本机选择执行资源</strong>
-              <p>对方只会看到“准备就绪”和期限，不会收到项目名称、路径、模型标识或凭据。</p>
-            </div>
-            <label>
-              <span>可信本机项目</span>
-              <select name="projectID" required defaultValue={projects[0]?.id || ''}>
-                {!projects.length && <option value="">请先添加本地项目</option>}
-                {projects.map((project) => (
-                  <option value={project.id} key={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>本机执行模型</span>
-              <select name="model" required defaultValue={models[0]?.id || ''}>
-                {!models.length && <option value="">请先连接本机模型</option>}
-                {models.map((model) => (
-                  <option value={model.id} key={model.id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="checkbox remote-preparation-confirmation">
-              <input type="checkbox" required />
-              我已检查这个本机项目，确认模型请求可能发送任务和代码，并同意保留 30
-              分钟；期间普通任务不能在该项目启动。
-            </label>
-            <div className="remote-task-buttons">
+        task.status === 'pending' && (
+          <div className="remote-task-buttons">
+            {policy.enabled && policyAllowsPeer && policy.mode === 'confirm' && (
               <button
                 className="button primary compact"
-                type="submit"
-                disabled={actions.busy || !projects.length || !models.length}
+                disabled={actions.busy || task.deliveryPending}
+                onClick={() => actions.respondRemoteTask(task.id, 'accepted')}
               >
-                <FolderGit2 size={14} />
-                确认本机执行准备
+                <Check size={14} />
+                确认并调用本机能力
               </button>
-              <button
-                className="button compact"
-                type="button"
-                disabled={actions.busy}
-                onClick={() => setPreparing(false)}
-              >
-                取消
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div className="remote-task-buttons">
+            )}
             <button
-              className="button primary compact"
-              disabled={actions.busy || !projects.length || !models.length}
-              onClick={() => setPreparing(true)}
-            >
-              <FolderGit2 size={14} />
-              选择本机项目与模型
-            </button>
-          </div>
-        ))}
-      {actions.owner &&
-        task.direction === 'incoming' &&
-        task.status === 'accepted' &&
-        task.executionStatus === 'ready' && (
-          <div className="remote-task-buttons">
-            <button
-              className="button danger compact"
+              className="button compact"
               disabled={actions.busy || task.deliveryPending}
-              onClick={() => actions.revokeRemoteTaskPreparation(task.id)}
+              onClick={() => actions.respondRemoteTask(task.id, 'declined')}
             >
               <X size={14} />
-              撤销执行准备
+              拒绝
             </button>
+            {!policy.enabled && <small>本机执行能力尚未开启。</small>}
+            {policy.enabled && policy.mode === 'limited' && !policyAllowsPeer && (
+              <small>当前策略未授权此节点。</small>
+            )}
           </div>
         )}
       {actions.owner &&
         task.direction === 'outgoing' &&
+        task.executionSequence === 0 &&
         (task.status === 'pending' || task.status === 'accepted') && (
           <div className="remote-task-buttons">
             <button
@@ -456,7 +528,7 @@ function RemoteTaskCard({
               onClick={() => actions.cancelRemoteTask(task.id)}
             >
               <X size={14} />
-              取消邀请
+              取消任务
             </button>
           </div>
         )}
@@ -469,6 +541,7 @@ export function NodeNetworkView({
   owner,
   projects,
   models,
+  executionPolicy,
   busy,
   onRequestPairing,
   onConfirmPairing,
@@ -477,13 +550,13 @@ export function NodeNetworkView({
   onCreateRemoteTask,
   onRespondRemoteTask,
   onCancelRemoteTask,
-  onPrepareRemoteTask,
-  onRevokeRemoteTaskPreparation,
+  onSaveExecutionPolicy,
 }: {
   network: NodeNetwork;
   owner: boolean;
   projects: Project[];
   models: { id: string; name: string }[];
+  executionPolicy: NodeExecutionPolicy;
   busy: boolean;
   onRequestPairing(nodeID: string): void;
   onConfirmPairing(pairingID: string): void;
@@ -496,8 +569,13 @@ export function NodeNetworkView({
   ): void;
   onRespondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   onCancelRemoteTask(taskID: string): void;
-  onPrepareRemoteTask(taskID: string, projectID: string, model: string): void;
-  onRevokeRemoteTaskPreparation(taskID: string): void;
+  onSaveExecutionPolicy(input: {
+    enabled: boolean;
+    mode: NodeExecutionPolicy['mode'];
+    projectID: string | null;
+    model: string | null;
+    allowedNodeIDs: string[];
+  }): void;
 }) {
   const online = network.status === 'online';
   const onlineNearby = network.nearby.filter((node) => node.online);
@@ -512,8 +590,7 @@ export function NodeNetworkView({
     createRemoteTask: onCreateRemoteTask,
     respondRemoteTask: onRespondRemoteTask,
     cancelRemoteTask: onCancelRemoteTask,
-    prepareRemoteTask: onPrepareRemoteTask,
-    revokeRemoteTaskPreparation: onRevokeRemoteTaskPreparation,
+    saveExecutionPolicy: onSaveExecutionPolicy,
   };
   return (
     <>
@@ -574,6 +651,26 @@ export function NodeNetworkView({
         )}
       </section>
 
+      {owner && (
+        <section className="network-section">
+          <div className="section-title">
+            <div>
+              <span className="eyebrow">CAPABILITY POLICY</span>
+              <h2>本机执行能力</h2>
+            </div>
+            <p>{executionPolicy.enabled ? '已按本机策略开放' : '尚未开放远端调用'}</p>
+          </div>
+          <ExecutionPolicyCard
+            key={executionPolicy.updatedAt || 'new-policy'}
+            policy={executionPolicy}
+            network={network}
+            projects={projects}
+            models={models}
+            actions={actions}
+          />
+        </section>
+      )}
+
       <section className="network-section">
         <div className="section-title">
           <div>
@@ -618,7 +715,7 @@ export function NodeNetworkView({
         <div className="section-title">
           <div>
             <span className="eyebrow">CROSS-DEVICE TASKS</span>
-            <h2>跨设备任务邀请</h2>
+            <h2>跨设备协作任务</h2>
           </div>
           <p>
             {network.remoteTasks.length ? `${network.remoteTasks.length} 条持久记录` : '尚无邀请'}
@@ -630,8 +727,7 @@ export function NodeNetworkView({
               <RemoteTaskCard
                 task={task}
                 network={network}
-                projects={projects}
-                models={models}
+                policy={executionPolicy}
                 actions={actions}
                 key={task.id}
               />
@@ -640,7 +736,7 @@ export function NodeNetworkView({
         ) : (
           <div className="network-empty compact remote-task-empty">
             <Inbox size={26} />
-            <p>与受信节点建立加密通道后，可以发出任务邀请；对方必须在自己的设备上决定。</p>
+            <p>与受信节点建立加密通道后，可以发出协作任务；对方会按自己的调用策略处理。</p>
           </div>
         )}
       </section>
@@ -648,10 +744,10 @@ export function NodeNetworkView({
       <div className="collaboration-note network-boundary">
         <ShieldCheck size={25} />
         <div>
-          <h3>任务邀请不会自动执行</h3>
+          <h3>本机策略决定如何调用</h3>
           <p>
-            当前加密协议只开放任务邀请、接受、拒绝和取消。接受后仍不会暴露项目、模型凭据或
-            OpenCode，也不会自动运行工具；项目授权、角色映射、执行与审批将在后续切片逐步接入。
+            默认可在信任建立后自动调用，也可以限制到指定节点或改为每项确认。执行节点只回传任务状态和必要结果，不发送本机项目路径、模型凭据或通用
+            OpenCode 接口。
           </p>
         </div>
       </div>

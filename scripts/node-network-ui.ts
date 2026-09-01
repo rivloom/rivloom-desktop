@@ -19,9 +19,9 @@ const { chromium } = createRequire(import.meta.url)(playwrightDirectory) as {
 };
 const runtime = JSON.parse(readFileSync(join(dataDirectory, 'desktop-runtime.json'), 'utf8'));
 const peerRoot = mkdtempSync(join(tmpdir(), 'rivloom-desktop-peer-'));
-const projectRoot = join(peerRoot, 'prepared-project');
+const projectRoot = join(peerRoot, 'automatic-execution-project');
 mkdirSync(projectRoot, { recursive: true });
-writeFileSync(join(projectRoot, 'README.md'), '# Rivloom remote preparation fixture\n');
+writeFileSync(join(projectRoot, 'README.md'), '# Rivloom automatic execution fixture\n');
 execFileSync('git', ['init', '--quiet'], { cwd: projectRoot, windowsHide: true });
 execFileSync(
   'git',
@@ -51,11 +51,13 @@ execFileSync(
 );
 const peer = new NodeNetwork(peerRoot, true);
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+let page: any = null;
+let runningLocalTaskID: string | null = null;
 try {
   await peer.start();
   assert.equal(peer.snapshot().status, 'online');
   const context = browser.contexts()[0];
-  const page = context.pages().find((candidate: any) => candidate.url().startsWith(runtime.url));
+  page = context.pages().find((candidate: any) => candidate.url().startsWith(runtime.url));
   assert(page, 'Rivloom WebView2 page not found');
   page.setDefaultTimeout(20_000);
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -67,7 +69,7 @@ try {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
       body: JSON.stringify({
-        name: '远端准备验证项目',
+        name: '远端自动执行验证项目',
         directory,
         trusted: true,
       }),
@@ -76,16 +78,18 @@ try {
   }, projectRoot);
   assert.equal(projectResult.status, 201, JSON.stringify(projectResult.body));
   const modelDeadline = Date.now() + 20_000;
-  let availableModels = 0;
-  while (Date.now() < modelDeadline && availableModels === 0) {
+  let availableModels: { id: string; name: string }[] = [];
+  while (Date.now() < modelDeadline && availableModels.length === 0) {
     availableModels = await page.evaluate(async () => {
       const response = await fetch('/api/bootstrap', { credentials: 'same-origin' });
       const value = await response.json();
-      return Array.isArray(value.engine?.models) ? value.engine.models.length : 0;
+      return Array.isArray(value.engine?.models) ? value.engine.models : [];
     });
-    if (!availableModels) await wait(500);
+    if (!availableModels.length) await wait(500);
   }
-  assert(availableModels > 0, 'Packaged engine did not expose an available local model');
+  assert(availableModels.length > 0, 'Packaged engine did not expose an available local model');
+  const verificationModel =
+    availableModels.find((model) => model.id === 'opencode/mimo-v2.5-free') || availableModels[0];
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: /节点与 Brain/ }).click();
   await page.getByRole('heading', { name: '节点与 Brain.' }).waitFor();
@@ -140,7 +144,7 @@ try {
     .getByLabel('任务说明')
     .fill('只验证邀请、人工接受和持久状态，不绑定项目或启动 OpenCode。');
   await syntheticCard.getByLabel('验收标准').fill('两端显示同一任务 ID 和已接受状态。');
-  await syntheticCard.getByRole('button', { name: '加密发送邀请' }).click();
+  await syntheticCard.getByRole('button', { name: '加密发送任务' }).click();
   const taskDeadline = Date.now() + 5000;
   while (
     Date.now() < taskDeadline &&
@@ -155,43 +159,103 @@ try {
     .locator('.remote-task-card')
     .filter({ has: page.getByRole('heading', { name: remoteTaskTitle }) });
   await remoteTaskCard.getByText('已接受', { exact: true }).waitFor();
-  await remoteTaskCard.getByText('尚未绑定本机项目、模型或启动 AI').waitFor();
   assert.equal(peer.snapshot().remoteTasks[0]?.status, 'accepted');
 
-  const incomingTitle = '准备本机执行资源';
+  const policyForm = page.locator('.execution-policy-form');
+  await policyForm.getByLabel('调用方式').selectOption('automatic');
+  await policyForm.getByLabel('本机项目').selectOption({ label: '远端自动执行验证项目' });
+  await policyForm.getByLabel('执行模型').selectOption(verificationModel.id);
+  await policyForm.locator('.remote-preparation-confirmation input').check();
+  await policyForm.getByRole('button', { name: '开启执行能力' }).click();
+  await page.getByText('已按本机策略开放').waitFor();
+
+  const incomingTitle = '真实自动执行跨设备任务';
   await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
     title: incomingTitle,
-    description: '由目标设备人工选择本机可信项目和模型，不向发起方发送路径或凭据。',
-    criteria: '发起方只收到有期限的准备状态。',
+    description:
+      '在当前 Git 项目新增 RESULT.txt，内容严格为 rivloom remote execution verified。不要修改其他文件，不要提交。',
+    criteria: 'RESULT.txt 存在且内容完全一致，归属 Brain 收到有序执行状态。',
   });
   const incomingCard = page
     .locator('.remote-task-card.incoming')
     .filter({ has: page.getByRole('heading', { name: incomingTitle }) });
-  await incomingCard.getByRole('button', { name: '接受任务邀请' }).click();
-  let incomingDeadline = Date.now() + 5000;
   const peerTask = () => peer.snapshot().remoteTasks.find((task) => task.title === incomingTitle);
+  let incomingDeadline = Date.now() + 30_000;
   while (
     Date.now() < incomingDeadline &&
-    (peerTask()?.status !== 'accepted' || peerTask()?.deliveryPending)
+    (peerTask()?.status !== 'accepted' ||
+      peerTask()?.deliveryPending ||
+      (peerTask()?.executionSequence || 0) < 1)
   )
     await wait(100);
   assert.equal(peerTask()?.status, 'accepted');
-  await incomingCard.getByRole('button', { name: '选择本机项目与模型' }).click();
-  await incomingCard.getByLabel('可信本机项目').selectOption({ label: '远端准备验证项目' });
-  await incomingCard.getByLabel('本机执行模型').selectOption({ index: 0 });
-  await incomingCard.locator('.remote-preparation-confirmation input').check();
-  await incomingCard.getByRole('button', { name: '确认本机执行准备' }).click();
-  incomingDeadline = Date.now() + 5000;
-  while (
-    Date.now() < incomingDeadline &&
-    (peerTask()?.executionStatus !== 'ready' || peerTask()?.deliveryPending)
-  )
-    await wait(100);
-  assert.equal(peerTask()?.executionStatus, 'ready');
+  assert((peerTask()?.executionSequence || 0) >= 1);
   assert.equal(peerTask()?.localProjectID, null);
   assert.equal(peerTask()?.localModel, null);
-  await incomingCard.getByText(/已在本机保留 远端准备验证项目/).waitFor();
-  const localLeaseCheck = await page.evaluate(async (projectID: string) => {
+  assert.equal(peerTask()?.localTaskID, null);
+
+  incomingDeadline = Date.now() + 600_000;
+  let localRemoteTask: any = null;
+  while (Date.now() < incomingDeadline && peerTask()?.executionState !== 'review') {
+    localRemoteTask = await page.evaluate(async (remoteTaskID: string) => {
+      const bootstrap = await (
+        await fetch('/api/bootstrap', { credentials: 'same-origin' })
+      ).json();
+      return (
+        bootstrap.tasks.find((task: any) => task.remoteOrigin?.remoteTaskID === remoteTaskID) ||
+        null
+      );
+    }, peerTask()!.id);
+    if (localRemoteTask) runningLocalTaskID = localRemoteTask.id;
+    if (localRemoteTask?.state === 'waiting_approval') {
+      for (const approval of localRemoteTask.approvals) {
+        const result = await page.evaluate(
+          async ({ taskID, requestID }: { taskID: string; requestID: string }) => {
+            const response = await fetch(`/api/tasks/${taskID}/permissions/${requestID}`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
+              body: JSON.stringify({ reply: 'once' }),
+            });
+            return { status: response.status, body: await response.json() };
+          },
+          { taskID: localRemoteTask.id, requestID: approval.id },
+        );
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+      }
+    }
+    if (['failed', 'interrupted', 'stopped'].includes(localRemoteTask?.state))
+      throw new Error(
+        `Remote OpenCode execution ended as ${localRemoteTask.state}: ${localRemoteTask.error}`,
+      );
+    await wait(500);
+  }
+  assert.equal(peerTask()?.executionState, 'review');
+  assert((peerTask()?.executionSequence || 0) >= 3);
+  assert.equal(
+    readFileSync(join(projectRoot, 'RESULT.txt'), 'utf8').trim(),
+    'rivloom remote execution verified',
+  );
+  assert(
+    localRemoteTask?.sessionID,
+    'Automatic remote execution did not create an OpenCode session',
+  );
+  runningLocalTaskID = localRemoteTask.id;
+  await incomingCard.getByText(/执行节点状态/).waitFor();
+
+  const ownerView = peerTask()!;
+  assert.equal(ownerView.localProjectID, null);
+  assert.equal(ownerView.localModel, null);
+  assert.equal(ownerView.localTaskID, null);
+  const localPolicy = await page.evaluate(async () => {
+    const response = await fetch('/api/network/execution-policy', { credentials: 'same-origin' });
+    return response.json();
+  });
+  assert.equal(localPolicy.mode, 'automatic');
+  assert.equal(localPolicy.projectID, String(projectResult.body.id));
+  assert(typeof localPolicy.model === 'string');
+
+  const localOrdinaryStart = await page.evaluate(async (projectID: string) => {
     const request = async (path: string, body: unknown) => {
       const response = await fetch(`/api${path}`, {
         method: 'POST',
@@ -204,9 +268,9 @@ try {
     const bootstrap = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
     const created = await request('/tasks', {
       projectID,
-      title: '验证远端项目保留',
-      description: '这个本机任务只用于确认项目保留会阻止普通任务启动。',
-      criteria: '启动请求在调用模型前被拒绝。',
+      title: '验证同项目并发保护',
+      description: '该任务只验证远端产物待验收时不会并发修改同一项目。',
+      criteria: '启动请求在创建第二个 OpenCode 会话前被拒绝。',
       assigneeID: bootstrap.user.id,
       approverID: bootstrap.user.id,
       reviewerID: bootstrap.user.id,
@@ -216,19 +280,10 @@ try {
     const run = await request(`/tasks/${created.body.id}/run`, { confirmed: true });
     return { created: created.status, claimed: claimed.status, run };
   }, String(projectResult.body.id));
-  assert.equal(localLeaseCheck.created, 201);
-  assert.equal(localLeaseCheck.claimed, 200);
-  assert.equal(localLeaseCheck.run.status, 409);
-  assert(String(localLeaseCheck.run.body.error).includes('跨设备任务'));
-  page.once('dialog', (dialog: any) => dialog.accept());
-  await incomingCard.getByRole('button', { name: '撤销执行准备' }).click();
-  incomingDeadline = Date.now() + 5000;
-  while (
-    Date.now() < incomingDeadline &&
-    (peerTask()?.executionStatus !== 'revoked' || peerTask()?.deliveryPending)
-  )
-    await wait(100);
-  assert.equal(peerTask()?.executionStatus, 'revoked');
+  assert.equal(localOrdinaryStart.created, 201);
+  assert.equal(localOrdinaryStart.claimed, 200);
+  assert.equal(localOrdinaryStart.run.status, 409);
+  assert(String(localOrdinaryStart.run.body.error).includes('同一项目'));
 
   const screenshot = join(verificationDirectory, 'desktop-node-network.png');
   await page.screenshot({ path: screenshot, fullPage: true });
@@ -236,7 +291,6 @@ try {
   await syntheticCard.getByRole('button', { name: '撤销信任' }).click();
   await syntheticCard.getByText('签名身份已验证，尚未配对授权').waitFor();
   assert.equal(peerViewOfDesktop()?.trusted, false);
-  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'cancelled');
   const proof = join(verificationDirectory, 'desktop-node-network.json');
   writeFileSync(
     proof,
@@ -258,18 +312,19 @@ try {
           'One-sided confirmation did not establish trust',
           'Bilateral confirmation established trust on both nodes',
           'Mutually authenticated X25519 and AES-GCM channel synchronized the Brain directory',
-          'An encrypted cross-device task invitation arrived without any project or model binding',
-          'The target operator accepted the invitation and both nodes persisted the accepted state',
-          'The target selected a trusted project and available model only on its own device',
-          'The owner received a bounded execution-ready lease without project or model identifiers',
-          'The local lease blocked an ordinary task before any model or OpenCode session could start',
-          'The target revoked execution preparation and released the local project reservation',
+          'An encrypted cross-device collaboration task arrived without project, model, or credential fields',
+          'The target stored one reusable local capability policy with automatic invocation as the default mode',
+          'The target automatically accepted a matching task without per-task project or model selection',
+          'The packaged OpenCode engine created a real session and executed the task in the configured Git project',
+          'The owner received monotonic execution states without local project, model, task ID, or credential values',
+          'The resulting file content was verified directly in the Git fixture',
+          'The existing project concurrency guard rejected a second task while remote results awaited review',
           'Revocation removed trust on both nodes',
           'Pairing did not expose any project, task, model, or OpenCode business endpoint',
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
-          'The task slice prepares local resources but does not yet create an OpenCode session, execute AI, transmit approvals, or return artifacts.',
+          'Approvals are still handled on the executor device; remote approval, stop, artifacts and acceptance are the next slice.',
         ],
         screenshot,
         pairingScreenshot,
@@ -281,8 +336,36 @@ try {
   console.log('PASS actual Tauri WebView2 node network UI:', proof);
   process.exitCode = 0;
 } finally {
+  if (page && runningLocalTaskID) {
+    await page
+      .evaluate(async (taskID: string) => {
+        const current = await (
+          await fetch(`/api/tasks/${taskID}`, { credentials: 'same-origin' })
+        ).json();
+        if (
+          !['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted'].includes(
+            current.task?.state,
+          )
+        )
+          return;
+        await fetch(`/api/tasks/${taskID}/stop`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
+          body: '{}',
+        });
+      }, runningLocalTaskID)
+      .catch(() => {});
+    await wait(500);
+  }
   await peer.stop();
-  rmSync(peerRoot, { recursive: true, force: true });
+  try {
+    rmSync(peerRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+  } catch (error) {
+    console.warn(
+      `Temporary fixture cleanup deferred until Rivloom exits: ${error instanceof Error ? error.message : 'unknown error'}`,
+    );
+  }
   // Do not close the browser connection: it belongs to the native application.
 }
 

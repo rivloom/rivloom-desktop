@@ -75,6 +75,11 @@ export type Task = {
   artifactHash: string | null;
   diffSource: string;
   error: string | null;
+  remoteOrigin?: {
+    remoteTaskID: string;
+    ownerNodeID: string;
+    ownerBrainID: string;
+  };
 };
 export type Bootstrap = {
   user: User;
@@ -88,6 +93,7 @@ export type Bootstrap = {
     error: string | null;
   };
   defaultModel: string;
+  executionPolicy: NodeExecutionPolicy;
   network: NodeNetwork;
 };
 export type BrainSummary = {
@@ -105,17 +111,31 @@ export type RemoteTaskInvite = {
   description: string;
   criteria: string;
   status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+  automaticEligible: boolean;
   executionStatus: 'unprepared' | 'ready' | 'revoked' | 'expired';
   executionLeaseID: string | null;
   executionLeaseExpiresAt: string | null;
   executionUpdatedAt: string | null;
   localProjectID: string | null;
   localModel: string | null;
+  localTaskID: string | null;
+  executionState: 'not_started' | TaskState;
+  executionSequence: number;
+  executionSummary: string;
   deliveryPending: boolean;
   deliveryError: string | null;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
+};
+export type NodeExecutionPolicy = {
+  enabled: boolean;
+  mode: 'automatic' | 'limited' | 'confirm';
+  projectID: string | null;
+  model: string | null;
+  allowedNodeIDs: string[];
+  maxConcurrent: 1;
+  updatedAt: string | null;
 };
 export type RivloomNode = {
   id: string;

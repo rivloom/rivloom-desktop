@@ -52,7 +52,7 @@ import {
 import { validateProject, redact } from './artifacts.ts';
 import { dataRoot } from './engine.ts';
 import { acquireDataLock } from './process-lock.ts';
-import { activeStates, type Task } from '../shared/types.ts';
+import { activeStates, stateLabels, type Task } from '../shared/types.ts';
 import {
   modelSettings,
   defaultModel,
@@ -63,6 +63,7 @@ import {
   assertCanStartTask,
 } from './model-settings.ts';
 import { NodeNetwork, NodeNetworkError } from './node-network.ts';
+import { ExecutionPolicyStore } from './execution-policy.ts';
 
 try {
   acquireDataLock();
@@ -72,6 +73,12 @@ try {
 }
 const app = express();
 const nodeNetwork = new NodeNetwork(dataRoot);
+const executionPolicies = new ExecutionPolicyStore(dataRoot);
+try {
+  executionPolicies.load();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : '本机执行能力配置无法读取。');
+}
 const port = Number(process.env.PORT || 4310);
 const dev = process.argv.includes('--dev');
 const desktop = process.env.RIVLOOM_DESKTOP === '1';
@@ -190,11 +197,13 @@ app.get('/api/bootstrap', (req, res) =>
     tasks: tasks().filter((t) => participant(t, who(req))),
     engine: engineStatus,
     defaultModel: defaultModel(),
+    executionPolicy: executionPolicies.snapshot(),
     network: nodeNetwork.snapshot(),
   }),
 );
 app.get('/api/model-settings', (_req, res) => res.json(modelSettings()));
 app.get('/api/network', (_req, res) => res.json(nodeNetwork.snapshot()));
+app.get('/api/network/execution-policy', (_req, res) => res.json(executionPolicies.snapshot()));
 const requireNetworkOwner = (req: Request) =>
   requireThat(who(req).owner, 403, '只有本机所有者可以管理设备信任');
 app.post('/api/network/pairings', async (req, res) => {
@@ -221,6 +230,46 @@ app.post('/api/network/trusted/:nodeID/revoke', async (req, res) => {
   z.object({ confirmed: z.literal(true) }).parse(req.body);
   res.json(await nodeNetwork.revokeTrust(nodeID));
 });
+app.post('/api/network/execution-policy', (req, res) => {
+  requireNetworkOwner(req);
+  const input = z
+    .object({
+      enabled: z.boolean(),
+      mode: z.enum(['automatic', 'limited', 'confirm']),
+      projectID: z.string().uuid().nullable(),
+      model: z.string().min(3).max(200).nullable(),
+      allowedNodeIDs: z.array(z.string().regex(/^[A-Za-z0-9_-]{32}$/)).max(100),
+      confirmed: z.literal(true),
+    })
+    .parse(req.body);
+  if (input.enabled) {
+    requireThat(input.projectID && input.model, 400, '开启执行能力前请选择本机项目和模型。');
+    project(input.projectID);
+    requireThat(
+      engineStatus.models.some((candidate) => candidate.id === input.model),
+      400,
+      '所选模型当前不可用，请先在本机模型设置中连接。',
+    );
+  }
+  if (input.enabled && input.mode === 'limited') {
+    requireThat(input.allowedNodeIDs.length > 0, 400, '有限调用至少选择一个受信节点。');
+    requireThat(
+      input.allowedNodeIDs.every((nodeID) => nodeNetwork.isTrustedNode(nodeID)),
+      400,
+      '有限调用只能授权已受信的节点。',
+    );
+  }
+  const saved = executionPolicies.save({
+    enabled: input.enabled,
+    mode: input.mode,
+    projectID: input.projectID,
+    model: input.model,
+    allowedNodeIDs: input.allowedNodeIDs,
+  });
+  changed();
+  queueMicrotask(() => void processRemoteTasks());
+  res.json(saved);
+});
 const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
 app.post('/api/network/tasks', async (req, res) => {
   requireNetworkOwner(req);
@@ -245,7 +294,19 @@ app.post('/api/network/tasks', async (req, res) => {
 app.post('/api/network/tasks/:id/accept', async (req, res) => {
   requireNetworkOwner(req);
   z.object({ confirmed: z.literal(true) }).parse(req.body);
-  res.json(await nodeNetwork.respondRemoteTask(remoteTaskID(req), 'accepted'));
+  const taskID = remoteTaskID(req);
+  const remote = nodeNetwork.remoteTask(taskID);
+  requireThat(remote?.automaticEligible, 409, '这条旧版任务记录不能自动执行，请重新发起。');
+  const policy = executionPolicies.snapshot();
+  requireThat(policy.enabled, 409, '请先配置并开启本机执行能力。');
+  requireThat(
+    policy.mode !== 'limited' || policy.allowedNodeIDs.includes(remote.ownerNodeID),
+    403,
+    '当前有限调用策略未授权此节点。',
+  );
+  const result = await nodeNetwork.respondRemoteTask(taskID, 'accepted');
+  queueMicrotask(() => void processRemoteTask(taskID, true));
+  res.json(result);
 });
 app.post('/api/network/tasks/:id/decline', async (req, res) => {
   requireNetworkOwner(req);
@@ -301,6 +362,234 @@ app.post('/api/network/tasks/:id/preparation/revoke', async (req, res) => {
   z.object({ confirmed: z.literal(true) }).parse(req.body);
   res.json(await nodeNetwork.revokeRemoteTaskPreparation(remoteTaskID(req)));
 });
+
+const processingRemoteTasks = new Set<string>();
+
+function remoteExecutionSummary(value: Task) {
+  if (value.state === 'review') {
+    const assistant = value.messages.filter((message) => message.role === 'assistant').at(-1)?.text;
+    return redact(assistant?.trim() || 'AI 已完成执行，等待发起方查看结果。').slice(0, 12_000);
+  }
+  if (value.state === 'failed' || value.state === 'interrupted')
+    return redact(value.error || stateLabels[value.state]);
+  if (value.state === 'waiting_approval') return '执行节点正在等待本机审批。';
+  if (value.state === 'waiting_input') return '执行节点正在等待本机补充信息。';
+  if (value.state === 'running') return 'OpenCode 正在执行任务。';
+  if (value.state === 'stopped') return '执行节点已停止任务，已完成的修改不会自动回滚。';
+  return stateLabels[value.state];
+}
+
+async function publishRemoteExecution(taskID: string) {
+  let value: Task;
+  try {
+    value = task(taskID);
+  } catch {
+    return;
+  }
+  if (!value.remoteOrigin) return;
+  await nodeNetwork
+    .publishRemoteTaskExecution(value.id, value.state, remoteExecutionSummary(value))
+    .catch(() => {});
+}
+
+const onTaskUpdateForNetwork = (value: { taskID?: string }) => {
+  if (value.taskID) void publishRemoteExecution(value.taskID);
+};
+updates.on('update', onTaskUpdateForNetwork);
+
+async function processRemoteTask(taskID: string, manuallyApproved = false) {
+  if (processingRemoteTasks.has(taskID)) return;
+  processingRemoteTasks.add(taskID);
+  try {
+    let remote = nodeNetwork.remoteTask(taskID);
+    let policy = executionPolicies.snapshot();
+    if (
+      !remote ||
+      remote.direction !== 'incoming' ||
+      !remote.automaticEligible ||
+      !policy.enabled ||
+      !policy.projectID ||
+      !policy.model
+    )
+      return;
+    if (remote.status === 'pending') {
+      if (!manuallyApproved && !executionPolicies.allows(remote.ownerNodeID)) return;
+      await nodeNetwork.respondRemoteTask(taskID, 'accepted');
+      remote = nodeNetwork.remoteTask(taskID);
+    }
+    if (
+      !remote ||
+      remote.status !== 'accepted' ||
+      remote.deliveryPending ||
+      !nodeNetwork.remoteTaskPeerReady(taskID)
+    )
+      return;
+    policy = executionPolicies.snapshot();
+    if (
+      !policy.enabled ||
+      !policy.projectID ||
+      !policy.model ||
+      (policy.mode === 'limited' && !policy.allowedNodeIDs.includes(remote.ownerNodeID))
+    )
+      return;
+    if (!engineStatus.ready || !engineStatus.models.some((model) => model.id === policy.model))
+      return;
+    const localOwner = users().find((candidate) => candidate.owner) || users()[0];
+    if (!localOwner) return;
+
+    await exclusive('remote-execution-queue', async () => {
+      let currentRemote = nodeNetwork.remoteTask(taskID);
+      if (!currentRemote || currentRemote.status !== 'accepted') return;
+      let localTask = tasks().find((candidate) => candidate.remoteOrigin?.remoteTaskID === taskID);
+      if (!localTask) {
+        const projectID = policy.projectID!;
+        project(projectID);
+        if (
+          tasks().some(
+            (candidate) =>
+              candidate.projectID === projectID &&
+              (activeStates.includes(candidate.state) ||
+                candidate.state === 'review' ||
+                candidate.state === 'interrupted'),
+          )
+        )
+          return;
+        const createdAt = now();
+        localTask = {
+          id: id(),
+          number: Math.max(0, ...tasks().map((candidate) => candidate.number)) + 1,
+          projectID,
+          title: currentRemote.title,
+          description: currentRemote.description,
+          criteria: currentRemote.criteria,
+          creatorID: localOwner.id,
+          assigneeID: localOwner.id,
+          approverID: localOwner.id,
+          reviewerID: localOwner.id,
+          acceptedBy: null,
+          state: 'ready',
+          version: 1,
+          createdAt,
+          updatedAt: createdAt,
+          model: policy.model!,
+          sessionID: null,
+          baseCommit: null,
+          runAfter: 0,
+          messages: [],
+          approvals: [],
+          questions: [],
+          artifacts: [],
+          artifactHash: null,
+          diffSource: '',
+          error: null,
+          remoteOrigin: {
+            remoteTaskID: taskID,
+            ownerNodeID: currentRemote.ownerNodeID,
+            ownerBrainID: currentRemote.ownerBrainID,
+          },
+        } satisfies Task;
+        saveTask(localTask);
+        activity(
+          localTask.id,
+          localOwner.id,
+          'remote_created',
+          `受信 Brain ${currentRemote.ownerBrainID.slice(0, 6)} 按本机策略调用执行能力。`,
+        );
+        changed(localTask.id);
+      }
+      currentRemote = nodeNetwork.remoteTask(taskID);
+      if (!currentRemote?.localTaskID)
+        await nodeNetwork.bindRemoteTaskExecution(taskID, localTask.id);
+      localTask = task(localTask.id);
+      if (localTask.state !== 'ready' || localTask.sessionID) {
+        if (localTask.state === 'ready' && localTask.sessionID) {
+          patchTask(localTask.id, {
+            state: 'interrupted',
+            error: '发现未确认的既有引擎会话；为避免重复执行，未自动继续。',
+          });
+          changed(localTask.id);
+        }
+        return;
+      }
+      try {
+        await exclusive('engine-settings', async () => {
+          assertCanStartTask();
+          await exclusive(`project:${localTask!.projectID}`, () =>
+            runTask(localTask!.id, localOwner),
+          );
+        });
+      } catch (error) {
+        const current = task(localTask.id);
+        if (current.state === 'ready') {
+          patchTask(current.id, {
+            state: 'failed',
+            error: redact(error instanceof Error ? error.message : '自动执行启动失败。'),
+          });
+          activity(current.id, localOwner.id, 'remote_start_failed', '自动执行启动失败。');
+          changed(current.id);
+        }
+      }
+    });
+  } catch (error) {
+    console.error(
+      `远端任务 ${taskID} 未能按策略启动：${error instanceof Error ? error.message : '未知错误'}`,
+    );
+  } finally {
+    processingRemoteTasks.delete(taskID);
+  }
+}
+
+async function processRemoteTasks() {
+  for (const remote of nodeNetwork.snapshot().remoteTasks)
+    if (
+      remote.direction === 'incoming' &&
+      remote.automaticEligible &&
+      (remote.status === 'pending' || remote.status === 'accepted') &&
+      (remote.executionSequence === 0 ||
+        (remote.direction === 'incoming' &&
+          remote.executionState === 'ready' &&
+          remote.localTaskID !== null))
+    )
+      await processRemoteTask(remote.id);
+}
+
+nodeNetwork.on('remote-task-offer', (value: { taskID: string }) => {
+  void processRemoteTask(value.taskID);
+});
+async function stopExecutionsForRevokedNode(nodeID: string) {
+  const localOwner = users().find((candidate) => candidate.owner) || users()[0];
+  if (!localOwner) return;
+  for (const value of tasks().filter(
+    (candidate) => candidate.remoteOrigin?.ownerNodeID === nodeID,
+  )) {
+    try {
+      if (value.state === 'ready' && !value.sessionID) {
+        patchTask(value.id, {
+          state: 'stopped',
+          error: '任务来源设备的信任已撤销；尚未开始的自动执行已取消。',
+        });
+        activity(value.id, localOwner.id, 'trust_revoked', '来源设备信任撤销，取消自动执行。');
+        changed(value.id);
+      } else if (activeStates.includes(value.state) || value.state === 'interrupted') {
+        await stopTask(value.id, localOwner);
+        activity(value.id, localOwner.id, 'trust_revoked', '来源设备信任撤销，停止远端执行。');
+      }
+    } catch {
+      const current = task(value.id);
+      patchTask(current.id, {
+        state: 'interrupted',
+        error: '来源设备信任已撤销，但无法确认 OpenCode 已停止；请立即在本机检查。',
+      });
+      changed(current.id);
+    }
+  }
+}
+const onTrustRevoked = (value: { nodeID: string }) => {
+  void stopExecutionsForRevokedNode(value.nodeID);
+};
+nodeNetwork.on('trust-revoked', onTrustRevoked);
+const remoteTaskProcessor = setInterval(() => void processRemoteTasks(), 2_000);
+remoteTaskProcessor.unref();
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z
@@ -606,6 +895,9 @@ let closing = false;
 export async function shutdown() {
   if (closing) return;
   closing = true;
+  clearInterval(remoteTaskProcessor);
+  updates.off('update', onTaskUpdateForNetwork);
+  nodeNetwork.off('trust-revoked', onTrustRevoked);
   const deadline = setTimeout(() => process.exit(1), 6000);
   deadline.unref();
   removeDesktopToken();

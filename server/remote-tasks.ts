@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { RemoteTaskInvite } from '../shared/types.ts';
+import type { RemoteTaskInvite, TaskState } from '../shared/types.ts';
 
 export type RemoteTaskOfferMessage = {
   type: 'remote-task-offer';
@@ -23,6 +23,7 @@ export type RemoteTaskOfferMessage = {
   title: string;
   description: string;
   criteria: string;
+  executionProtocol: 1;
   createdAt: string;
   expiresAt: string;
 };
@@ -67,19 +68,48 @@ export type RemoteTaskPreparationMessage = {
   statusAt: string;
 };
 
+export type RemoteTaskExecutionMessage = {
+  type: 'remote-task-execution';
+  version: 1;
+  taskID: string;
+  idempotencyKey: string;
+  ownerNodeID: string;
+  ownerBrainID: string;
+  targetNodeID: string;
+  targetBrainID: string;
+  sequence: number;
+  state: TaskState;
+  summary: string;
+  statusAt: string;
+};
+
 export type RemoteTaskMessage =
   | RemoteTaskOfferMessage
   | RemoteTaskResponseMessage
   | RemoteTaskCancelMessage
-  | RemoteTaskPreparationMessage;
+  | RemoteTaskPreparationMessage
+  | RemoteTaskExecutionMessage;
 
 type StoredRemoteTask = RemoteTaskInvite & { idempotencyKey: string };
-type StoredRemoteTasks = { version: 2; tasks: StoredRemoteTask[] };
+type StoredRemoteTasks = { version: 3; tasks: StoredRemoteTask[] };
 
 const nodePattern = /^[A-Za-z0-9_-]{32}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const maximumLifetimeMilliseconds = 24 * 60 * 60_000;
 const executionLeaseMilliseconds = 30 * 60_000;
+const taskStates = [
+  'open',
+  'ready',
+  'running',
+  'waiting_approval',
+  'waiting_input',
+  'stopping',
+  'stopped',
+  'interrupted',
+  'failed',
+  'review',
+  'accepted',
+] as const satisfies readonly TaskState[];
 
 function validDate(value: unknown) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
@@ -118,6 +148,7 @@ export function validRemoteTaskOffer(value: unknown): value is RemoteTaskOfferMe
     typeof item.criteria !== 'string' ||
     item.criteria.trim().length < 1 ||
     item.criteria.length > 2000 ||
+    item.executionProtocol !== 1 ||
     !validDate(item.createdAt) ||
     !validDate(item.expiresAt)
   )
@@ -180,6 +211,22 @@ export function validRemoteTaskPreparation(value: unknown): value is RemoteTaskP
   );
 }
 
+export function validRemoteTaskExecution(value: unknown): value is RemoteTaskExecutionMessage {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.type === 'remote-task-execution' &&
+    validBase(item) &&
+    Number.isSafeInteger(item.sequence) &&
+    Number(item.sequence) > 0 &&
+    taskStates.includes(item.state as TaskState) &&
+    typeof item.summary === 'string' &&
+    item.summary.length <= 12_000 &&
+    validDate(item.statusAt) &&
+    Date.parse(String(item.statusAt)) <= Date.now() + 60_000
+  );
+}
+
 function validStored(value: unknown): value is StoredRemoteTask {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
@@ -207,6 +254,7 @@ function validStored(value: unknown): value is StoredRemoteTask {
     item.criteria.trim().length >= 1 &&
     item.criteria.length <= 2000 &&
     ['pending', 'accepted', 'declined', 'cancelled', 'expired'].includes(String(item.status)) &&
+    typeof item.automaticEligible === 'boolean' &&
     ['unprepared', 'ready', 'revoked', 'expired'].includes(String(item.executionStatus)) &&
     (item.executionLeaseID === null ||
       (typeof item.executionLeaseID === 'string' && uuidPattern.test(item.executionLeaseID))) &&
@@ -218,6 +266,22 @@ function validStored(value: unknown): value is StoredRemoteTask {
       (typeof item.localModel === 'string' &&
         item.localModel.length >= 3 &&
         item.localModel.length <= 200)) &&
+    (item.localTaskID === null ||
+      (typeof item.localTaskID === 'string' && uuidPattern.test(item.localTaskID))) &&
+    (item.executionState === 'not_started' ||
+      taskStates.includes(item.executionState as TaskState)) &&
+    Number.isSafeInteger(item.executionSequence) &&
+    Number(item.executionSequence) >= 0 &&
+    typeof item.executionSummary === 'string' &&
+    item.executionSummary.length <= 12_000 &&
+    ((item.executionSequence === 0 &&
+      item.executionState === 'not_started' &&
+      item.executionSummary === '' &&
+      item.localTaskID === null) ||
+      (Number(item.executionSequence) > 0 &&
+        item.status === 'accepted' &&
+        item.executionState !== 'not_started' &&
+        (item.direction === 'outgoing' || item.localTaskID !== null))) &&
     ((item.executionStatus === 'unprepared' &&
       item.executionLeaseID === null &&
       item.executionLeaseExpiresAt === null &&
@@ -250,12 +314,18 @@ function normalizeStored(value: unknown): StoredRemoteTask | null {
   const item = value as Record<string, unknown>;
   const normalized = {
     ...item,
+    automaticEligible: item.automaticEligible ?? false,
     executionStatus: item.executionStatus ?? 'unprepared',
     executionLeaseID: item.executionLeaseID ?? null,
     executionLeaseExpiresAt: item.executionLeaseExpiresAt ?? null,
     executionUpdatedAt: item.executionUpdatedAt ?? null,
     localProjectID: item.localProjectID ?? null,
     localModel: item.localModel ?? null,
+    localTaskID: item.localTaskID ?? null,
+    executionState: item.executionState ?? 'not_started',
+    executionSequence: item.executionSequence ?? 0,
+    executionSummary: item.executionSummary ?? '',
+    deliveryPending: item.automaticEligible === undefined ? false : item.deliveryPending,
     deliveryError: item.deliveryError ?? null,
   };
   return validStored(normalized) ? normalized : null;
@@ -277,6 +347,7 @@ function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
     task.title === message.title &&
     task.description === message.description &&
     task.criteria === message.criteria &&
+    task.automaticEligible === (message.executionProtocol === 1) &&
     task.createdAt === message.createdAt &&
     task.expiresAt === message.expiresAt
   );
@@ -284,7 +355,11 @@ function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
 
 function sameRoute(
   task: StoredRemoteTask,
-  message: RemoteTaskResponseMessage | RemoteTaskCancelMessage | RemoteTaskPreparationMessage,
+  message:
+    | RemoteTaskResponseMessage
+    | RemoteTaskCancelMessage
+    | RemoteTaskPreparationMessage
+    | RemoteTaskExecutionMessage,
 ) {
   return (
     task.id === message.taskID &&
@@ -317,7 +392,7 @@ export class RemoteTaskStore {
       throw new Error('远端任务邀请记录无效；节点网络保持关闭。');
     const stored = value as Record<string, unknown>;
     if (
-      (stored.version !== 1 && stored.version !== 2) ||
+      (stored.version !== 1 && stored.version !== 2 && stored.version !== 3) ||
       !Array.isArray(stored.tasks) ||
       stored.tasks.length > 500
     )
@@ -328,7 +403,7 @@ export class RemoteTaskStore {
     if (new Set(normalizedTasks.map((task) => task.id)).size !== normalizedTasks.length)
       throw new Error('远端任务邀请记录存在冲突；节点网络保持关闭。');
     for (const task of normalizedTasks) this.values.set(task.id, { ...task });
-    if (stored.version === 1) this.save();
+    if (stored.version !== 3) this.save();
   }
 
   list() {
@@ -362,12 +437,17 @@ export class RemoteTaskStore {
       description: input.description.trim(),
       criteria: input.criteria.trim(),
       status: 'pending',
+      automaticEligible: true,
       executionStatus: 'unprepared',
       executionLeaseID: null,
       executionLeaseExpiresAt: null,
       executionUpdatedAt: null,
       localProjectID: null,
       localModel: null,
+      localTaskID: null,
+      executionState: 'not_started',
+      executionSequence: 0,
+      executionSummary: '',
       deliveryPending: true,
       deliveryError: null,
       createdAt,
@@ -399,12 +479,17 @@ export class RemoteTaskStore {
       description: message.description,
       criteria: message.criteria,
       status: 'pending',
+      automaticEligible: true,
       executionStatus: 'unprepared',
       executionLeaseID: null,
       executionLeaseExpiresAt: null,
       executionUpdatedAt: null,
       localProjectID: null,
       localModel: null,
+      localTaskID: null,
+      executionState: 'not_started',
+      executionSequence: 0,
+      executionSummary: '',
       deliveryPending: false,
       deliveryError: null,
       createdAt: message.createdAt,
@@ -529,11 +614,85 @@ export class RemoteTaskStore {
     return true;
   }
 
+  bindLocalTask(taskID: string, localTaskID: string) {
+    const task = this.values.get(taskID);
+    if (!task || task.direction !== 'incoming' || !task.automaticEligible)
+      throw new Error('可执行的远端任务不存在。');
+    if (task.status !== 'accepted' || task.deliveryPending)
+      throw new Error('远端任务接受状态尚未完成同步。');
+    if (!uuidPattern.test(localTaskID)) throw new Error('本机任务标识无效。');
+    if (task.localTaskID) {
+      if (task.localTaskID === localTaskID) return publicTask(task);
+      throw new Error('远端任务已经绑定其他本机任务。');
+    }
+    const statusAt = new Date().toISOString();
+    task.localTaskID = localTaskID;
+    task.executionState = 'ready';
+    task.executionSequence = 1;
+    task.executionSummary = '执行节点已创建本机任务，等待启动 OpenCode。';
+    task.deliveryPending = true;
+    task.deliveryError = null;
+    task.updatedAt = statusAt;
+    this.save();
+    return publicTask(task);
+  }
+
+  updateLocalExecution(localTaskID: string, state: TaskState, summary: string) {
+    const task = [...this.values.values()].find(
+      (candidate) => candidate.direction === 'incoming' && candidate.localTaskID === localTaskID,
+    );
+    if (!task || task.status !== 'accepted') return null;
+    const normalizedSummary = summary.slice(0, 12_000);
+    if (task.executionState === state && task.executionSummary === normalizedSummary)
+      return publicTask(task);
+    task.executionState = state;
+    task.executionSequence += 1;
+    task.executionSummary = normalizedSummary;
+    task.deliveryPending = true;
+    task.deliveryError = null;
+    task.updatedAt = new Date().toISOString();
+    this.save();
+    return publicTask(task);
+  }
+
+  receiveExecution(message: RemoteTaskExecutionMessage) {
+    const task = this.values.get(message.taskID);
+    if (!task || task.direction !== 'outgoing' || !sameRoute(task, message))
+      throw new Error('远端执行状态与原任务不匹配。');
+    if (!task.automaticEligible || task.status !== 'accepted')
+      throw new Error('远端任务尚未进入执行阶段。');
+    if (Date.parse(message.statusAt) < Date.parse(task.createdAt))
+      throw new Error('远端执行状态时间无效。');
+    if (message.sequence < task.executionSequence) return false;
+    if (message.sequence === task.executionSequence) {
+      if (task.executionState === message.state && task.executionSummary === message.summary)
+        return false;
+      throw new Error('远端执行状态序号冲突。');
+    }
+    task.executionState = message.state;
+    task.executionSequence = message.sequence;
+    task.executionSummary = message.summary;
+    task.localTaskID = null;
+    task.deliveryPending = false;
+    task.deliveryError = null;
+    task.updatedAt = message.statusAt;
+    this.save();
+    return true;
+  }
+
+  taskForLocalTask(localTaskID: string) {
+    const task = [...this.values.values()].find(
+      (candidate) => candidate.direction === 'incoming' && candidate.localTaskID === localTaskID,
+    );
+    return task ? publicTask(task) : null;
+  }
+
   cancel(taskID: string) {
     const task = this.values.get(taskID);
     if (!task || task.direction !== 'outgoing') throw new Error('可取消的远端任务邀请不存在。');
     if (task.status !== 'pending' && task.status !== 'accepted')
       throw new Error('远端任务邀请当前不能取消。');
+    if (task.executionSequence > 0) throw new Error('远端任务已经开始执行；请使用停止操作。');
     task.status = 'cancelled';
     task.executionStatus = task.executionStatus === 'unprepared' ? 'unprepared' : 'revoked';
     task.localProjectID = null;
@@ -552,6 +711,7 @@ export class RemoteTaskStore {
     if (Date.parse(message.cancelledAt) < Date.parse(task.createdAt))
       throw new Error('远端任务取消时间无效。');
     if (task.status === 'cancelled' || task.status === 'declined') return false;
+    if (task.executionSequence > 0) throw new Error('远端任务已经开始执行，不能按邀请取消。');
     task.status = 'cancelled';
     task.executionStatus = task.executionStatus === 'unprepared' ? 'unprepared' : 'revoked';
     task.localProjectID = null;
@@ -592,8 +752,23 @@ export class RemoteTaskStore {
         title: task.title,
         description: task.description,
         criteria: task.criteria,
+        executionProtocol: 1,
         createdAt: task.createdAt,
         expiresAt: task.expiresAt,
+      };
+    if (
+      task.direction === 'incoming' &&
+      task.status === 'accepted' &&
+      task.executionSequence > 0 &&
+      task.executionState !== 'not_started'
+    )
+      return {
+        ...base,
+        type: 'remote-task-execution',
+        sequence: task.executionSequence,
+        state: task.executionState,
+        summary: task.executionSummary,
+        statusAt: task.updatedAt,
       };
     if (
       task.direction === 'incoming' &&
@@ -695,7 +870,7 @@ export class RemoteTaskStore {
     for (const task of this.values.values())
       if (
         (task.ownerNodeID === nodeID || task.targetNodeID === nodeID) &&
-        (task.status === 'pending' || task.status === 'accepted')
+        (task.status === 'pending' || (task.status === 'accepted' && task.executionSequence === 0))
       ) {
         task.status = 'cancelled';
         task.executionStatus = task.executionStatus === 'unprepared' ? 'unprepared' : 'revoked';
@@ -713,7 +888,7 @@ export class RemoteTaskStore {
   private save() {
     mkdirSync(dirname(this.path), { recursive: true });
     const value: StoredRemoteTasks = {
-      version: 2,
+      version: 3,
       tasks: [...this.values.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     };
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;

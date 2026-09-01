@@ -9,6 +9,7 @@ import type {
   NodeNetwork as NodeNetworkSnapshot,
   NodePairing,
   RivloomNode,
+  TaskState,
 } from '../shared/types.ts';
 import {
   fingerprintForPublicKey,
@@ -49,6 +50,7 @@ import {
 import {
   RemoteTaskStore,
   validRemoteTaskCancel,
+  validRemoteTaskExecution,
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
   validRemoteTaskResponse,
@@ -138,7 +140,7 @@ export class NodeNetworkError extends Error {
 }
 
 const serviceType = 'rivloom';
-const capabilities = ['brain', 'executor', 'human-ui'];
+const capabilities = ['brain', 'executor', 'human-ui', 'remote-execution-v1'];
 const maximumHelloBytes = 16 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
@@ -783,6 +785,7 @@ export class NodeNetwork extends EventEmitter {
       return envelope;
     }
     let changed = false;
+    let receivedOfferID: string | null = null;
     try {
       if (validRemoteTaskOffer(message)) {
         if (
@@ -793,6 +796,7 @@ export class NodeNetwork extends EventEmitter {
         )
           throw new Error('远端任务邀请路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveOffer(message);
+        if (changed) receivedOfferID = message.taskID;
       } else if (validRemoteTaskResponse(message)) {
         if (
           message.ownerNodeID !== this.identity!.nodeID ||
@@ -811,6 +815,15 @@ export class NodeNetwork extends EventEmitter {
         )
           throw new Error('远端执行准备路由与当前节点不匹配。');
         changed = this.remoteTasks.receivePreparation(message);
+      } else if (validRemoteTaskExecution(message)) {
+        if (
+          message.ownerNodeID !== this.identity!.nodeID ||
+          message.targetNodeID !== node.id ||
+          message.ownerBrainID !== this.identity!.brainID ||
+          !node.brains.some((brain) => brain.id === message.targetBrainID)
+        )
+          throw new Error('远端执行状态路由与当前节点不匹配。');
+        changed = this.remoteTasks.receiveExecution(message);
       } else if (validRemoteTaskCancel(message)) {
         if (
           message.ownerNodeID !== node.id ||
@@ -828,6 +841,10 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(409, '远端任务消息冲突或已经失效。');
     }
     if (changed) this.update();
+    if (receivedOfferID) {
+      const taskID = receivedOfferID;
+      queueMicrotask(() => this.emit('remote-task-offer', { taskID }));
+    }
     return null;
   }
 
@@ -1137,6 +1154,7 @@ export class NodeNetwork extends EventEmitter {
     const pairing = this.pairingForNode(node.id);
     if (pairing) this.pairings.delete(pairing.id);
     this.update();
+    queueMicrotask(() => this.emit('trust-revoked', { nodeID: node.id }));
   }
 
   private async handlePeerRequest(request: IncomingMessage, response: ServerResponse) {
@@ -1321,6 +1339,7 @@ export class NodeNetwork extends EventEmitter {
     const pairing = this.pairingForNode(nodeID);
     if (pairing) this.pairings.delete(pairing.id);
     this.update();
+    queueMicrotask(() => this.emit('trust-revoked', { nodeID }));
     if (node?.online)
       try {
         await this.sendRevocation(node);
@@ -1342,6 +1361,8 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(409, '请先完成设备互信并等待加密通道就绪。');
     if (!node.brains.some((brain) => brain.id === targetBrainID))
       throw new NodeNetworkError(404, '目标 Brain 当前不可用。');
+    if (!node.capabilities.includes('remote-execution-v1'))
+      throw new NodeNetworkError(409, '目标节点版本尚不支持策略化任务执行。');
     const title = input.title.trim();
     const description = input.description.trim();
     const criteria = input.criteria.trim();
@@ -1465,6 +1486,43 @@ export class NodeNetwork extends EventEmitter {
 
   projectLeased(projectID: string) {
     return this.remoteTasks.projectLeased(projectID);
+  }
+
+  remoteTask(taskID: string) {
+    return this.remoteTasks.list().find((task) => task.id === taskID) || null;
+  }
+
+  remoteTaskPeerReady(taskID: string) {
+    const task = this.remoteTasks.record(taskID);
+    if (!task || task.direction !== 'incoming') return false;
+    const node = this.nodes.get(task.ownerNodeID);
+    return !!node?.online && node.trusted && node.channelReady;
+  }
+
+  isTrustedNode(nodeID: string) {
+    return !!this.trustStore.record(nodeID);
+  }
+
+  async bindRemoteTaskExecution(taskID: string, localTaskID: string) {
+    try {
+      this.remoteTasks.bindLocalTask(taskID, localTaskID);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '远端任务无法绑定本机执行。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
+    return this.remoteTask(taskID);
+  }
+
+  async publishRemoteTaskExecution(localTaskID: string, state: TaskState, summary: string) {
+    const updated = this.remoteTasks.updateLocalExecution(localTaskID, state, summary);
+    if (!updated) return null;
+    this.update();
+    await this.flushRemoteTask(updated.id);
+    return updated;
   }
 
   private async probe(service: MdnsService) {

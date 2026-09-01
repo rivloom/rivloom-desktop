@@ -1274,6 +1274,7 @@ function App() {
               owner={user.owner}
               projects={projects}
               models={engine.models}
+              executionPolicy={data.executionPolicy}
               busy={busy}
               onRequestPairing={(nodeID) => void action(() => api('/network/pairings', { nodeID }))}
               onConfirmPairing={(pairingID) =>
@@ -1285,7 +1286,7 @@ function App() {
               onRevokeTrust={(nodeID) => {
                 if (
                   globalThis.confirm(
-                    '撤销后，两台设备将不能继续通过该信任关系协作。确定撤销此设备吗？',
+                    '撤销后，两台设备将不能继续协作；由该设备发起且仍在本机执行的任务也会停止。确定撤销吗？',
                   )
                 )
                   void action(() => api(`/network/trusted/${nodeID}/revoke`, { confirmed: true }));
@@ -1314,27 +1315,9 @@ function App() {
                 if (globalThis.confirm('确定取消这条跨设备任务邀请吗？'))
                   void action(() => api(`/network/tasks/${taskID}/cancel`, { confirmed: true }));
               }}
-              onPrepareRemoteTask={(taskID, projectID, model) =>
-                void action(() =>
-                  api(`/network/tasks/${taskID}/prepare`, {
-                    projectID,
-                    model,
-                    confirmedProject: true,
-                    confirmedModel: true,
-                    confirmedLease: true,
-                  }),
-                )
+              onSaveExecutionPolicy={(input) =>
+                void action(() => api('/network/execution-policy', { ...input, confirmed: true }))
               }
-              onRevokeRemoteTaskPreparation={(taskID) => {
-                if (
-                  globalThis.confirm(
-                    '撤销后会立即释放本机项目，并通知发起方执行准备已取消。确定继续吗？',
-                  )
-                )
-                  void action(() =>
-                    api(`/network/tasks/${taskID}/preparation/revoke`, { confirmed: true }),
-                  );
-              }}
             />
           )}
         </main>

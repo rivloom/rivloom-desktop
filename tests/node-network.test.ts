@@ -31,10 +31,12 @@ import {
 import {
   RemoteTaskStore,
   validRemoteTaskCancel,
+  validRemoteTaskExecution,
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
   validRemoteTaskResponse,
 } from '../server/remote-tasks.ts';
+import { ExecutionPolicyStore } from '../server/execution-policy.ts';
 
 async function availableUdpPort() {
   const socket = createSocket('udp4');
@@ -322,13 +324,19 @@ test('remote task invitations persist and apply idempotent offer and response me
         'executionUpdatedAt',
         'localProjectID',
         'localModel',
+        'automaticEligible',
+        'localTaskID',
+        'executionState',
+        'executionSequence',
+        'executionSummary',
       ])
         delete task[key];
     writeFileSync(legacyPath, JSON.stringify(legacyValue, null, 2));
     const migrated = new RemoteTaskStore(roots[2]);
     migrated.load();
     assert.equal(migrated.list()[0].executionStatus, 'unprepared');
-    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 2);
+    assert.equal(migrated.list()[0].automaticEligible, false);
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 3);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',
@@ -344,8 +352,77 @@ test('remote task invitations persist and apply idempotent offer and response me
     assert(validRemoteTaskCancel(cancellation));
     assert.equal(target.receiveCancel(cancellation), true);
     assert.equal(target.receiveCancel(cancellation), false);
+
+    const executing = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
+      title: '策略化执行',
+      description: '验证远端任务与本机业务任务只绑定一次。',
+      criteria: '归属 Brain 按单调序号收到执行状态。',
+    });
+    const executingOffer = owner.message(executing.id);
+    assert(validRemoteTaskOffer(executingOffer));
+    target.receiveOffer(executingOffer);
+    owner.markDelivered(executing.id, executingOffer);
+    target.decide(executing.id, 'accepted');
+    const executingResponse = target.message(executing.id);
+    assert(validRemoteTaskResponse(executingResponse));
+    owner.receiveResponse(executingResponse);
+    target.markDelivered(executing.id, executingResponse);
+    const localTaskID = randomUUID();
+    target.bindLocalTask(executing.id, localTaskID);
+    const readyExecution = target.message(executing.id);
+    assert(validRemoteTaskExecution(readyExecution));
+    assert.equal(owner.receiveExecution(readyExecution), true);
+    assert.equal(owner.receiveExecution(readyExecution), false);
+    target.markDelivered(executing.id, readyExecution);
+    target.updateLocalExecution(localTaskID, 'running', 'OpenCode 正在执行任务。');
+    const runningExecution = target.message(executing.id);
+    assert(validRemoteTaskExecution(runningExecution));
+    assert.equal(owner.receiveExecution(runningExecution), true);
+    assert.equal(owner.list().find((task) => task.id === executing.id)?.executionState, 'running');
+    assert.throws(() => owner.cancel(executing.id), /停止操作/);
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('execution policy persists automatic, limited and disabled local capability rules', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-execution-policy-'));
+  try {
+    const store = new ExecutionPolicyStore(root);
+    store.load();
+    assert.equal(store.snapshot().enabled, false);
+    const projectID = randomUUID();
+    const trustedNodeID = 'T'.repeat(32);
+    store.save({
+      enabled: true,
+      mode: 'automatic',
+      projectID,
+      model: 'opencode/mimo-v2.5-free',
+      allowedNodeIDs: [],
+    });
+    assert(store.allows('A'.repeat(32)));
+    store.save({
+      enabled: true,
+      mode: 'limited',
+      projectID,
+      model: 'opencode/mimo-v2.5-free',
+      allowedNodeIDs: [trustedNodeID],
+    });
+    assert(store.allows(trustedNodeID));
+    assert.equal(store.allows('A'.repeat(32)), false);
+    const reloaded = new ExecutionPolicyStore(root);
+    reloaded.load();
+    assert.deepEqual(reloaded.snapshot().allowedNodeIDs, [trustedNodeID]);
+    reloaded.save({
+      enabled: false,
+      mode: 'automatic',
+      projectID: null,
+      model: null,
+      allowedNodeIDs: [],
+    });
+    assert.equal(reloaded.allows(trustedNodeID), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -652,11 +729,22 @@ test(
         403,
       );
 
+      const revokedNodeIDs: string[][] = [[], []];
+      networks.forEach((network, index) =>
+        network.on('trust-revoked', (value: { nodeID: string }) =>
+          revokedNodeIDs[index].push(value.nodeID),
+        ),
+      );
       await networks[0].revokeTrust(snapshots[0].nearby[0].id);
+      const revocationDeadline = Date.now() + 2_000;
+      while (Date.now() < revocationDeadline && revokedNodeIDs.some((values) => !values.length))
+        await wait(20);
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].channelReady));
       assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.status === 'cancelled'));
+      assert.deepEqual(revokedNodeIDs[0], [snapshots[0].nearby[0].id]);
+      assert.deepEqual(revokedNodeIDs[1], [snapshots[1].nearby[0].id]);
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       for (const root of roots) rmSync(root, { recursive: true, force: true });
