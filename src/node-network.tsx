@@ -20,6 +20,7 @@ import type {
   NodeNetwork,
   NodePairing,
   Project,
+  RemoteTaskControlAction,
   RemoteTaskInvite,
   RivloomNode,
 } from '../shared/types';
@@ -48,10 +49,7 @@ type NetworkActions = {
   controlRemoteTask(
     taskID: string,
     expectedExecutionSequence: number,
-    action:
-      | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
-      | { kind: 'question'; requestID: string; answers: string[][] }
-      | { kind: 'stop' },
+    action: RemoteTaskControlAction,
   ): void;
   saveExecutionPolicy(input: {
     enabled: boolean;
@@ -456,6 +454,39 @@ function RemoteTaskCard({
           </p>
         </div>
       )}
+      {task.direction === 'outgoing' &&
+        task.executionSequence > 0 &&
+        (task.remoteDiffSource || task.remoteArtifacts.length > 0) && (
+          <section className="remote-result-card">
+            <div className="remote-result-heading">
+              <strong>执行结果与官方差异</strong>
+              <span>
+                {task.remoteArtifacts.length} 个文件 ·{' '}
+                {task.remoteDiffSource || '执行节点未提供差异来源'}
+              </span>
+            </div>
+            {task.remoteArtifacts.length > 0 ? (
+              <div className="remote-artifact-list">
+                {task.remoteArtifacts.map((artifact, index) => (
+                  <article key={`${artifact.file}-${index}`}>
+                    <div>
+                      <strong>{artifact.file}</strong>
+                      <span>
+                        +{artifact.additions} −{artifact.deletions} · {artifact.status}
+                      </span>
+                    </div>
+                    <pre>{artifact.patch}</pre>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p>
+                OpenCode 没有返回可展示的会话差异。Rivloom
+                不扫描或哈希执行机文件夹；验收前请结合执行摘要，必要时让执行机参与者直接检查本地文件。
+              </p>
+            )}
+          </section>
+        )}
       {task.direction === 'outgoing' && task.remoteApprovals.length > 0 && (
         <div className="remote-intervention-list">
           {task.remoteApprovals.map((approval) => (
@@ -593,6 +624,86 @@ function RemoteTaskCard({
         )}
       {actions.owner &&
         task.direction === 'outgoing' &&
+        peer?.capabilities.includes('remote-results-v1') &&
+        [
+          'running',
+          'waiting_approval',
+          'waiting_input',
+          'stopped',
+          'interrupted',
+          'failed',
+          'review',
+        ].includes(task.executionState) && (
+          <details className="remote-followup">
+            <summary>
+              {task.executionState === 'review' ? '退回修改并继续' : '补充任务要求'}
+            </summary>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                actions.controlRemoteTask(task.id, task.executionSequence, {
+                  kind: 'supplement',
+                  text: String(form.get('remote-supplement') || ''),
+                });
+              }}
+            >
+              <textarea
+                name="remote-supplement"
+                required
+                maxLength={12000}
+                rows={4}
+                placeholder="补充新的约束、修改意见或验收要求…"
+              />
+              <button
+                className="button primary compact"
+                type="submit"
+                disabled={actions.busy || task.controlPending || task.deliveryPending}
+              >
+                {task.executionState === 'review' ? '退回并继续执行' : '发送补充要求'}
+              </button>
+            </form>
+          </details>
+        )}
+      {actions.owner &&
+        task.direction === 'outgoing' &&
+        task.executionState === 'review' &&
+        peer?.capabilities.includes('remote-results-v1') && (
+          <form
+            className="remote-acceptance-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              actions.controlRemoteTask(task.id, task.executionSequence, {
+                kind: 'accept',
+                note: String(form.get('remote-acceptance-note') || ''),
+              });
+            }}
+          >
+            <strong>归属 Brain 验收</strong>
+            <textarea
+              name="remote-acceptance-note"
+              required
+              maxLength={4000}
+              rows={3}
+              placeholder="记录已核对的结果、测试和限制…"
+            />
+            <label>
+              <input type="checkbox" required />
+              我已根据可见差异、执行摘要和验收标准核对本次交付；验收不会提交、推送或部署。
+            </label>
+            <button
+              className="button primary compact"
+              type="submit"
+              disabled={actions.busy || task.controlPending || task.deliveryPending}
+            >
+              <Check size={14} />
+              确认远程验收
+            </button>
+          </form>
+        )}
+      {actions.owner &&
+        task.direction === 'outgoing' &&
         task.executionSequence === 0 &&
         (task.status === 'pending' || task.status === 'accepted') && (
           <div className="remote-task-buttons">
@@ -645,10 +756,7 @@ export function NodeNetworkView({
   onControlRemoteTask(
     taskID: string,
     expectedExecutionSequence: number,
-    action:
-      | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
-      | { kind: 'question'; requestID: string; answers: string[][] }
-      | { kind: 'stop' },
+    action: RemoteTaskControlAction,
   ): void;
   onSaveExecutionPolicy(input: {
     enabled: boolean;

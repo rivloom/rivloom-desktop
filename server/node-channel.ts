@@ -41,6 +41,18 @@ export type ChannelAck = {
   signature: string;
 };
 
+export type ChannelRecovery = {
+  protocol: 'rivloom-secure-channel';
+  version: 1;
+  type: 'recover';
+  recoveryID: string;
+  requesterNodeID: string;
+  responderNodeID: string;
+  issuedAt: number;
+  publicKey: string;
+  signature: string;
+};
+
 export type ChannelEnvelope = {
   protocol: 'rivloom-secure-channel';
   version: 1;
@@ -109,6 +121,19 @@ export function unsignedChannelAck(value: Omit<ChannelAck, 'signature'>) {
   });
 }
 
+export function unsignedChannelRecovery(value: Omit<ChannelRecovery, 'signature'>) {
+  return JSON.stringify({
+    protocol: value.protocol,
+    version: value.version,
+    type: value.type,
+    recoveryID: value.recoveryID,
+    requesterNodeID: value.requesterNodeID,
+    responderNodeID: value.responderNodeID,
+    issuedAt: value.issuedAt,
+    publicKey: value.publicKey,
+  });
+}
+
 function envelopeAAD(value: Omit<ChannelEnvelope, 'ciphertext' | 'tag'>) {
   return Buffer.from(
     JSON.stringify({
@@ -170,6 +195,27 @@ export function validChannelAck(value: unknown): value is ChannelAck {
     Number.isInteger(item.issuedAt) &&
     typeof item.ephemeralPublicKey === 'string' &&
     item.ephemeralPublicKey.length <= 512 &&
+    typeof item.publicKey === 'string' &&
+    item.publicKey.length <= 512 &&
+    typeof item.signature === 'string' &&
+    item.signature.length <= 256
+  );
+}
+
+export function validChannelRecovery(value: unknown): value is ChannelRecovery {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.protocol === 'rivloom-secure-channel' &&
+    item.version === 1 &&
+    item.type === 'recover' &&
+    typeof item.recoveryID === 'string' &&
+    uuidPattern.test(item.recoveryID) &&
+    typeof item.requesterNodeID === 'string' &&
+    nodePattern.test(item.requesterNodeID) &&
+    typeof item.responderNodeID === 'string' &&
+    nodePattern.test(item.responderNodeID) &&
+    Number.isInteger(item.issuedAt) &&
     typeof item.publicKey === 'string' &&
     item.publicKey.length <= 512 &&
     typeof item.signature === 'string' &&

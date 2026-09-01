@@ -332,6 +332,8 @@ test('remote task invitations persist and apply idempotent offer and response me
         'executionSummary',
         'remoteApprovals',
         'remoteQuestions',
+        'remoteArtifacts',
+        'remoteDiffSource',
         'pendingControl',
         'incomingControls',
         'appliedControlIDs',
@@ -342,7 +344,7 @@ test('remote task invitations persist and apply idempotent offer and response me
     migrated.load();
     assert.equal(migrated.list()[0].executionStatus, 'unprepared');
     assert.equal(migrated.list()[0].automaticEligible, false);
-    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 4);
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 5);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',
@@ -377,7 +379,13 @@ test('remote task invitations persist and apply idempotent offer and response me
     target.bindLocalTask(executing.id, localTaskID);
     const readyExecution = target.message(executing.id);
     assert(validRemoteTaskExecution(readyExecution));
-    assert.equal(owner.receiveExecution(readyExecution), true);
+    const legacyExecution = structuredClone(readyExecution) as Record<string, unknown>;
+    delete legacyExecution.approvals;
+    delete legacyExecution.questions;
+    delete legacyExecution.artifacts;
+    delete legacyExecution.diffSource;
+    assert(validRemoteTaskExecution(legacyExecution));
+    assert.equal(owner.receiveExecution(legacyExecution), true);
     assert.equal(owner.receiveExecution(readyExecution), false);
     target.markDelivered(executing.id, readyExecution);
     target.updateLocalExecution(localTaskID, 'running', 'OpenCode 正在执行任务。');
@@ -408,10 +416,71 @@ test('remote task invitations persist and apply idempotent offer and response me
     assert.equal(target.pendingIncomingControls()[0]?.control.controlID, approvalControl.controlID);
     assert(target.finishIncomingControl(executing.id, approvalControl.controlID));
     assert.equal(target.pendingIncomingControls().length, 0);
-    owner.requestControl(executing.id, approvalSnapshot.executionSequence, {
-      kind: 'permission',
-      requestID: 'permission-1',
-      reply: 'reject',
+    target.updateLocalExecution(
+      localTaskID,
+      'review',
+      '结果等待归属 Brain 验收。',
+      [],
+      [],
+      [
+        {
+          file: 'RESULT.txt',
+          patch: '@@ -0,0 +1 @@\n+verified',
+          additions: 1,
+          deletions: 0,
+          status: 'added',
+        },
+      ],
+      'OpenCode 会话差异',
+    );
+    const reviewExecution = target.message(executing.id);
+    assert(validRemoteTaskExecution(reviewExecution));
+    assert.equal(owner.receiveExecution(reviewExecution), true);
+    target.markDelivered(executing.id, reviewExecution);
+    const reviewSnapshot = owner.list().find((task) => task.id === executing.id)!;
+    assert.equal(reviewSnapshot.remoteArtifacts[0]?.file, 'RESULT.txt');
+    assert.equal(reviewSnapshot.remoteDiffSource, 'OpenCode 会话差异');
+    owner.requestControl(executing.id, reviewSnapshot.executionSequence, {
+      kind: 'supplement',
+      text: '请补充一条边界测试。',
+    });
+    const supplementControl = owner.message(executing.id);
+    assert(validRemoteTaskControl(supplementControl));
+    assert.equal(target.receiveControl(supplementControl), true);
+    owner.markDelivered(executing.id, supplementControl);
+    assert(
+      owner
+        .list()
+        .find((task) => task.id === executing.id)
+        ?.description.includes('边界测试'),
+    );
+    assert(
+      target
+        .list()
+        .find((task) => task.id === executing.id)
+        ?.description.includes('边界测试'),
+    );
+    owner.requestControl(executing.id, reviewSnapshot.executionSequence, {
+      kind: 'accept',
+      note: '已核对差异和验收标准。',
+    });
+    const acceptanceControl = owner.message(executing.id);
+    assert(validRemoteTaskControl(acceptanceControl));
+    assert.equal(
+      validRemoteTaskControl({
+        ...acceptanceControl,
+        action: { ...acceptanceControl.action, extra: true },
+      }),
+      false,
+    );
+    assert.throws(() => target.receiveControl(acceptanceControl), /上一项远程操作仍在执行/);
+    assert(target.finishIncomingControl(executing.id, supplementControl.controlID));
+    assert.equal(target.receiveControl(acceptanceControl), true);
+    owner.markDelivered(executing.id, acceptanceControl);
+    assert(target.finishIncomingControl(executing.id, acceptanceControl.controlID));
+    owner.requestControl(executing.id, reviewSnapshot.executionSequence, {
+      kind: 'accept',
+      note: '验证过期验收控制不会在重启后执行。',
     });
     const ownerStorePath = join(roots[0], 'remote-task-invites.json');
     const staleControlStore = JSON.parse(readFileSync(ownerStorePath, 'utf8'));
@@ -596,7 +665,7 @@ test(
 
 test(
   'two nodes require bilateral confirmation, persist trust, reject replay and revoke both sides',
-  { skip: process.platform !== 'win32', timeout: 45_000 },
+  { skip: process.platform !== 'win32', timeout: 60_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -707,6 +776,16 @@ test(
       assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.status === 'accepted'));
       assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.executionStatus === 'ready'));
       assert(networks[1].projectLeased(leasedProjectID));
+
+      const higherIndex = snapshots[0].local!.id.localeCompare(snapshots[1].local!.id) > 0 ? 0 : 1;
+      const lowerIndex = higherIndex === 0 ? 1 : 0;
+      const higherNetwork = networks[higherIndex] as unknown as {
+        closeChannel(nodeID: string): void;
+      };
+      higherNetwork.closeChannel(snapshots[lowerIndex].local!.id);
+      assert.equal(networks[higherIndex].snapshot().nearby[0].channelReady, false);
+      assert.equal(networks[lowerIndex].snapshot().nearby[0].channelReady, true);
+      await waitForSecureChannels(networks);
 
       const initiatorIndex =
         snapshots[0].local!.id.localeCompare(snapshots[1].local!.id) < 0 ? 0 : 1;

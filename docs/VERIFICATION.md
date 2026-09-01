@@ -14,15 +14,15 @@
 
 真实 Windows 窗口检查：**通过**。在全新隔离测试目录启动 Release 可执行程序，实际 WebView2 通过启动期原生令牌自动建立本机操作者并直接进入任务工作台；首次页面没有工作区、显示名称、用户名、密码或终端初始化码表单，节点发现已经启动，原生目录操作可用。缺失令牌返回 403，正确令牌返回 200；关闭桌面后令牌文件和后台进程均被清理。随后通过 Release Tauri WebView2 检查节点页和“模型与额度”页面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-direct-start.png`、`.data/verification/desktop-node-network.json`、`.data/verification/desktop-model-settings.json` 及对应截图。
 
-上一版 NSIS current-user 安装包曾通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。该历史安装包为 71,016,423 字节，SHA-256：`f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`。
+上一版 NSIS current-user 安装包曾通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。
 
-普通文件夹和本轮设备信任/AI 审批改动已重编译到 `src-tauri/target/release/Rivloom.exe`，但没有重建 NSIS。因此上述哈希包不含这些改动，重新分发前必须重建并复测安装器。
+本轮已重建包含普通文件夹、设备信任、AI 审批、远端补充/结果/验收的 Release 和 NSIS：`Rivloom.exe` 为 10,264,576 字节、SHA-256 `9da6c7b764f4cef3a33a02508ff4fbb414fba84c3721a47295d31bdf1f5c24cd`；NSIS 为 71,070,646 字节、SHA-256 `d688e2d9a2f978fc7bde08fa09c88ffc17ab3bc86f607e3947bd9e92b281ef01`。当前 NSIS 尚未重新执行安装/启动/卸载烟雾测试。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
 ## M3.1 自发现、M3.2 加密通道与 M3.3 策略化执行
 
-`npm run test:node-network-ui`：**23 项实际 Release 桌面检查通过**。测试启动新编译的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock；局域网同时存在真实 Rivloom 时，脚本按精确测试 Node ID 选取节点，避免操作其他设备。
+上一份 `npm run test:node-network-ui` 完整机器报告：**23 项实际 Release 桌面检查通过**。测试启动 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock；局域网同时存在真实 Rivloom 时，脚本按精确测试 Node ID 选取节点，避免操作其他设备。本轮脚本已扩充到远端差异、补充和验收，新增确定性部分通过，但完整运行受免费模型无响应阻塞，详见本节末尾。
 
 - 两个实例各自生成稳定 Ed25519 身份；私钥 PKCS#8 只以 Windows DPAPI CurrentUser 密文保存在节点身份文件中，重载后 Node ID 不变。
 - 两个实例在本机真实 mDNS/DNS-SD 网络栈发布和发现 `_rivloom._tcp.local`，使用不同数据目录、Node ID、Brain ID 和端口。
@@ -38,9 +38,12 @@
 - 最终直接读取隔离普通文件夹的 `RESULT.txt`，内容严格等于 `rivloom remote execution verified`。归属节点收到单调递增状态并最终进入 `review`。
 - 归属节点公开记录中的本机项目 ID、模型标识和本机任务 ID 均为空；节点消息也不包含凭据。远端结果待验收时，第二个普通本机任务在创建新 OpenCode 会话前被同项目并发保护拒绝。
 - 自动化还验证同一签名配对请求重放返回 409、重启两个节点后信任和通道重建、伪造/重放 X25519 握手被拒绝、AES-GCM 密文篡改/重放被拒绝、会话过期失效，以及信任记录冲突时安全失败。
+- 本轮增加单边通道丢失回归：只删除较大 Node ID 一端的本地会话，另一端仍认为通道在线；较大节点发送签名恢复请求，确定的较小节点重新握手，两端恢复同一加密通道。该真实双实例网络测试通过。
 - 节点端点拒绝畸形请求和未开放的加密消息类型；项目、模型、工具、产物和 OpenCode 路径返回 404，React 业务服务与 OpenCode 没有暴露到局域网。
 
-机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：双向发现、签名退出通知、双端短码/指纹核对、单方不授信、双方授信、重启保持和撤销均由用户确认通过。设备信任/AI 审批分层、真实 OpenCode 执行和远程人工介入仍待相同两台设备复测；异常结束进程或断网的 15/30 秒兜底也待专项复测。当前实际执行和远程控制只在同机隔离双实例完成；补充要求、差异/产物、验收及两真人角色映射尚未开放。
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。这份机器报告仍是上一完整运行的 23 项结果。本轮新 Release 实际 WebView2 已继续通过新增的限长官方差异卡片、补充要求和最终验收控制的认证加密往返；随后真实 `opencode/mimo-v2.5-free` 停止夹具在 10 分钟内只产生空 assistant 消息，没有进入人工介入点，因此脚本按失败退出并未覆盖旧机器报告。此前同一补充流程已实际继续到第二轮 OpenCode 操作审批，但当时暴露单边通道丢失；修复后的完整真实模型续跑仍需使用可用模型复测。
+
+物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：双向发现、签名退出通知、双端短码/指纹核对、单方不授信、双方授信、重启保持和撤销均由用户确认通过。设备信任/AI 审批分层、真实 OpenCode 执行、补充结果闭环和两真人角色映射仍待相同两台设备复测；异常结束进程或断网的 15/30 秒兜底也待专项复测。
 
 `npm run test:permission-policy`：**通过**。脚本启动未修改的官方 OpenCode 1.18.25，在三个隔离目录分别以“请求批准 / 帮我批准 / 允许任何操作”的规则创建会话，再通过官方 `session.get` 读回并逐项比对。没有发送模型请求、使用凭据或修改用户项目。机器报告：`.data/verification/permission-policy.json`。
 
@@ -140,7 +143,7 @@
 
 ## 尚未验证或不包含
 
-- Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上受信任务自动接收、三种 AI 审批、远程批准/回答/停止、真实 OpenCode 执行和撤销信任停止任务的物理复测，以及异常结束进程或断网的离线、移除和恢复结果；两个真人完成角色映射、补充要求、差异和验收，最小跨 Brain 委派及跨网络运行。双向发现、正常退出、双端配对、重启保持与撤销已经物理验证。
+- Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上受信任务自动接收、三种 AI 审批、远程批准/回答/停止/补充、官方差异提示、真实 OpenCode 执行、最终验收和撤销信任停止任务的物理复测，以及异常结束进程或断网的离线、移除和恢复结果；两个真人完成角色映射，最小跨 Brain 委派及跨网络运行。双向发现、正常退出、双端配对、重启保持与撤销已经物理验证。
 - ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

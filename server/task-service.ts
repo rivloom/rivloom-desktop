@@ -387,6 +387,35 @@ export async function stopTask(taskID: string, actor: User) {
     return task(t.id);
   });
 }
+export async function addRequirement(taskID: string, actor: User, text: string) {
+  const initial = task(taskID);
+  const requirement = text.trim();
+  requireThat(requirement.length >= 1 && requirement.length <= 12_000, 400, '补充要求长度无效');
+  return exclusive(`project:${initial.projectID}`, async () => {
+    let current = task(initial.id);
+    requireThat(
+      [current.creatorID, current.assigneeID].includes(actor.id),
+      403,
+      '只有发起人或接受人可以补充要求',
+    );
+    requireThat(current.state !== 'accepted', 409, '已验收任务不可修改');
+    if (activeStates.includes(current.state) || current.state === 'interrupted')
+      await stopTask(current.id, actor);
+    current = task(current.id);
+    const safeRequirement = redact(requirement);
+    const result = patchTask(current.id, {
+      description: `${current.description}\n\n补充要求：${safeRequirement}`,
+    });
+    activity(
+      current.id,
+      actor.id,
+      'requirement',
+      `补充要求（由接受人确认后继续）：${safeRequirement}`,
+    );
+    changed(current.id);
+    return result;
+  });
+}
 export async function replyPermission(
   taskID: string,
   actor: User,
@@ -459,6 +488,22 @@ export async function acceptResult(taskID: string, actor: User, version: number,
     const result = patchTask(t.id, { state: 'accepted', acceptedBy: actor.id });
     activity(t.id, actor.id, 'accepted', `验收通过：${redact(note)}`);
     changed(t.id);
+    return result;
+  });
+}
+export async function requestChanges(taskID: string, actor: User, note: string) {
+  const safeNote = redact(note.trim());
+  requireThat(safeNote.length >= 1 && safeNote.length <= 4000, 400, '退回意见长度无效');
+  return exclusive(taskID, async () => {
+    const current = task(taskID);
+    requireThat(actor.id === current.reviewerID, 403, '只有验收人可以退回');
+    requireThat(current.state === 'review', 409, '任务不在验收阶段');
+    const result = patchTask(current.id, {
+      state: 'ready',
+      description: `${current.description}\n\n验收退回：${safeNote}`,
+    });
+    activity(current.id, actor.id, 'changes_requested', `退回修改：${safeNote}`);
+    changed(current.id);
     return result;
   });
 }

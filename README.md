@@ -10,7 +10,7 @@
 
 客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 
-本轮最新代码已编译为 `src-tauri\target\release\Rivloom.exe`。现有 `src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe` 是改动前的历史验证包，不包含本轮普通文件夹语义；重新分发前需运行 `npm.cmd run desktop:build` 重建并复测安装器。
+本轮最新代码已编译为 `src-tauri\target\release\Rivloom.exe`，NSIS 也已重建为 `src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe`。当前安装器包含普通文件夹、远端人工介入、结果与验收能力，但只完成开发机构建，尚未重新执行安装/卸载烟雾测试，也未签名；不要把它作为正式商业发行包。
 
 开发环境需要 Node.js **24+**、Rust 和 Visual Studio C++ Build Tools：
 
@@ -92,7 +92,7 @@ M3.1 已使每个安装实例成为自发现节点：稳定节点身份由 Windo
 
 自动发现不等于自动信任。M3.2 已增加两端短码/指纹核对、双方分别确认、持久信任、取消和撤销；旧配对请求重放、单方确认和已撤销关系都不能建立信任。真实同机双实例、Release WebView2 及用户的 Win10/Win11 物理双机均已验证配对闭环。受信节点会用签名的临时 X25519 密钥建立双向认证通道，经 HKDF 派生方向密钥，以 AES-256-GCM、严格消息序号和时间窗保护消息。
 
-M3.3 当前把设备信任、本机执行能力和 AI 操作审批分开：受信设备发来的任务立即接收；执行能力关闭时任务等待，开启后使用本机预设项目和模型。每个任务锁定「请求批准 / 帮我批准 / 允许任何操作」之一，并通过 OpenCode 官方会话权限规则执行。归属 Brain 现在能通过认证加密任务通道批准或拒绝一项 OpenCode 操作、回答 AI 提问并停止远端执行；所有操作绑定任务路由和执行序号。审批内容会移除 metadata，执行机项目根目录若出现则替换为 `<project>`。任务只绑定一个本机业务任务和官方 OpenCode 会话，本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未实现跨设备补充要求、差异/产物回传、验收和完整人员角色映射，也尚未由两个真人完成新版跨设备执行验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md)、[ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md) 和 [ADR-0003](docs/adr/0003-trust-and-ai-approval.md)。
+M3.3 当前把设备信任、本机执行能力和 AI 操作审批分开：受信设备发来的任务立即接收；执行能力关闭时任务等待，开启后使用本机预设项目和模型。每个任务锁定「请求批准 / 帮我批准 / 允许任何操作」之一，并通过 OpenCode 官方会话权限规则执行。归属 Brain 能通过认证加密任务通道批准或拒绝一项 OpenCode 操作、回答 AI 提问、停止执行、补充要求并继续同一会话，还能查看经过脱敏和限长的 OpenCode 官方会话差异并完成远程验收。所有操作绑定任务路由、唯一控制 ID 和执行序号；同一任务一次只处理一个远程操作。审批内容会移除 metadata，执行机项目根目录若出现则替换为 `<project>`。任务只绑定一个本机业务任务和官方 OpenCode 会话，本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。若 OpenCode 不返回差异，Rivloom 明确提示执行机参与者本地核对，不扫描或哈希文件夹补齐。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未完成跨设备人员身份到发起/接受/审批/验收角色的最终映射，也尚未由两个真人在两台设备完成新版闭环验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md)、[ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md) 和 [ADR-0003](docs/adr/0003-trust-and-ai-approval.md)。
 
 ## 验证命令
 

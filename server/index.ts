@@ -44,9 +44,11 @@ import {
   updates,
   runTask,
   stopTask,
+  addRequirement,
   replyPermission,
   replyQuestion,
   acceptResult,
+  requestChanges,
   shutdownEngine,
 } from './task-service.ts';
 import { validateProject, redact } from './artifacts.ts';
@@ -56,6 +58,7 @@ import {
   activeStates,
   stateLabels,
   type Approval,
+  type Artifact,
   type Question,
   type Task,
 } from '../shared/types.ts';
@@ -312,6 +315,14 @@ app.post('/api/network/tasks/:id/control', async (req, res) => {
             .max(10),
         }),
         z.object({ kind: z.literal('stop') }),
+        z.object({
+          kind: z.literal('supplement'),
+          text: z.string().trim().min(1).max(12_000),
+        }),
+        z.object({
+          kind: z.literal('accept'),
+          note: z.string().trim().min(1).max(4000),
+        }),
       ]),
       confirmed: z.literal(true),
     })
@@ -401,29 +412,69 @@ function remoteSafeText(value: string, directory: string, maximum: number) {
 }
 
 function remoteApprovals(value: Task, directory: string): Approval[] {
-  return value.approvals.slice(0, 30).map((approval) => ({
-    id: approval.id.slice(0, 200),
-    permission: approval.permission.slice(0, 100),
-    patterns: approval.patterns
-      .slice(0, 30)
-      .map((pattern) => remoteSafeText(pattern, directory, 2000)),
-    metadata: {},
-  }));
+  const result: Approval[] = [];
+  for (const approval of value.approvals.slice(0, 30)) {
+    result.push({
+      id: approval.id.slice(0, 200),
+      permission: approval.permission.slice(0, 100),
+      patterns: approval.patterns
+        .slice(0, 30)
+        .map((pattern) => remoteSafeText(pattern, directory, 2000)),
+      metadata: {},
+    });
+    if (JSON.stringify(result).length > 8000) {
+      result.pop();
+      break;
+    }
+  }
+  return result;
 }
 
 function remoteQuestions(value: Task, directory: string): Question[] {
-  return value.questions.slice(0, 10).map((request) => ({
-    id: request.id.slice(0, 200),
-    questions: request.questions.slice(0, 10).map((question) => ({
-      header: remoteSafeText(question.header, directory, 120),
-      question: remoteSafeText(question.question, directory, 4000),
-      ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
-      options: question.options.slice(0, 20).map((option) => ({
-        label: remoteSafeText(option.label, directory, 200),
-        description: remoteSafeText(option.description, directory, 1000),
+  const result: Question[] = [];
+  for (const request of value.questions.slice(0, 10)) {
+    result.push({
+      id: request.id.slice(0, 200),
+      questions: request.questions.slice(0, 10).map((question) => ({
+        header: remoteSafeText(question.header, directory, 120),
+        question: remoteSafeText(question.question, directory, 4000),
+        ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
+        options: question.options.slice(0, 20).map((option) => ({
+          label: remoteSafeText(option.label, directory, 200),
+          description: remoteSafeText(option.description, directory, 1000),
+        })),
       })),
-    })),
-  }));
+    });
+    if (JSON.stringify(result).length > 8000) {
+      result.pop();
+      break;
+    }
+  }
+  return result;
+}
+
+function remoteArtifacts(value: Task, directory: string): Artifact[] {
+  const result: Artifact[] = [];
+  for (const artifact of value.artifacts.slice(0, 50)) {
+    result.push({
+      file: remoteSafeText(artifact.file, directory, 2000) || '未命名文件',
+      patch: remoteSafeText(artifact.patch, directory, 24_000),
+      additions:
+        Number.isSafeInteger(artifact.additions) && artifact.additions >= 0
+          ? artifact.additions
+          : 0,
+      deletions:
+        Number.isSafeInteger(artifact.deletions) && artifact.deletions >= 0
+          ? artifact.deletions
+          : 0,
+      status: remoteSafeText(artifact.status, directory, 100) || 'modified',
+    });
+    if (JSON.stringify(result).length > 28_000) {
+      result.pop();
+      break;
+    }
+  }
+  return result;
 }
 
 async function publishRemoteExecution(taskID: string) {
@@ -439,9 +490,11 @@ async function publishRemoteExecution(taskID: string) {
     .publishRemoteTaskExecution(
       value.id,
       value.state,
-      remoteExecutionSummary(value),
+      remoteSafeText(remoteExecutionSummary(value), directory, 8000),
       remoteApprovals(value, directory),
       remoteQuestions(value, directory),
+      remoteArtifacts(value, directory),
+      remoteSafeText(value.diffSource, directory, 200),
     )
     .catch(() => {});
 }
@@ -619,12 +672,48 @@ async function processRemoteControl(taskID: string, controlID: string) {
     requireThat(localTask.remoteOrigin?.remoteTaskID === taskID, 409, '远程控制任务绑定不匹配。');
     const localOwner = users().find((candidate) => candidate.owner) || users()[0];
     requireThat(localOwner, 409, '执行节点没有可处理远程操作的本机所有者。');
+    if (
+      activities(localTask.id).some(
+        (entry) =>
+          entry.kind === 'remote_control_started' &&
+          entry.text === `远程控制开始处理 · ${controlID}`,
+      )
+    ) {
+      activity(
+        localTask.id,
+        localOwner.id,
+        'remote_control_uncertain',
+        `远程控制 ${controlID} 曾开始处理；重启后不自动重复执行，请人工检查任务状态。`,
+      );
+      return;
+    }
+    activity(
+      localTask.id,
+      localOwner.id,
+      'remote_control_started',
+      `远程控制开始处理 · ${controlID}`,
+    );
     const action = pending.control.action;
     if (action.kind === 'permission')
       await replyPermission(localTask.id, localOwner, action.requestID, action.reply);
     else if (action.kind === 'question')
       await replyQuestion(localTask.id, localOwner, action.requestID, action.answers);
-    else await stopTask(localTask.id, localOwner);
+    else if (action.kind === 'stop') await stopTask(localTask.id, localOwner);
+    else if (action.kind === 'accept')
+      await acceptResult(localTask.id, localOwner, localTask.version, action.note);
+    else
+      await exclusive('engine-settings', async () => {
+        requireThat(executionPolicies.allows(), 409, '本机执行能力已关闭。');
+        assertCanStartTask();
+        const updated = await addRequirement(localTask.id, localOwner, action.text);
+        await exclusive(`project:${updated.projectID}`, () =>
+          runTask(
+            updated.id,
+            localOwner,
+            `归属 Brain 补充要求：\n${redact(action.text)}\n\n请继续完成原任务并重新核对全部验收标准。`,
+          ),
+        );
+      });
     activity(
       localTask.id,
       localOwner.id,
@@ -633,7 +722,11 @@ async function processRemoteControl(taskID: string, controlID: string) {
         ? `归属 Brain 远程${action.reply === 'once' ? '批准' : '拒绝'}权限请求。`
         : action.kind === 'question'
           ? '归属 Brain 远程回答 AI 问题。'
-          : '归属 Brain 远程请求停止任务。',
+          : action.kind === 'stop'
+            ? '归属 Brain 远程请求停止任务。'
+            : action.kind === 'accept'
+              ? '归属 Brain 远程确认验收。'
+              : '归属 Brain 远程补充要求并继续执行。',
     );
   } catch (error) {
     console.error(
@@ -840,25 +933,7 @@ app.post('/api/tasks/:id/stop', async (req, res) =>
 app.post('/api/tasks/:id/requirements', async (req, res) => {
   const initial = visibleTask(req);
   const body = z.object({ text: z.string().trim().min(1).max(12000) }).parse(req.body);
-  await exclusive(`project:${initial.projectID}`, async () => {
-    const t = task(initial.id);
-    requireThat(
-      [t.creatorID, t.assigneeID].includes(who(req).id),
-      403,
-      '只有发起人或接受人可以补充要求',
-    );
-    requireThat(t.state !== 'accepted', 409, '已验收任务不可修改');
-    if (activeStates.includes(t.state) || t.state === 'interrupted') await stopTask(t.id, who(req));
-    patchTask(t.id, { description: `${task(t.id).description}\n\n补充要求：${redact(body.text)}` });
-    activity(
-      t.id,
-      who(req).id,
-      'requirement',
-      `补充要求（由接受人确认后继续）：${redact(body.text)}`,
-    );
-    changed(t.id);
-    res.json(task(t.id));
-  });
+  res.json(await addRequirement(initial.id, who(req), body.text));
 });
 app.post('/api/tasks/:id/permissions/:requestID', async (req, res) => {
   const t = visibleTask(req);
@@ -891,18 +966,7 @@ app.post('/api/tasks/:id/accept', async (req, res) => {
 app.post('/api/tasks/:id/request-changes', async (req, res) => {
   const initial = visibleTask(req);
   const { note } = z.object({ note: z.string().trim().min(1).max(4000) }).parse(req.body);
-  await exclusive(initial.id, async () => {
-    const t = task(initial.id);
-    requireThat(who(req).id === t.reviewerID, 403, '只有验收人可以退回');
-    requireThat(t.state === 'review', 409, '任务不在验收阶段');
-    const result = patchTask(t.id, {
-      state: 'ready',
-      description: `${t.description}\n\n验收退回：${redact(note)}`,
-    });
-    activity(t.id, who(req).id, 'changes_requested', `退回修改：${redact(note)}`);
-    changed(t.id);
-    res.json(result);
-  });
+  res.json(await requestChanges(initial.id, who(req), note));
 });
 app.get('/api/events', (req, res) => {
   res.set({

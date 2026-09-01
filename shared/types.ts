@@ -49,6 +49,12 @@ export type Question = {
     options: { label: string; description: string }[];
   }[];
 };
+export type RemoteTaskControlAction =
+  | { kind: 'permission'; requestID: string; reply: 'once' | 'reject' }
+  | { kind: 'question'; requestID: string; answers: string[][] }
+  | { kind: 'stop' }
+  | { kind: 'supplement'; text: string }
+  | { kind: 'accept'; note: string };
 export type Task = {
   id: string;
   number: number;
@@ -124,6 +130,8 @@ export type RemoteTaskInvite = {
   executionSummary: string;
   remoteApprovals: Approval[];
   remoteQuestions: Question[];
+  remoteArtifacts: Artifact[];
+  remoteDiffSource: string;
   controlPending: boolean;
   deliveryPending: boolean;
   deliveryError: string | null;

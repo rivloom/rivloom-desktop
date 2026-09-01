@@ -257,6 +257,78 @@ try {
   await peer.publishRemoteTaskExecution(simulatedLocalTaskID, 'stopped', '任务已由发起方停止。');
   await remoteTaskCard.getByText('已停止', { exact: true }).waitFor();
 
+  const simulatedArtifact = {
+    file: 'SIMULATED.txt',
+    patch: '@@ -0,0 +1 @@\n+simulated result',
+    additions: 1,
+    deletions: 0,
+    status: 'added',
+  };
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'review',
+    '模拟结果等待归属 Brain 验收。',
+    [],
+    [],
+    [simulatedArtifact],
+    'OpenCode 会话差异',
+  );
+  await remoteTaskCard.getByText('SIMULATED.txt', { exact: true }).waitFor();
+  await remoteTaskCard.getByText('退回修改并继续', { exact: true }).click();
+  await remoteTaskCard
+    .getByPlaceholder('补充新的约束、修改意见或验收要求…')
+    .fill('请补充边界测试后重新交付。');
+  await remoteTaskCard.getByRole('button', { name: '退回并继续执行' }).click();
+  simulatedControlsDeadline = Date.now() + 5000;
+  while (Date.now() < simulatedControlsDeadline && peer.pendingRemoteTaskControls().length === 0)
+    await wait(100);
+  simulatedControl = peer.pendingRemoteTaskControls()[0];
+  assert.equal(simulatedControl?.control.action.kind, 'supplement');
+  assert.equal(
+    simulatedControl?.control.action.kind === 'supplement'
+      ? simulatedControl.control.action.text
+      : null,
+    '请补充边界测试后重新交付。',
+  );
+  assert(peer.finishRemoteTaskControl(remoteTask()!.id, simulatedControl!.control.controlID));
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'review',
+    '模拟补充已完成，等待最终验收。',
+    [],
+    [],
+    [simulatedArtifact],
+    'OpenCode 会话差异',
+  );
+  await remoteTaskCard.getByText('模拟补充已完成，等待最终验收。', { exact: true }).waitFor();
+  await remoteTaskCard
+    .getByPlaceholder('记录已核对的结果、测试和限制…')
+    .fill('已核对模拟官方差异和验收标准。');
+  await remoteTaskCard.locator('.remote-acceptance-form input[type="checkbox"]').check();
+  await remoteTaskCard.getByRole('button', { name: '确认远程验收' }).click();
+  simulatedControlsDeadline = Date.now() + 5000;
+  while (Date.now() < simulatedControlsDeadline && peer.pendingRemoteTaskControls().length === 0)
+    await wait(100);
+  simulatedControl = peer.pendingRemoteTaskControls()[0];
+  assert.equal(simulatedControl?.control.action.kind, 'accept');
+  assert.equal(
+    simulatedControl?.control.action.kind === 'accept'
+      ? simulatedControl.control.action.note
+      : null,
+    '已核对模拟官方差异和验收标准。',
+  );
+  assert(peer.finishRemoteTaskControl(remoteTask()!.id, simulatedControl!.control.controlID));
+  await peer.publishRemoteTaskExecution(
+    simulatedLocalTaskID,
+    'accepted',
+    '归属 Brain 已确认验收。',
+    [],
+    [],
+    [simulatedArtifact],
+    'OpenCode 会话差异',
+  );
+  await remoteTaskCard.getByText('已验收', { exact: true }).waitFor();
+
   const policyForm = page.locator('.execution-policy-form');
   await policyForm.getByLabel('AI 审批模式').selectOption('ask');
   await policyForm.getByLabel('本机项目').selectOption({ label: '远端自动执行验证项目' });
@@ -322,52 +394,62 @@ try {
   assert.equal(peerTask()?.localModel, null);
   assert.equal(peerTask()?.localTaskID, null);
 
-  incomingDeadline = Date.now() + 600_000;
   let localRemoteTask: any = null;
   const approvedRemoteRequests = new Set<string>();
   const answeredRemoteQuestions = new Set<string>();
-  while (Date.now() < incomingDeadline && peerTask()?.executionState !== 'review') {
-    localRemoteTask = await page.evaluate(async (remoteTaskID: string) => {
-      const bootstrap = await (
-        await fetch('/api/bootstrap', { credentials: 'same-origin' })
-      ).json();
-      return (
-        bootstrap.tasks.find((task: any) => task.remoteOrigin?.remoteTaskID === remoteTaskID) ||
-        null
-      );
-    }, peerTask()!.id);
-    if (localRemoteTask) runningLocalTaskID = localRemoteTask.id;
-    for (const approval of peerTask()?.remoteApprovals || []) {
-      assert(
-        !approval.patterns.join('\n').includes(projectRoot),
-        'Remote approval exposed the executor project path',
-      );
-      assert.deepEqual(approval.metadata, {});
-      if (!approvedRemoteRequests.has(approval.id)) {
-        await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
-          kind: 'permission',
-          requestID: approval.id,
-          reply: 'once',
-        });
-        approvedRemoteRequests.add(approval.id);
+  const driveRemoteToReview = async (afterSequence: number) => {
+    const deadline = Date.now() + 600_000;
+    while (
+      Date.now() < deadline &&
+      (peerTask()?.executionState !== 'review' ||
+        (peerTask()?.executionSequence || 0) <= afterSequence)
+    ) {
+      localRemoteTask = await page.evaluate(async (remoteTaskID: string) => {
+        const bootstrap = await (
+          await fetch('/api/bootstrap', { credentials: 'same-origin' })
+        ).json();
+        return (
+          bootstrap.tasks.find((task: any) => task.remoteOrigin?.remoteTaskID === remoteTaskID) ||
+          null
+        );
+      }, peerTask()!.id);
+      if (localRemoteTask) runningLocalTaskID = localRemoteTask.id;
+      for (const approval of peerTask()?.remoteApprovals || []) {
+        assert(
+          !approval.patterns.join('\n').includes(projectRoot),
+          'Remote approval exposed the executor project path',
+        );
+        assert.deepEqual(approval.metadata, {});
+        if (!approvedRemoteRequests.has(approval.id)) {
+          await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
+            kind: 'permission',
+            requestID: approval.id,
+            reply: 'once',
+          });
+          approvedRemoteRequests.add(approval.id);
+        }
       }
-    }
-    for (const request of peerTask()?.remoteQuestions || []) {
-      if (!answeredRemoteQuestions.has(request.id)) {
-        await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
-          kind: 'question',
-          requestID: request.id,
-          answers: request.questions.map(() => ['请严格按任务说明和验收标准继续。']),
-        });
-        answeredRemoteQuestions.add(request.id);
+      for (const request of peerTask()?.remoteQuestions || []) {
+        if (!answeredRemoteQuestions.has(request.id)) {
+          await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
+            kind: 'question',
+            requestID: request.id,
+            answers: request.questions.map(() => ['请严格按任务说明和验收标准继续。']),
+          });
+          answeredRemoteQuestions.add(request.id);
+        }
       }
+      if (['failed', 'interrupted', 'stopped'].includes(localRemoteTask?.state))
+        throw new Error(
+          `Remote OpenCode execution ended as ${localRemoteTask.state}: ${localRemoteTask.error}`,
+        );
+      await wait(500);
     }
-    if (['failed', 'interrupted', 'stopped'].includes(localRemoteTask?.state))
-      throw new Error(
-        `Remote OpenCode execution ended as ${localRemoteTask.state}: ${localRemoteTask.error}`,
-      );
-    await wait(500);
-  }
+    assert.equal(peerTask()?.executionState, 'review');
+    assert((peerTask()?.executionSequence || 0) > afterSequence);
+    return peerTask()!.executionSequence;
+  };
+  const firstReviewSequence = await driveRemoteToReview(0);
   assert.equal(peerTask()?.executionState, 'review');
   assert((peerTask()?.executionSequence || 0) >= 3);
   assert(approvedRemoteRequests.size > 0, 'Remote OpenCode task did not request an approval');
@@ -382,10 +464,23 @@ try {
   runningLocalTaskID = localRemoteTask.id;
   await incomingCard.getByText(/执行节点状态/).waitFor();
 
+  await peer.requestRemoteTaskControl(peerTask()!.id, firstReviewSequence, {
+    kind: 'supplement',
+    text: '将 RESULT.txt 的内容严格改为 rivloom remote supplement verified；不要修改其他文件。',
+  });
+  assert(peerTask()!.description.includes('rivloom remote supplement verified'));
+  const secondReviewSequence = await driveRemoteToReview(firstReviewSequence);
+  assert(secondReviewSequence > firstReviewSequence);
+  assert.equal(
+    readFileSync(join(projectRoot, 'RESULT.txt'), 'utf8').trim(),
+    'rivloom remote supplement verified',
+  );
+
   const ownerView = peerTask()!;
   assert.equal(ownerView.localProjectID, null);
   assert.equal(ownerView.localModel, null);
   assert.equal(ownerView.localTaskID, null);
+  assert(ownerView.remoteDiffSource.startsWith('OpenCode'));
   const localPolicy = await page.evaluate(async () => {
     const response = await fetch('/api/network/execution-policy', { credentials: 'same-origin' });
     return response.json();
@@ -425,6 +520,23 @@ try {
   assert.equal(localOrdinaryStart.run.status, 409);
   assert(String(localOrdinaryStart.run.body.error).includes('同一项目'));
 
+  await peer.requestRemoteTaskControl(peerTask()!.id, peerTask()!.executionSequence, {
+    kind: 'accept',
+    note: '已核对远程执行摘要、可见官方差异和补充要求后的最终文件内容。',
+  });
+  const acceptanceDeadline = Date.now() + 30_000;
+  while (Date.now() < acceptanceDeadline && peerTask()?.executionState !== 'accepted')
+    await wait(250);
+  assert.equal(peerTask()?.executionState, 'accepted');
+  localRemoteTask = await page.evaluate(async (remoteTaskID: string) => {
+    const bootstrap = await (await fetch('/api/bootstrap', { credentials: 'same-origin' })).json();
+    return (
+      bootstrap.tasks.find((task: any) => task.remoteOrigin?.remoteTaskID === remoteTaskID) || null
+    );
+  }, peerTask()!.id);
+  assert.equal(localRemoteTask?.state, 'accepted');
+  await incomingCard.getByText('已验收', { exact: true }).waitFor();
+
   const screenshot = join(verificationDirectory, 'desktop-node-network.png');
   await page.screenshot({ path: screenshot, fullPage: true });
   page.once('dialog', (dialog: any) => dialog.accept());
@@ -459,21 +571,29 @@ try {
           'The source UI answered a remote AI question through the authenticated encrypted channel',
           'The source UI rejected a remote operation request through the authenticated encrypted channel',
           'The source UI sent a remote stop request through the authenticated encrypted channel',
+          'The source UI rendered a bounded official-diff artifact and sent a supplementary requirement',
+          'The source UI submitted remote acceptance through the authenticated encrypted channel',
           'The target stored one reusable local capability policy with the selected request-approval AI mode',
           'The target automatically accepted a matching task without per-task project or model selection',
           'A real packaged OpenCode task was stopped remotely at a human-intervention point before the test file was written',
           'The packaged OpenCode engine created a real session and resumed after one remote operation approval',
+          'The same packaged OpenCode session continued from a remote supplementary requirement and produced the revised file content',
           'The remote approval snapshot exposed neither the executor project directory nor approval metadata',
+          'The owner received the explicit OpenCode diff source without an executor-local path',
           'The owner received monotonic execution states without local project, model, task ID, or credential values',
           'The resulting file content was verified directly in the ordinary-folder fixture',
           'The existing project concurrency guard rejected a second task while remote results awaited review',
+          'Remote acceptance moved both the owner record and executor business task to accepted',
           'Revocation removed trust on both nodes',
           'Pairing did not expose any project, task, model, or OpenCode business endpoint',
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
           'The AI question branch was exercised with a protocol-level execution snapshot rather than a model-triggered question.',
-          'Remote requirement supplements, artifacts, diffs, and acceptance remain the next slice.',
+          ownerView.remoteArtifacts.length
+            ? 'The real OpenCode task returned official diff entries; file contents outside those entries were not scanned.'
+            : 'The real OpenCode ordinary-folder task returned no official diff entries; Rivloom did not scan or hash the folder to invent them.',
+          'Complete cross-device person-role mapping and two-human acceptance remain unverified.',
         ],
         screenshot,
         pairingScreenshot,

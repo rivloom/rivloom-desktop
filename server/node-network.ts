@@ -7,9 +7,11 @@ import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import type {
   Approval,
+  Artifact,
   NodeNetwork as NodeNetworkSnapshot,
   NodePairing,
   Question,
+  RemoteTaskControlAction,
   RivloomNode,
   TaskState,
 } from '../shared/types.ts';
@@ -41,12 +43,15 @@ import {
   finishSecureChannel,
   unsignedChannelAck,
   unsignedChannelOpen,
+  unsignedChannelRecovery,
   validChannelAck,
   validChannelEnvelope,
   validChannelOpen,
+  validChannelRecovery,
   type ChannelAck,
   type ChannelEnvelope,
   type ChannelOpen,
+  type ChannelRecovery,
   type SecureChannelSession,
 } from './node-channel.ts';
 import {
@@ -57,7 +62,6 @@ import {
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
   validRemoteTaskResponse,
-  type RemoteTaskControlAction,
   type RemoteTaskMessage,
 } from './remote-tasks.ts';
 
@@ -144,8 +148,16 @@ export class NodeNetworkError extends Error {
 }
 
 const serviceType = 'rivloom';
-const capabilities = ['brain', 'executor', 'human-ui', 'remote-execution-v1', 'remote-control-v1'];
+const capabilities = [
+  'brain',
+  'executor',
+  'human-ui',
+  'remote-execution-v1',
+  'remote-control-v1',
+  'remote-results-v1',
+];
 const maximumHelloBytes = 16 * 1024;
+const maximumChannelRequestBytes = 96 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
 const discoveryProtocol = 'rivloom-node-discovery';
@@ -448,7 +460,7 @@ async function limitedJson(response: Response) {
   return JSON.parse(body) as unknown;
 }
 
-async function requestJson(request: IncomingMessage) {
+async function requestJson(request: IncomingMessage, maximumBytes = maximumHelloBytes) {
   if (!request.headers['content-type']?.toLowerCase().startsWith('application/json'))
     throw new NodeNetworkError(415, '节点请求必须使用 JSON。');
   const chunks: Buffer[] = [];
@@ -456,7 +468,7 @@ async function requestJson(request: IncomingMessage) {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += bytes.byteLength;
-    if (total > maximumHelloBytes) throw new NodeNetworkError(413, '节点请求过大。');
+    if (total > maximumBytes) throw new NodeNetworkError(413, '节点请求过大。');
     chunks.push(bytes);
   }
   try {
@@ -498,7 +510,9 @@ export class NodeNetwork extends EventEmitter {
   private readonly revocationAttempts = new Map<string, number>();
   private readonly channels = new Map<string, SecureChannelSession>();
   private readonly openingChannels = new Set<string>();
+  private readonly requestingChannelRecovery = new Set<string>();
   private readonly seenChannelOpens = new Map<string, number>();
+  private readonly seenChannelRecoveries = new Map<string, number>();
   private readonly channelSendQueues = new Map<string, Promise<unknown>>();
   private readonly deliveringRemoteTasks = new Set<string>();
   private readonly trustStore: NodeTrustStore;
@@ -598,6 +612,21 @@ export class NodeNetwork extends EventEmitter {
       publicKey: this.identity.publicKey,
     };
     return { ...unsigned, signature: this.identity.sign(unsignedRevocationMessage(unsigned)) };
+  }
+
+  private signedChannelRecovery(nodeID: string): ChannelRecovery {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const unsigned: Omit<ChannelRecovery, 'signature'> = {
+      protocol: 'rivloom-secure-channel',
+      version: 1,
+      type: 'recover',
+      recoveryID: randomUUID(),
+      requesterNodeID: this.identity.nodeID,
+      responderNodeID: nodeID,
+      issuedAt: Date.now(),
+      publicKey: this.identity.publicKey,
+    };
+    return { ...unsigned, signature: this.identity.sign(unsignedChannelRecovery(unsigned)) };
   }
 
   private validPairingFrom(
@@ -718,6 +747,35 @@ export class NodeNetwork extends EventEmitter {
     );
   }
 
+  private validChannelRecoveryFrom(message: ChannelRecovery, node: RivloomNode) {
+    if (!this.identity || message.responderNodeID !== this.identity.nodeID) return false;
+    const record = this.trustStore.record(node.id);
+    return (
+      !!record &&
+      message.requesterNodeID === node.id &&
+      message.requesterNodeID.localeCompare(message.responderNodeID) > 0 &&
+      message.publicKey === record.publicKey &&
+      Math.abs(Date.now() - message.issuedAt) <= channelMessageWindowMilliseconds &&
+      message.issuedAt >= Date.parse(record.pairedAt) &&
+      verifySignedNodeMessage(
+        message.publicKey,
+        message.requesterNodeID,
+        record.fingerprint,
+        unsignedChannelRecovery({
+          protocol: message.protocol,
+          version: message.version,
+          type: message.type,
+          recoveryID: message.recoveryID,
+          requesterNodeID: message.requesterNodeID,
+          responderNodeID: message.responderNodeID,
+          issuedAt: message.issuedAt,
+          publicKey: message.publicKey,
+        }),
+        message.signature,
+      )
+    );
+  }
+
   private handleChannelOpen(message: ChannelOpen, remote: string | undefined) {
     if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
     const node = this.nodeForRemote(message.initiatorNodeID, remote);
@@ -738,6 +796,23 @@ export class NodeNetwork extends EventEmitter {
     } catch {
       throw new NodeNetworkError(400, '加密通道临时公钥无效。');
     }
+  }
+
+  private handleChannelRecovery(message: ChannelRecovery, remote: string | undefined) {
+    const node = this.nodeForRemote(message.requesterNodeID, remote);
+    if (!node || !this.validChannelRecoveryFrom(message, node))
+      throw new NodeNetworkError(403, '加密通道恢复请求身份校验失败。');
+    if (this.seenChannelRecoveries.has(message.recoveryID))
+      throw new NodeNetworkError(409, '加密通道恢复请求已处理。');
+    this.seenChannelRecoveries.set(
+      message.recoveryID,
+      Date.now() + channelMessageWindowMilliseconds,
+    );
+    this.closeChannel(node.id);
+    queueMicrotask(() => {
+      const current = this.nodes.get(node.id);
+      if (current?.online && current.trusted) void this.openSecureChannel(current);
+    });
   }
 
   private handleChannelMessage(value: ChannelEnvelope, remote: string | undefined) {
@@ -930,6 +1005,31 @@ export class NodeNetwork extends EventEmitter {
       this.closeChannel(node.id);
     } finally {
       this.openingChannels.delete(node.id);
+    }
+  }
+
+  private async requestSecureChannelRecovery(node: RivloomNode) {
+    if (
+      !this.identity ||
+      !node.online ||
+      !node.trusted ||
+      this.identity.nodeID.localeCompare(node.id) <= 0 ||
+      this.requestingChannelRecovery.has(node.id) ||
+      this.channelReady(node.id)
+    )
+      return;
+    this.requestingChannelRecovery.add(node.id);
+    try {
+      const value = await this.postToNode(
+        node,
+        '/v1/channel/recover',
+        this.signedChannelRecovery(node.id),
+      );
+      if (value !== null) throw new NodeNetworkError(502, '对方返回的通道恢复响应无效。');
+    } catch {
+      this.closeChannel(node.id);
+    } finally {
+      this.requestingChannelRecovery.delete(node.id);
     }
   }
 
@@ -1200,7 +1300,10 @@ export class NodeNetwork extends EventEmitter {
       return;
     }
     if (request.method !== 'POST') throw new NodeNetworkError(404, '节点接口不存在。');
-    const value = await requestJson(request);
+    const value = await requestJson(
+      request,
+      url.pathname === '/v1/channel/message' ? maximumChannelRequestBytes : maximumHelloBytes,
+    );
     if (url.pathname === '/v1/pairing/request' && validPairingMessage(value)) {
       jsonResponse(response, 200, await this.handlePairingRequest(value, remote));
       return;
@@ -1222,6 +1325,11 @@ export class NodeNetwork extends EventEmitter {
     }
     if (url.pathname === '/v1/channel/open' && validChannelOpen(value)) {
       jsonResponse(response, 200, this.handleChannelOpen(value, remote));
+      return;
+    }
+    if (url.pathname === '/v1/channel/recover' && validChannelRecovery(value)) {
+      this.handleChannelRecovery(value, remote);
+      response.writeHead(204).end();
       return;
     }
     if (url.pathname === '/v1/channel/message' && validChannelEnvelope(value)) {
@@ -1542,6 +1650,8 @@ export class NodeNetwork extends EventEmitter {
     summary: string,
     approvals: Approval[] = [],
     questions: Question[] = [],
+    artifacts: Artifact[] = [],
+    diffSource = '',
   ) {
     const updated = this.remoteTasks.updateLocalExecution(
       localTaskID,
@@ -1549,6 +1659,8 @@ export class NodeNetwork extends EventEmitter {
       summary,
       approvals,
       questions,
+      artifacts,
+      diffSource,
     );
     if (!updated) return null;
     this.update();
@@ -1565,6 +1677,11 @@ export class NodeNetwork extends EventEmitter {
     const peer = current ? this.nodes.get(current.targetNodeID) : null;
     if (!peer?.capabilities.includes('remote-control-v1'))
       throw new NodeNetworkError(409, '对方版本尚不支持远程人工介入。');
+    if (
+      (action.kind === 'supplement' || action.kind === 'accept') &&
+      !peer.capabilities.includes('remote-results-v1')
+    )
+      throw new NodeNetworkError(409, '对方版本尚不支持远程补充或验收。');
     try {
       this.remoteTasks.requestControl(taskID, expectedExecutionSequence, action);
     } catch (error) {
@@ -1980,7 +2097,10 @@ export class NodeNetwork extends EventEmitter {
               this.nodes.set(id, { ...node, channelReady });
               changed = true;
             }
-            if (!channelReady) void this.openSecureChannel(node);
+            if (!channelReady) {
+              if (this.identity!.nodeID.localeCompare(id) < 0) void this.openSecureChannel(node);
+              else void this.requestSecureChannelRecovery(node);
+            }
           }
         }
         for (const [id, pairing] of this.pairings)
@@ -1992,6 +2112,8 @@ export class NodeNetwork extends EventEmitter {
           if (expiresAt <= Date.now()) this.seenPairings.delete(id);
         for (const [id, expiresAt] of this.seenChannelOpens)
           if (expiresAt <= Date.now()) this.seenChannelOpens.delete(id);
+        for (const [id, expiresAt] of this.seenChannelRecoveries)
+          if (expiresAt <= Date.now()) this.seenChannelRecoveries.delete(id);
         if (this.remoteTasks.expire()) changed = true;
         for (const node of this.nodes.values())
           if (node.online && node.trusted && node.channelReady) void this.flushRemoteTasks(node.id);
@@ -2039,7 +2161,9 @@ export class NodeNetwork extends EventEmitter {
     this.revocationAttempts.clear();
     for (const nodeID of this.channels.keys()) this.forgetChannel(nodeID);
     this.openingChannels.clear();
+    this.requestingChannelRecovery.clear();
     this.seenChannelOpens.clear();
+    this.seenChannelRecoveries.clear();
     this.channelSendQueues.clear();
     this.deliveringRemoteTasks.clear();
     if (this.peerServer)
