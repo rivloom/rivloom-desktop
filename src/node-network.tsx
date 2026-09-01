@@ -71,6 +71,8 @@ function NodeCard({ node }: { node: RivloomNode }) {
 
 export function NodeNetworkView({ network }: { network: NodeNetwork }) {
   const online = network.status === 'online';
+  const onlineNearby = network.nearby.filter((node) => node.online);
+  const offlineNearby = network.nearby.length - onlineNearby.length;
   return (
     <>
       <div className="page-heading network-page-heading">
@@ -94,18 +96,18 @@ export function NodeNetworkView({ network }: { network: NodeNetwork }) {
 
       <div className="network-overview">
         <div>
-          <strong>{network.local ? 1 + network.nearby.length : network.nearby.length}</strong>
-          <span>已验证节点</span>
+          <strong>{network.local ? 1 + onlineNearby.length : onlineNearby.length}</strong>
+          <span>在线节点</span>
         </div>
         <div>
           <strong>
             {(network.local?.brains.length || 0) +
-              network.nearby.reduce((total, node) => total + node.brains.length, 0)}
+              onlineNearby.reduce((total, node) => total + node.brains.length, 0)}
           </strong>
           <span>可见 Brain</span>
         </div>
         <div>
-          <strong>{network.nearby.filter((node) => node.trusted).length}</strong>
+          <strong>{onlineNearby.filter((node) => node.trusted).length}</strong>
           <span>受信邻居</span>
         </div>
       </div>
@@ -138,7 +140,9 @@ export function NodeNetworkView({ network }: { network: NodeNetwork }) {
           </div>
           <p>
             {network.nearby.length
-              ? `发现 ${network.nearby.length} 个签名节点`
+              ? offlineNearby
+                ? `${onlineNearby.length} 个在线，${offlineNearby} 个离线`
+                : `发现 ${onlineNearby.length} 个在线签名节点`
               : '等待同网段 Rivloom 出现'}
           </p>
         </div>

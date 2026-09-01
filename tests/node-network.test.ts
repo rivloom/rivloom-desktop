@@ -9,6 +9,7 @@ import {
   directedBroadcastAddress,
   discoveryProbeAddresses,
   NodeNetwork,
+  nodePresence,
   privateNetworkAddress,
 } from '../server/node-network.ts';
 
@@ -38,6 +39,13 @@ test('node network only accepts local and private source addresses', () => {
   assert.equal(directedBroadcastAddress('192.168.5.20', '255.255.255.0'), '192.168.5.255');
   assert.equal(directedBroadcastAddress('172.18.0.1', '255.255.255.252'), '172.18.0.3');
   assert.equal(directedBroadcastAddress('bad', '255.255.255.0'), null);
+  const seenAt = new Date('2026-09-01T00:00:00.000Z').toISOString();
+  const at = Date.parse(seenAt);
+  assert.equal(nodePresence(seenAt, at + 29_999), 'online');
+  assert.equal(nodePresence(seenAt, at + 30_000), 'offline');
+  assert.equal(nodePresence(seenAt, at + 119_999), 'offline');
+  assert.equal(nodePresence(seenAt, at + 120_000), 'expired');
+  assert.equal(nodePresence('invalid', at), 'expired');
 });
 
 test(

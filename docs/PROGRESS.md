@@ -21,7 +21,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 | M0 真实引擎与任务闭环  | 新 Release 桌面包内真实回归 11 组通过，包含桌面无表单自动身份                 |
 | M1 模型设置与 DeepSeek | 功能已实现并完成无 Key 验证；真实 DeepSeek 调用待用户在客户端本机填入有效 Key |
 | M2 Windows 安装包      | 开发机安装/启动/卸载通过；干净机、升级矩阵和签名待发行阶段                    |
-| M3 自发现节点与 Brain  | 物理双机发现暴露单向 mDNS，UDP 回退已实现并通过同机测试；待新包双机复测       |
+| M3 自发现节点与 Brain  | Win10/Win11 双向发现已通过；30 秒离线/120 秒移除修复待原设备复测              |
 | M4 ChatGPT 登录        | 待做、按需验证                                                                |
 | M5 商业内测发布检查    | 待做；锁版和必要开源声明已有                                                  |
 
@@ -40,6 +40,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `server/node-identity.ts`：稳定 Ed25519 节点身份、Node ID/指纹派生和 Windows DPAPI CurrentUser 私钥保护。
 - `server/node-network.ts`：独立受限节点端点、`_rivloom._tcp.local` 发布/发现、LAN UDP 查询/单播回复回退、私有来源过滤、限频、随机挑战签名校验和节点过期处理。
 - `src/node-network.tsx`：桌面“节点与 Brain”页，区分本机、签名已验证的附近节点和尚未配对授权状态。
+- 节点心跳每 10 秒刷新；30 秒没有成功签名心跳改为离线，120 秒后移除。顶部、Brain 和侧栏数量只统计在线节点，恢复心跳自动上线。
 - `tests/node-network.test.ts` 与 `scripts/node-network-ui.ts`：分别关闭回退或 mDNS 的真实双实例发现/签名边界测试，以及 Release WebView2 页面验证。
 
 ## 当前证据
@@ -53,12 +54,12 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `.data/verification/desktop-node-network.json` 与 `.png`：5 项实际 Release 节点页检查通过；第二个隔离实例通过真实 mDNS、nonce 和 Ed25519 签名被发现，保持未授权。
 - 本地检查：TypeScript/生产构建通过；10 项测试通过，其中 mDNS 与 LAN UDP 回退分别强制验证；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
 
-安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,011,083 字节，SHA-256 `ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4`。这是包含 LAN UDP 回退的未签名内测包，开发机隔离安装/启动/卸载已通过。
+安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,010,576 字节，SHA-256 `3fb676844d87998cc49174fbe50a49d215b24c05fa40b3607e5224cb1b2ecc5b`。这是包含 LAN UDP 回退和离线状态修复的未签名内测包，开发机隔离安装/启动/卸载已通过。
 
 ## 下一次恢复工作时
 
-1. 把 SHA-256 为 `ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4` 的新包安装到 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`，保持两端打开 20 秒，确认两边都显示两个节点。
-2. 双向发现通过后分别重启客户端，确认 Node ID/Brain ID 稳定；若仍单向，先核对 UDP 43531 监听和随包 `node.exe` 专用网络规则，再记录现场结果。
+1. 把当前包含离线状态修复的新包安装到 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`；关闭一端，确认另一端约 30 至 40 秒显示离线、约 120 至 130 秒后移除。
+2. 重新启动关闭的客户端，确认它自动恢复在线，Node ID/Brain ID 与关闭前一致。
 3. 实现 M3.2 双方确认配对、持久信任与撤销；在认证加密通道完成前，不开放任何任务或业务 API。
 4. 配对验证后再做单 Brain 分布式任务和最小跨 Brain 委派；正式发给更多内测者前，完成干净 Windows 虚拟机安装/升级/卸载、代码签名和发布安全审查。
 5. 用户若准备好 DeepSeek Key，只在 Rivloom 客户端“模型与额度”页面本机输入，不发到聊天、仓库或截图；确认额度共享后做真实连接测试，再用专用 fixture 回归完整编程闭环。

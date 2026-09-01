@@ -14,7 +14,7 @@
 
 真实 Windows 窗口检查：**通过**。在全新隔离测试目录启动 Release 可执行程序，实际 WebView2 通过启动期原生令牌自动建立本机操作者并直接进入任务工作台；首次页面没有工作区、显示名称、用户名、密码或终端初始化码表单，节点发现已经启动，原生目录操作可用。缺失令牌返回 403，正确令牌返回 200；关闭桌面后令牌文件和后台进程均被清理。随后通过 Release Tauri WebView2 检查节点页和“模型与额度”页面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-direct-start.png`、`.data/verification/desktop-node-network.json`、`.data/verification/desktop-model-settings.json` 及对应截图。
 
-当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。包含 LAN UDP 回退的安装包为 71,011,083 字节，SHA-256：`ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4`。
+当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。包含 LAN UDP 回退和离线状态修复的安装包为 71,010,576 字节，SHA-256：`3fb676844d87998cc49174fbe50a49d215b24c05fa40b3607e5224cb1b2ecc5b`。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
@@ -29,7 +29,7 @@
 - 实际 Tauri WebView2 “节点与 Brain”页显示本机节点、Brain 和附近节点；对方明确保持“签名已验证、尚未配对授权”。
 - 节点端点拒绝畸形请求，业务路径返回 404；React 业务服务与 OpenCode 没有暴露到局域网。
 
-机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：原 mDNS 版本中 Win10 能看到两台，Win11 只能看到自己；Win11 对 Win10 随机节点 TCP 端口的 `Test-NetConnection` 成功，故障收敛到 Win11 的 mDNS 接收/处理路径。LAN UDP 回退已经实现并完成同机强制降级测试及新安装包烟雾测试，仍需在这两台物理机确认双向发现。配对、撤销、加密业务通信和任务委派属于 M3.2 以后范围；不能把“签名身份已验证”写成“设备已信任”。
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：原 mDNS 版本中 Win10 能看到两台，Win11 只能看到自己；Win11 对 Win10 随机节点 TCP 端口的 `Test-NetConnection` 成功，故障收敛到 Win11 的 mDNS 接收/处理路径。LAN UDP 回退包安装后，用户确认两台设备已经双向发现。继续测试发现 Win10 关闭后，Win11 在原 120 秒保活窗口内仍显示在线；已实现 10 秒心跳、30 秒离线、120 秒移除和在线数量过滤，代码/同机回归通过，仍需新包在原设备确认关闭与恢复。配对、撤销、加密业务通信和任务委派属于 M3.2 以后范围；不能把“签名身份已验证”写成“设备已信任”。
 
 ## 模型设置与 DeepSeek 公共接口
 
@@ -112,7 +112,7 @@
 
 ## 尚未验证或不包含
 
-- 新 LAN UDP 回退在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上的双向发现结果、两个真人协作、设备配对与撤销、加密节点业务通信、单/多 Brain 任务委派和跨网络运行。同机双实例两种发现路径与签名校验已经验证。
+- 新生命周期版本在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上的离线、移除、恢复和身份稳定结果；两个真人协作、设备配对与撤销、加密节点业务通信、单/多 Brain 任务委派和跨网络运行。双向发现与同机双实例两种发现路径已经验证。
 - DeepSeek 有效凭据的真实连接回复和完整编程任务；ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

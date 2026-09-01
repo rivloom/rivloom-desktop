@@ -463,7 +463,10 @@ function App() {
           </button>
           <button className={view === 'network' ? 'active' : ''} onClick={() => go('network')}>
             <Network size={18} />
-            节点与 Brain<span>{network.nearby.length + (network.local ? 1 : 0)}</span>
+            节点与 Brain
+            <span>
+              {network.nearby.filter((node) => node.online).length + (network.local ? 1 : 0)}
+            </span>
           </button>
           <button className={view === 'models' ? 'active' : ''} onClick={() => go('models')}>
             <Settings2 size={18} />

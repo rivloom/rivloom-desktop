@@ -62,6 +62,9 @@ const maximumHelloBytes = 16 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
 const discoveryProtocol = 'rivloom-node-discovery';
+const discoveryIntervalMilliseconds = 10_000;
+const nodeOfflineAfterMilliseconds = 30_000;
+const nodeExpireAfterMilliseconds = 120_000;
 
 function unsignedHello(value: Omit<Hello, 'signature'>) {
   return JSON.stringify({
@@ -141,6 +144,12 @@ export function directedBroadcastAddress(address: string, netmask: string) {
   )
     return null;
   return addressParts.map((part, index) => part | (255 ^ maskParts[index])).join('.');
+}
+
+export function nodePresence(lastSeen: string, now = Date.now()) {
+  const seenAt = Date.parse(lastSeen);
+  if (!Number.isFinite(seenAt) || now - seenAt >= nodeExpireAfterMilliseconds) return 'expired';
+  return now - seenAt >= nodeOfflineAfterMilliseconds ? 'offline' : 'online';
 }
 
 function text(value: unknown) {
@@ -652,15 +661,19 @@ export class NodeNetwork extends EventEmitter {
         this.browser?.expire();
         for (const found of this.browser?.services || []) void this.probe(found as MdnsService);
         this.sendDiscoveryQuery();
-        const cutoff = Date.now() - 120_000;
         let changed = false;
-        for (const [id, node] of this.nodes)
-          if (Date.parse(node.lastSeen) < cutoff) {
+        for (const [id, node] of this.nodes) {
+          const presence = nodePresence(node.lastSeen);
+          if (presence === 'expired') {
             this.nodes.delete(id);
             changed = true;
+          } else if (presence === 'offline' && node.online) {
+            this.nodes.set(id, { ...node, online: false });
+            changed = true;
           }
+        }
         if (changed) this.update();
-      }, 20_000);
+      }, discoveryIntervalMilliseconds);
       this.timer.unref();
       this.status = 'online';
       this.error = null;
