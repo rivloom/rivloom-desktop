@@ -66,13 +66,11 @@ export type Task = {
   updatedAt: string;
   model: string;
   sessionID: string | null;
-  baseCommit: string | null;
   runAfter: number;
   messages: Message[];
   approvals: Approval[];
   questions: Question[];
   artifacts: Artifact[];
-  artifactHash: string | null;
   diffSource: string;
   error: string | null;
   remoteOrigin?: {

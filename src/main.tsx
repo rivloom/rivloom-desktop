@@ -7,7 +7,7 @@ import {
   Search,
   LayoutDashboard,
   Users,
-  FolderGit2,
+  FolderOpen,
   Check,
   X,
   Play,
@@ -15,7 +15,6 @@ import {
   ChevronRight,
   CircleCheck,
   CircleDot,
-  GitBranch,
   ShieldCheck,
   Activity as ActivityIcon,
   FileCode2,
@@ -454,7 +453,7 @@ function App() {
             任务工作台<span>{tasks.length}</span>
           </button>
           <button className={view === 'projects' ? 'active' : ''} onClick={() => go('projects')}>
-            <FolderGit2 size={18} />
+            <FolderOpen size={18} />
             本地项目<span>{projects.length}</span>
           </button>
           <button className={view === 'team' ? 'active' : ''} onClick={() => go('team')}>
@@ -700,7 +699,7 @@ function App() {
                 {!visible.length && (
                   <div className="empty">
                     <div className="empty-symbol">
-                      <GitBranch size={32} />
+                      <FileCode2 size={32} />
                       <span>
                         <Plus size={15} />
                       </span>
@@ -715,7 +714,7 @@ function App() {
                     <p>
                       {tasks.length
                         ? '调整筛选或创建一个新任务。'
-                        : '添加一个可信的 Git 项目，写下目标与验收标准，\n再邀请 AI 和协作伙伴加入。'}
+                        : '添加一个可信的本地文件夹，写下目标与验收标准，\n再邀请 AI 和协作伙伴加入。'}
                     </p>
                     <Button onClick={() => setModal(projects.length ? 'task' : 'project')}>
                       <Plus size={16} />
@@ -732,8 +731,8 @@ function App() {
                 </div>
               </section>
               <div className="bottom-note">
-                <GitBranch size={15} />
-                代码在本机执行。请只授权专用测试仓库，不要在工作区放置生产凭据。
+                <ShieldCheck size={15} />
+                代码在本机执行。请只授权可信的测试文件夹，不要放置生产凭据。
               </div>
             </>
           )}
@@ -751,7 +750,7 @@ function App() {
                   </div>
                   <h1>{current.title}</h1>
                   <p>
-                    <FolderGit2 size={15} />
+                    <FolderOpen size={15} />
                     {projects.find((p) => p.id === current.projectID)?.name}
                     <span>
                       由 {name(current.creatorID)} 发起 · {time(current.createdAt)}
@@ -1026,7 +1025,7 @@ function App() {
                     {tab === 'artifacts' && (
                       <div className="artifacts">
                         <div className="artifact-summary">
-                          <GitBranch size={16} />
+                          <FileCode2 size={16} />
                           <span>{current.artifacts.length} 个变更文件</span>
                           <strong className="add">
                             +{current.artifacts.reduce((n, f) => n + f.additions, 0)}
@@ -1039,7 +1038,7 @@ function App() {
                           <>
                             <p className="muted">
                               来源：{current.diffSource}
-                              。这里展示执行结束或停止时的快照；验收时会再次核对。
+                              。这里只展示 OpenCode 明确返回的会话差异，不扫描或哈希文件夹。
                             </p>
                             {current.artifacts.map((file) => (
                               <details className="file-diff" key={file.file} open>
@@ -1074,9 +1073,11 @@ function App() {
                           <div className="empty compact">
                             <FileCode2 size={30} />
                             <h3>
-                              {current.sessionID ? '没有捕获到文件变更' : '产物将在执行后出现'}
+                              {current.sessionID
+                                ? 'OpenCode 没有返回文件差异'
+                                : '产物将在执行后出现'}
                             </h3>
-                            <p>请结合执行结果和验收标准判断任务是否完成。</p>
+                            <p>请直接检查本地文件，并结合执行结果和验收标准判断是否完成。</p>
                           </div>
                         )}
                       </div>
@@ -1172,8 +1173,8 @@ function App() {
               <div className="project-grid">
                 {projects.map((p) => (
                   <section className="project-card" key={p.id}>
-                    <FolderGit2 size={26} />
-                    <span className="preview-label">GIT</span>
+                    <FolderOpen size={26} />
+                    <span className="preview-label">LOCAL</span>
                     <h2>{p.name}</h2>
                     <p className="mono">{p.directory}</p>
                     <footer>
@@ -1193,14 +1194,14 @@ function App() {
               </div>
               {!projects.length && (
                 <div className="empty">
-                  <FolderGit2 size={35} />
-                  <h3>添加一个专用测试仓库</h3>
-                  <p>需要有初始提交的 Git 仓库。首次执行前，工作区必须干净。</p>
+                  <FolderOpen size={35} />
+                  <h3>添加一个可信的测试文件夹</h3>
+                  <p>任何本机可访问的普通文件夹都可以，不要求 Git 或初始提交。</p>
                 </div>
               )}
               <div className="notice">
                 <AlertTriangle size={17} />
-                请先在本机审核仓库内的 OpenCode 配置、插件与指令。可信目录不是安全隔离。
+                请先在本机审核文件夹内的 OpenCode 配置、插件与指令。可信目录不是安全隔离。
               </div>
             </>
           )}
@@ -1329,7 +1330,7 @@ function App() {
       {modal === 'project' && (
         <Modal
           title="添加本地项目"
-          subtitle="授权一个已审核的 Git 测试仓库。只有工作区创建者可添加。"
+          subtitle="授权一个已审核的本地测试文件夹。只有工作区创建者可添加。"
           close={() => setModal(null)}
         >
           <form
@@ -1354,14 +1355,14 @@ function App() {
               label="执行主机上的绝对路径"
               hint={
                 desktop
-                  ? '选择本机可信的测试仓库，需要有至少一次 Git 提交。'
-                  : '仓库需要有至少一次 Git 提交。这是执行主机的路径。'
+                  ? '选择本机可信的普通文件夹，不要求 Git。'
+                  : '填写执行主机上可访问的可信文件夹路径。'
               }
             >
               <input
                 name="directory"
                 required
-                placeholder="C:\projects\my-test-repo"
+                placeholder="C:\projects\my-test-folder"
                 value={projectDirectory}
                 onChange={(e) => setProjectDirectory(e.target.value)}
               />
@@ -1376,7 +1377,7 @@ function App() {
                     .catch(() => setError('无法打开目录选择器，请手动填写路径。'));
                 }}
               >
-                <FolderGit2 size={16} />
+                <FolderOpen size={16} />
                 浏览本机文件夹
               </Button>
             )}
@@ -1591,7 +1592,7 @@ function App() {
       {modal === 'review' && current && (
         <Modal
           title="确认本次交付"
-          subtitle={`指定验收人：${name(current.reviewerID)}。请先关闭此窗口查看差异和测试记录，再确认验收。`}
+          subtitle={`指定验收人：${name(current.reviewerID)}。请先检查本地文件和测试记录，再确认验收。Rivloom 不核验验收期间的文件变化。`}
           close={() => setModal(null)}
         >
           <form

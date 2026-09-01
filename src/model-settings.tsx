@@ -63,17 +63,21 @@ export function ModelSettingsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  const applySettings = (next: ModelSettings) => {
+    setSettings(next);
+    setSelectedDefault((current) =>
+      current && next.models.some((model) => model.id === current) ? current : next.defaultModel,
+    );
+    const deepseek = next.models.filter((model) => model.id.startsWith('deepseek/'));
+    setTestModel((current) =>
+      current && deepseek.some((model) => model.id === current) ? current : deepseek[0]?.id || '',
+    );
+  };
+
   const load = async () => {
     try {
       const next = await api<ModelSettings>('/model-settings');
-      setSettings(next);
-      setSelectedDefault((current) =>
-        current && next.models.some((model) => model.id === current) ? current : next.defaultModel,
-      );
-      const deepseek = next.models.filter((model) => model.id.startsWith('deepseek/'));
-      setTestModel((current) =>
-        current && deepseek.some((model) => model.id === current) ? current : deepseek[0]?.id || '',
-      );
+      applySettings(next);
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -104,7 +108,7 @@ export function ModelSettingsView({
     setError('');
     try {
       const next = await api<ModelSettings>(path, body);
-      setSettings(next);
+      applySettings(next);
       onChanged();
     } catch (cause) {
       setError((cause as Error).message);

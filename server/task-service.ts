@@ -10,7 +10,7 @@ import {
   exclusive,
   isLocked,
 } from './store.ts';
-import { git, captureArtifacts, sanitize, redact } from './artifacts.ts';
+import { openCodeArtifacts, sanitize, redact } from './artifacts.ts';
 import { activeStates, type Task, type User, type Message } from '../shared/types.ts';
 
 export const updates = new EventEmitter();
@@ -58,8 +58,7 @@ export async function initializeEngine() {
     await refreshEngineModels();
     engineStatus.ready = true;
   } catch {
-    engineStatus.error =
-      'OpenCode 启动失败。检查 Windows x64、Git 和已锁定的引擎安装；重启应用后再试。';
+    engineStatus.error = 'OpenCode 启动失败。检查 Windows x64 和已锁定的引擎安装；重启应用后再试。';
   }
   changed();
 }
@@ -68,19 +67,31 @@ export async function refreshEngineModels() {
   const providers = (await engine.client.provider.list({ directory: dataRoot })).data!;
   engineStatus.connectedProviders = providers.connected;
   engineStatus.models = providers.all
-      .filter((p) => providers.connected.includes(p.id))
-      .flatMap((p) =>
-        Object.values(p.models).map((m) => ({
-          id: `${p.id}/${m.id}`,
-          name: `${m.name} · ${p.name}`,
-        })),
-      );
+    .filter((p) => providers.connected.includes(p.id))
+    .flatMap((p) =>
+      Object.values(p.models).map((m) => ({
+        id: `${p.id}/${m.id}`,
+        name: `${m.name} · ${p.name}`,
+      })),
+    );
 }
 export function engineClient() {
   requireThat(engineStatus.ready && engine, 503, engineStatus.error || '引擎正在启动');
   return engine.client;
 }
 const client = engineClient;
+
+async function readSessionArtifacts(directory: string, sessionID: string) {
+  try {
+    const official = (await client().session.diff({ directory, sessionID })).data;
+    return {
+      artifacts: openCodeArtifacts(official),
+      diffSource: official?.length ? 'OpenCode 会话差异' : 'OpenCode 未返回文件差异',
+    };
+  } catch {
+    return { artifacts: [], diffSource: 'OpenCode 会话差异暂不可用' };
+  }
+}
 
 export async function refreshEngineConfiguration() {
   // Auth changes must take effect in every project instance, not only the settings page.
@@ -210,19 +221,7 @@ export async function sync(taskID: string) {
     }
     const patch: Partial<Task> = { messages, approvals, questions, state, error };
     if (state === 'review' && t.state !== 'review') {
-      try {
-        const capture = await captureArtifacts(directory, t.baseCommit!);
-        // Retain the public API call, but Git is authoritative for review, including new files.
-        const official = (await client().session.diff({ directory, sessionID: t.sessionID })).data;
-        Object.assign(patch, capture, {
-          diffSource: official?.length
-            ? 'Git（并已读取 OpenCode diff）'
-            : 'Git（OpenCode 会话 diff 为空）',
-        });
-      } catch (e) {
-        patch.state = 'failed';
-        patch.error = e instanceof Error ? e.message : '产物读取失败';
-      }
+      Object.assign(patch, await readSessionArtifacts(directory, t.sessionID));
     }
     if (
       JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error]) !==
@@ -235,7 +234,7 @@ export async function sync(taskID: string) {
           null,
           patch.state!,
           patch.state === 'review'
-            ? 'AI 执行结束，产物已保存，等待指定人员验收。'
+            ? 'AI 执行结束，执行结果已更新，等待指定人员验收。'
             : patch.state === 'failed'
               ? patch.error || '执行失败'
               : `引擎状态：${patch.state}`,
@@ -288,14 +287,6 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       const status = (await client().session.status({ directory })).data?.[t.sessionID];
       requireThat(!status || status.type === 'idle', 409, '引擎仍在执行，请先停止并确认后再继续');
     }
-    if (!t.baseCommit) {
-      requireThat(
-        !(await git(directory, ['status', '--porcelain'])).trim(),
-        409,
-        '首次执行要求 Git 工作区干净，请先提交或自行处理已有修改',
-      );
-      t = patchTask(t.id, { baseCommit: (await git(directory, ['rev-parse', 'HEAD'])).trim() });
-    }
     await subscribe(directory);
     if (!t.sessionID) {
       const session = (await client().session.create({ directory, title: t.title })).data!;
@@ -304,14 +295,15 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
     const runAfter = Date.now();
     const instructions =
       addition ||
-      `任务：${t.title}\n\n要求：\n${t.description}\n\n验收标准：\n${t.criteria}\n\n在当前 Git 工作目录完成编程任务并运行必要测试。每次修改和命令等待审批。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。`;
+      `任务：${t.title}\n\n要求：\n${t.description}\n\n验收标准：\n${t.criteria}\n\n在当前项目文件夹完成编程任务并运行必要测试。每次修改和命令等待审批。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。`;
     patchTask(t.id, {
       state: 'running',
       runAfter,
       error: null,
       approvals: [],
       questions: [],
-      artifactHash: null,
+      artifacts: [],
+      diffSource: '',
     });
     changed(t.id);
     activity(
@@ -362,14 +354,13 @@ export async function stopTask(taskID: string, actor: User) {
       const messages = normalizeMessages(
         (await client().session.messages({ directory, sessionID: t.sessionID })).data,
       );
-      const artifacts = t.baseCommit ? await captureArtifacts(directory, t.baseCommit) : {};
+      const artifacts = await readSessionArtifacts(directory, t.sessionID);
       patchTask(t.id, {
         state: 'stopped',
         approvals: [],
         questions: [],
         messages,
         ...artifacts,
-        diffSource: 'Git · 停止时的已有修改',
         error: null,
       });
       activity(
@@ -458,12 +449,6 @@ export async function acceptResult(taskID: string, actor: User, version: number,
       t.state === 'review' && t.version === version,
       409,
       '任务或产物已更新，请刷新后验收',
-    );
-    const current = await captureArtifacts(project(t.projectID).directory, t.baseCommit!);
-    requireThat(
-      current.artifactHash === t.artifactHash,
-      409,
-      '工作目录在产物生成后被修改。请由接受人继续执行并重新生成产物后验收',
     );
     const result = patchTask(t.id, { state: 'accepted', acceptedBy: actor.id });
     activity(t.id, actor.id, 'accepted', `验收通过：${redact(note)}`);

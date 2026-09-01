@@ -473,13 +473,11 @@ async function processRemoteTask(taskID: string, manuallyApproved = false) {
           updatedAt: createdAt,
           model: policy.model!,
           sessionID: null,
-          baseCommit: null,
           runAfter: 0,
           messages: [],
           approvals: [],
           questions: [],
           artifacts: [],
-          artifactHash: null,
           diffSource: '',
           error: null,
           remoteOrigin: {
@@ -684,13 +682,11 @@ app.post('/api/tasks', (req, res) => {
     createdAt: now(),
     updatedAt: now(),
     sessionID: null,
-    baseCommit: null,
     runAfter: 0,
     messages: [],
     approvals: [],
     questions: [],
     artifacts: [],
-    artifactHash: null,
     diffSource: '',
     error: null,
   };
@@ -869,7 +865,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return void res.status(error.status).json({ error: error.message });
   if (error instanceof NodeNetworkError)
     return void res.status(error.status).json({ error: error.message });
-  res.status(500).json({ error: '操作未完成。请检查任务状态、Git 仓库及引擎连接后重试。' });
+  res.status(500).json({ error: '操作未完成。请检查任务状态、项目文件夹及引擎连接后重试。' });
 });
 const server = app.listen(port, '127.0.0.1', (error?: Error) => {
   if (error) {

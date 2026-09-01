@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 process.env.RIVLOOM_DATA_DIR = mkdtempSync(join(tmpdir(), 'rivloom-security-'));
-const { captureArtifacts, redact } = await import('../server/artifacts.ts');
+const { openCodeArtifacts, redact, validateProject } = await import('../server/artifacts.ts');
 const { passwordHash, sameToken, verifyPassword } = await import('../server/auth.ts');
 const { createExample } = await import('../scripts/example.ts');
 const { connectionFailure, parsePreferences } = await import('../server/model-settings.ts');
@@ -63,35 +63,35 @@ test('common secret formats are redacted', () => {
   assert.equal(redact('Authorization: Bearer 1234567890abcde'), 'Authorization: Bearer [REDACTED]');
   assert.equal(redact('api_key=not-for-the-browser'), 'api_key=[REDACTED]');
 });
-test('review capture includes tracked edits, new files and deletion; hash changes with contents', async () => {
-  const dir = join(process.env.RIVLOOM_DATA_DIR!, 'fixture');
+test('a normal folder is accepted without Git metadata', async () => {
+  const dir = join(process.env.RIVLOOM_DATA_DIR!, 'plain-folder');
   createExample(dir);
-  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
-  const first = await captureArtifacts(dir, base);
-  assert.equal(first.artifacts.length, 0);
-  const source = readFileSync(join(dir, 'slugify.mjs'), 'utf8');
-  writeFileSync(join(dir, 'slugify.mjs'), source + '// external edit\n');
-  writeFileSync(join(dir, 'new.txt'), 'new artifact');
-  const next = await captureArtifacts(dir, base);
-  assert.equal(next.artifacts.length, 2);
-  assert.notEqual(first.artifactHash, next.artifactHash);
-  assert(next.artifacts.some((f) => f.file === 'new.txt' && f.status === 'added'));
-  writeFileSync(join(dir, 'new.txt'), 'different artifact');
-  assert.notEqual((await captureArtifacts(dir, base)).artifactHash, next.artifactHash);
-  unlinkSync(join(dir, 'slugify.mjs'));
-  assert(
-    (await captureArtifacts(dir, base)).artifacts.some(
-      (f) => f.file === 'slugify.mjs' && f.status === 'deleted',
-    ),
-  );
+  assert(!existsSync(join(dir, '.git')));
+  assert.equal((await validateProject(dir)).toLowerCase(), dir.toLowerCase());
 });
-test('sensitive filenames do not expose diff content', async () => {
-  const dir = join(process.env.RIVLOOM_DATA_DIR!, 'private-fixture');
-  createExample(dir);
-  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
-  writeFileSync(join(dir, '.env'), 'SOME_UNKNOWN_SECRET=private-value');
-  const result = await captureArtifacts(dir, base);
-  assert(!JSON.stringify(result).includes('private-value'));
+test('only official OpenCode diffs are displayed and sensitive contents stay hidden', () => {
+  const visible = openCodeArtifacts([
+    {
+      file: 'slugify.mjs',
+      patch: '-export const value = 1;\n+export const value = 2;\n',
+      additions: 1,
+      deletions: 1,
+      status: 'modified',
+    },
+  ]);
+  assert.equal(visible.length, 1);
+  assert.match(visible[0].patch, /-export const value = 1/);
+  assert.match(visible[0].patch, /\+export const value = 2/);
+  const sensitive = openCodeArtifacts([
+    {
+      file: '.env',
+      patch: '+SOME_UNKNOWN_SECRET=private-value',
+      additions: 1,
+      deletions: 0,
+      status: 'added',
+    },
+  ]);
+  assert(!JSON.stringify(sensitive).includes('private-value'));
 });
 test('model state rejects corrupt persisted values and provider errors never echo secrets', () => {
   const fallback = parsePreferences('{broken');

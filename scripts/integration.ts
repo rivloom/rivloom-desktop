@@ -259,10 +259,10 @@ try {
   assert(handled.size >= 2);
   assert(verifiedActions.has('edit') && verifiedActions.has('test-command'));
   assert(streamText.includes('event: delta'));
-  assert(finished.artifacts.some((f) => f.file === 'slugify.mjs' && f.patch.includes('+')));
+  assert(finished.diffSource.startsWith('OpenCode'));
   execFileSync(process.execPath, ['--test', 'slugify.test.mjs'], { cwd: repo });
   pass(
-    'Real model execution, streaming, edit + command approval, test success and Git artifact capture',
+    'Real model execution, streaming, edit + command approval and test success in a plain folder',
   );
   await member.call(
     `/tasks/${created.id}/accept`,
@@ -271,42 +271,21 @@ try {
   );
   const original = readFileSync(join(repo, 'slugify.mjs'), 'utf8');
   writeFileSync(join(repo, 'slugify.mjs'), original + '\n// external edit\n');
-  await owner.call(
-    `/tasks/${created.id}/accept`,
-    { confirmed: true, version: finished.version, note: 'external change' },
-    409,
-  );
-  writeFileSync(join(repo, 'slugify.mjs'), original);
   await owner.call(`/tasks/${created.id}/accept`, {
     confirmed: true,
     version: finished.version,
-    note: '已核对真实测试输出、Git diff 和验收标准。',
+    note: '已直接核对本地文件、真实测试输出和验收标准。',
   });
-  pass('Only reviewer can accept; changed artifacts rejected before acceptance');
+  writeFileSync(join(repo, 'slugify.mjs'), original);
+  pass('Only the reviewer can accept; acceptance does not scan or hash the folder');
   feedAbort.abort();
   await readStream;
   await stop();
   await start();
   const restored = await get(created.id);
   assert.equal(restored.state, 'accepted');
-  assert(restored.artifacts.length);
   assert(restored.messages.length);
-  pass('Restart preserves authenticated accounts, task state, outputs, artifacts and audit');
-  // The accepted work is committed by the test operator, never by the model.
-  execFileSync('git', ['add', '.'], { cwd: repo });
-  execFileSync(
-    'git',
-    [
-      '-c',
-      'user.name=Rivloom Test',
-      '-c',
-      'user.email=test@localhost',
-      'commit',
-      '-qm',
-      'Reviewed fixture result',
-    ],
-    { cwd: repo },
-  );
+  pass('Restart preserves authenticated accounts, task state, outputs and audit');
   const stopped = await owner.call<Task>(
     '/tasks',
     taskBody(

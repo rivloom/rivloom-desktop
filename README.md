@@ -4,11 +4,11 @@
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，详细计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，当前停点见 [实施进度](docs/PROGRESS.md)，继续开发或开启新会话前读 [交接状态](docs/HANDOFF.md)。M0、M3.1 和 M3.2 已确认完成；用户已经创建 DeepSeek Key，M1 的真实调用待在客户端本机验证；M2 发行完善暂缓；当前聚焦 M3.3，M3.4 讨论清楚前暂停。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，详细计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，当前停点见 [实施进度](docs/PROGRESS.md)，继续开发或开启新会话前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1 和 M3.2 已确认完成；M2 发行完善暂缓；当前聚焦 M3.3，M3.4 讨论清楚前暂停。
 
 ## 在 Windows 启动
 
-客户使用当前内测包需要 Git for Windows、项目所需工具链，以及可访问模型提供方的网络。Node.js 24.19.0 和 OpenCode 1.18.25 已随包提供。
+客户使用当前内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 已随包提供。
 
 安装包：`src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe`。双击安装后从开始菜单启动，不需要命令行。
 
@@ -30,7 +30,7 @@ npm.cmd start
 npm.cmd run example
 ```
 
-该命令在 `.data/workspaces/slugify` 创建独立的小型 Git 测试仓库（已存在时不会覆盖）。添加项目时填入命令输出的绝对路径。
+该命令在 `.data/workspaces/slugify` 创建独立的普通测试文件夹（已存在时不会覆盖），不会初始化 Git。添加项目时填入命令输出的绝对路径。
 
 建议任务：
 
@@ -44,7 +44,7 @@ npm.cmd run example
 4. 任一任务参与者可以停止。发起人或接受人补充要求时，运行中的任务先停止，由接受人确认继续。
 5. AI 完成后，查看「执行记录」「产物与差异」；指定验收人填写意见并验收，或退回修改。
 
-首次执行要求仓库有初始提交且工作区干净。后续修改直接留在这个仓库；不自动创建分支、提交、推送、回滚或部署。完成一个任务后，请自行检查并提交/处理修改，再开始下一个任务。
+修改直接留在所选文件夹；Rivloom 不建立 Git 基线、文件快照或内容哈希，也不自动提交、推送、回滚或部署。“产物与差异”只展示 OpenCode 明确返回的会话差异；验收人应直接检查本地文件和测试结果。
 
 ### 模型与独立凭据
 
@@ -92,12 +92,12 @@ M3.1 已使每个安装实例成为自发现节点：稳定节点身份由 Windo
 
 自动发现不等于自动信任。M3.2 已增加两端短码/指纹核对、双方分别确认、持久信任、取消和撤销；旧配对请求重放、单方确认和已撤销关系都不能建立信任。真实同机双实例、Release WebView2 及用户的 Win10/Win11 物理双机均已验证配对闭环。受信节点会用签名的临时 X25519 密钥建立双向认证通道，经 HKDF 派生方向密钥，以 AES-256-GCM、严格消息序号和时间窗保护消息。
 
-M3.3 当前已实现策略化跨节点执行：执行节点一次选择本机项目和模型，可使用自动调用（界面默认）、仅指定受信节点自动调用或每项确认；匹配任务只创建一个本机业务任务和官方 OpenCode 会话，归属 Brain 按单调序号收到执行状态和最终摘要。本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。实际 Release WebView2 已用真实第二节点和随包 OpenCode 在隔离 Git 项目生成并核对文件。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未实现跨设备审批、补充要求、停止、差异/产物回传和验收，也尚未由两个真人完成新版跨设备执行验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md) 和 [ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md)。
+M3.3 当前已实现策略化跨节点执行：执行节点一次选择本机项目和模型，可使用自动调用（界面默认）、仅指定受信节点自动调用或每项确认；匹配任务只创建一个本机业务任务和官方 OpenCode 会话，归属 Brain 按单调序号收到执行状态和最终摘要。本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。实际 Release WebView2 已用真实第二节点和随包 OpenCode 在隔离项目文件夹生成并核对文件。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未实现跨设备审批、补充要求、停止、差异/产物回传和验收，也尚未由两个真人完成新版跨设备执行验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md) 和 [ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md)。
 
 ## 验证命令
 
 ```powershell
-npm.cmd test                  # 密码、脱敏、产物完整性等本地检查
+npm.cmd test                  # 密码、脱敏、普通文件夹与网络协议等本地检查
 npm.cmd run typecheck
 npm.cmd run build
 npm.cmd run test:model-settings  # 官方 OpenCode 凭据/模型接口；测试字符串，不调用模型
@@ -107,9 +107,9 @@ npm.cmd run test:integration  # 真实应用、独立账号、审批、验收、
 npm.cmd run test:installer    # 当前 NSIS 的隔离安装、随包引擎启动和卸载
 ```
 
-真实测试使用独立临时仓库，不修改你的项目。引擎探针仅自动批准固定测试文件 `slugify.mjs` 和固定命令 `node --test slugify.test.mjs`；集成测试另允许固定的只读目录列举 `ls -la` / `Get-ChildItem`。出现其他请求会失败。测试仍要求真实发生编辑和 Node 测试命令审批，目录列举不能替代它们。它是测试操作者，不代表真实用户已经完成可用性测试，也不会启用产品的自动批准。
+真实测试使用独立临时文件夹，不修改你的项目。引擎探针仅自动批准固定测试文件 `slugify.mjs` 和固定命令 `node --test slugify.test.mjs`；集成测试另允许固定的只读目录列举 `ls -la` / `Get-ChildItem`。出现其他请求会失败。测试仍要求真实发生编辑和 Node 测试命令审批，目录列举不能替代它们。它是测试操作者，不代表真实用户已经完成可用性测试，也不会启用产品的自动批准。
 
-报告保存在 `.data/verification`。模型设置报告会明确区分“官方接口验证”和“真实提供方回复”；测试字符串通过不能写成 DeepSeek 已连接。测试目录可能包含源码和输出，不要公开上传。模型执行时间不固定，测试超时/限流不会被当成成功。
+报告保存在 `.data/verification`。2026-09-01 已用 `deepseek/deepseek-v4-flash` 在没有 `.git` 的普通文件夹完成真实编程任务：编辑审批、指定测试命令审批、1 项测试通过和人工验收均成功。OpenCode 的 `session.diff` 返回空数组，所以产物页按实际情况提示直接检查本地文件；Rivloom 没有用文件快照或哈希补齐。测试目录可能包含源码和输出，不要公开上传。模型执行时间不固定，测试超时/限流不会被当成成功。
 
 ## 架构和边界
 
@@ -117,13 +117,13 @@ npm.cmd run test:installer    # 当前 NSIS 的隔离安装、随包引擎启动
 Windows 桌面窗口 / 后续伙伴客户端
          │ 同源 HTTP + SSE / HttpOnly cookie
          ▼
-React + Node 本地任务服务 ── SQLite（账号、任务、活动、产物快照）
+React + Node 本地任务服务 ── SQLite（账号、任务、活动、执行记录）
          │ 官方 SDK + 私有 Basic Auth / 127.0.0.1
          ▼
 官方 OpenCode 1.18.25 ── 模型提供方 / 工具执行
          │
          ▼
-已授权 Git 测试仓库
+已授权普通项目文件夹
 ```
 
 `server/engine.ts` 管理官方二进制生命周期和配置；`server/task-service.ts` 将公开事件/会话结果映射到业务状态。没有引擎源码、fork、自研 Agent 循环、上下文管理、模型调用实现或工具执行器。Node 24 内置 SQLite 避免原生数据库依赖；当前仅一台执行主机，同项目串行，不做调度平台。

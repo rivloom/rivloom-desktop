@@ -1,7 +1,6 @@
 // Verifies the node network page inside an already-running Tauri WebView2 instance.
 // A second isolated NodeNetwork supplies a real signed LAN discovery advertisement.
 import { createRequire } from 'node:module';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -22,33 +21,6 @@ const peerRoot = mkdtempSync(join(tmpdir(), 'rivloom-desktop-peer-'));
 const projectRoot = join(peerRoot, 'automatic-execution-project');
 mkdirSync(projectRoot, { recursive: true });
 writeFileSync(join(projectRoot, 'README.md'), '# Rivloom automatic execution fixture\n');
-execFileSync('git', ['init', '--quiet'], { cwd: projectRoot, windowsHide: true });
-execFileSync(
-  'git',
-  [
-    '-c',
-    'user.name=Rivloom Verification',
-    '-c',
-    'user.email=verification@rivloom.local',
-    'add',
-    'README.md',
-  ],
-  { cwd: projectRoot, windowsHide: true },
-);
-execFileSync(
-  'git',
-  [
-    '-c',
-    'user.name=Rivloom Verification',
-    '-c',
-    'user.email=verification@rivloom.local',
-    'commit',
-    '--quiet',
-    '-m',
-    'fixture',
-  ],
-  { cwd: projectRoot, windowsHide: true },
-);
 const peer = new NodeNetwork(peerRoot, true);
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
 let page: any = null;
@@ -173,7 +145,7 @@ try {
   await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
     title: incomingTitle,
     description:
-      '在当前 Git 项目新增 RESULT.txt，内容严格为 rivloom remote execution verified。不要修改其他文件，不要提交。',
+      '在当前普通项目文件夹新增 RESULT.txt，内容严格为 rivloom remote execution verified。不要修改其他文件。',
     criteria: 'RESULT.txt 存在且内容完全一致，归属 Brain 收到有序执行状态。',
   });
   const incomingCard = page

@@ -4,7 +4,7 @@ import {
   Check,
   Clock3,
   Fingerprint,
-  FolderGit2,
+  FolderOpen,
   Inbox,
   Link2,
   Radio,
@@ -385,7 +385,7 @@ function ExecutionPolicyCard({
               (mode === 'limited' && !selectableNodeIDs.length)
             }
           >
-            <FolderGit2 size={14} />
+            <FolderOpen size={14} />
             {policy.enabled ? '保存调用策略' : '开启执行能力'}
           </button>
           {policy.enabled && (
