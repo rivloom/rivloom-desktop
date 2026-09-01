@@ -1,0 +1,152 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { createOpencodeClient, type Config } from '@opencode-ai/sdk/v2';
+
+export const ENGINE_VERSION = '1.18.25';
+export const dataRoot = resolve(process.env.RIVLOOM_DATA_DIR || '.data');
+export const engineRoot = join(dataRoot, 'engine');
+const require = createRequire(import.meta.url);
+export function engineBinary() {
+  if (process.platform !== 'win32') throw new Error('此 MVP 当前只验证 Windows x64。');
+  return join(require.resolve('opencode-windows-x64/package.json'), '..', 'bin', 'opencode.exe');
+}
+export const permissions: Config['permission'] = {
+  '*': 'ask',
+  read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny', '*.pem': 'deny', '*auth.json': 'deny' },
+  glob: 'allow',
+  grep: 'allow',
+  edit: 'ask',
+  bash: 'ask',
+  question: 'allow',
+  task: 'deny',
+  skill: 'deny',
+  external_directory: 'deny',
+  webfetch: 'deny',
+  websearch: 'deny',
+};
+export function engineEnv(password?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (
+      /^(path|systemroot|windir|comspec|pathext|userprofile|appdata|localappdata|programdata|programfiles|programfiles\(x86\)|systemdrive|https?_proxy|no_proxy)$/i.test(
+        key,
+      )
+    )
+      env[key] = value;
+  }
+  for (const [key, folder] of Object.entries({
+    XDG_CONFIG_HOME: 'config',
+    XDG_DATA_HOME: 'data',
+    XDG_CACHE_HOME: 'cache',
+    XDG_STATE_HOME: 'state',
+    TEMP: 'temp',
+    TMP: 'temp',
+  })) {
+    env[key] = join(engineRoot, folder);
+    mkdirSync(env[key]!, { recursive: true });
+  }
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+    autoupdate: false,
+    share: 'disabled',
+    snapshot: true,
+    permission: permissions,
+    agent: { build: { permission: permissions } },
+  });
+  if (password) {
+    env.OPENCODE_SERVER_PASSWORD = password;
+    env.OPENCODE_SERVER_USERNAME = 'rivloom';
+  }
+  return env;
+}
+
+export function importAuth(source: string) {
+  const destination = join(engineRoot, 'data', 'opencode', 'auth.json');
+  if (existsSync(destination)) throw new Error('独立引擎已有凭据，不会覆盖。');
+  const auth = JSON.parse(readFileSync(source, 'utf8'));
+  mkdirSync(join(destination, '..'), { recursive: true });
+  writeFileSync(destination, JSON.stringify(auth), { mode: 0o600 });
+  return Object.keys(auth);
+}
+
+export async function startEngine(cwd: string, port = 0) {
+  const password = randomBytes(32).toString('hex');
+  let child: ChildProcess;
+  const url = await new Promise<string>((ok, fail) => {
+    child = spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./engine-host.mjs', import.meta.url)),
+        engineBinary(),
+        'serve',
+        '--hostname',
+        '127.0.0.1',
+        '--port',
+        String(port),
+      ],
+      {
+        cwd,
+        env: engineEnv(password),
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        windowsHide: true,
+      },
+    );
+    let output = '';
+    const timeout = setTimeout(() => {
+      if (child.connected) child.disconnect();
+      fail(new Error('OpenCode 启动超时'));
+    }, 45_000);
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      fail(error);
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      fail(new Error(`OpenCode 退出 (${code}): ${output.slice(-1800)}`));
+    });
+    const onData = (data: Buffer) => {
+      output = (output + data.toString()).slice(-4000);
+      const match = output.match(/opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/);
+      if (match) {
+        clearTimeout(timeout);
+        ok(match[1]);
+      }
+    };
+    child.stdout!.on('data', onData);
+    child.stderr!.on('data', onData);
+  });
+  const headers = {
+    Authorization: `Basic ${Buffer.from(`rivloom:${password}`).toString('base64')}`,
+  };
+  const client = createOpencodeClient({
+    baseUrl: url,
+    headers,
+    throwOnError: true,
+    fetch: (input, init) => {
+      const address = input instanceof Request ? input.url : String(input);
+      if (new URL(address).pathname.endsWith('/event')) return fetch(input, init);
+      const caller = init?.signal || (input instanceof Request ? input.signal : undefined);
+      const signal = caller
+        ? AbortSignal.any([caller, AbortSignal.timeout(20000)])
+        : AbortSignal.timeout(20000);
+      return fetch(input, { ...init, signal });
+    },
+  });
+  const health = await client.global.health();
+  if (health.data?.version !== ENGINE_VERSION) {
+    child!.disconnect();
+    throw new Error(`引擎版本不匹配：需要 ${ENGINE_VERSION}`);
+  }
+  return {
+    client,
+    url,
+    child: child!,
+    headers,
+    close: () => {
+      if (child!.connected) child!.disconnect();
+    },
+  };
+}

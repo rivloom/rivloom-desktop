@@ -1,0 +1,11 @@
+{
+  "version": "1.18.25",
+  "platform": "windows-x64",
+  "package": "opencode-windows-x64",
+  "sdk": "@opencode-ai/sdk",
+  "source": "https://github.com/anomalyco/opencode/releases/tag/v1.18.25",
+  "license": "MIT",
+  "licenseSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/LICENSE",
+  "binarySha256": "ef06e41a35795066e95acde276a42fbbf85d7a683c2787f6a19ed20bcde9b6ff",
+  "modified": false
+}

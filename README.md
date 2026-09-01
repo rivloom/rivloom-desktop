@@ -1,0 +1,128 @@
+# Rivloom MVP
+
+人与 AI 协作的任务工作台。React + TypeScript 界面、单个 Node.js 本地服务、SQLite、官方 OpenCode。任务有发起人、接受人、审批人和验收人；AI 执行结束只会进入「待验收」。
+
+**已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
+
+后续开发按 [实施计划](docs/plans/2026-08-31-mvp-delivery.md) 推进，当前停点见 [实施进度](docs/PROGRESS.md)，初始化 Git 或新会话前读 [交接状态](docs/HANDOFF.md)。桌面、官方 OpenCode 接入和模型设置产品功能已验证；由于尚未提供有效 Key，DeepSeek 成功调用仍明确标为待验证。
+
+## 在 Windows 启动
+
+客户使用当前内测包需要 Git for Windows、项目所需工具链，以及可访问模型提供方的网络。Node.js 24.19.0 和 OpenCode 1.18.25 已随包提供。
+
+安装包：`src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe`。双击安装后从开始菜单启动，不需要命令行。
+
+开发环境需要 Node.js **24+**、Rust 和 Visual Studio C++ Build Tools：
+
+```powershell
+cd C:\project\rivloom-opencode
+npm.cmd ci
+npm.cmd start
+```
+
+`npm start` 会构建随包资源并打开独立的 Tauri 窗口。首次启动直接在窗口中设置创建者的用户名、显示名称和密码，不需要读终端初始化码；没有默认密码和公开注册。
+
+`npm run dev` 与 `npm start` 都启动桌面开发版本。内部 Web 调试必须显式使用 `npm run server:dev`；不要和桌面端共用数据目录。同一数据目录有进程锁。关闭桌面窗口时会提示并停止执行，异常退出也由父子进程监控清理。
+
+### 第一个真实任务
+
+```powershell
+npm.cmd run example
+```
+
+该命令在 `.data/workspaces/slugify` 创建独立的小型 Git 测试仓库（已存在时不会覆盖）。添加项目时填入命令输出的绝对路径。
+
+建议任务：
+
+> 修复 slugify.mjs，使已有测试通过。只修改 slugify.mjs，不修改测试。使用编辑工具修改，执行 node --test slugify.test.mjs，并报告结果。不要提交、推送或部署。
+
+验收标准：处理大写、连续空白和首尾标点；现有测试通过；测试文件不变。
+
+1. 添加可信项目，创建任务并指定三个责任人；发起人是当前登录者。
+2. 接受人点击「接受任务」，再确认开始执行。
+3. 审批人核对修改或命令，选择「仅本次允许」或「拒绝」。不提供全局自动批准。
+4. 任一任务参与者可以停止。发起人或接受人补充要求时，运行中的任务先停止，由接受人确认继续。
+5. AI 完成后，查看「执行记录」「产物与差异」；指定验收人填写意见并验收，或退回修改。
+
+首次执行要求仓库有初始提交且工作区干净。后续修改直接留在这个仓库；不自动创建分支、提交、推送、回滚或部署。完成一个任务后，请自行检查并提交/处理修改，再开始下一个任务。
+
+### 模型与独立凭据
+
+默认模型是本次实际验证通过的 `opencode/mimo-v2.5-free`。免费模型由官方提供，可能限流、停用或改变数据处理政策。仅用无敏感信息的测试代码；应用不是离线 AI。
+
+工作区创建者在桌面侧栏进入“模型与额度”，可以：
+
+1. 在密码输入框中保存、替换或移除 DeepSeek 官方 API Key，并确认可信成员的任务会消耗此账号额度。
+2. 选择 OpenCode 返回的 DeepSeek 模型，另行确认后执行一次真实、可能计费且不会自动重试的连接测试。
+3. 设置新任务默认模型。已有任务继续锁定创建时选择的模型。
+
+完整 Key 由 OpenCode 官方认证接口写入 Rivloom 独立的本机引擎目录。业务数据库、模型操作记录和应用接口都不保存或返回 Key；界面提交后立即清空输入。连接测试使用无项目文件、禁止全部工具的独立会话，10 分钟最多 3 次。当前工作区共用一份提供方凭据，不代表每个成员拥有独立计费账号。
+
+可在创建任务时选择已连接提供方的模型。以下命令只保留给开发调试，不是客户配置模型的必要步骤：
+
+```powershell
+npm.cmd run engine:login
+```
+
+通过官方登录流程写入 Rivloom 独立的 OpenCode 数据目录。登录后重启应用以刷新模型列表。也可以显式导入你已有的 OpenCode 凭据（只应导入你有权使用的账号；目标已存在时拒绝覆盖）：
+
+```powershell
+npm.cmd run engine:import-auth -- C:\Users\你的用户名\.local\share\opencode\auth.json
+```
+
+不会复制原 OpenCode 数据库、会话、插件或旧项目。只有这个显式导入命令读取原凭据文件。服务不会自动扫描个人凭据。不要导入无权使用的账号，也不要把 Key 发到聊天、仓库、截图或验证报告。
+
+开发调试可通过启动终端的环境变量选择隔离数据目录：
+
+```powershell
+$env:RIVLOOM_MODEL = '提供方ID/模型ID'
+$env:RIVLOOM_DATA_DIR = 'C:\rivloom-test-data'
+npm.cmd start
+```
+
+没有自动加载 `.env`，避免把工作区秘密继承给 AI 进程。更换 `RIVLOOM_DATA_DIR` 会使用另一个工作区。
+
+## 两人协作
+
+工作区创建者在「协作成员」生成邀请码，**自行私下交给可信伙伴**。伙伴使用自己的独立登录创建账号；邀请码 24 小时内有效且只能使用一次。
+
+这是共享后端与数据库、独立账号/会话、服务端鉴权的协作协议。角色不由前端切换决定。非参与者看不到任务或事件；接受人负责启动，审批人负责权限决策，验收人负责交付确认。
+
+现阶段只完成自动化的独立账号协议验证，**尚未由两个真人在两台设备上完成内测**。M3 会提供受保护的伙伴桌面接入方式；当前应用和 OpenCode 均只监听 `127.0.0.1`，不开放公网引擎，也不提供通用 API 代理。不要简单改为 `0.0.0.0` 或转发引擎端口。
+
+## 验证命令
+
+```powershell
+npm.cmd test                  # 密码、脱敏、产物完整性等本地检查
+npm.cmd run typecheck
+npm.cmd run build
+npm.cmd run test:model-settings  # 官方 OpenCode 凭据/模型接口；测试字符串，不调用模型
+npm.cmd run engine:probe      # 真实官方引擎探针，会调用模型
+npm.cmd run test:integration  # 真实应用、独立账号、审批、验收、重启、停止
+npm.cmd run test:installer    # 当前 NSIS 的隔离安装、随包引擎启动和卸载
+```
+
+真实测试使用独立临时仓库，不修改你的项目。引擎探针仅自动批准固定测试文件 `slugify.mjs` 和固定命令 `node --test slugify.test.mjs`；集成测试另允许固定的只读目录列举 `ls -la` / `Get-ChildItem`。出现其他请求会失败。测试仍要求真实发生编辑和 Node 测试命令审批，目录列举不能替代它们。它是测试操作者，不代表真实用户已经完成可用性测试，也不会启用产品的自动批准。
+
+报告保存在 `.data/verification`。模型设置报告会明确区分“官方接口验证”和“真实提供方回复”；测试字符串通过不能写成 DeepSeek 已连接。测试目录可能包含源码和输出，不要公开上传。模型执行时间不固定，测试超时/限流不会被当成成功。
+
+## 架构和边界
+
+```text
+Windows 桌面窗口 / 后续伙伴客户端
+         │ 同源 HTTP + SSE / HttpOnly cookie
+         ▼
+React + Node 本地任务服务 ── SQLite（账号、任务、活动、产物快照）
+         │ 官方 SDK + 私有 Basic Auth / 127.0.0.1
+         ▼
+官方 OpenCode 1.18.25 ── 模型提供方 / 工具执行
+         │
+         ▼
+已授权 Git 测试仓库
+```
+
+`server/engine.ts` 管理官方二进制生命周期和配置；`server/task-service.ts` 将公开事件/会话结果映射到业务状态。没有引擎源码、fork、自研 Agent 循环、上下文管理、模型调用实现或工具执行器。Node 24 内置 SQLite 避免原生数据库依赖；当前仅一台执行主机，同项目串行，不做调度平台。
+
+桌面壳只处理窗口、随包运行时、目录选择和进程生命周期；不会实现 Agent 循环或模型调用。详细打包、测试和发行边界见 [Windows 桌面端说明](docs/DESKTOP.md)。
+
+详细限制、敏感信息与可信环境约束见 [SECURITY.md](SECURITY.md)。锁定版本与官方接口映射见 [引擎接入说明](docs/ENGINE.md)。开源声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

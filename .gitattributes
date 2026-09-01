@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.bmp binary
+*.crate binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.webp binary
+
+# Preserve upstream license text verbatim without treating its whitespace as a project defect.
+docs/licenses/** -whitespace
