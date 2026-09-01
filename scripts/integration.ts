@@ -132,6 +132,7 @@ const taskBody = (projectID: string, title: string, description: string) => ({
   approverID: owner.user.id,
   reviewerID: owner.user.id,
   model: 'opencode/mimo-v2.5-free',
+  approvalMode: 'ask',
 });
 async function get(id: string) {
   return (await owner.call<{ task: Task }>(`/tasks/${id}`)).task;

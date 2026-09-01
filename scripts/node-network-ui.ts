@@ -49,6 +49,22 @@ try {
     return { status: response.status, body: await response.json() };
   }, projectRoot);
   assert.equal(projectResult.status, 201, JSON.stringify(projectResult.body));
+  const disabledPolicy = await page.evaluate(async () => {
+    const response = await fetch('/api/network/execution-policy', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
+      body: JSON.stringify({
+        enabled: false,
+        approvalMode: 'ask',
+        projectID: null,
+        model: null,
+        confirmed: true,
+      }),
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  assert.equal(disabledPolicy.status, 200, JSON.stringify(disabledPolicy.body));
   const modelDeadline = Date.now() + 20_000;
   let availableModels: { id: string; name: string }[] = [];
   while (Date.now() < modelDeadline && availableModels.length === 0) {
@@ -109,6 +125,32 @@ try {
   assert.equal(peerViewOfDesktop()?.channelReady, true);
   assert.equal(peerViewOfDesktop()?.trusted, true);
 
+  const waitingTitle = '验证可信任务自动接收';
+  await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
+    title: waitingTitle,
+    description: '验证设备互信后任务自动接收；本机执行能力关闭时不得创建 OpenCode 会话。',
+    criteria: '归属 Brain 看到已接受，执行序号仍为零。',
+  });
+  const waitingTask = () => peer.snapshot().remoteTasks.find((task) => task.title === waitingTitle);
+  const waitingDeadline = Date.now() + 10_000;
+  while (
+    Date.now() < waitingDeadline &&
+    (waitingTask()?.status !== 'accepted' || waitingTask()?.deliveryPending)
+  )
+    await wait(100);
+  assert.equal(waitingTask()?.status, 'accepted');
+  assert.equal(waitingTask()?.executionSequence, 0);
+  assert.equal(waitingTask()?.executionState, 'not_started');
+  await page
+    .locator('.remote-task-card.incoming')
+    .filter({ has: page.getByRole('heading', { name: waitingTitle }) })
+    .getByText('已接受', { exact: true })
+    .waitFor();
+  await peer.cancelRemoteTask(waitingTask()!.id);
+  const cancelDeadline = Date.now() + 5000;
+  while (Date.now() < cancelDeadline && waitingTask()?.deliveryPending) await wait(100);
+  assert.equal(waitingTask()?.status, 'cancelled');
+
   const remoteTaskTitle = '验证跨设备任务邀请';
   await syntheticCard.getByRole('button', { name: '发起协作任务' }).click();
   await syntheticCard.getByLabel('任务标题').fill(remoteTaskTitle);
@@ -117,29 +159,27 @@ try {
     .fill('只验证邀请、人工接受和持久状态，不绑定项目或启动 OpenCode。');
   await syntheticCard.getByLabel('验收标准').fill('两端显示同一任务 ID 和已接受状态。');
   await syntheticCard.getByRole('button', { name: '加密发送任务' }).click();
+  const remoteTask = () =>
+    peer.snapshot().remoteTasks.find((task) => task.title === remoteTaskTitle);
   const taskDeadline = Date.now() + 5000;
-  while (
-    Date.now() < taskDeadline &&
-    (peer.snapshot().remoteTasks.length !== 1 || peer.snapshot().remoteTasks[0]?.deliveryPending)
-  )
+  while (Date.now() < taskDeadline && (!remoteTask() || remoteTask()?.deliveryPending))
     await wait(100);
-  assert.equal(peer.snapshot().remoteTasks[0]?.direction, 'incoming');
-  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'pending');
-  assert.equal(peer.snapshot().remoteTasks[0]?.title, remoteTaskTitle);
-  await peer.respondRemoteTask(peer.snapshot().remoteTasks[0].id, 'accepted');
+  assert.equal(remoteTask()?.direction, 'incoming');
+  assert.equal(remoteTask()?.status, 'pending');
+  await peer.respondRemoteTask(remoteTask()!.id, 'accepted');
   const remoteTaskCard = page
     .locator('.remote-task-card')
     .filter({ has: page.getByRole('heading', { name: remoteTaskTitle }) });
   await remoteTaskCard.getByText('已接受', { exact: true }).waitFor();
-  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'accepted');
+  assert.equal(remoteTask()?.status, 'accepted');
 
   const policyForm = page.locator('.execution-policy-form');
-  await policyForm.getByLabel('调用方式').selectOption('automatic');
+  await policyForm.getByLabel('AI 审批模式').selectOption('auto');
   await policyForm.getByLabel('本机项目').selectOption({ label: '远端自动执行验证项目' });
   await policyForm.getByLabel('执行模型').selectOption(verificationModel.id);
   await policyForm.locator('.remote-preparation-confirmation input').check();
   await policyForm.getByRole('button', { name: '开启执行能力' }).click();
-  await page.getByText('已按本机策略开放').waitFor();
+  await page.getByText('已按本机设置开放').waitFor();
 
   const incomingTitle = '真实自动执行跨设备任务';
   await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
@@ -179,23 +219,12 @@ try {
       );
     }, peerTask()!.id);
     if (localRemoteTask) runningLocalTaskID = localRemoteTask.id;
-    if (localRemoteTask?.state === 'waiting_approval') {
-      for (const approval of localRemoteTask.approvals) {
-        const result = await page.evaluate(
-          async ({ taskID, requestID }: { taskID: string; requestID: string }) => {
-            const response = await fetch(`/api/tasks/${taskID}/permissions/${requestID}`, {
-              method: 'POST',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' },
-              body: JSON.stringify({ reply: 'once' }),
-            });
-            return { status: response.status, body: await response.json() };
-          },
-          { taskID: localRemoteTask.id, requestID: approval.id },
-        );
-        assert.equal(result.status, 200, JSON.stringify(result.body));
-      }
-    }
+    if (localRemoteTask?.state === 'waiting_approval')
+      throw new Error(
+        `帮我批准模式仍产生本机审批请求：${localRemoteTask.approvals
+          .map((approval: any) => approval.permission)
+          .join(', ')}`,
+      );
     if (['failed', 'interrupted', 'stopped'].includes(localRemoteTask?.state))
       throw new Error(
         `Remote OpenCode execution ended as ${localRemoteTask.state}: ${localRemoteTask.error}`,
@@ -223,7 +252,7 @@ try {
     const response = await fetch('/api/network/execution-policy', { credentials: 'same-origin' });
     return response.json();
   });
-  assert.equal(localPolicy.mode, 'automatic');
+  assert.equal(localPolicy.approvalMode, 'auto');
   assert.equal(localPolicy.projectID, String(projectResult.body.id));
   assert(typeof localPolicy.model === 'string');
 
@@ -247,6 +276,7 @@ try {
       approverID: bootstrap.user.id,
       reviewerID: bootstrap.user.id,
       model: bootstrap.engine.models[0].id,
+      approvalMode: 'ask',
     });
     const claimed = await request(`/tasks/${created.body.id}/claim`, {});
     const run = await request(`/tasks/${created.body.id}/run`, { confirmed: true });
@@ -285,11 +315,12 @@ try {
           'Bilateral confirmation established trust on both nodes',
           'Mutually authenticated X25519 and AES-GCM channel synchronized the Brain directory',
           'An encrypted cross-device collaboration task arrived without project, model, or credential fields',
-          'The target stored one reusable local capability policy with automatic invocation as the default mode',
+          'A trusted task was automatically accepted while local execution capability was disabled and did not start a session',
+          'The target stored one reusable local capability policy with the selected help-me-approve AI mode',
           'The target automatically accepted a matching task without per-task project or model selection',
-          'The packaged OpenCode engine created a real session and executed the task in the configured Git project',
+          'The packaged OpenCode engine created a real session and executed local file operations without a manual approval prompt',
           'The owner received monotonic execution states without local project, model, task ID, or credential values',
-          'The resulting file content was verified directly in the Git fixture',
+          'The resulting file content was verified directly in the ordinary-folder fixture',
           'The existing project concurrency guard rejected a second task while remote results awaited review',
           'Revocation removed trust on both nodes',
           'Pairing did not expose any project, task, model, or OpenCode business endpoint',

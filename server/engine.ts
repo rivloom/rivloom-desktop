@@ -4,7 +4,8 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createOpencodeClient, type Config } from '@opencode-ai/sdk/v2';
+import { createOpencodeClient, type Config, type PermissionRuleset } from '@opencode-ai/sdk/v2';
+import type { ApprovalMode } from '../shared/types.ts';
 
 export const ENGINE_VERSION = '1.18.25';
 export const dataRoot = resolve(process.env.RIVLOOM_DATA_DIR || '.data');
@@ -28,6 +29,48 @@ export const permissions: Config['permission'] = {
   webfetch: 'deny',
   websearch: 'deny',
 };
+
+export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
+  const rules: PermissionRuleset = [
+    { permission: '*', pattern: '*', action: mode === 'full' ? 'allow' : 'ask' },
+    { permission: 'read', pattern: '*', action: 'allow' },
+    { permission: 'glob', pattern: '*', action: 'allow' },
+    { permission: 'grep', pattern: '*', action: 'allow' },
+    { permission: 'list', pattern: '*', action: 'allow' },
+    { permission: 'question', pattern: '*', action: 'allow' },
+  ];
+  if (mode === 'auto' || mode === 'full') {
+    rules.push(
+      { permission: 'edit', pattern: '*', action: 'allow' },
+      { permission: 'bash', pattern: '*', action: 'allow' },
+    );
+  }
+  if (mode === 'full') {
+    rules.push(
+      { permission: 'webfetch', pattern: '*', action: 'allow' },
+      { permission: 'websearch', pattern: '*', action: 'allow' },
+      { permission: 'external_directory', pattern: '*', action: 'allow' },
+    );
+  } else {
+    rules.push(
+      { permission: 'webfetch', pattern: '*', action: 'ask' },
+      { permission: 'websearch', pattern: '*', action: 'ask' },
+      { permission: 'external_directory', pattern: '*', action: 'deny' },
+    );
+  }
+  rules.push(
+    { permission: 'read', pattern: '*.env', action: 'deny' },
+    { permission: 'read', pattern: '*.env.*', action: 'deny' },
+    { permission: 'read', pattern: '*.pem', action: 'deny' },
+    { permission: 'read', pattern: '*.key', action: 'deny' },
+    { permission: 'read', pattern: '*.p12', action: 'deny' },
+    { permission: 'read', pattern: '*auth.json', action: 'deny' },
+    { permission: 'read', pattern: '*credentials*', action: 'deny' },
+    { permission: 'task', pattern: '*', action: 'deny' },
+    { permission: 'skill', pattern: '*', action: 'deny' },
+  );
+  return rules;
+}
 export function engineEnv(password?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {

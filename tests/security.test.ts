@@ -9,6 +9,7 @@ const { openCodeArtifacts, redact, validateProject } = await import('../server/a
 const { passwordHash, sameToken, verifyPassword } = await import('../server/auth.ts');
 const { createExample } = await import('../scripts/example.ts');
 const { connectionFailure, parsePreferences } = await import('../server/model-settings.ts');
+const { sessionPermissions } = await import('../server/engine.ts');
 test('a workspace rejects a second process and recovers a lock after abrupt exit', async () => {
   const source = `import { acquireDataLock } from './server/process-lock.ts'; acquireDataLock(); console.log('locked'); setInterval(() => {}, 1000);`;
   const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
@@ -92,6 +93,22 @@ test('only official OpenCode diffs are displayed and sensitive contents stay hid
     },
   ]);
   assert(!JSON.stringify(sensitive).includes('private-value'));
+});
+test('AI approval modes expand only the documented OpenCode session permissions', () => {
+  const ask = sessionPermissions('ask');
+  const auto = sessionPermissions('auto');
+  const full = sessionPermissions('full');
+  assert(ask.some((rule) => rule.permission === '*' && rule.action === 'ask'));
+  assert(!ask.some((rule) => rule.permission === 'edit' && rule.action === 'allow'));
+  assert(auto.some((rule) => rule.permission === 'edit' && rule.action === 'allow'));
+  assert(auto.some((rule) => rule.permission === 'bash' && rule.action === 'allow'));
+  assert(auto.some((rule) => rule.permission === 'external_directory' && rule.action === 'deny'));
+  assert(full.some((rule) => rule.permission === 'external_directory' && rule.action === 'allow'));
+  for (const rules of [ask, auto, full]) {
+    assert(rules.some((rule) => rule.permission === 'read' && rule.pattern === '*.env'));
+    assert(rules.some((rule) => rule.permission === 'task' && rule.action === 'deny'));
+    assert(rules.some((rule) => rule.permission === 'skill' && rule.action === 'deny'));
+  }
 });
 test('model state rejects corrupt persisted values and provider errors never echo secrets', () => {
   const fallback = parsePreferences('{broken');

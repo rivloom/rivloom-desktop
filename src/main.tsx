@@ -34,6 +34,7 @@ import { authenticateDesktop, desktop, chooseProjectDirectory } from './desktop'
 import { ModelSettingsView } from './model-settings';
 import { NodeNetworkView } from './node-network';
 import {
+  approvalModeLabels,
   stateLabels,
   activeStates,
   type Task,
@@ -954,9 +955,13 @@ function App() {
                           <h3>执行安排</h3>
                         </div>
                         <p>
-                          接受人启动任务后，由 OpenCode 执行。修改文件与运行命令需要{' '}
-                          {name(current.approverID)} 逐次审批；执行结束后由{' '}
-                          {name(current.reviewerID)} 查看产物并验收。
+                          接受人启动任务后，由 OpenCode 执行。
+                          {current.approvalMode === 'ask'
+                            ? `修改、命令和联网请求由 ${name(current.approverID)} 审批。`
+                            : current.approvalMode === 'auto'
+                              ? `项目内修改和命令自动批准；联网请求由 ${name(current.approverID)} 审批。`
+                              : '支持的文件、命令、联网和项目外目录操作自动批准；敏感凭据与子代理仍禁止。'}
+                          执行结束后由 {name(current.reviewerID)} 查看产物并验收。
                         </p>
                         {current.state !== 'accepted' &&
                           [current.creatorID, current.assigneeID].includes(user.id) && (
@@ -1131,6 +1136,8 @@ function App() {
                       <dd>OpenCode {engine.version}</dd>
                       <dt>模型</dt>
                       <dd className="mono">{current.model}</dd>
+                      <dt>AI 审批</dt>
+                      <dd>{approvalModeLabels[current.approvalMode]}</dd>
                       <dt>项目目录</dt>
                       <dd className="mono">
                         {projects.find((p) => p.id === current.projectID)?.directory}
@@ -1302,16 +1309,6 @@ function App() {
                   }),
                 )
               }
-              onRespondRemoteTask={(taskID, decision) =>
-                void action(() =>
-                  api(
-                    `/network/tasks/${taskID}/${decision === 'accepted' ? 'accept' : 'decline'}`,
-                    {
-                      confirmed: true,
-                    },
-                  ),
-                )
-              }
               onCancelRemoteTask={(taskID) => {
                 if (globalThis.confirm('确定取消这条跨设备任务邀请吗？'))
                   void action(() => api(`/network/tasks/${taskID}/cancel`, { confirmed: true }));
@@ -1467,6 +1464,16 @@ function App() {
                 )}
               </select>
             </Field>
+            <Field
+              label="AI 审批模式"
+              hint="模式在任务创建后锁定。敏感凭据读取和子代理在所有模式下仍然禁止。"
+            >
+              <select name="approvalMode" defaultValue="ask">
+                <option value="ask">请求批准 · 修改、命令和联网操作询问审批人</option>
+                <option value="auto">帮我批准 · 项目内修改和命令自动批准</option>
+                <option value="full">允许任何操作 · 文件、命令、联网和项目外目录自动批准</option>
+              </select>
+            </Field>
             {error && <p className="error">{error}</p>}
             <div className="modal-actions">
               <span className="muted">创建后由接受人启动执行</span>
@@ -1526,8 +1533,9 @@ function App() {
           >
             <div className="notice">
               <AlertTriangle size={19} />
-              AI
-              可以实际修改文件和执行命令。逐次审批不能提供沙箱隔离；停止也不会回滚已经完成的操作。
+              AI 可以实际修改文件和执行命令。本任务使用“
+              {approvalModeLabels[current.approvalMode]}
+              ”；审批设置不能提供沙箱隔离，停止也不会回滚已经完成的操作。
             </div>
             {current.sessionID && (
               <Field label="本次继续执行的要求">

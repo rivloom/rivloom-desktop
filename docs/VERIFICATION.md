@@ -16,13 +16,13 @@
 
 上一版 NSIS current-user 安装包曾通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。该历史安装包为 71,016,423 字节，SHA-256：`f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`。
 
-本轮普通文件夹改动已重编译到 `src-tauri/target/release/Rivloom.exe`，但没有重建 NSIS。因此上述哈希包不含本轮改动，重新分发前必须重建并复测安装器。
+普通文件夹和本轮设备信任/AI 审批改动已重编译到 `src-tauri/target/release/Rivloom.exe`，但没有重建 NSIS。因此上述哈希包不含这些改动，重新分发前必须重建并复测安装器。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
 ## M3.1 自发现、M3.2 加密通道与 M3.3 策略化执行
 
-`npm run test:node-network-ui`：**17 项实际 Release 桌面检查通过**。测试启动安装包对应的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock；局域网同时存在真实 Rivloom 时，脚本按精确测试 Node ID 选取节点，避免操作其他设备。
+`npm run test:node-network-ui`：**18 项实际 Release 桌面检查通过**。测试启动新编译的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock；局域网同时存在真实 Rivloom 时，脚本按精确测试 Node ID 选取节点，避免操作其他设备。
 
 - 两个实例各自生成稳定 Ed25519 身份；私钥 PKCS#8 只以 Windows DPAPI CurrentUser 密文保存在节点身份文件中，重载后 Node ID 不变。
 - 两个实例在本机真实 mDNS/DNS-SD 网络栈发布和发现 `_rivloom._tcp.local`，使用不同数据目录、Node ID、Brain ID 和端口。
@@ -30,14 +30,17 @@
 - 发现方连接对方独立的 `/v1/hello` 端点，发送随机 nonce，并核对公钥派生 Node ID、指纹、响应时间与 Ed25519 签名。
 - 实际 Tauri WebView2 “节点与 Brain”页显示本机节点、Brain 和附近节点；发起后两端得到相同六位短码，页面同时展示完整公钥指纹供人工核对。
 - 只确认桌面一端时两端仍未受信；第二实例确认后两端同时受信，并显示“已建立设备信任 · 加密通道就绪”。最小 Brain 目录经实际加密消息往返同步。
-- 桌面端向第二节点加密发送协作任务；目标端保存同一任务 ID 和待处理状态，由目标操作者接受后两端都显示已接受。任务消息没有项目路径、模型或 OpenCode 会话。
-- 桌面执行节点一次选择专用 Git 项目和本机可用的 `opencode/mimo-v2.5-free`，保存默认自动调用策略。第二节点反向发任务后，桌面无需逐任务选择资源或确认，自动接受并只创建一个本机业务任务和官方 OpenCode 会话。
-- 测试在执行节点本机逐次批准真实 OpenCode 编辑请求，最终直接读取隔离 Git 项目的 `RESULT.txt`，内容严格等于 `rivloom remote execution verified`。归属节点收到至少 3 个单调递增状态并最终进入 `review`。
+- 桌面端向第二节点加密发送协作任务；目标端保存同一任务 ID 和待处理状态，由测试端接受后两端都显示已接受。任务消息没有项目路径、模型或 OpenCode 会话。
+- 第二节点反向发送任务时，本机执行能力处于关闭状态。Release 自动接收可信任务，归属端看到已接受，但执行序号保持 0、状态为 `not_started`，没有创建 OpenCode 会话；发送方随后成功取消。
+- 桌面执行节点一次选择专用普通文件夹和本机可用的 `opencode/mimo-v2.5-free`。第二节点反向发任务后，桌面无需逐任务选择资源或确认，自动接受并只创建一个本机业务任务和官方 OpenCode 会话。
+- 本机审批模式选择“帮我批准”。真实 OpenCode 在没有人工批准提示的情况下完成本地文件操作；最终直接读取隔离普通文件夹的 `RESULT.txt`，内容严格等于 `rivloom remote execution verified`。归属节点收到至少 3 个单调递增状态并最终进入 `review`。
 - 归属节点公开记录中的本机项目 ID、模型标识和本机任务 ID 均为空；节点消息也不包含凭据。远端结果待验收时，第二个普通本机任务在创建新 OpenCode 会话前被同项目并发保护拒绝。
 - 自动化还验证同一签名配对请求重放返回 409、重启两个节点后信任和通道重建、伪造/重放 X25519 握手被拒绝、AES-GCM 密文篡改/重放被拒绝、会话过期失效，以及信任记录冲突时安全失败。
 - 节点端点拒绝畸形请求和未开放的加密消息类型；项目、模型、工具、产物和 OpenCode 路径返回 404，React 业务服务与 OpenCode 没有暴露到局域网。
 
-机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：双向发现、签名退出通知、双端短码/指纹核对、单方不授信、双方授信、重启保持和撤销均由用户确认通过。新版策略化自动调用和真实 OpenCode 执行仍待相同两台设备复测；异常结束进程或断网的 15/30 秒兜底也待专项复测。当前实际执行只在同机隔离双实例完成，审批仍在执行节点本机处理；跨设备审批、补充、停止、差异/产物和验收尚未开放。
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：双向发现、签名退出通知、双端短码/指纹核对、单方不授信、双方授信、重启保持和撤销均由用户确认通过。本轮设备信任/AI 审批分层和真实 OpenCode 执行仍待相同两台设备复测；异常结束进程或断网的 15/30 秒兜底也待专项复测。当前实际执行只在同机隔离双实例完成，审批仍在执行节点本机处理；跨设备审批、补充、停止、差异/产物和验收尚未开放。
+
+`npm run test:permission-policy`：**通过**。脚本启动未修改的官方 OpenCode 1.18.25，在三个隔离目录分别以“请求批准 / 帮我批准 / 允许任何操作”的规则创建会话，再通过官方 `session.get` 读回并逐项比对。没有发送模型请求、使用凭据或修改用户项目。机器报告：`.data/verification/permission-policy.json`。
 
 ## 模型设置与 DeepSeek 真实普通文件夹任务
 
@@ -120,7 +123,7 @@
 
 - `npm run typecheck`：通过（strict、noUnusedLocals、noUnusedParameters）。
 - `npm run build`：通过，生成 React 生产构建。
-- `npm test`：15 项通过；在原有安全检查外，包含私有地址过滤、Windows DPAPI 稳定身份、信任记录冲突拒绝、mDNS/LAN UDP、双端配对、握手/密文攻击，以及任务幂等、旧记录迁移、能力策略持久化、唯一任务绑定、单调执行状态、重启保持和撤销边界。
+- `npm test`：16 项通过；在原有安全检查外，包含三种会话权限规则与敏感项拒绝、私有地址过滤、Windows DPAPI 稳定身份、信任记录冲突拒绝、mDNS/LAN UDP、双端配对、握手/密文攻击，以及任务幂等、旧记录迁移、能力策略持久化、唯一任务绑定、单调执行状态、重启保持和撤销边界。
 - `npm audit --offline --omit=dev`：当日 0 个已知漏洞；不是安全认证。
 - `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`：通过。
 - 官方版本、npm integrity、二进制 SHA-256、MIT 原文及 123 个已安装依赖的许可证元数据已保存。
@@ -135,7 +138,7 @@
 
 ## 尚未验证或不包含
 
-- Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上策略化自动调用、真实 OpenCode 执行和撤销信任停止任务的物理复测，以及异常结束进程或断网的离线、移除和恢复结果；两个真人完成角色映射、远程审批/停止、差异和验收，最小跨 Brain 委派及跨网络运行。双向发现、正常退出、双端配对、重启保持与撤销已经物理验证。
+- Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上受信任务自动接收、三种 AI 审批、真实 OpenCode 执行和撤销信任停止任务的物理复测，以及异常结束进程或断网的离线、移除和恢复结果；两个真人完成角色映射、远程审批/停止、差异和验收，最小跨 Brain 委派及跨网络运行。双向发现、正常退出、双端配对、重启保持与撤销已经物理验证。
 - ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

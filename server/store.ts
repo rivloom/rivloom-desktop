@@ -50,12 +50,15 @@ export function tasks(): Task[] {
   return db
     .prepare('SELECT body FROM tasks ORDER BY number DESC')
     .all()
-    .map((r) => JSON.parse(r.body as string));
+    .map((r) => normalizeTask(JSON.parse(r.body as string)));
 }
 export function task(id: string): Task {
   const row = db.prepare('SELECT body FROM tasks WHERE id=?').get(id);
   if (!row) throw new HttpError(404, '任务不存在');
-  return JSON.parse(row.body as string);
+  return normalizeTask(JSON.parse(row.body as string));
+}
+function normalizeTask(value: Task): Task {
+  return { ...value, approvalMode: value.approvalMode || 'ask' };
 }
 export function saveTask(value: Task) {
   db.prepare(

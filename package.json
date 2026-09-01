@@ -19,6 +19,7 @@
     "test:integration": "node scripts/integration.ts",
     "test:model-settings": "node scripts/model-settings-check.ts",
     "test:model-settings-ui": "node scripts/model-settings-ui.ts",
+    "test:permission-policy": "node scripts/permission-policy-check.ts",
     "test:node-network-ui": "node scripts/node-network-ui.ts",
     "test:installer": "node scripts/desktop-install-smoke.ts",
     "engine:probe": "node scripts/engine-probe.ts",

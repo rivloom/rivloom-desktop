@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { startEngine, dataRoot, ENGINE_VERSION } from './engine.ts';
+import { startEngine, dataRoot, ENGINE_VERSION, sessionPermissions } from './engine.ts';
 import {
   tasks,
   task,
@@ -289,7 +289,13 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
     }
     await subscribe(directory);
     if (!t.sessionID) {
-      const session = (await client().session.create({ directory, title: t.title })).data!;
+      const session = (
+        await client().session.create({
+          directory,
+          title: t.title,
+          permission: sessionPermissions(t.approvalMode),
+        })
+      ).data!;
       t = patchTask(t.id, { sessionID: session.id });
     }
     const runAfter = Date.now();

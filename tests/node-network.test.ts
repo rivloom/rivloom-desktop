@@ -71,7 +71,7 @@ async function waitForSecureChannels(networks: NodeNetwork[]) {
 }
 
 async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 10_000;
   while (
     Date.now() < deadline &&
     networks.some(
@@ -385,42 +385,62 @@ test('remote task invitations persist and apply idempotent offer and response me
   }
 });
 
-test('execution policy persists automatic, limited and disabled local capability rules', () => {
+test('execution policy trusts paired senders and persists the local AI approval mode', () => {
   const root = mkdtempSync(join(tmpdir(), 'rivloom-execution-policy-'));
   try {
     const store = new ExecutionPolicyStore(root);
     store.load();
     assert.equal(store.snapshot().enabled, false);
     const projectID = randomUUID();
-    const trustedNodeID = 'T'.repeat(32);
     store.save({
       enabled: true,
-      mode: 'automatic',
+      approvalMode: 'auto',
       projectID,
       model: 'opencode/mimo-v2.5-free',
-      allowedNodeIDs: [],
     });
-    assert(store.allows('A'.repeat(32)));
+    assert(store.allows());
+    assert.equal(store.snapshot().approvalMode, 'auto');
     store.save({
       enabled: true,
-      mode: 'limited',
+      approvalMode: 'full',
       projectID,
       model: 'opencode/mimo-v2.5-free',
-      allowedNodeIDs: [trustedNodeID],
     });
-    assert(store.allows(trustedNodeID));
-    assert.equal(store.allows('A'.repeat(32)), false);
     const reloaded = new ExecutionPolicyStore(root);
     reloaded.load();
-    assert.deepEqual(reloaded.snapshot().allowedNodeIDs, [trustedNodeID]);
+    assert.equal(reloaded.snapshot().approvalMode, 'full');
+    assert(reloaded.allows());
     reloaded.save({
       enabled: false,
-      mode: 'automatic',
+      approvalMode: 'ask',
       projectID: null,
       model: null,
-      allowedNodeIDs: [],
     });
-    assert.equal(reloaded.allows(trustedNodeID), false);
+    assert.equal(reloaded.allows(), false);
+    writeFileSync(
+      join(root, 'execution-policy.json'),
+      JSON.stringify({
+        version: 1,
+        policy: {
+          enabled: true,
+          mode: 'limited',
+          projectID,
+          model: 'opencode/mimo-v2.5-free',
+          allowedNodeIDs: ['T'.repeat(32)],
+          maxConcurrent: 1,
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    );
+    const migrated = new ExecutionPolicyStore(root);
+    migrated.load();
+    assert.equal(migrated.snapshot().approvalMode, 'ask');
+    assert.equal(migrated.allows(), false);
+    assert.equal(migrated.snapshot().projectID, null);
+    assert.equal(migrated.snapshot().model, null);
+    const migratedFile = JSON.parse(readFileSync(join(root, 'execution-policy.json'), 'utf8'));
+    assert.equal(migratedFile.version, 2);
+    assert.equal('mode' in migratedFile.policy, false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

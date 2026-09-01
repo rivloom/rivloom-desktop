@@ -235,10 +235,9 @@ app.post('/api/network/execution-policy', (req, res) => {
   const input = z
     .object({
       enabled: z.boolean(),
-      mode: z.enum(['automatic', 'limited', 'confirm']),
+      approvalMode: z.enum(['ask', 'auto', 'full']),
       projectID: z.string().uuid().nullable(),
       model: z.string().min(3).max(200).nullable(),
-      allowedNodeIDs: z.array(z.string().regex(/^[A-Za-z0-9_-]{32}$/)).max(100),
       confirmed: z.literal(true),
     })
     .parse(req.body);
@@ -251,20 +250,11 @@ app.post('/api/network/execution-policy', (req, res) => {
       '所选模型当前不可用，请先在本机模型设置中连接。',
     );
   }
-  if (input.enabled && input.mode === 'limited') {
-    requireThat(input.allowedNodeIDs.length > 0, 400, '有限调用至少选择一个受信节点。');
-    requireThat(
-      input.allowedNodeIDs.every((nodeID) => nodeNetwork.isTrustedNode(nodeID)),
-      400,
-      '有限调用只能授权已受信的节点。',
-    );
-  }
   const saved = executionPolicies.save({
     enabled: input.enabled,
-    mode: input.mode,
+    approvalMode: input.approvalMode,
     projectID: input.projectID,
     model: input.model,
-    allowedNodeIDs: input.allowedNodeIDs,
   });
   changed();
   queueMicrotask(() => void processRemoteTasks());
@@ -290,28 +280,6 @@ app.post('/api/network/tasks', async (req, res) => {
       criteria: redact(input.criteria),
     }),
   );
-});
-app.post('/api/network/tasks/:id/accept', async (req, res) => {
-  requireNetworkOwner(req);
-  z.object({ confirmed: z.literal(true) }).parse(req.body);
-  const taskID = remoteTaskID(req);
-  const remote = nodeNetwork.remoteTask(taskID);
-  requireThat(remote?.automaticEligible, 409, '这条旧版任务记录不能自动执行，请重新发起。');
-  const policy = executionPolicies.snapshot();
-  requireThat(policy.enabled, 409, '请先配置并开启本机执行能力。');
-  requireThat(
-    policy.mode !== 'limited' || policy.allowedNodeIDs.includes(remote.ownerNodeID),
-    403,
-    '当前有限调用策略未授权此节点。',
-  );
-  const result = await nodeNetwork.respondRemoteTask(taskID, 'accepted');
-  queueMicrotask(() => void processRemoteTask(taskID, true));
-  res.json(result);
-});
-app.post('/api/network/tasks/:id/decline', async (req, res) => {
-  requireNetworkOwner(req);
-  z.object({ confirmed: z.literal(true) }).parse(req.body);
-  res.json(await nodeNetwork.respondRemoteTask(remoteTaskID(req), 'declined'));
 });
 app.post('/api/network/tasks/:id/cancel', async (req, res) => {
   requireNetworkOwner(req);
@@ -397,23 +365,14 @@ const onTaskUpdateForNetwork = (value: { taskID?: string }) => {
 };
 updates.on('update', onTaskUpdateForNetwork);
 
-async function processRemoteTask(taskID: string, manuallyApproved = false) {
+async function processRemoteTask(taskID: string) {
   if (processingRemoteTasks.has(taskID)) return;
   processingRemoteTasks.add(taskID);
   try {
     let remote = nodeNetwork.remoteTask(taskID);
-    let policy = executionPolicies.snapshot();
-    if (
-      !remote ||
-      remote.direction !== 'incoming' ||
-      !remote.automaticEligible ||
-      !policy.enabled ||
-      !policy.projectID ||
-      !policy.model
-    )
-      return;
+    if (!remote || remote.direction !== 'incoming' || !remote.automaticEligible) return;
     if (remote.status === 'pending') {
-      if (!manuallyApproved && !executionPolicies.allows(remote.ownerNodeID)) return;
+      if (!nodeNetwork.isTrustedNode(remote.ownerNodeID)) return;
       await nodeNetwork.respondRemoteTask(taskID, 'accepted');
       remote = nodeNetwork.remoteTask(taskID);
     }
@@ -424,14 +383,8 @@ async function processRemoteTask(taskID: string, manuallyApproved = false) {
       !nodeNetwork.remoteTaskPeerReady(taskID)
     )
       return;
-    policy = executionPolicies.snapshot();
-    if (
-      !policy.enabled ||
-      !policy.projectID ||
-      !policy.model ||
-      (policy.mode === 'limited' && !policy.allowedNodeIDs.includes(remote.ownerNodeID))
-    )
-      return;
+    const policy = executionPolicies.snapshot();
+    if (!executionPolicies.allows() || !policy.projectID || !policy.model) return;
     if (!engineStatus.ready || !engineStatus.models.some((model) => model.id === policy.model))
       return;
     const localOwner = users().find((candidate) => candidate.owner) || users()[0];
@@ -472,6 +425,7 @@ async function processRemoteTask(taskID: string, manuallyApproved = false) {
           createdAt,
           updatedAt: createdAt,
           model: policy.model!,
+          approvalMode: policy.approvalMode,
           sessionID: null,
           runAfter: 0,
           messages: [],
@@ -655,6 +609,7 @@ const taskInput = z.object({
   approverID: z.string().uuid(),
   reviewerID: z.string().uuid(),
   model: z.string().min(3).max(200),
+  approvalMode: z.enum(['ask', 'auto', 'full']),
 });
 app.post('/api/tasks', (req, res) => {
   const input = taskInput.parse(req.body);

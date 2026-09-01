@@ -40,7 +40,7 @@ npm.cmd run example
 
 1. 添加可信项目，创建任务并指定三个责任人；发起人是当前登录者。
 2. 接受人点击「接受任务」，再确认开始执行。
-3. 审批人核对修改或命令，选择「仅本次允许」或「拒绝」。不提供全局自动批准。
+3. 创建任务时选择 AI 审批模式：「请求批准」由审批人核对修改、命令和联网请求；「帮我批准」自动批准项目内修改和命令；「允许任何操作」还自动批准联网和项目外目录。三种模式都继续禁止敏感凭据读取、子代理和技能加载。
 4. 任一任务参与者可以停止。发起人或接受人补充要求时，运行中的任务先停止，由接受人确认继续。
 5. AI 完成后，查看「执行记录」「产物与差异」；指定验收人填写意见并验收，或退回修改。
 
@@ -92,7 +92,7 @@ M3.1 已使每个安装实例成为自发现节点：稳定节点身份由 Windo
 
 自动发现不等于自动信任。M3.2 已增加两端短码/指纹核对、双方分别确认、持久信任、取消和撤销；旧配对请求重放、单方确认和已撤销关系都不能建立信任。真实同机双实例、Release WebView2 及用户的 Win10/Win11 物理双机均已验证配对闭环。受信节点会用签名的临时 X25519 密钥建立双向认证通道，经 HKDF 派生方向密钥，以 AES-256-GCM、严格消息序号和时间窗保护消息。
 
-M3.3 当前已实现策略化跨节点执行：执行节点一次选择本机项目和模型，可使用自动调用（界面默认）、仅指定受信节点自动调用或每项确认；匹配任务只创建一个本机业务任务和官方 OpenCode 会话，归属 Brain 按单调序号收到执行状态和最终摘要。本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。实际 Release WebView2 已用真实第二节点和随包 OpenCode 在隔离项目文件夹生成并核对文件。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未实现跨设备审批、补充要求、停止、差异/产物回传和验收，也尚未由两个真人完成新版跨设备执行验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md) 和 [ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md)。
+M3.3 当前把设备信任、本机执行能力和 AI 操作审批分开：受信设备发来的任务立即接收；执行能力关闭时任务等待，开启后使用本机预设项目和模型。每个任务锁定「请求批准 / 帮我批准 / 允许任何操作」之一，并通过 OpenCode 官方会话权限规则执行。任务只绑定一个本机业务任务和官方 OpenCode 会话，归属 Brain 按单调序号收到执行状态和最终摘要。本机绝对路径、项目 ID、模型标识、本机任务 ID 和凭据不进入节点消息。React 业务服务、OpenCode、项目和模型接口仍只监听 `127.0.0.1`。**尚未实现跨设备处理审批、补充要求、停止、差异/产物回传和验收，也尚未由两个真人完成新版跨设备执行验收**。详见 [ADR-0001](docs/adr/0001-self-discovering-brain-network.md)、[ADR-0002](docs/adr/0002-configurable-node-invocation-policy.md) 和 [ADR-0003](docs/adr/0003-trust-and-ai-approval.md)。
 
 ## 验证命令
 
@@ -101,10 +101,11 @@ npm.cmd test                  # 密码、脱敏、普通文件夹与网络协议
 npm.cmd run typecheck
 npm.cmd run build
 npm.cmd run test:model-settings  # 官方 OpenCode 凭据/模型接口；测试字符串，不调用模型
+npm.cmd run test:permission-policy # 官方 OpenCode 会话权限接口；不调用模型
 npm.cmd run test:node-network-ui # Release 桌面节点页和真实双实例局域网发现/签名验证
 npm.cmd run engine:probe      # 真实官方引擎探针，会调用模型
 npm.cmd run test:integration  # 真实应用、独立账号、审批、验收、重启、停止
-npm.cmd run test:installer    # 当前 NSIS 的隔离安装、随包引擎启动和卸载
+npm.cmd run test:installer    # 历史 NSIS 的隔离安装、随包引擎启动和卸载
 ```
 
 真实测试使用独立临时文件夹，不修改你的项目。引擎探针仅自动批准固定测试文件 `slugify.mjs` 和固定命令 `node --test slugify.test.mjs`；集成测试另允许固定的只读目录列举 `ls -la` / `Get-ChildItem`。出现其他请求会失败。测试仍要求真实发生编辑和 Node 测试命令审批，目录列举不能替代它们。它是测试操作者，不代表真实用户已经完成可用性测试，也不会启用产品的自动批准。

@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  ApprovalMode,
   NodeExecutionPolicy,
   NodeNetwork,
   NodePairing,
@@ -43,14 +44,12 @@ type NetworkActions = {
     targetBrainID: string,
     input: { title: string; description: string; criteria: string },
   ): void;
-  respondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   cancelRemoteTask(taskID: string): void;
   saveExecutionPolicy(input: {
     enabled: boolean;
-    mode: NodeExecutionPolicy['mode'];
+    approvalMode: ApprovalMode;
     projectID: string | null;
     model: string | null;
-    allowedNodeIDs: string[];
   }): void;
 };
 
@@ -168,7 +167,7 @@ function NodeCard({
                     <span className="eyebrow">ENCRYPTED TASK INVITE</span>
                     <strong>交给 {node.brains[0]?.name} 协作执行</strong>
                     <p>
-                      对方会按本机策略自动执行、有限调用或逐项确认。不要填写密码、密钥或生产敏感信息。
+                      设备信任建立后，对方会按已开放的本机能力自动接收。不要填写密码、密钥或生产敏感信息。
                     </p>
                   </div>
                   <label>
@@ -263,7 +262,7 @@ function NodeCard({
 }
 
 const remoteTaskStatus: Record<RemoteTaskInvite['status'], string> = {
-  pending: '等待处理',
+  pending: '正在接收',
   accepted: '已接受',
   declined: '已拒绝',
   cancelled: '已取消',
@@ -272,57 +271,55 @@ const remoteTaskStatus: Record<RemoteTaskInvite['status'], string> = {
 
 function ExecutionPolicyCard({
   policy,
-  network,
   projects,
   models,
   actions,
 }: {
   policy: NodeExecutionPolicy;
-  network: NodeNetwork;
   projects: Project[];
   models: { id: string; name: string }[];
   actions: NetworkActions;
 }) {
-  const [mode, setMode] = useState<NodeExecutionPolicy['mode']>(policy.mode);
-  const knownNodes = new Map(network.nearby.map((node) => [node.id, node]));
-  const selectableNodeIDs = [
-    ...new Set([
-      ...network.nearby.filter((node) => node.trusted).map((node) => node.id),
-      ...policy.allowedNodeIDs,
-    ]),
-  ];
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(policy.approvalMode);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     actions.saveExecutionPolicy({
       enabled: true,
-      mode,
+      approvalMode,
       projectID: String(data.get('projectID') || '') || null,
       model: String(data.get('model') || '') || null,
-      allowedNodeIDs: data.getAll('allowedNodeIDs').map(String),
     });
   };
   return (
     <article className="remote-preparation-form execution-policy-form">
       <div>
         <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
-        <strong>{policy.enabled ? '本机执行能力已开放' : '配置本机执行能力'}</strong>
+        <strong>{policy.enabled ? '本机执行能力已开放' : '本机执行能力已关闭'}</strong>
         <p>
-          项目路径、模型凭据只保留在本机。任务匹配策略后可直接创建本机任务，不再逐项选择资源或等待准备租约。
+          受信任务会照常接收；开启后才使用这里的项目、模型和 AI
+          审批模式执行。路径和凭据只保留在本机。
         </p>
       </div>
       <form onSubmit={submit}>
         <label>
-          <span>调用方式</span>
+          <span>AI 审批模式</span>
           <select
-            name="mode"
-            value={mode}
-            onChange={(event) => setMode(event.target.value as NodeExecutionPolicy['mode'])}
+            name="approvalMode"
+            value={approvalMode}
+            onChange={(event) => setApprovalMode(event.target.value as ApprovalMode)}
           >
-            <option value="automatic">自动调用（默认）</option>
-            <option value="limited">仅指定受信节点自动调用</option>
-            <option value="confirm">每项任务确认</option>
+            <option value="ask">请求批准（默认）</option>
+            <option value="auto">帮我批准</option>
+            <option value="full">允许任何操作</option>
           </select>
+          <small>
+            {approvalMode === 'ask'
+              ? '修改、命令和联网操作等待指定审批人处理。'
+              : approvalMode === 'auto'
+                ? '项目内修改和命令自动批准；联网操作仍会询问。'
+                : '文件、命令、联网和项目外目录自动批准。敏感凭据与子代理仍禁止。'}
+          </small>
         </label>
         <label>
           <span>本机项目</span>
@@ -350,43 +347,18 @@ function ExecutionPolicyCard({
             ))}
           </select>
         </label>
-        {mode === 'limited' && (
-          <fieldset className="execution-policy-peers">
-            <legend>允许自动调用的节点</legend>
-            {selectableNodeIDs.length ? (
-              selectableNodeIDs.map((nodeID) => (
-                <label className="checkbox" key={nodeID}>
-                  <input
-                    type="checkbox"
-                    name="allowedNodeIDs"
-                    value={nodeID}
-                    defaultChecked={policy.allowedNodeIDs.includes(nodeID)}
-                  />
-                  {knownNodes.get(nodeID)?.name || `Node ${nodeID.slice(0, 8)}`}
-                </label>
-              ))
-            ) : (
-              <p>请先与至少一台设备建立信任。</p>
-            )}
-          </fieldset>
-        )}
         <label className="checkbox remote-preparation-confirmation">
           <input type="checkbox" required />
-          我确认该项目可用于可信协作；模型请求可能包含任务说明和项目代码，命令与修改仍按本机审批规则处理。
+          我确认所有已配对设备都可把任务交给该项目；模型请求可能包含任务说明和项目代码。
         </label>
         <div className="remote-task-buttons">
           <button
             className="button primary compact"
             type="submit"
-            disabled={
-              actions.busy ||
-              !projects.length ||
-              !models.length ||
-              (mode === 'limited' && !selectableNodeIDs.length)
-            }
+            disabled={actions.busy || !projects.length || !models.length}
           >
             <FolderOpen size={14} />
-            {policy.enabled ? '保存调用策略' : '开启执行能力'}
+            {policy.enabled ? '保存执行设置' : '开启执行能力'}
           </button>
           {policy.enabled && (
             <button
@@ -396,14 +368,13 @@ function ExecutionPolicyCard({
               onClick={() =>
                 actions.saveExecutionPolicy({
                   enabled: false,
-                  mode: 'automatic',
+                  approvalMode: 'ask',
                   projectID: null,
                   model: null,
-                  allowedNodeIDs: [],
                 })
               }
             >
-              停止接受新调用
+              关闭执行能力
             </button>
           )}
         </div>
@@ -415,20 +386,16 @@ function ExecutionPolicyCard({
 function RemoteTaskCard({
   task,
   network,
-  policy,
   actions,
 }: {
   task: RemoteTaskInvite;
   network: NodeNetwork;
-  policy: NodeExecutionPolicy;
   actions: NetworkActions;
 }) {
   const peerID = task.direction === 'incoming' ? task.ownerNodeID : task.targetNodeID;
   const peer = network.nearby.find((node) => node.id === peerID);
   const brainID = task.direction === 'incoming' ? task.ownerBrainID : task.targetBrainID;
   const brain = peer?.brains.find((item) => item.id === brainID);
-  const policyAllowsPeer =
-    policy.mode !== 'limited' || policy.allowedNodeIDs.includes(task.ownerNodeID);
   return (
     <article className={`remote-task-card ${task.direction} status-${task.status}`}>
       <div className="remote-task-heading">
@@ -485,38 +452,9 @@ function RemoteTaskCard({
         <p className="remote-task-boundary">
           {task.direction === 'incoming'
             ? '任务已接受，正在等待本机项目空闲、模型就绪和加密通道可用；满足条件后会自动启动一次。'
-            : '对方已接受任务，正在按其本机调用策略分配执行能力。'}
+            : '对方已接受任务，正在等待其本机执行能力和项目可用。'}
         </p>
       )}
-      {actions.owner &&
-        task.automaticEligible &&
-        task.direction === 'incoming' &&
-        task.status === 'pending' && (
-          <div className="remote-task-buttons">
-            {policy.enabled && policyAllowsPeer && policy.mode === 'confirm' && (
-              <button
-                className="button primary compact"
-                disabled={actions.busy || task.deliveryPending}
-                onClick={() => actions.respondRemoteTask(task.id, 'accepted')}
-              >
-                <Check size={14} />
-                确认并调用本机能力
-              </button>
-            )}
-            <button
-              className="button compact"
-              disabled={actions.busy || task.deliveryPending}
-              onClick={() => actions.respondRemoteTask(task.id, 'declined')}
-            >
-              <X size={14} />
-              拒绝
-            </button>
-            {!policy.enabled && <small>本机执行能力尚未开启。</small>}
-            {policy.enabled && policy.mode === 'limited' && !policyAllowsPeer && (
-              <small>当前策略未授权此节点。</small>
-            )}
-          </div>
-        )}
       {actions.owner &&
         task.direction === 'outgoing' &&
         task.executionSequence === 0 &&
@@ -548,7 +486,6 @@ export function NodeNetworkView({
   onCancelPairing,
   onRevokeTrust,
   onCreateRemoteTask,
-  onRespondRemoteTask,
   onCancelRemoteTask,
   onSaveExecutionPolicy,
 }: {
@@ -567,14 +504,12 @@ export function NodeNetworkView({
     targetBrainID: string,
     input: { title: string; description: string; criteria: string },
   ): void;
-  onRespondRemoteTask(taskID: string, decision: 'accepted' | 'declined'): void;
   onCancelRemoteTask(taskID: string): void;
   onSaveExecutionPolicy(input: {
     enabled: boolean;
-    mode: NodeExecutionPolicy['mode'];
+    approvalMode: ApprovalMode;
     projectID: string | null;
     model: string | null;
-    allowedNodeIDs: string[];
   }): void;
 }) {
   const online = network.status === 'online';
@@ -588,7 +523,6 @@ export function NodeNetworkView({
     cancelPairing: onCancelPairing,
     revokeTrust: onRevokeTrust,
     createRemoteTask: onCreateRemoteTask,
-    respondRemoteTask: onRespondRemoteTask,
     cancelRemoteTask: onCancelRemoteTask,
     saveExecutionPolicy: onSaveExecutionPolicy,
   };
@@ -658,12 +592,11 @@ export function NodeNetworkView({
               <span className="eyebrow">CAPABILITY POLICY</span>
               <h2>本机执行能力</h2>
             </div>
-            <p>{executionPolicy.enabled ? '已按本机策略开放' : '尚未开放远端调用'}</p>
+            <p>{executionPolicy.enabled ? '已按本机设置开放' : '已关闭；可信任务仍会接收并等待'}</p>
           </div>
           <ExecutionPolicyCard
             key={executionPolicy.updatedAt || 'new-policy'}
             policy={executionPolicy}
-            network={network}
             projects={projects}
             models={models}
             actions={actions}
@@ -724,19 +657,13 @@ export function NodeNetworkView({
         {network.remoteTasks.length ? (
           <div className="remote-task-grid">
             {network.remoteTasks.map((task) => (
-              <RemoteTaskCard
-                task={task}
-                network={network}
-                policy={executionPolicy}
-                actions={actions}
-                key={task.id}
-              />
+              <RemoteTaskCard task={task} network={network} actions={actions} key={task.id} />
             ))}
           </div>
         ) : (
           <div className="network-empty compact remote-task-empty">
             <Inbox size={26} />
-            <p>与受信节点建立加密通道后，可以发出协作任务；对方会按自己的调用策略处理。</p>
+            <p>与受信节点建立加密通道后，可以发出协作任务；对方会按自己的执行设置处理。</p>
           </div>
         )}
       </section>

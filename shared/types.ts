@@ -10,6 +10,7 @@ export type TaskState =
   | 'failed'
   | 'review'
   | 'accepted';
+export type ApprovalMode = 'ask' | 'auto' | 'full';
 export type User = { id: string; username: string; name: string; owner: boolean };
 export type Project = { id: string; name: string; directory: string; createdAt: string };
 export type Artifact = {
@@ -65,6 +66,7 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   model: string;
+  approvalMode: ApprovalMode;
   sessionID: string | null;
   runAfter: number;
   messages: Message[];
@@ -128,10 +130,9 @@ export type RemoteTaskInvite = {
 };
 export type NodeExecutionPolicy = {
   enabled: boolean;
-  mode: 'automatic' | 'limited' | 'confirm';
+  approvalMode: ApprovalMode;
   projectID: string | null;
   model: string | null;
-  allowedNodeIDs: string[];
   maxConcurrent: 1;
   updatedAt: string | null;
 };
@@ -212,6 +213,11 @@ export const stateLabels: Record<TaskState, string> = {
   failed: '执行失败',
   review: '待验收',
   accepted: '已验收',
+};
+export const approvalModeLabels: Record<ApprovalMode, string> = {
+  ask: '请求批准',
+  auto: '帮我批准',
+  full: '允许任何操作',
 };
 export const activeStates: TaskState[] = [
   'running',
