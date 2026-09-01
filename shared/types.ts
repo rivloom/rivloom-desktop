@@ -94,6 +94,23 @@ export type BrainSummary = {
   id: string;
   name: string;
 };
+export type RemoteTaskInvite = {
+  id: string;
+  direction: 'incoming' | 'outgoing';
+  ownerNodeID: string;
+  ownerBrainID: string;
+  targetNodeID: string;
+  targetBrainID: string;
+  title: string;
+  description: string;
+  criteria: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+  deliveryPending: boolean;
+  deliveryError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+};
 export type RivloomNode = {
   id: string;
   name: string;
@@ -116,6 +133,7 @@ export type NodeNetwork = {
   local: RivloomNode | null;
   nearby: RivloomNode[];
   pairings: NodePairing[];
+  remoteTasks: RemoteTaskInvite[];
   error: string | null;
 };
 export type NodePairing = {

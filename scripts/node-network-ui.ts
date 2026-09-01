@@ -76,12 +76,38 @@ try {
   assert.equal(peerViewOfDesktop()?.channelReady, true);
   assert.equal(peerViewOfDesktop()?.trusted, true);
 
+  const remoteTaskTitle = '验证跨设备任务邀请';
+  await syntheticCard.getByRole('button', { name: '发起协作任务' }).click();
+  await syntheticCard.getByLabel('任务标题').fill(remoteTaskTitle);
+  await syntheticCard
+    .getByLabel('任务说明')
+    .fill('只验证邀请、人工接受和持久状态，不绑定项目或启动 OpenCode。');
+  await syntheticCard.getByLabel('验收标准').fill('两端显示同一任务 ID 和已接受状态。');
+  await syntheticCard.getByRole('button', { name: '加密发送邀请' }).click();
+  const taskDeadline = Date.now() + 5000;
+  while (
+    Date.now() < taskDeadline &&
+    (peer.snapshot().remoteTasks.length !== 1 || peer.snapshot().remoteTasks[0]?.deliveryPending)
+  )
+    await wait(100);
+  assert.equal(peer.snapshot().remoteTasks[0]?.direction, 'incoming');
+  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'pending');
+  assert.equal(peer.snapshot().remoteTasks[0]?.title, remoteTaskTitle);
+  await peer.respondRemoteTask(peer.snapshot().remoteTasks[0].id, 'accepted');
+  const remoteTaskCard = page
+    .locator('.remote-task-card')
+    .filter({ has: page.getByRole('heading', { name: remoteTaskTitle }) });
+  await remoteTaskCard.getByText('已接受', { exact: true }).waitFor();
+  await remoteTaskCard.getByText('尚未绑定本机项目、模型或启动 AI').waitFor();
+  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'accepted');
+
   const screenshot = join(verificationDirectory, 'desktop-node-network.png');
   await page.screenshot({ path: screenshot, fullPage: true });
   page.once('dialog', (dialog: any) => dialog.accept());
   await syntheticCard.getByRole('button', { name: '撤销信任' }).click();
   await syntheticCard.getByText('签名身份已验证，尚未配对授权').waitFor();
   assert.equal(peerViewOfDesktop()?.trusted, false);
+  assert.equal(peer.snapshot().remoteTasks[0]?.status, 'cancelled');
   const proof = join(verificationDirectory, 'desktop-node-network.json');
   writeFileSync(
     proof,
@@ -103,12 +129,14 @@ try {
           'One-sided confirmation did not establish trust',
           'Bilateral confirmation established trust on both nodes',
           'Mutually authenticated X25519 and AES-GCM channel synchronized the Brain directory',
+          'An encrypted cross-device task invitation arrived without any project or model binding',
+          'The target operator accepted the invitation and both nodes persisted the accepted state',
           'Revocation removed trust on both nodes',
           'Pairing did not expose any project, task, model, or OpenCode business endpoint',
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
-          'Only the Brain directory is open inside the encrypted channel; task delegation remains closed.',
+          'The task slice only invites, accepts, declines, or cancels; project binding and AI execution remain closed.',
         ],
         screenshot,
         pairingScreenshot,

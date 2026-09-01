@@ -46,6 +46,13 @@ import {
   type ChannelOpen,
   type SecureChannelSession,
 } from './node-channel.ts';
+import {
+  RemoteTaskStore,
+  validRemoteTaskCancel,
+  validRemoteTaskOffer,
+  validRemoteTaskResponse,
+  type RemoteTaskMessage,
+} from './remote-tasks.ts';
 
 type MdnsService = {
   fqdn: string;
@@ -109,6 +116,8 @@ type PairingSession = NodePairing & {
 type BrainDirectoryRequest = {
   type: 'brain-directory-request';
   requestID: string;
+  capabilities: string[];
+  brains: { id: string; name: string }[];
 };
 
 type BrainDirectoryResponse = {
@@ -313,7 +322,23 @@ function validBrainDirectoryRequest(value: unknown): value is BrainDirectoryRequ
   return (
     item.type === 'brain-directory-request' &&
     typeof item.requestID === 'string' &&
-    /^[0-9a-f-]{36}$/i.test(item.requestID)
+    /^[0-9a-f-]{36}$/i.test(item.requestID) &&
+    Array.isArray(item.capabilities) &&
+    item.capabilities.length <= 12 &&
+    item.capabilities.every((entry) => typeof entry === 'string' && entry.length <= 30) &&
+    Array.isArray(item.brains) &&
+    item.brains.length <= 8 &&
+    item.brains.every((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const brain = entry as Record<string, unknown>;
+      return (
+        typeof brain.id === 'string' &&
+        /^[0-9a-f-]{36}$/i.test(brain.id) &&
+        typeof brain.name === 'string' &&
+        brain.name.length >= 1 &&
+        brain.name.length <= 80
+      );
+    })
   );
 }
 
@@ -467,7 +492,10 @@ export class NodeNetwork extends EventEmitter {
   private readonly channels = new Map<string, SecureChannelSession>();
   private readonly openingChannels = new Set<string>();
   private readonly seenChannelOpens = new Map<string, number>();
+  private readonly channelSendQueues = new Map<string, Promise<unknown>>();
+  private readonly deliveringRemoteTasks = new Set<string>();
   private readonly trustStore: NodeTrustStore;
+  private readonly remoteTasks: RemoteTaskStore;
   private readonly root: string;
   private readonly enabled: boolean;
 
@@ -475,6 +503,7 @@ export class NodeNetwork extends EventEmitter {
     super();
     this.root = root;
     this.trustStore = new NodeTrustStore(root);
+    this.remoteTasks = new RemoteTaskStore(root);
     this.enabled = enabled;
     this.status = enabled ? 'starting' : 'disabled';
   }
@@ -496,6 +525,7 @@ export class NodeNetwork extends EventEmitter {
           }) => pairing,
         )
         .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt)),
+      remoteTasks: this.remoteTasks.list(),
       error: this.error,
     };
   }
@@ -725,11 +755,76 @@ export class NodeNetwork extends EventEmitter {
     } catch {
       throw new NodeNetworkError(403, '加密消息完整性、顺序或时间校验失败。');
     }
-    if (!validBrainDirectoryRequest(message))
-      throw new NodeNetworkError(404, '加密消息类型尚未开放。');
-    const response: BrainDirectoryResponse = {
-      type: 'brain-directory-response',
-      requestID: message.requestID,
+    if (validBrainDirectoryRequest(message)) {
+      const response: BrainDirectoryResponse = {
+        type: 'brain-directory-response',
+        requestID: message.requestID,
+        capabilities,
+        brains: [
+          {
+            id: this.identity!.brainID,
+            name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
+          },
+        ],
+      };
+      const envelope = encryptChannelPayload(channel, response);
+      const current = this.nodes.get(node.id);
+      if (current)
+        this.nodes.set(node.id, {
+          ...current,
+          channelReady: true,
+          capabilities: [...new Set(message.capabilities)].sort(),
+          brains: message.brains.map((brain) => ({ ...brain })),
+        });
+      this.update();
+      const flushAfterResponse = setTimeout(() => void this.flushRemoteTasks(node.id), 100);
+      flushAfterResponse.unref();
+      return envelope;
+    }
+    let changed = false;
+    try {
+      if (validRemoteTaskOffer(message)) {
+        if (
+          message.ownerNodeID !== node.id ||
+          message.targetNodeID !== this.identity!.nodeID ||
+          !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
+          message.targetBrainID !== this.identity!.brainID
+        )
+          throw new Error('远端任务邀请路由与当前节点不匹配。');
+        changed = this.remoteTasks.receiveOffer(message);
+      } else if (validRemoteTaskResponse(message)) {
+        if (
+          message.ownerNodeID !== this.identity!.nodeID ||
+          message.targetNodeID !== node.id ||
+          message.ownerBrainID !== this.identity!.brainID ||
+          !node.brains.some((brain) => brain.id === message.targetBrainID)
+        )
+          throw new Error('远端任务回复路由与当前节点不匹配。');
+        changed = this.remoteTasks.receiveResponse(message);
+      } else if (validRemoteTaskCancel(message)) {
+        if (
+          message.ownerNodeID !== node.id ||
+          message.targetNodeID !== this.identity!.nodeID ||
+          !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
+          message.targetBrainID !== this.identity!.brainID
+        )
+          throw new Error('远端任务取消路由与当前节点不匹配。');
+        changed = this.remoteTasks.receiveCancel(message);
+      } else {
+        throw new NodeNetworkError(404, '加密消息类型尚未开放。');
+      }
+    } catch (error) {
+      if (error instanceof NodeNetworkError) throw error;
+      throw new NodeNetworkError(409, '远端任务消息冲突或已经失效。');
+    }
+    if (changed) this.update();
+    return null;
+  }
+
+  private async syncBrainDirectory(node: RivloomNode, channel: SecureChannelSession) {
+    const request: BrainDirectoryRequest = {
+      type: 'brain-directory-request',
+      requestID: randomUUID(),
       capabilities,
       brains: [
         {
@@ -737,14 +832,6 @@ export class NodeNetwork extends EventEmitter {
           name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
         },
       ],
-    };
-    return encryptChannelPayload(channel, response);
-  }
-
-  private async syncBrainDirectory(node: RivloomNode, channel: SecureChannelSession) {
-    const request: BrainDirectoryRequest = {
-      type: 'brain-directory-request',
-      requestID: randomUUID(),
     };
     const value = await this.postToNode(
       node,
@@ -770,6 +857,7 @@ export class NodeNetwork extends EventEmitter {
       brains: message.brains.map((brain) => ({ ...brain })),
     });
     this.update();
+    void this.flushRemoteTasks(node.id);
   }
 
   private async openSecureChannel(node: RivloomNode) {
@@ -797,6 +885,71 @@ export class NodeNetwork extends EventEmitter {
     } finally {
       this.openingChannels.delete(node.id);
     }
+  }
+
+  private async sendChannelEvent(node: RivloomNode, message: RemoteTaskMessage) {
+    const previous = this.channelSendQueues.get(node.id) || Promise.resolve();
+    const operation = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = this.nodes.get(node.id);
+        const channel = this.channels.get(node.id);
+        if (
+          !current?.online ||
+          !current.trusted ||
+          !current.channelReady ||
+          !channel ||
+          channel.expiresAt <= Date.now()
+        )
+          throw new NodeNetworkError(503, '受信节点的加密通道尚未就绪。');
+        const result = await this.postToNode(
+          current,
+          '/v1/channel/message',
+          encryptChannelPayload(channel, message),
+        );
+        if (result !== null) throw new NodeNetworkError(502, '远端任务消息响应格式无效。');
+      });
+    this.channelSendQueues.set(node.id, operation);
+    try {
+      await operation;
+    } finally {
+      if (this.channelSendQueues.get(node.id) === operation) this.channelSendQueues.delete(node.id);
+    }
+  }
+
+  private async flushRemoteTask(taskID: string) {
+    if (this.deliveringRemoteTasks.has(taskID)) return;
+    const task = this.remoteTasks.record(taskID);
+    const message = this.remoteTasks.message(taskID);
+    if (!task || !message) return;
+    const peerNodeID = task.direction === 'outgoing' ? task.targetNodeID : task.ownerNodeID;
+    const node = this.nodes.get(peerNodeID);
+    if (!node?.online || !node.trusted || !node.channelReady) return;
+    this.deliveringRemoteTasks.add(taskID);
+    try {
+      await this.sendChannelEvent(node, message);
+      if (this.remoteTasks.markDelivered(taskID, task.status)) this.update();
+    } catch (error) {
+      if (
+        error instanceof NodeNetworkError &&
+        (error.status === 400 || error.status === 404 || error.status === 409)
+      ) {
+        if (this.remoteTasks.markDeliveryFailed(taskID, '对方拒绝了冲突或无效的任务消息。'))
+          this.update();
+        return;
+      }
+      if (
+        error instanceof NodeNetworkError &&
+        (error.status === 403 || error.status === 502 || error.status === 503)
+      )
+        this.closeChannel(node.id);
+    } finally {
+      this.deliveringRemoteTasks.delete(taskID);
+    }
+  }
+
+  private async flushRemoteTasks(nodeID: string) {
+    for (const task of this.remoteTasks.pendingForPeer(nodeID)) await this.flushRemoteTask(task.id);
   }
 
   private async postToNode(node: RivloomNode, path: string, value: unknown) {
@@ -969,6 +1122,7 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(403, '撤销请求身份校验失败。');
     this.trustStore.revoke(node.id, node.fingerprint);
     this.forgetChannel(node.id);
+    this.remoteTasks.revokePeer(node.id);
     this.nodes.set(node.id, { ...node, trusted: false, channelReady: false });
     const pairing = this.pairingForNode(node.id);
     if (pairing) this.pairings.delete(pairing.id);
@@ -1024,7 +1178,9 @@ export class NodeNetwork extends EventEmitter {
       return;
     }
     if (url.pathname === '/v1/channel/message' && validChannelEnvelope(value)) {
-      jsonResponse(response, 200, this.handleChannelMessage(value, remote));
+      const result = this.handleChannelMessage(value, remote);
+      if (result) jsonResponse(response, 200, result);
+      else response.writeHead(204).end();
       return;
     }
     throw new NodeNetworkError(404, '节点接口不存在。');
@@ -1150,6 +1306,7 @@ export class NodeNetwork extends EventEmitter {
     this.trustStore.revoke(record.nodeID, record.fingerprint);
     const node = this.nodes.get(nodeID);
     this.forgetChannel(nodeID);
+    this.remoteTasks.revokePeer(nodeID);
     if (node) this.nodes.set(node.id, { ...node, trusted: false, channelReady: false });
     const pairing = this.pairingForNode(nodeID);
     if (pairing) this.pairings.delete(pairing.id);
@@ -1160,6 +1317,93 @@ export class NodeNetwork extends EventEmitter {
       } catch {
         /* Persisted revocation is retried when the node is discovered again. */
       }
+    return this.snapshot();
+  }
+
+  async createRemoteTask(
+    nodeID: string,
+    targetBrainID: string,
+    input: { title: string; description: string; criteria: string },
+  ) {
+    if (!this.identity || this.status !== 'online')
+      throw new NodeNetworkError(503, '节点网络尚未就绪。');
+    const node = this.nodes.get(nodeID);
+    if (!node?.online || !node.trusted || !node.channelReady)
+      throw new NodeNetworkError(409, '请先完成设备互信并等待加密通道就绪。');
+    if (!node.brains.some((brain) => brain.id === targetBrainID))
+      throw new NodeNetworkError(404, '目标 Brain 当前不可用。');
+    const title = input.title.trim();
+    const description = input.description.trim();
+    const criteria = input.criteria.trim();
+    if (
+      title.length < 1 ||
+      title.length > 120 ||
+      description.length < 1 ||
+      description.length > 4000 ||
+      criteria.length < 1 ||
+      criteria.length > 2000
+    )
+      throw new NodeNetworkError(400, '远端任务邀请内容长度无效。');
+    let created;
+    try {
+      created = this.remoteTasks.create(
+        this.identity.nodeID,
+        this.identity.brainID,
+        node.id,
+        targetBrainID,
+        { title, description, criteria },
+      );
+    } catch {
+      throw new NodeNetworkError(409, '无法保存远端任务邀请。');
+    }
+    this.update();
+    await this.flushRemoteTask(created.id);
+    return this.snapshot();
+  }
+
+  async respondRemoteTask(taskID: string, decision: 'accepted' | 'declined') {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const current = this.remoteTasks.record(taskID);
+    if (
+      !current ||
+      current.direction !== 'incoming' ||
+      current.targetNodeID !== this.identity.nodeID ||
+      current.targetBrainID !== this.identity.brainID
+    )
+      throw new NodeNetworkError(404, '待处理的远端任务邀请不存在。');
+    try {
+      this.remoteTasks.decide(taskID, decision);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '远端任务邀请当前不能处理。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
+    return this.snapshot();
+  }
+
+  async cancelRemoteTask(taskID: string) {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const current = this.remoteTasks.record(taskID);
+    if (
+      !current ||
+      current.direction !== 'outgoing' ||
+      current.ownerNodeID !== this.identity.nodeID ||
+      current.ownerBrainID !== this.identity.brainID
+    )
+      throw new NodeNetworkError(404, '可取消的远端任务邀请不存在。');
+    try {
+      this.remoteTasks.cancel(taskID);
+    } catch (error) {
+      throw new NodeNetworkError(
+        409,
+        error instanceof Error ? error.message : '远端任务邀请当前不能取消。',
+      );
+    }
+    this.update();
+    await this.flushRemoteTask(taskID);
     return this.snapshot();
   }
 
@@ -1474,6 +1718,7 @@ export class NodeNetwork extends EventEmitter {
     try {
       this.identity = loadNodeIdentity(this.root);
       this.trustStore.load();
+      this.remoteTasks.load();
       this.peerServer = this.createPeerServer(this.identity);
       const configuredPort = Number(process.env.RIVLOOM_PEER_PORT || 0);
       if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65_535)
@@ -1566,6 +1811,9 @@ export class NodeNetwork extends EventEmitter {
           if (expiresAt <= Date.now()) this.seenPairings.delete(id);
         for (const [id, expiresAt] of this.seenChannelOpens)
           if (expiresAt <= Date.now()) this.seenChannelOpens.delete(id);
+        if (this.remoteTasks.expire()) changed = true;
+        for (const node of this.nodes.values())
+          if (node.online && node.trusted && node.channelReady) void this.flushRemoteTasks(node.id);
         if (changed) this.update();
       }, discoveryIntervalMilliseconds);
       this.timer.unref();
@@ -1576,7 +1824,9 @@ export class NodeNetwork extends EventEmitter {
       await this.stop();
       this.fail(
         error instanceof Error &&
-          (error.message.includes('节点身份') || error.message.includes('信任记录'))
+          (error.message.includes('节点身份') ||
+            error.message.includes('信任记录') ||
+            error.message.includes('远端任务邀请记录'))
           ? error.message
           : '无法启动局域网节点发现；本机任务功能仍可继续使用。',
       );
@@ -1609,6 +1859,8 @@ export class NodeNetwork extends EventEmitter {
     for (const nodeID of this.channels.keys()) this.forgetChannel(nodeID);
     this.openingChannels.clear();
     this.seenChannelOpens.clear();
+    this.channelSendQueues.clear();
+    this.deliveringRemoteTasks.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;

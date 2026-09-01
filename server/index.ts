@@ -221,6 +221,42 @@ app.post('/api/network/trusted/:nodeID/revoke', async (req, res) => {
   z.object({ confirmed: z.literal(true) }).parse(req.body);
   res.json(await nodeNetwork.revokeTrust(nodeID));
 });
+const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
+app.post('/api/network/tasks', async (req, res) => {
+  requireNetworkOwner(req);
+  const input = z
+    .object({
+      nodeID: z.string().regex(/^[A-Za-z0-9_-]{32}$/),
+      targetBrainID: z.string().uuid(),
+      title: z.string().trim().min(1).max(120),
+      description: z.string().trim().min(1).max(4000),
+      criteria: z.string().trim().min(1).max(2000),
+      confirmed: z.literal(true),
+    })
+    .parse(req.body);
+  res.status(201).json(
+    await nodeNetwork.createRemoteTask(input.nodeID, input.targetBrainID, {
+      title: redact(input.title),
+      description: redact(input.description),
+      criteria: redact(input.criteria),
+    }),
+  );
+});
+app.post('/api/network/tasks/:id/accept', async (req, res) => {
+  requireNetworkOwner(req);
+  z.object({ confirmed: z.literal(true) }).parse(req.body);
+  res.json(await nodeNetwork.respondRemoteTask(remoteTaskID(req), 'accepted'));
+});
+app.post('/api/network/tasks/:id/decline', async (req, res) => {
+  requireNetworkOwner(req);
+  z.object({ confirmed: z.literal(true) }).parse(req.body);
+  res.json(await nodeNetwork.respondRemoteTask(remoteTaskID(req), 'declined'));
+});
+app.post('/api/network/tasks/:id/cancel', async (req, res) => {
+  requireNetworkOwner(req);
+  z.object({ confirmed: z.literal(true) }).parse(req.body);
+  res.json(await nodeNetwork.cancelRemoteTask(remoteTaskID(req)));
+});
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z

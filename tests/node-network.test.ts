@@ -28,6 +28,12 @@ import {
   unsignedPairingMessage,
   type PairingMessage,
 } from '../server/node-trust.ts';
+import {
+  RemoteTaskStore,
+  validRemoteTaskCancel,
+  validRemoteTaskOffer,
+  validRemoteTaskResponse,
+} from '../server/remote-tasks.ts';
 
 async function availableUdpPort() {
   const socket = createSocket('udp4');
@@ -59,6 +65,28 @@ async function waitForSecureChannels(networks: NodeNetwork[]) {
   )
     await wait(100);
   assert(networks.every((network) => network.snapshot().nearby[0]?.channelReady === true));
+}
+
+async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) {
+  const deadline = Date.now() + 5000;
+  while (
+    Date.now() < deadline &&
+    networks.some(
+      (network) =>
+        network.snapshot().remoteTasks.length !== 1 ||
+        network.snapshot().remoteTasks[0]?.status !== status ||
+        network.snapshot().remoteTasks[0]?.deliveryPending,
+    )
+  )
+    await wait(50);
+  assert(
+    networks.every(
+      (network) =>
+        network.snapshot().remoteTasks.length === 1 &&
+        network.snapshot().remoteTasks[0]?.status === status &&
+        !network.snapshot().remoteTasks[0]?.deliveryPending,
+    ),
+  );
 }
 
 test('node network only accepts local and private source addresses', () => {
@@ -184,6 +212,62 @@ test(
     }
   },
 );
+
+test('remote task invitations persist and apply idempotent offer and response messages', () => {
+  const roots = [
+    mkdtempSync(join(tmpdir(), 'rivloom-remote-task-owner-')),
+    mkdtempSync(join(tmpdir(), 'rivloom-remote-task-target-')),
+  ];
+  try {
+    const owner = new RemoteTaskStore(roots[0]);
+    const target = new RemoteTaskStore(roots[1]);
+    const created = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
+      title: '检查构建失败',
+      description: '请先复现失败并说明原因，不要开始执行工具。',
+      criteria: '双方确认任务范围后再选择项目和模型。',
+    });
+    const offer = owner.message(created.id);
+    assert(validRemoteTaskOffer(offer));
+    assert.equal(target.receiveOffer(offer), true);
+    assert.equal(target.receiveOffer(offer), false);
+    assert.throws(() => target.receiveOffer({ ...offer, title: '冲突标题' }), /冲突/);
+    assert(owner.markDelivered(created.id, 'pending'));
+
+    target.decide(created.id, 'accepted');
+    const response = target.message(created.id);
+    assert(validRemoteTaskResponse(response));
+    assert.equal(owner.receiveResponse(response), true);
+    assert.equal(owner.receiveResponse(response), false);
+    assert(target.markDelivered(created.id, 'accepted'));
+    assert.equal(owner.list()[0].status, 'accepted');
+    assert.equal(target.list()[0].status, 'accepted');
+    assert.equal('idempotencyKey' in owner.list()[0], false);
+
+    const reloadedOwner = new RemoteTaskStore(roots[0]);
+    const reloadedTarget = new RemoteTaskStore(roots[1]);
+    reloadedOwner.load();
+    reloadedTarget.load();
+    assert.equal(reloadedOwner.list()[0].status, 'accepted');
+    assert.equal(reloadedTarget.list()[0].status, 'accepted');
+
+    const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
+      title: '取消邀请',
+      description: '验证归属 Brain 可以取消尚未执行的邀请。',
+      criteria: '目标端幂等地显示已取消。',
+    });
+    const cancelledOffer = owner.message(cancelled.id);
+    assert(validRemoteTaskOffer(cancelledOffer));
+    target.receiveOffer(cancelledOffer);
+    owner.markDelivered(cancelled.id, 'pending');
+    owner.cancel(cancelled.id);
+    const cancellation = owner.message(cancelled.id);
+    assert(validRemoteTaskCancel(cancellation));
+    assert.equal(target.receiveCancel(cancellation), true);
+    assert.equal(target.receiveCancel(cancellation), false);
+  } finally {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test(
   'two isolated Rivloom instances discover and cryptographically verify each other',
@@ -348,6 +432,23 @@ test(
       assert(snapshots.every((snapshot) => snapshot.pairings.length === 0));
       assert(roots.every((root) => readFileSync(join(root, 'trusted-nodes.json'), 'utf8')));
 
+      await networks[0].createRemoteTask(
+        snapshots[0].nearby[0].id,
+        snapshots[0].nearby[0].brains[0].id,
+        {
+          title: '验证远端任务邀请',
+          description: '只接受或拒绝这条邀请，不启动 OpenCode，也不访问任何项目。',
+          criteria: '两端状态一致，重启后仍可读取。',
+        },
+      );
+      await waitForRemoteTaskStatus(networks, 'pending');
+      snapshots = networks.map((network) => network.snapshot());
+      assert.equal(snapshots[0].remoteTasks[0].direction, 'outgoing');
+      assert.equal(snapshots[1].remoteTasks[0].direction, 'incoming');
+      assert.equal(snapshots[0].remoteTasks[0].id, snapshots[1].remoteTasks[0].id);
+      await networks[1].respondRemoteTask(snapshots[1].remoteTasks[0].id, 'accepted');
+      await waitForRemoteTaskStatus(networks, 'accepted');
+
       await Promise.all(networks.map((network) => network.stop()));
       networks = roots.map((root) => new NodeNetwork(root, true));
       await Promise.all(networks.map((network) => network.start()));
@@ -356,6 +457,7 @@ test(
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
       assert(snapshots.every((snapshot) => snapshot.nearby[0].channelReady));
+      assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.status === 'accepted'));
 
       const initiatorIndex =
         snapshots[0].local!.id.localeCompare(snapshots[1].local!.id) < 0 ? 0 : 1;
@@ -402,6 +504,8 @@ test(
       const directoryRequest = encryptChannelPayload(manualChannel, {
         type: 'brain-directory-request',
         requestID: randomUUID(),
+        capabilities: ['brain', 'executor', 'human-ui'],
+        brains: snapshots[initiatorIndex].local!.brains,
       });
       const forgedCiphertext = {
         ...directoryRequest,
@@ -458,6 +562,7 @@ test(
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].channelReady));
+      assert(snapshots.every((snapshot) => snapshot.remoteTasks[0]?.status === 'cancelled'));
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       for (const root of roots) rmSync(root, { recursive: true, force: true });

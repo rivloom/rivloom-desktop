@@ -1288,6 +1288,30 @@ function App() {
                 )
                   void action(() => api(`/network/trusted/${nodeID}/revoke`, { confirmed: true }));
               }}
+              onCreateRemoteTask={(nodeID, targetBrainID, input) =>
+                void action(() =>
+                  api('/network/tasks', {
+                    nodeID,
+                    targetBrainID,
+                    ...input,
+                    confirmed: true,
+                  }),
+                )
+              }
+              onRespondRemoteTask={(taskID, decision) =>
+                void action(() =>
+                  api(
+                    `/network/tasks/${taskID}/${decision === 'accepted' ? 'accept' : 'decline'}`,
+                    {
+                      confirmed: true,
+                    },
+                  ),
+                )
+              }
+              onCancelRemoteTask={(taskID) => {
+                if (globalThis.confirm('确定取消这条跨设备任务邀请吗？'))
+                  void action(() => api(`/network/tasks/${taskID}/cancel`, { confirmed: true }));
+              }}
             />
           )}
         </main>

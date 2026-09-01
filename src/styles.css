@@ -1827,6 +1827,182 @@ main {
 .node-pairing-actions > span {
   flex: 1;
 }
+.trusted-task-actions,
+.remote-task-buttons,
+.remote-task-meta {
+  display: flex;
+  align-items: center;
+}
+.trusted-task-actions {
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.remote-task-form {
+  display: grid;
+  gap: 11px;
+  margin-top: 13px;
+  padding: 14px;
+  border: 1px solid #cfdecf;
+  border-radius: 9px;
+  background: #f8fbf6;
+}
+.remote-task-form > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.remote-task-form strong {
+  color: #3f604f;
+  font-size: 12px;
+}
+.remote-task-form p {
+  margin: 0;
+  color: #738078;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.remote-task-form label {
+  display: grid;
+  gap: 5px;
+  color: #63756a;
+  font-size: 9px;
+}
+.remote-task-form input,
+.remote-task-form textarea {
+  width: 100%;
+  border: 1px solid #dce5da;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px 9px;
+  color: #40574a;
+  font:
+    10px/1.55 'Segoe UI',
+    sans-serif;
+  resize: vertical;
+}
+.remote-task-form input:focus,
+.remote-task-form textarea:focus {
+  border-color: #8caf97;
+  outline: 2px solid #8caf9720;
+}
+.remote-task-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.remote-task-card {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid #dfe7df;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 20px #27443807;
+}
+.remote-task-card.incoming {
+  border-color: #cbdccf;
+  background: #fbfdf9;
+}
+.remote-task-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.remote-task-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #edf5ee;
+  color: #4e765e;
+}
+.remote-task-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.remote-task-heading h3 {
+  margin: 4px 0 0;
+  color: #385747;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.remote-task-status {
+  padding: 5px 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #f1f3ef;
+  color: #7a857d;
+  font-size: 9px;
+}
+.remote-task-status.status-accepted {
+  background: #e9f3e8;
+  color: #4f775a;
+}
+.remote-task-status.status-declined,
+.remote-task-status.status-cancelled,
+.remote-task-status.status-expired {
+  background: #f4eeee;
+  color: #8a6666;
+}
+.remote-task-description {
+  margin: 15px 0 11px;
+  color: #52645a;
+  font-size: 10px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.remote-task-criteria {
+  padding: 10px 11px;
+  border-radius: 7px;
+  background: #f5f8f3;
+}
+.remote-task-criteria strong {
+  color: #64776b;
+  font-size: 9px;
+}
+.remote-task-criteria p {
+  margin: 4px 0 0;
+  color: #5a6a61;
+  font-size: 9px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.remote-task-meta {
+  gap: 13px;
+  flex-wrap: wrap;
+  margin-top: 11px;
+  color: #7b897f;
+  font-size: 9px;
+}
+.remote-task-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-task-boundary {
+  margin: 11px 0 0;
+  color: #4f745c;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.remote-task-error {
+  margin: 11px 0 0;
+  color: #9b5555;
+  font-size: 9px;
+  line-height: 1.6;
+}
+.remote-task-buttons {
+  gap: 8px;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1ed;
+}
+.remote-task-empty {
+  gap: 10px;
+}
 .network-empty {
   min-height: 210px;
   display: flex;
@@ -2576,7 +2752,8 @@ main {
   .project-grid {
     grid-template-columns: 1fr;
   }
-  .network-grid {
+  .network-grid,
+  .remote-task-grid {
     grid-template-columns: 1fr;
   }
   .network-node-details {
