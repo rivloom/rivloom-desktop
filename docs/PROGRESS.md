@@ -12,7 +12,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 
 运行状态：用户要求关闭网页端后，`127.0.0.1:4310` 的内部 Web 调试服务及其引擎子进程已于 2026-09-01 停止。本轮所有隔离后端、桌面、安装和引擎测试进程也已停止；不会作为产品入口常驻。
 
-产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。桌面首次启动现已取消工作区/账号表单，通过启动期本机令牌自动建立操作者，直接进入任务界面并发现节点。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD、LAN UDP 查询/单播回复回退、随机挑战签名验证、受限公开端点和桌面节点页。Brain 任务归属、设备配对和委派仍待后续；OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
+产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。桌面首次启动现已取消工作区/账号表单，通过启动期本机令牌自动建立操作者，直接进入任务界面并发现节点。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD、LAN UDP 回退、随机挑战签名验证、受限公开端点和桌面节点页。M3.2 第一切片已完成短码/指纹核对、双方确认、信任持久化、重放拒绝和撤销，并通过真实同机双实例与 Release WebView2；物理双机配对、认证加密业务通道和任务委派仍待后续。OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
 
 ## 阶段状态
 
@@ -21,7 +21,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 | M0 真实引擎与任务闭环  | 新 Release 桌面包内真实回归 11 组通过，包含桌面无表单自动身份                 |
 | M1 模型设置与 DeepSeek | 功能已实现并完成无 Key 验证；真实 DeepSeek 调用待用户在客户端本机填入有效 Key |
 | M2 Windows 安装包      | 开发机安装/启动/卸载通过；干净机、升级矩阵和签名待发行阶段                    |
-| M3 自发现节点与 Brain  | Win10/Win11 双向发现已通过；签名离线通知和 15/30 秒异常断线兜底待原设备复测   |
+| M3 自发现节点与 Brain  | 双向发现已通过；配对第一切片自动化通过，生命周期与配对待物理双机复测          |
 | M4 ChatGPT 登录        | 待做、按需验证                                                                |
 | M5 商业内测发布检查    | 待做；锁版和必要开源声明已有                                                  |
 
@@ -38,8 +38,8 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `scripts/model-settings-ui.ts`：实际 Release Tauri WebView2 页面检查与截图。
 - `scripts/desktop-install-smoke.ts`：当前 NSIS 的隔离安装、随包引擎启动、进程清理、卸载和数据保留检查。
 - `server/node-identity.ts`：稳定 Ed25519 节点身份、Node ID/指纹派生和 Windows DPAPI CurrentUser 私钥保护。
-- `server/node-network.ts`：独立受限节点端点、`_rivloom._tcp.local` 发布/发现、LAN UDP 查询/单播回复回退、私有来源过滤、限频、随机挑战签名校验和节点过期处理。
-- `src/node-network.tsx`：桌面“节点与 Brain”页，区分本机、签名已验证的附近节点和尚未配对授权状态。
+- `server/node-network.ts`、`server/node-trust.ts`：独立受限节点端点、发现与离线处理、签名配对会话、短码派生、双方确认、公开信任记录持久化、冲突拒绝、撤销和重试。
+- `server/index.ts`、`src/node-network.tsx`：只有本机所有者可调用的配对管理 API，以及桌面发起、核对、确认、取消和撤销界面；跨节点业务 API 仍关闭。
 - 正常关闭会主动发送签名离线通知；异常断电或断网时每 5 秒刷新签名心跳，约 15 秒显示离线、约 30 秒移除。顶部、Brain 和侧栏数量只统计在线节点，恢复心跳自动上线。
 - `tests/node-network.test.ts` 与 `scripts/node-network-ui.ts`：分别关闭回退或 mDNS 的真实双实例发现/签名边界测试，以及 Release WebView2 页面验证。
 
@@ -51,19 +51,20 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `.data/verification/desktop-integration.json`：最终 Release 使用 `opencode/mimo-v2.5-free` 的 11 组真实闭环检查通过；任务 `46dd767c-ae19-401d-890a-e65ba5bfef59`，引擎会话 `ses_fa4bf8155ffe1Iq2eD7Uzu9sz2`。
 - `.data/verification/desktop-ui.json` 与 `desktop-direct-start.png`：全新数据目录无账号/工作区表单，自动建立本机操作者并直达任务工作台，发现已启动。
 - `.data/verification/desktop-install.json`：当前安装包开发机隔离安装/启动/卸载通过。
-- `.data/verification/desktop-node-network.json` 与 `.png`：5 项实际 Release 节点页检查通过；第二个隔离实例通过真实 mDNS、nonce 和 Ed25519 签名被发现，保持未授权。
-- 本地检查：TypeScript/生产构建通过；10 项测试通过，其中 mDNS 与 LAN UDP 回退分别强制验证；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
+- `.data/verification/desktop-node-network.json`、`.png` 与 `desktop-node-pairing.png`：9 项实际 Release 节点页检查通过；真实第二实例完成同码、单方不授信、双方授信和撤销。
+- 本地检查：TypeScript/生产构建通过；12 项测试通过，其中信任冲突拒绝、mDNS、LAN UDP、配对重放拒绝、双方确认、重启保持和撤销均有验证；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
 
-安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,039,431 字节，SHA-256 `eae0ad3a809fafeadcd69e2e6c4c8272ac136b9df241467dc4d28f5bafd88c87`。这是包含 LAN UDP 回退、签名离线通知和 15/30 秒异常断线兜底的未签名内测包，开发机隔离安装/启动/卸载已通过。
+安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,044,500 字节，SHA-256 `d186d258a434a547692a52250e7e6170e55649a2f5ad4ef77f7051e0eda21dcf`。这是包含 LAN UDP 回退、快速离线、双端配对、持久信任和撤销的未签名内测包，开发机隔离安装/启动/卸载已通过。
 
 ## 下一次恢复工作时
 
 1. 把包含签名离线通知的新包安装到 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`；正常关闭一端，确认另一端数秒内显示离线，并在约 15 至 20 秒后移除。
 2. 强制结束进程或断开网络，确认另一端约 15 至 20 秒显示离线、约 30 至 35 秒后移除。
 3. 重新启动，确认节点恢复在线，且 Node ID 和 Brain ID 保持不变。
-4. 实现 M3.2 双方确认配对、持久信任与撤销；在认证加密通道完成前，不开放任何任务或业务 API。
-5. 配对验证后再做单 Brain 分布式任务和最小跨 Brain 委派；正式发给更多内测者前，完成干净 Windows 虚拟机安装/升级/卸载、代码签名和发布安全审查。
-6. 用户若准备好 DeepSeek Key，只在 Rivloom 客户端“模型与额度”页面本机输入，不发到聊天、仓库或截图；确认额度共享后做真实连接测试，再用专用 fixture 回归完整编程闭环。
+4. 在两台物理设备发起配对，核对短码和完整指纹一致；先只确认一台验证仍未受信，再确认另一台并重启，确认双方受信记录保持。
+5. 从任一设备撤销信任，确认双方都回到未授权；重新配对需再次由双方确认。
+6. 物理配对验证后实现认证加密节点业务通道，再进入单 Brain 分布式任务；正式发给更多内测者前，完成干净 Windows 虚拟机安装/升级/卸载、代码签名和发布安全审查。
+7. 用户若准备好 DeepSeek Key，只在 Rivloom 客户端“模型与额度”页面本机输入，不发到聊天、仓库或截图；确认额度共享后做真实连接测试，再用专用 fixture 回归完整编程闭环。
 
 ## 持续约束
 

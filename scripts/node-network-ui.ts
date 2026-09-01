@@ -47,8 +47,33 @@ try {
 
   const verificationDirectory = resolve('.data', 'verification');
   mkdirSync(verificationDirectory, { recursive: true });
+  await page.getByRole('button', { name: '与此设备配对' }).click();
+  await page.locator('.pairing-code').waitFor();
+  const pairingDeadline = Date.now() + 5000;
+  while (Date.now() < pairingDeadline && peer.snapshot().pairings.length !== 1) await wait(100);
+  const pageCode = String(await page.locator('.pairing-code').innerText()).replace(/\D/g, '');
+  assert.equal(pageCode, peer.snapshot().pairings[0]?.code);
+  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
+  const pairingScreenshot = join(verificationDirectory, 'desktop-node-pairing.png');
+  await page.screenshot({ path: pairingScreenshot, fullPage: true });
+
+  await page.getByRole('button', { name: '短码一致，确认' }).click();
+  await page.getByText('本机已确认，等待对方在其设备确认。').waitFor();
+  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
+  assert.equal(peer.snapshot().pairings[0]?.remoteConfirmed, true);
+  await peer.confirmPairing(peer.snapshot().pairings[0].id);
+  await page.locator('.network-node-card:not(.local)').getByText('已建立设备信任').waitFor();
+  assert.equal(peer.snapshot().nearby[0]?.trusted, true);
+
   const screenshot = join(verificationDirectory, 'desktop-node-network.png');
   await page.screenshot({ path: screenshot, fullPage: true });
+  page.once('dialog', (dialog: any) => dialog.accept());
+  await page.getByRole('button', { name: '撤销信任' }).click();
+  await page
+    .locator('.network-node-card:not(.local)')
+    .getByText('签名身份已验证，尚未配对授权')
+    .waitFor();
+  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
   const proof = join(verificationDirectory, 'desktop-node-network.json');
   writeFileSync(
     proof,
@@ -66,13 +91,18 @@ try {
           'Packaged backend loaded a stable Windows-DPAPI-protected node identity',
           'A second isolated Rivloom instance was discovered through the real LAN discovery stack',
           'The nearby node passed nonce and Ed25519 signature verification',
-          'The verified nearby node remained explicitly untrusted and unable to access business APIs',
+          'Both sides displayed the same six-digit pairing code derived from the signed session',
+          'One-sided confirmation did not establish trust',
+          'Bilateral confirmation established trust on both nodes',
+          'Revocation removed trust on both nodes',
+          'Pairing did not expose any project, task, model, or OpenCode business endpoint',
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
-          'Pairing, revocation, encrypted business transport, and task delegation are not part of M3.1.',
+          'Encrypted business transport and task delegation remain closed for a later slice.',
         ],
         screenshot,
+        pairingScreenshot,
       },
       null,
       2,

@@ -1,11 +1,15 @@
 import Bonjour from 'bonjour-service';
 import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
 import { EventEmitter } from 'node:events';
-import { createServer, type Server } from 'node:http';
-import { createPublicKey, randomBytes, verify } from 'node:crypto';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
-import type { NodeNetwork as NodeNetworkSnapshot, RivloomNode } from '../shared/types.ts';
+import type {
+  NodeNetwork as NodeNetworkSnapshot,
+  NodePairing,
+  RivloomNode,
+} from '../shared/types.ts';
 import {
   fingerprintForPublicKey,
   loadNodeIdentity,
@@ -13,6 +17,17 @@ import {
   nodeProtocolVersion,
   type NodeIdentity,
 } from './node-identity.ts';
+import {
+  NodeTrustStore,
+  pairingShortCode,
+  unsignedPairingMessage,
+  unsignedRevocationMessage,
+  validPairingMessage,
+  validRevocationMessage,
+  verifySignedNodeMessage,
+  type PairingMessage,
+  type RevocationMessage,
+} from './node-trust.ts';
 
 type MdnsService = {
   fqdn: string;
@@ -66,6 +81,22 @@ type DiscoveryDeparture = {
   signature: string;
 };
 
+type PairingSession = NodePairing & {
+  requesterNodeID: string;
+  responderNodeID: string;
+  nonce: string;
+  peerPublicKey: string;
+};
+
+export class NodeNetworkError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 const serviceType = 'rivloom';
 const capabilities = ['brain', 'executor', 'human-ui'];
 const maximumHelloBytes = 16 * 1024;
@@ -75,6 +106,10 @@ const discoveryProtocol = 'rivloom-node-discovery';
 const discoveryIntervalMilliseconds = 5_000;
 const nodeOfflineAfterMilliseconds = 15_000;
 const nodeExpireAfterMilliseconds = 30_000;
+const pairingExpireAfterMilliseconds = 5 * 60_000;
+const pairingReplayWindowMilliseconds = 10 * 60_000;
+const signedMessageWindowMilliseconds = 30_000;
+const maximumPendingPairings = 20;
 
 function unsignedHello(value: Omit<Hello, 'signature'>) {
   return JSON.stringify({
@@ -312,6 +347,33 @@ async function limitedJson(response: Response) {
   return JSON.parse(body) as unknown;
 }
 
+async function requestJson(request: IncomingMessage) {
+  if (!request.headers['content-type']?.toLowerCase().startsWith('application/json'))
+    throw new NodeNetworkError(415, '节点请求必须使用 JSON。');
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bytes.byteLength;
+    if (total > maximumHelloBytes) throw new NodeNetworkError(413, '节点请求过大。');
+    chunks.push(bytes);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } catch {
+    throw new NodeNetworkError(400, '节点请求不是有效 JSON。');
+  }
+}
+
+function jsonResponse(response: ServerResponse, status: number, value: unknown) {
+  const body = JSON.stringify(value);
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+  });
+  response.end(body);
+}
+
 export class NodeNetwork extends EventEmitter {
   private status: NodeNetworkSnapshot['status'];
   private error: string | null = null;
@@ -329,12 +391,18 @@ export class NodeNetwork extends EventEmitter {
   private readonly probing = new Set<string>();
   private readonly discoveryQueries = new Map<string, number>();
   private readonly requests = new Map<string, { count: number; until: number }>();
+  private readonly pairings = new Map<string, PairingSession>();
+  private readonly seenPairings = new Map<string, number>();
+  private readonly sendingRevocations = new Set<string>();
+  private readonly revocationAttempts = new Map<string, number>();
+  private readonly trustStore: NodeTrustStore;
   private readonly root: string;
   private readonly enabled: boolean;
 
   constructor(root: string, enabled = process.env.RIVLOOM_NODE_NETWORK !== 'disabled') {
     super();
     this.root = root;
+    this.trustStore = new NodeTrustStore(root);
     this.enabled = enabled;
     this.status = enabled ? 'starting' : 'disabled';
   }
@@ -345,6 +413,17 @@ export class NodeNetwork extends EventEmitter {
       serviceType: `_${serviceType}._tcp.local · LAN UDP ${this.discoveryPort || defaultDiscoveryPort}`,
       local: this.identity ? publicNode(this.identity, this.peerPort) : null,
       nearby: [...this.nodes.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      pairings: [...this.pairings.values()]
+        .map(
+          ({
+            peerPublicKey: _peerPublicKey,
+            requesterNodeID: _requester,
+            responderNodeID: _responder,
+            nonce: _nonce,
+            ...pairing
+          }) => pairing,
+        )
+        .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt)),
       error: this.error,
     };
   }
@@ -372,32 +451,254 @@ export class NodeNetwork extends EventEmitter {
     return bucket.count > 60;
   }
 
-  private createPeerServer(identity: NodeIdentity) {
-    const server = createServer((request, response) => {
-      response.setHeader('X-Content-Type-Options', 'nosniff');
-      response.setHeader('Cache-Control', 'no-store');
-      response.setHeader('Referrer-Policy', 'no-referrer');
-      response.setHeader('X-Frame-Options', 'DENY');
-      response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
-      const remote = request.socket.remoteAddress;
-      if (!this.allowed(remote)) {
-        response.writeHead(403).end();
-        return;
+  private nodeForRemote(nodeID: string, remoteAddress: string | undefined) {
+    const node = this.nodes.get(nodeID);
+    const remote = normalizedAddress(remoteAddress || '');
+    return node?.verified && node.addresses.map(normalizedAddress).includes(remote) ? node : null;
+  }
+
+  private signedPairing(
+    type: PairingMessage['type'],
+    pairing: Pick<PairingSession, 'id' | 'requesterNodeID' | 'responderNodeID' | 'nonce'>,
+  ): PairingMessage {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const unsigned: Omit<PairingMessage, 'signature'> = {
+      protocol: 'rivloom-node-pairing',
+      version: 1,
+      type,
+      pairingID: pairing.id,
+      requesterNodeID: pairing.requesterNodeID,
+      responderNodeID: pairing.responderNodeID,
+      nonce: pairing.nonce,
+      actorNodeID: this.identity.nodeID,
+      issuedAt: Date.now(),
+      publicKey: this.identity.publicKey,
+    };
+    return { ...unsigned, signature: this.identity.sign(unsignedPairingMessage(unsigned)) };
+  }
+
+  private signedRevocation(nodeID: string): RevocationMessage {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const unsigned: Omit<RevocationMessage, 'signature'> = {
+      protocol: 'rivloom-node-trust',
+      version: 1,
+      type: 'revoke',
+      nodeID: this.identity.nodeID,
+      peerNodeID: nodeID,
+      issuedAt: Date.now(),
+      publicKey: this.identity.publicKey,
+    };
+    return { ...unsigned, signature: this.identity.sign(unsignedRevocationMessage(unsigned)) };
+  }
+
+  private validPairingFrom(
+    message: PairingMessage,
+    node: RivloomNode,
+    expectedType: PairingMessage['type'],
+  ) {
+    return (
+      message.type === expectedType &&
+      message.actorNodeID === node.id &&
+      Math.abs(Date.now() - message.issuedAt) <= signedMessageWindowMilliseconds &&
+      verifySignedNodeMessage(
+        message.publicKey,
+        message.actorNodeID,
+        node.fingerprint,
+        unsignedPairingMessage({
+          protocol: message.protocol,
+          version: message.version,
+          type: message.type,
+          pairingID: message.pairingID,
+          requesterNodeID: message.requesterNodeID,
+          responderNodeID: message.responderNodeID,
+          nonce: message.nonce,
+          actorNodeID: message.actorNodeID,
+          issuedAt: message.issuedAt,
+          publicKey: message.publicKey,
+        }),
+        message.signature,
+      )
+    );
+  }
+
+  private async postToNode(node: RivloomNode, path: string, value: unknown) {
+    let unavailable = true;
+    for (const address of node.addresses.map(normalizedAddress)) {
+      if (!privateNetworkAddress(address)) continue;
+      try {
+        const response = await fetch(`http://${address}:${node.port}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(value),
+          signal: AbortSignal.timeout(3500),
+          redirect: 'error',
+        });
+        unavailable = false;
+        if (response.status === 204) return null;
+        const body = response.headers.get('content-type')?.startsWith('application/json')
+          ? await limitedJson(response)
+          : null;
+        if (response.ok) return body;
+        throw new NodeNetworkError(
+          response.status >= 400 && response.status < 500 ? response.status : 502,
+          response.status === 409
+            ? '对方当前已有配对或信任状态，请在两台设备检查后重试。'
+            : response.status === 403
+              ? '对方拒绝了节点身份校验。'
+              : '对方没有接受本次配对操作。',
+        );
+      } catch (error) {
+        if (error instanceof NodeNetworkError) throw error;
       }
-      if (this.rateLimited(remote!)) {
-        response.writeHead(429).end();
-        return;
-      }
-      const url = new URL(request.url || '/', 'http://rivloom.local');
-      if (request.method !== 'GET' || url.pathname !== '/v1/hello') {
-        response.writeHead(404).end();
-        return;
-      }
+    }
+    throw new NodeNetworkError(
+      503,
+      unavailable ? '附近节点暂时无法连接，请确认两台设备仍在线。' : '配对操作未完成。',
+    );
+  }
+
+  private pairingForNode(nodeID: string) {
+    return [...this.pairings.values()].find((pairing) => pairing.nodeID === nodeID) || null;
+  }
+
+  private completePairing(pairing: PairingSession) {
+    const node = this.nodes.get(pairing.nodeID);
+    if (!node || !node.verified) throw new NodeNetworkError(409, '节点已离线，不能完成配对。');
+    this.trustStore.trust({
+      nodeID: node.id,
+      fingerprint: node.fingerprint,
+      publicKey: pairing.peerPublicKey,
+      pairedAt: new Date().toISOString(),
+    });
+    this.nodes.set(node.id, { ...node, trusted: true });
+    this.pairings.delete(pairing.id);
+    this.update();
+  }
+
+  private async handlePairingRequest(message: PairingMessage, remote: string | undefined) {
+    if (!this.identity || message.responderNodeID !== this.identity.nodeID)
+      throw new NodeNetworkError(403, '配对目标不匹配。');
+    const node = this.nodeForRemote(message.requesterNodeID, remote);
+    if (
+      !node ||
+      message.actorNodeID !== message.requesterNodeID ||
+      !this.validPairingFrom(message, node, 'request')
+    )
+      throw new NodeNetworkError(403, '配对请求身份校验失败。');
+    if (
+      this.seenPairings.has(message.pairingID) ||
+      this.pairingForNode(node.id) ||
+      this.trustStore.trusted(node.id, node.fingerprint)
+    )
+      throw new NodeNetworkError(409, '节点已有配对或信任状态。');
+    if (this.pairings.size >= maximumPendingPairings)
+      throw new NodeNetworkError(429, '待处理配对过多，请先处理现有请求。');
+    const pairing: PairingSession = {
+      id: message.pairingID,
+      nodeID: node.id,
+      requesterNodeID: message.requesterNodeID,
+      responderNodeID: message.responderNodeID,
+      nonce: message.nonce,
+      peerPublicKey: message.publicKey,
+      direction: 'incoming',
+      code: pairingShortCode(
+        message.pairingID,
+        message.nonce,
+        node.id,
+        node.fingerprint,
+        this.identity.nodeID,
+        this.identity.fingerprint,
+      ),
+      expiresAt: new Date(Date.now() + pairingExpireAfterMilliseconds).toISOString(),
+      localConfirmed: false,
+      remoteConfirmed: false,
+    };
+    this.pairings.set(pairing.id, pairing);
+    this.seenPairings.set(pairing.id, Date.now() + pairingReplayWindowMilliseconds);
+    this.update();
+    return this.signedPairing('ack', pairing);
+  }
+
+  private handlePairingConfirm(message: PairingMessage, remote: string | undefined) {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const pairing = this.pairings.get(message.pairingID);
+    const node = pairing ? this.nodeForRemote(pairing.nodeID, remote) : null;
+    if (
+      !pairing ||
+      !node ||
+      message.requesterNodeID !== pairing.requesterNodeID ||
+      message.responderNodeID !== pairing.responderNodeID ||
+      message.nonce !== pairing.nonce ||
+      message.publicKey !== pairing.peerPublicKey ||
+      !this.validPairingFrom(message, node, 'confirm')
+    )
+      throw new NodeNetworkError(403, '配对确认身份或会话不匹配。');
+    pairing.remoteConfirmed = true;
+    if (pairing.localConfirmed) this.completePairing(pairing);
+    else this.update();
+  }
+
+  private handlePairingCancel(message: PairingMessage, remote: string | undefined) {
+    const pairing = this.pairings.get(message.pairingID);
+    const node = pairing ? this.nodeForRemote(pairing.nodeID, remote) : null;
+    if (
+      !pairing ||
+      !node ||
+      message.requesterNodeID !== pairing.requesterNodeID ||
+      message.responderNodeID !== pairing.responderNodeID ||
+      message.nonce !== pairing.nonce ||
+      message.publicKey !== pairing.peerPublicKey ||
+      !this.validPairingFrom(message, node, 'cancel')
+    )
+      throw new NodeNetworkError(403, '取消配对的身份或会话不匹配。');
+    this.pairings.delete(pairing.id);
+    this.update();
+  }
+
+  private handleRevocation(message: RevocationMessage, remote: string | undefined) {
+    if (!this.identity || message.peerNodeID !== this.identity.nodeID)
+      throw new NodeNetworkError(403, '撤销目标不匹配。');
+    const record = this.trustStore.record(message.nodeID);
+    const node = this.nodeForRemote(message.nodeID, remote);
+    if (
+      !record ||
+      !node ||
+      message.publicKey !== record.publicKey ||
+      Math.abs(Date.now() - message.issuedAt) > signedMessageWindowMilliseconds ||
+      message.issuedAt < Date.parse(record.pairedAt) ||
+      !verifySignedNodeMessage(
+        message.publicKey,
+        message.nodeID,
+        record.fingerprint,
+        unsignedRevocationMessage({
+          protocol: message.protocol,
+          version: message.version,
+          type: message.type,
+          nodeID: message.nodeID,
+          peerNodeID: message.peerNodeID,
+          issuedAt: message.issuedAt,
+          publicKey: message.publicKey,
+        }),
+        message.signature,
+      )
+    )
+      throw new NodeNetworkError(403, '撤销请求身份校验失败。');
+    this.trustStore.revoke(node.id, node.fingerprint);
+    this.nodes.set(node.id, { ...node, trusted: false });
+    const pairing = this.pairingForNode(node.id);
+    if (pairing) this.pairings.delete(pairing.id);
+    this.update();
+  }
+
+  private async handlePeerRequest(request: IncomingMessage, response: ServerResponse) {
+    const remote = request.socket.remoteAddress;
+    if (!this.allowed(remote)) throw new NodeNetworkError(403, '只接受局域网节点请求。');
+    if (this.rateLimited(remote!)) throw new NodeNetworkError(429, '节点请求过于频繁。');
+    const url = new URL(request.url || '/', 'http://rivloom.local');
+    if (request.method === 'GET' && url.pathname === '/v1/hello') {
       const nonce = url.searchParams.get('nonce') || '';
-      if (!/^[A-Za-z0-9_-]{32}$/.test(nonce)) {
-        response.writeHead(400).end();
-        return;
-      }
+      if (!/^[A-Za-z0-9_-]{32}$/.test(nonce)) throw new NodeNetworkError(400, '随机挑战无效。');
+      const identity = this.identity!;
       const value: Omit<Hello, 'signature'> = {
         protocolVersion: nodeProtocolVersion,
         nodeID: identity.nodeID,
@@ -409,18 +710,163 @@ export class NodeNetwork extends EventEmitter {
         issuedAt: Date.now(),
         publicKey: identity.publicKey,
       };
-      const body = JSON.stringify({ ...value, signature: identity.sign(unsignedHello(value)) });
-      response.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
+      jsonResponse(response, 200, { ...value, signature: identity.sign(unsignedHello(value)) });
+      return;
+    }
+    if (request.method !== 'POST') throw new NodeNetworkError(404, '节点接口不存在。');
+    const value = await requestJson(request);
+    if (url.pathname === '/v1/pairing/request' && validPairingMessage(value)) {
+      jsonResponse(response, 200, await this.handlePairingRequest(value, remote));
+      return;
+    }
+    if (url.pathname === '/v1/pairing/confirm' && validPairingMessage(value)) {
+      this.handlePairingConfirm(value, remote);
+      response.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/v1/pairing/cancel' && validPairingMessage(value)) {
+      this.handlePairingCancel(value, remote);
+      response.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/v1/trust/revoke' && validRevocationMessage(value)) {
+      this.handleRevocation(value, remote);
+      response.writeHead(204).end();
+      return;
+    }
+    throw new NodeNetworkError(404, '节点接口不存在。');
+  }
+
+  private createPeerServer(_identity: NodeIdentity) {
+    const server = createServer((request, response) => {
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Referrer-Policy', 'no-referrer');
+      response.setHeader('X-Frame-Options', 'DENY');
+      response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+      void this.handlePeerRequest(request, response).catch((error: unknown) => {
+        if (response.headersSent) return void response.destroy();
+        const status = error instanceof NodeNetworkError ? error.status : 400;
+        jsonResponse(response, status, {
+          error: error instanceof NodeNetworkError ? error.message : '节点请求未完成。',
+        });
       });
-      response.end(body);
     });
     server.headersTimeout = 5000;
     server.requestTimeout = 5000;
     server.keepAliveTimeout = 1000;
     server.maxRequestsPerSocket = 10;
     return server;
+  }
+
+  async requestPairing(nodeID: string) {
+    if (!this.identity || this.status !== 'online')
+      throw new NodeNetworkError(503, '节点网络尚未就绪。');
+    const node = this.nodes.get(nodeID);
+    if (!node?.online || !node.verified)
+      throw new NodeNetworkError(404, '附近没有可配对的在线节点。');
+    if (this.trustStore.trusted(node.id, node.fingerprint))
+      throw new NodeNetworkError(409, '节点已经受信。');
+    if (this.pairingForNode(node.id)) throw new NodeNetworkError(409, '节点已有待处理配对。');
+    if (this.pairings.size >= maximumPendingPairings)
+      throw new NodeNetworkError(429, '待处理配对过多，请先处理现有请求。');
+    const pairing: PairingSession = {
+      id: randomUUID(),
+      nodeID: node.id,
+      requesterNodeID: this.identity.nodeID,
+      responderNodeID: node.id,
+      nonce: randomBytes(24).toString('base64url'),
+      peerPublicKey: '',
+      direction: 'outgoing',
+      code: '',
+      expiresAt: new Date(Date.now() + pairingExpireAfterMilliseconds).toISOString(),
+      localConfirmed: false,
+      remoteConfirmed: false,
+    };
+    const request = this.signedPairing('request', pairing);
+    const value = await this.postToNode(node, '/v1/pairing/request', request);
+    if (
+      !validPairingMessage(value) ||
+      value.pairingID !== pairing.id ||
+      value.requesterNodeID !== pairing.requesterNodeID ||
+      value.responderNodeID !== pairing.responderNodeID ||
+      value.nonce !== pairing.nonce ||
+      !this.validPairingFrom(value, node, 'ack')
+    )
+      throw new NodeNetworkError(502, '对方返回的配对确认无效。');
+    pairing.peerPublicKey = value.publicKey;
+    pairing.code = pairingShortCode(
+      pairing.id,
+      pairing.nonce,
+      this.identity.nodeID,
+      this.identity.fingerprint,
+      node.id,
+      node.fingerprint,
+    );
+    this.pairings.set(pairing.id, pairing);
+    this.seenPairings.set(pairing.id, Date.now() + pairingReplayWindowMilliseconds);
+    this.update();
+    return this.snapshot();
+  }
+
+  async confirmPairing(pairingID: string) {
+    const pairing = this.pairings.get(pairingID);
+    const node = pairing ? this.nodes.get(pairing.nodeID) : null;
+    if (!pairing || !node?.online)
+      throw new NodeNetworkError(404, '配对会话不存在或节点已经离线。');
+    if (Date.parse(pairing.expiresAt) <= Date.now())
+      throw new NodeNetworkError(409, '配对已过期，请重新发起。');
+    if (pairing.localConfirmed) throw new NodeNetworkError(409, '本机已经确认该配对。');
+    await this.postToNode(node, '/v1/pairing/confirm', this.signedPairing('confirm', pairing));
+    pairing.localConfirmed = true;
+    if (pairing.remoteConfirmed) this.completePairing(pairing);
+    else this.update();
+    return this.snapshot();
+  }
+
+  async cancelPairing(pairingID: string) {
+    const pairing = this.pairings.get(pairingID);
+    if (!pairing) throw new NodeNetworkError(404, '配对会话不存在。');
+    this.pairings.delete(pairing.id);
+    this.update();
+    const node = this.nodes.get(pairing.nodeID);
+    if (node?.online)
+      try {
+        await this.postToNode(node, '/v1/pairing/cancel', this.signedPairing('cancel', pairing));
+      } catch {
+        /* The remote pending request expires automatically. */
+      }
+    return this.snapshot();
+  }
+
+  private async sendRevocation(node: RivloomNode) {
+    const lastAttempt = this.revocationAttempts.get(node.id) || 0;
+    if (this.sendingRevocations.has(node.id) || Date.now() - lastAttempt < 30_000) return;
+    this.revocationAttempts.set(node.id, Date.now());
+    this.sendingRevocations.add(node.id);
+    try {
+      await this.postToNode(node, '/v1/trust/revoke', this.signedRevocation(node.id));
+    } finally {
+      this.sendingRevocations.delete(node.id);
+    }
+  }
+
+  async revokeTrust(nodeID: string) {
+    const record = this.trustStore.record(nodeID);
+    if (!record) throw new NodeNetworkError(404, '该节点没有本机信任记录。');
+    this.trustStore.revoke(record.nodeID, record.fingerprint);
+    const node = this.nodes.get(nodeID);
+    if (node) this.nodes.set(node.id, { ...node, trusted: false });
+    const pairing = this.pairingForNode(nodeID);
+    if (pairing) this.pairings.delete(pairing.id);
+    this.update();
+    if (node?.online)
+      try {
+        await this.sendRevocation(node);
+      } catch {
+        /* Persisted revocation is retried when the node is discovered again. */
+      }
+    return this.snapshot();
   }
 
   private async probe(service: MdnsService) {
@@ -482,7 +928,7 @@ export class NodeNetwork extends EventEmitter {
             )
           )
             continue;
-          this.nodes.set(value.nodeID, {
+          const node: RivloomNode = {
             id: value.nodeID,
             name: value.name,
             fingerprint: computedFingerprint,
@@ -491,13 +937,16 @@ export class NodeNetwork extends EventEmitter {
             port: value.port,
             online: true,
             local: false,
-            trusted: false,
+            trusted: this.trustStore.trusted(value.nodeID, computedFingerprint),
             verified: true,
             lastSeen: new Date().toISOString(),
             capabilities: [...new Set(value.capabilities)].sort(),
             brains: [value.brain],
-          });
+          };
+          this.nodes.set(value.nodeID, node);
           this.update();
+          if (this.trustStore.revocation(node.id, node.fingerprint))
+            void this.sendRevocation(node).catch(() => undefined);
           return;
         } catch {
           /* Try the next private address advertised for the same signed node. */
@@ -725,6 +1174,7 @@ export class NodeNetwork extends EventEmitter {
     if (!this.enabled || this.peerServer) return;
     try {
       this.identity = loadNodeIdentity(this.root);
+      this.trustStore.load();
       this.peerServer = this.createPeerServer(this.identity);
       const configuredPort = Number(process.env.RIVLOOM_PEER_PORT || 0);
       if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65_535)
@@ -798,6 +1248,13 @@ export class NodeNetwork extends EventEmitter {
             changed = true;
           }
         }
+        for (const [id, pairing] of this.pairings)
+          if (Date.parse(pairing.expiresAt) <= Date.now()) {
+            this.pairings.delete(id);
+            changed = true;
+          }
+        for (const [id, expiresAt] of this.seenPairings)
+          if (expiresAt <= Date.now()) this.seenPairings.delete(id);
         if (changed) this.update();
       }, discoveryIntervalMilliseconds);
       this.timer.unref();
@@ -807,7 +1264,8 @@ export class NodeNetwork extends EventEmitter {
     } catch (error) {
       await this.stop();
       this.fail(
-        error instanceof Error && error.message.includes('节点身份')
+        error instanceof Error &&
+          (error.message.includes('节点身份') || error.message.includes('信任记录'))
           ? error.message
           : '无法启动局域网节点发现；本机任务功能仍可继续使用。',
       );
@@ -833,6 +1291,10 @@ export class NodeNetwork extends EventEmitter {
     for (const socket of this.discoveryQuerySockets) socket.close();
     this.discoveryQuerySockets.clear();
     this.discoveryQueries.clear();
+    this.pairings.clear();
+    this.seenPairings.clear();
+    this.sendingRevocations.clear();
+    this.revocationAttempts.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;

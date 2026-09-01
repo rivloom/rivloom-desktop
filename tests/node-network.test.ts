@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { createSocket } from 'node:dgram';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
   directedBroadcastAddress,
@@ -13,6 +14,11 @@ import {
   nodePresence,
   privateNetworkAddress,
 } from '../server/node-network.ts';
+import {
+  NodeTrustStore,
+  unsignedPairingMessage,
+  type PairingMessage,
+} from '../server/node-trust.ts';
 
 async function availableUdpPort() {
   const socket = createSocket('udp4');
@@ -24,6 +30,16 @@ async function availableUdpPort() {
   await new Promise<void>((resolve) => socket.close(() => resolve()));
   if (typeof address === 'string') throw new Error('无法分配 UDP 测试端口。');
   return address.port;
+}
+
+async function waitForMutualDiscovery(networks: NodeNetwork[]) {
+  const deadline = Date.now() + 20_000;
+  while (
+    Date.now() < deadline &&
+    networks.some((network) => network.snapshot().nearby.length !== 1)
+  )
+    await wait(250);
+  assert(networks.every((network) => network.snapshot().nearby.length === 1));
 }
 
 test('node network only accepts local and private source addresses', () => {
@@ -76,6 +92,36 @@ test(
       assert(stored.includes('windows-dpapi-current-user'));
       assert(!stored.includes('PRIVATE KEY'));
       assert(!stored.includes('same-value'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'node trust storage rejects conflicting trusted and revoked records',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const root = mkdtempSync(join(tmpdir(), 'rivloom-trust-test-'));
+    try {
+      const identity = loadNodeIdentity(root);
+      const trust = new NodeTrustStore(root);
+      const pairedAt = new Date().toISOString();
+      trust.trust({
+        nodeID: identity.nodeID,
+        fingerprint: identity.fingerprint,
+        publicKey: identity.publicKey,
+        pairedAt,
+      });
+      const path = join(root, 'trusted-nodes.json');
+      const stored = JSON.parse(readFileSync(path, 'utf8'));
+      stored.revoked.push({
+        nodeID: identity.nodeID,
+        fingerprint: identity.fingerprint,
+        revokedAt: pairedAt,
+      });
+      writeFileSync(path, JSON.stringify(stored));
+      assert.throws(() => new NodeTrustStore(root).load(), /存在冲突/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -161,6 +207,98 @@ test(
       for (const root of roots) rmSync(root, { recursive: true, force: true });
       if (previous === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
       else process.env.RIVLOOM_MDNS_NETWORK = previous;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'two nodes require bilateral confirmation, persist trust, reject replay and revoke both sides',
+  { skip: process.platform !== 'win32', timeout: 45_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const roots = [
+      mkdtempSync(join(tmpdir(), 'rivloom-pairing-a-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-pairing-b-')),
+    ];
+    let networks = roots.map((root) => new NodeNetwork(root, true));
+    try {
+      await Promise.all(networks.map((network) => network.start()));
+      await waitForMutualDiscovery(networks);
+
+      const first = networks[0].snapshot();
+      const second = networks[1].snapshot();
+      const requester = loadNodeIdentity(roots[0]);
+      const unsigned: Omit<PairingMessage, 'signature'> = {
+        protocol: 'rivloom-node-pairing',
+        version: 1,
+        type: 'request',
+        pairingID: randomUUID(),
+        requesterNodeID: first.local!.id,
+        responderNodeID: second.local!.id,
+        nonce: randomBytes(24).toString('base64url'),
+        actorNodeID: first.local!.id,
+        issuedAt: Date.now(),
+        publicKey: requester.publicKey,
+      };
+      const request: PairingMessage = {
+        ...unsigned,
+        signature: requester.sign(unsignedPairingMessage(unsigned)),
+      };
+      const target = first.nearby[0];
+      const requestUrl = `http://${target.addresses[0]}:${target.port}/v1/pairing/request`;
+      const accepted = await fetch(requestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      assert.equal(accepted.status, 200);
+      const replayed = await fetch(requestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      assert.equal(replayed.status, 409);
+      await networks[1].cancelPairing(unsigned.pairingID);
+
+      await networks[0].requestPairing(second.local!.id);
+      let snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => snapshot.pairings.length === 1));
+      assert.equal(snapshots[0].pairings[0].code, snapshots[1].pairings[0].code);
+      assert(/^\d{6}$/.test(snapshots[0].pairings[0].code));
+      assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
+
+      await networks[0].confirmPairing(snapshots[0].pairings[0].id);
+      snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
+      assert.equal(snapshots[0].pairings[0].localConfirmed, true);
+      assert.equal(snapshots[1].pairings[0].remoteConfirmed, true);
+
+      await networks[1].confirmPairing(snapshots[1].pairings[0].id);
+      snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
+      assert(snapshots.every((snapshot) => snapshot.pairings.length === 0));
+      assert(roots.every((root) => readFileSync(join(root, 'trusted-nodes.json'), 'utf8')));
+
+      await Promise.all(networks.map((network) => network.stop()));
+      networks = roots.map((root) => new NodeNetwork(root, true));
+      await Promise.all(networks.map((network) => network.start()));
+      await waitForMutualDiscovery(networks);
+      snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
+
+      await networks[0].revokeTrust(snapshots[0].nearby[0].id);
+      snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
+    } finally {
+      await Promise.all(networks.map((network) => network.stop()));
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
       if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
       else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
     }

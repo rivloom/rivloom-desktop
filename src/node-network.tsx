@@ -1,5 +1,15 @@
-import { BrainCircuit, Fingerprint, Radio, ShieldCheck, WifiOff } from 'lucide-react';
-import type { NodeNetwork, RivloomNode } from '../shared/types';
+import {
+  BrainCircuit,
+  Check,
+  Fingerprint,
+  Link2,
+  Radio,
+  ShieldCheck,
+  ShieldX,
+  WifiOff,
+  X,
+} from 'lucide-react';
+import type { NodeNetwork, NodePairing, RivloomNode } from '../shared/types';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -8,7 +18,24 @@ const shortFingerprint = (value: string) => {
     : value;
 };
 
-function NodeCard({ node }: { node: RivloomNode }) {
+type NetworkActions = {
+  owner: boolean;
+  busy: boolean;
+  requestPairing(nodeID: string): void;
+  confirmPairing(pairingID: string): void;
+  cancelPairing(pairingID: string): void;
+  revokeTrust(nodeID: string): void;
+};
+
+function NodeCard({
+  node,
+  pairing,
+  actions,
+}: {
+  node: RivloomNode;
+  pairing?: NodePairing;
+  actions: NetworkActions;
+}) {
   return (
     <article className={`network-node-card ${node.local ? 'local' : ''}`}>
       <div className="network-node-heading">
@@ -65,14 +92,108 @@ function NodeCard({ node }: { node: RivloomNode }) {
             ? '已建立设备信任'
             : '签名身份已验证，尚未配对授权'}
       </div>
+      {!node.local && (
+        <div className="node-pairing">
+          {node.trusted ? (
+            <div className="node-pairing-actions trusted-actions">
+              <span>双方已确认此设备身份，信任记录保存在本机。</span>
+              {actions.owner && (
+                <button
+                  className="button danger compact"
+                  disabled={actions.busy}
+                  onClick={() => actions.revokeTrust(node.id)}
+                >
+                  <ShieldX size={14} />
+                  撤销信任
+                </button>
+              )}
+            </div>
+          ) : pairing ? (
+            <div className="pairing-request">
+              <div className="pairing-request-heading">
+                <span>
+                  <Link2 size={14} />
+                  {pairing.direction === 'incoming' ? '对方请求配对' : '已发起配对'}
+                </span>
+                <small>有效至 {new Date(pairing.expiresAt).toLocaleTimeString('zh-CN')}</small>
+              </div>
+              <strong className="pairing-code" aria-label={`配对码 ${pairing.code}`}>
+                {pairing.code.slice(0, 3)} <i /> {pairing.code.slice(3)}
+              </strong>
+              <p>
+                {pairing.localConfirmed
+                  ? '本机已确认，等待对方在其设备确认。'
+                  : pairing.remoteConfirmed
+                    ? '对方已确认。请核对两台设备短码和指纹一致后确认。'
+                    : '请在两台设备核对短码和公钥指纹，双方都确认后才会建立信任。'}
+              </p>
+              {actions.owner && (
+                <div className="node-pairing-buttons">
+                  <button
+                    className="button primary compact"
+                    disabled={actions.busy || pairing.localConfirmed || !node.online}
+                    onClick={() => actions.confirmPairing(pairing.id)}
+                  >
+                    <Check size={14} />
+                    {pairing.localConfirmed ? '已确认' : '短码一致，确认'}
+                  </button>
+                  <button
+                    className="button compact"
+                    disabled={actions.busy}
+                    onClick={() => actions.cancelPairing(pairing.id)}
+                  >
+                    <X size={14} />
+                    取消
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : actions.owner ? (
+            <button
+              className="button compact pair-node-button"
+              disabled={actions.busy || !node.online}
+              onClick={() => actions.requestPairing(node.id)}
+            >
+              <Link2 size={14} />
+              与此设备配对
+            </button>
+          ) : (
+            <p className="pairing-owner-note">只有本机所有者可以管理设备信任。</p>
+          )}
+        </div>
+      )}
     </article>
   );
 }
 
-export function NodeNetworkView({ network }: { network: NodeNetwork }) {
+export function NodeNetworkView({
+  network,
+  owner,
+  busy,
+  onRequestPairing,
+  onConfirmPairing,
+  onCancelPairing,
+  onRevokeTrust,
+}: {
+  network: NodeNetwork;
+  owner: boolean;
+  busy: boolean;
+  onRequestPairing(nodeID: string): void;
+  onConfirmPairing(pairingID: string): void;
+  onCancelPairing(pairingID: string): void;
+  onRevokeTrust(nodeID: string): void;
+}) {
   const online = network.status === 'online';
   const onlineNearby = network.nearby.filter((node) => node.online);
   const offlineNearby = network.nearby.length - onlineNearby.length;
+  const actions: NetworkActions = {
+    owner,
+    busy,
+    requestPairing: onRequestPairing,
+    confirmPairing: onConfirmPairing,
+    cancelPairing: onCancelPairing,
+    revokeTrust: onRevokeTrust,
+  };
   return (
     <>
       <div className="page-heading network-page-heading">
@@ -122,7 +243,7 @@ export function NodeNetworkView({ network }: { network: NodeNetwork }) {
         </div>
         {network.local ? (
           <div className="network-grid single">
-            <NodeCard node={network.local} />
+            <NodeCard node={network.local} actions={actions} />
           </div>
         ) : (
           <div className="network-empty compact">
@@ -149,7 +270,12 @@ export function NodeNetworkView({ network }: { network: NodeNetwork }) {
         {network.nearby.length ? (
           <div className="network-grid">
             {network.nearby.map((node) => (
-              <NodeCard node={node} key={node.id} />
+              <NodeCard
+                node={node}
+                pairing={network.pairings.find((pairing) => pairing.nodeID === node.id)}
+                actions={actions}
+                key={node.id}
+              />
             ))}
           </div>
         ) : (
@@ -170,10 +296,10 @@ export function NodeNetworkView({ network }: { network: NodeNetwork }) {
       <div className="collaboration-note network-boundary">
         <ShieldCheck size={25} />
         <div>
-          <h3>自动发现不会自动授予权限</h3>
+          <h3>配对只建立设备信任</h3>
           <p>
-            当前 M3.1
-            已验证节点身份和附近发现。设备配对、撤销以及跨节点任务传输将在下一切片开放；在此之前，附近节点不能读取任务、项目或模型凭据。
+            两台设备必须核对相同短码和公钥指纹，并由双方分别确认。配对和撤销不会开放
+            OpenCode、项目、任务或模型凭据；跨节点任务协议仍将在后续切片单独实现和验证。
           </p>
         </div>
       </div>

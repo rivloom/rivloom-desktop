@@ -62,7 +62,7 @@ import {
   cancelConnectionCheck,
   assertCanStartTask,
 } from './model-settings.ts';
-import { NodeNetwork } from './node-network.ts';
+import { NodeNetwork, NodeNetworkError } from './node-network.ts';
 
 try {
   acquireDataLock();
@@ -195,6 +195,32 @@ app.get('/api/bootstrap', (req, res) =>
 );
 app.get('/api/model-settings', (_req, res) => res.json(modelSettings()));
 app.get('/api/network', (_req, res) => res.json(nodeNetwork.snapshot()));
+const requireNetworkOwner = (req: Request) =>
+  requireThat(who(req).owner, 403, '只有本机所有者可以管理设备信任');
+app.post('/api/network/pairings', async (req, res) => {
+  requireNetworkOwner(req);
+  const { nodeID } = z.object({ nodeID: z.string().regex(/^[A-Za-z0-9_-]{32}$/) }).parse(req.body);
+  res.status(201).json(await nodeNetwork.requestPairing(nodeID));
+});
+app.post('/api/network/pairings/:id/confirm', async (req, res) => {
+  requireNetworkOwner(req);
+  const pairingID = z.string().uuid().parse(req.params.id);
+  res.json(await nodeNetwork.confirmPairing(pairingID));
+});
+app.post('/api/network/pairings/:id/cancel', async (req, res) => {
+  requireNetworkOwner(req);
+  const pairingID = z.string().uuid().parse(req.params.id);
+  res.json(await nodeNetwork.cancelPairing(pairingID));
+});
+app.post('/api/network/trusted/:nodeID/revoke', async (req, res) => {
+  requireNetworkOwner(req);
+  const nodeID = z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{32}$/)
+    .parse(req.params.nodeID);
+  z.object({ confirmed: z.literal(true) }).parse(req.body);
+  res.json(await nodeNetwork.revokeTrust(nodeID));
+});
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z
@@ -464,6 +490,8 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
       error: `输入不正确：${error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('；')}`,
     });
   if (error instanceof HttpError)
+    return void res.status(error.status).json({ error: error.message });
+  if (error instanceof NodeNetworkError)
     return void res.status(error.status).json({ error: error.message });
   res.status(500).json({ error: '操作未完成。请检查任务状态、Git 仓库及引擎连接后重试。' });
 });

@@ -114,7 +114,17 @@ export type NodeNetwork = {
   serviceType: string;
   local: RivloomNode | null;
   nearby: RivloomNode[];
+  pairings: NodePairing[];
   error: string | null;
+};
+export type NodePairing = {
+  id: string;
+  nodeID: string;
+  direction: 'incoming' | 'outgoing';
+  code: string;
+  expiresAt: string;
+  localConfirmed: boolean;
+  remoteConfirmed: boolean;
 };
 export type ModelCheck = {
   status: 'testing' | 'passed' | 'failed' | 'interrupted';

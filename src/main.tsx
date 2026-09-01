@@ -1268,7 +1268,28 @@ function App() {
               onChanged={() => void refresh()}
             />
           )}
-          {view === 'network' && <NodeNetworkView network={network} />}
+          {view === 'network' && (
+            <NodeNetworkView
+              network={network}
+              owner={user.owner}
+              busy={busy}
+              onRequestPairing={(nodeID) => void action(() => api('/network/pairings', { nodeID }))}
+              onConfirmPairing={(pairingID) =>
+                void action(() => api(`/network/pairings/${pairingID}/confirm`, {}))
+              }
+              onCancelPairing={(pairingID) =>
+                void action(() => api(`/network/pairings/${pairingID}/cancel`, {}))
+              }
+              onRevokeTrust={(nodeID) => {
+                if (
+                  globalThis.confirm(
+                    '撤销后，两台设备将不能继续通过该信任关系协作。确定撤销此设备吗？',
+                  )
+                )
+                  void action(() => api(`/network/trusted/${nodeID}/revoke`, { confirmed: true }));
+              }}
+            />
+          )}
         </main>
         <footer className="app-footer">
           <span>RIVLOOM · 人与 AI 的任务空间</span>
