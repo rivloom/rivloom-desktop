@@ -4,7 +4,7 @@
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发按 [实施计划](docs/plans/2026-08-31-mvp-delivery.md) 推进，当前停点见 [实施进度](docs/PROGRESS.md)，继续开发或开启新会话前读 [交接状态](docs/HANDOFF.md)。桌面、官方 OpenCode 接入和模型设置产品功能已验证；由于尚未提供有效 Key，DeepSeek 成功调用仍明确标为待验证。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，详细计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，当前停点见 [实施进度](docs/PROGRESS.md)，继续开发或开启新会话前读 [交接状态](docs/HANDOFF.md)。M0、M3.1 和 M3.2 已确认完成；用户已经创建 DeepSeek Key，M1 的真实调用待在客户端本机验证；M2 发行完善暂缓；当前聚焦 M3.3，M3.4 讨论清楚前暂停。
 
 ## 在 Windows 启动
 
