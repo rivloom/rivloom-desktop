@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+import { createSocket } from 'node:dgram';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
   directedBroadcastAddress,
@@ -12,6 +13,18 @@ import {
   nodePresence,
   privateNetworkAddress,
 } from '../server/node-network.ts';
+
+async function availableUdpPort() {
+  const socket = createSocket('udp4');
+  await new Promise<void>((resolve, reject) => {
+    socket.once('error', reject);
+    socket.bind(0, '0.0.0.0', () => resolve());
+  });
+  const address = socket.address();
+  await new Promise<void>((resolve) => socket.close(() => resolve()));
+  if (typeof address === 'string') throw new Error('无法分配 UDP 测试端口。');
+  return address.port;
+}
 
 test('node network only accepts local and private source addresses', () => {
   assert(privateNetworkAddress('127.0.0.1'));
@@ -41,10 +54,10 @@ test('node network only accepts local and private source addresses', () => {
   assert.equal(directedBroadcastAddress('bad', '255.255.255.0'), null);
   const seenAt = new Date('2026-09-01T00:00:00.000Z').toISOString();
   const at = Date.parse(seenAt);
-  assert.equal(nodePresence(seenAt, at + 29_999), 'online');
-  assert.equal(nodePresence(seenAt, at + 30_000), 'offline');
-  assert.equal(nodePresence(seenAt, at + 119_999), 'offline');
-  assert.equal(nodePresence(seenAt, at + 120_000), 'expired');
+  assert.equal(nodePresence(seenAt, at + 14_999), 'online');
+  assert.equal(nodePresence(seenAt, at + 15_000), 'offline');
+  assert.equal(nodePresence(seenAt, at + 29_999), 'offline');
+  assert.equal(nodePresence(seenAt, at + 30_000), 'expired');
   assert.equal(nodePresence('invalid', at), 'expired');
 });
 
@@ -114,7 +127,9 @@ test(
   { skip: process.platform !== 'win32', timeout: 30_000 },
   async () => {
     const previous = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
     process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
     const roots = [
       mkdtempSync(join(tmpdir(), 'rivloom-fallback-a-')),
       mkdtempSync(join(tmpdir(), 'rivloom-fallback-b-')),
@@ -135,11 +150,19 @@ test(
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
       assert.equal(snapshots[0].nearby[0].id, snapshots[1].local?.id);
       assert.equal(snapshots[1].nearby[0].id, snapshots[0].local?.id);
+
+      await networks[1].stop();
+      const departureDeadline = Date.now() + 3000;
+      while (Date.now() < departureDeadline && networks[0].snapshot().nearby[0]?.online !== false)
+        await wait(50);
+      assert.equal(networks[0].snapshot().nearby[0]?.online, false);
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       for (const root of roots) rmSync(root, { recursive: true, force: true });
       if (previous === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
       else process.env.RIVLOOM_MDNS_NETWORK = previous;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
     }
   },
 );

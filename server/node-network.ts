@@ -56,15 +56,25 @@ type DiscoveryResponse = {
   port: number;
 };
 
+type DiscoveryDeparture = {
+  protocol: 'rivloom-node-discovery';
+  version: 1;
+  type: 'departure';
+  nodeID: string;
+  issuedAt: number;
+  publicKey: string;
+  signature: string;
+};
+
 const serviceType = 'rivloom';
 const capabilities = ['brain', 'executor', 'human-ui'];
 const maximumHelloBytes = 16 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
 const discoveryProtocol = 'rivloom-node-discovery';
-const discoveryIntervalMilliseconds = 10_000;
-const nodeOfflineAfterMilliseconds = 30_000;
-const nodeExpireAfterMilliseconds = 120_000;
+const discoveryIntervalMilliseconds = 5_000;
+const nodeOfflineAfterMilliseconds = 15_000;
+const nodeExpireAfterMilliseconds = 30_000;
 
 function unsignedHello(value: Omit<Hello, 'signature'>) {
   return JSON.stringify({
@@ -75,6 +85,17 @@ function unsignedHello(value: Omit<Hello, 'signature'>) {
     capabilities: [...value.capabilities].sort(),
     port: value.port,
     nonce: value.nonce,
+    issuedAt: value.issuedAt,
+    publicKey: value.publicKey,
+  });
+}
+
+function unsignedDeparture(value: Omit<DiscoveryDeparture, 'signature'>) {
+  return JSON.stringify({
+    protocol: value.protocol,
+    version: value.version,
+    type: value.type,
+    nodeID: value.nodeID,
     issuedAt: value.issuedAt,
     publicKey: value.publicKey,
   });
@@ -252,6 +273,23 @@ function validDiscoveryResponse(value: unknown): value is DiscoveryResponse {
     Number.isInteger(item.port) &&
     Number(item.port) >= 1 &&
     Number(item.port) <= 65_535
+  );
+}
+
+function validDiscoveryDeparture(value: unknown): value is DiscoveryDeparture {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.protocol === discoveryProtocol &&
+    item.version === 1 &&
+    item.type === 'departure' &&
+    typeof item.nodeID === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.nodeID) &&
+    Number.isInteger(item.issuedAt) &&
+    typeof item.publicKey === 'string' &&
+    item.publicKey.length <= 512 &&
+    typeof item.signature === 'string' &&
+    item.signature.length <= 256
   );
 }
 
@@ -503,6 +541,47 @@ export class NodeNetwork extends EventEmitter {
       socket.send(response, remote.port, remote.address, () => undefined);
       return;
     }
+    if (validDiscoveryDeparture(value)) {
+      const node = this.nodes.get(value.nodeID);
+      if (
+        !node ||
+        !node.addresses.map(normalizedAddress).includes(normalizedAddress(remote.address))
+      )
+        return;
+      try {
+        const publicBytes = Buffer.from(value.publicKey, 'base64');
+        if (
+          Math.abs(Date.now() - value.issuedAt) > 30_000 ||
+          nodeIDForPublicKey(publicBytes) !== value.nodeID ||
+          fingerprintForPublicKey(publicBytes) !== node.fingerprint ||
+          !verify(
+            null,
+            Buffer.from(
+              unsignedDeparture({
+                protocol: value.protocol,
+                version: value.version,
+                type: value.type,
+                nodeID: value.nodeID,
+                issuedAt: value.issuedAt,
+                publicKey: value.publicKey,
+              }),
+            ),
+            createPublicKey({ key: publicBytes, format: 'der', type: 'spki' }),
+            Buffer.from(value.signature, 'base64url'),
+          )
+        )
+          return;
+      } catch {
+        return;
+      }
+      this.nodes.set(value.nodeID, {
+        ...node,
+        online: false,
+        lastSeen: new Date(Date.now() - nodeOfflineAfterMilliseconds).toISOString(),
+      });
+      this.update();
+      return;
+    }
     if (
       !validDiscoveryResponse(value) ||
       value.nodeID === this.identity.nodeID ||
@@ -593,6 +672,53 @@ export class NodeNetwork extends EventEmitter {
     const timeout = setTimeout(close, 5000);
     timeout.unref();
     socket.unref();
+  }
+
+  private async sendDiscoveryDeparture() {
+    if (!this.identity || !this.discoveryPort) return;
+    const unsigned: Omit<DiscoveryDeparture, 'signature'> = {
+      protocol: discoveryProtocol,
+      version: 1,
+      type: 'departure',
+      nodeID: this.identity.nodeID,
+      issuedAt: Date.now(),
+      publicKey: this.identity.publicKey,
+    };
+    const message = Buffer.from(
+      JSON.stringify({ ...unsigned, signature: this.identity.sign(unsignedDeparture(unsigned)) }),
+    );
+    const broadcasts = new Set(
+      lanInterfaces()
+        .map(({ address, netmask }) => directedBroadcastAddress(address, netmask))
+        .filter((address): address is string => !!address),
+    );
+    if (!broadcasts.size) return;
+    const socket = createSocket('udp4');
+    await new Promise<void>((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        try {
+          socket.close();
+        } catch {
+          /* A network change may close the departure socket first. */
+        }
+        resolve();
+      };
+      socket.once('error', finish);
+      socket.bind(0, '0.0.0.0', () => {
+        socket.setBroadcast(true);
+        let pending = broadcasts.size;
+        for (const address of broadcasts)
+          socket.send(message, this.discoveryPort, address, () => {
+            pending--;
+            if (!pending) finish();
+          });
+      });
+      setTimeout(finish, 750).unref();
+      socket.unref();
+    });
   }
 
   async start() {
@@ -706,11 +832,12 @@ export class NodeNetwork extends EventEmitter {
     }
     for (const socket of this.discoveryQuerySockets) socket.close();
     this.discoveryQuerySockets.clear();
-    this.discoveryPort = 0;
     this.discoveryQueries.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;
+    await this.sendDiscoveryDeparture();
+    this.discoveryPort = 0;
     this.peerPort = 0;
     this.nodes.clear();
   }
