@@ -9,7 +9,7 @@
 - 启动时自动运行随包 Node.js 24.19.0、本地业务服务、官方 OpenCode 1.18.25；无需客户另装 OpenCode 或 Node。
 - 业务服务使用随机 loopback 端口；引擎也只监听 loopback，另有私有随机密码。前端不接触引擎地址和密码。
 - 每个 Windows 用户/数据目录生成稳定 Ed25519 节点身份，私钥由 Windows DPAPI CurrentUser 加密。桌面“节点与 Brain”页显示本机身份、Brain、局域网发现状态和通过签名验证的附近节点。
-- `_rivloom._tcp.local` 自动发现使用独立的最小节点端点，只发布公开身份和能力，不暴露业务服务或 OpenCode。发现节点默认未配对、无任务权限。
+- 自动发现以 `_rivloom._tcp.local` 为标准路径，并用 LAN UDP 43531 查询、临时端口单播回复处理 Windows 单向 mDNS 故障。两者只提供候选地址，必须再通过随机挑战和 Ed25519 签名校验；不暴露业务服务或 OpenCode。发现节点默认未配对、无任务权限。
 - 首次启动自动建立或恢复本机操作者，直接进入任务工作台并在后台开始节点发现；不显示工作区、显示名称、用户名或密码初始化表单。任务审批确认仍保留。
 - 本机自动登录使用每次后台启动随机生成的临时令牌。Tauri 只向通过窗口标签和精确 origin 校验的应用 WebView2 提供该令牌；普通网页不可调用，退出时删除，重启即失效。
 - 客户端内置“模型与额度”页面。工作区创建者通过官方 OpenCode API 管理 DeepSeek 凭据、确认后执行真实连接测试、设置新任务默认模型；其他成员只读。
@@ -19,7 +19,7 @@
 
 ## 启动和构建
 
-对内测试安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`。安装后从开始菜单启动 Rivloom。当前产物为 71,021,448 字节，SHA-256：`5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`。
+对内测试安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`。安装后从开始菜单启动 Rivloom。当前产物为 71,011,083 字节，SHA-256：`ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4`。
 
 开发者使用：
 
@@ -57,7 +57,7 @@ npm.cmd run test:node-network-ui
 npm.cmd run test:installer
 ```
 
-真实模型回归命令会打开桌面窗口，在独立测试目录自动建立本机操作者、调用真实模型、验证审批/验收/重启，并模拟异常退出。节点网络命令也打开实际 Release WebView2，同时启动第二个隔离的真实 Rivloom 节点，通过 mDNS、HTTP 随机挑战和 Ed25519 签名完成发现验证。不会操作个人工作区；同机双实例不等于两个真人或两台物理设备已验证。
+真实模型回归命令会打开桌面窗口，在独立测试目录自动建立本机操作者、调用真实模型、验证审批/验收/重启，并模拟异常退出。节点网络命令也打开实际 Release WebView2，同时启动第二个隔离的真实 Rivloom 节点，通过局域网发现、HTTP 随机挑战和 Ed25519 签名完成验证。单元测试分别强制关闭 LAN UDP 和 mDNS，独立验证标准 mDNS 与 UDP 回退。不会操作个人工作区；同机双实例不等于两个真人或两台物理设备已验证。
 
 内部 Web 调试需显式使用 `npm run server:dev` 或 `npm run server:start`，默认 `127.0.0.1:4310`。桌面和内部 Web 不要共用数据目录运行。
 
@@ -67,7 +67,7 @@ npm.cmd run test:installer
 - WebView2 已安装的机器可直接使用；缺失时 NSIS 使用 Microsoft 的联网 bootstrapper，不承诺离线安装。配置依据 [Tauri Windows 安装器文档](https://v2.tauri.app/distribute/windows-installer/) 和 [配置参考](https://v2.tauri.app/reference/config/)。
 - 编程项目所需 Git 和语言工具链仍需本机准备。随包 Node 可以执行 Node 测试，不代表任意项目无需环境配置。
 - 模型配置界面已完成；DeepSeek 真实回复仍要等创建者在客户端本机填入有效 Key 后验证。ChatGPT 登录和两台设备的伙伴客户端接入仍是后续里程碑。
-- M3.1 已验证同机双实例自动发现和身份签名；两台物理 Windows 设备、防火墙差异、配对/撤销、加密业务通信和任务委派仍待后续里程碑。专用网络首次发现可能出现 Windows 防火墙提示。
+- M3.1 已验证同机双实例的 mDNS、LAN UDP 回退和身份签名。原安装包在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 实测出现单向 mDNS：Win10 能看到两台，Win11 只能看到自己；Win11 到 Win10 节点 TCP 端口实测成功。新回退版本仍需在这两台物理机复测。配对/撤销、加密业务通信和任务委派仍待后续里程碑。专用网络首次发现可能出现 Windows 防火墙提示。
 - Windows 当前用户下的本地进程仍可能读取本地文件；不是防恶意本机用户的隔离系统。已运行的命令可能有不可撤销副作用，脱离进程树的外部进程不在停止保证内。
 - 退出会停止执行，不支持关闭窗口后继续无人值守运行。暂无托盘、开机启动或分布式执行。
 

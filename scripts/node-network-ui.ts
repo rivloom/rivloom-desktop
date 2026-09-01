@@ -1,5 +1,5 @@
 // Verifies the node network page inside an already-running Tauri WebView2 instance.
-// A second isolated NodeNetwork supplies a real signed mDNS advertisement.
+// A second isolated NodeNetwork supplies a real signed LAN discovery advertisement.
 import { createRequire } from 'node:module';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,7 +64,7 @@ try {
         assertions: [
           'Actual Tauri WebView2 rendered the Node and Brain page',
           'Packaged backend loaded a stable Windows-DPAPI-protected node identity',
-          'A second isolated Rivloom instance was discovered through real mDNS',
+          'A second isolated Rivloom instance was discovered through the real LAN discovery stack',
           'The nearby node passed nonce and Ed25519 signature verification',
           'The verified nearby node remained explicitly untrusted and unable to access business APIs',
         ],

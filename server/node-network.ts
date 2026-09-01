@@ -1,4 +1,5 @@
 import Bonjour from 'bonjour-service';
+import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
 import { EventEmitter } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { createPublicKey, randomBytes, verify } from 'node:crypto';
@@ -35,9 +36,32 @@ type Hello = {
   signature: string;
 };
 
+type DiscoveryQuery = {
+  protocol: 'rivloom-node-discovery';
+  version: 1;
+  type: 'query';
+  nonce: string;
+  nodeID: string;
+};
+
+type DiscoveryResponse = {
+  protocol: 'rivloom-node-discovery';
+  version: 1;
+  type: 'response';
+  nonce: string;
+  protocolVersion: number;
+  nodeID: string;
+  fingerprint: string;
+  brainID: string;
+  port: number;
+};
+
 const serviceType = 'rivloom';
 const capabilities = ['brain', 'executor', 'human-ui'];
 const maximumHelloBytes = 16 * 1024;
+const maximumDiscoveryBytes = 2 * 1024;
+const defaultDiscoveryPort = 43_531;
+const discoveryProtocol = 'rivloom-node-discovery';
 
 function unsignedHello(value: Omit<Hello, 'signature'>) {
   return JSON.stringify({
@@ -90,13 +114,33 @@ export function privateNetworkAddress(value: string) {
   return false;
 }
 
-function localAddresses() {
-  const values = new Set<string>();
+function lanInterfaces() {
+  const values = new Map<string, string>();
   for (const records of Object.values(networkInterfaces()))
     for (const record of records || [])
       if (record.family === 'IPv4' && !record.internal && privateNetworkAddress(record.address))
-        values.add(record.address);
-  return [...values].sort();
+        values.set(record.address, record.netmask);
+  return [...values].map(([address, netmask]) => ({ address, netmask }));
+}
+
+function localAddresses() {
+  return lanInterfaces()
+    .map(({ address }) => address)
+    .sort();
+}
+
+export function directedBroadcastAddress(address: string, netmask: string) {
+  const addressParts = address.split('.').map(Number);
+  const maskParts = netmask.split('.').map(Number);
+  if (
+    addressParts.length !== 4 ||
+    maskParts.length !== 4 ||
+    [...addressParts, ...maskParts].some(
+      (part) => !Number.isInteger(part) || part < 0 || part > 255,
+    )
+  )
+    return null;
+  return addressParts.map((part, index) => part | (255 ^ maskParts[index])).join('.');
 }
 
 function text(value: unknown) {
@@ -166,6 +210,42 @@ function validHello(value: unknown): value is Hello {
   );
 }
 
+function validDiscoveryQuery(value: unknown): value is DiscoveryQuery {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.protocol === discoveryProtocol &&
+    item.version === 1 &&
+    item.type === 'query' &&
+    typeof item.nonce === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.nonce) &&
+    typeof item.nodeID === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.nodeID)
+  );
+}
+
+function validDiscoveryResponse(value: unknown): value is DiscoveryResponse {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.protocol === discoveryProtocol &&
+    item.version === 1 &&
+    item.type === 'response' &&
+    typeof item.nonce === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.nonce) &&
+    item.protocolVersion === nodeProtocolVersion &&
+    typeof item.nodeID === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.nodeID) &&
+    typeof item.fingerprint === 'string' &&
+    /^[0-9A-F:]{79}$/i.test(item.fingerprint) &&
+    typeof item.brainID === 'string' &&
+    /^[0-9a-f-]{36}$/i.test(item.brainID) &&
+    Number.isInteger(item.port) &&
+    Number(item.port) >= 1 &&
+    Number(item.port) <= 65_535
+  );
+}
+
 async function limitedJson(response: Response) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('节点响应没有正文。');
@@ -194,9 +274,13 @@ export class NodeNetwork extends EventEmitter {
   private bonjour: Bonjour | null = null;
   private browser: ReturnType<Bonjour['find']> | null = null;
   private service: ReturnType<Bonjour['publish']> | null = null;
+  private discoverySocket: Socket | null = null;
+  private readonly discoveryQuerySockets = new Set<Socket>();
+  private discoveryPort = 0;
   private timer: NodeJS.Timeout | null = null;
   private readonly nodes = new Map<string, RivloomNode>();
   private readonly probing = new Set<string>();
+  private readonly discoveryQueries = new Map<string, number>();
   private readonly requests = new Map<string, { count: number; until: number }>();
   private readonly root: string;
   private readonly enabled: boolean;
@@ -211,7 +295,7 @@ export class NodeNetwork extends EventEmitter {
   snapshot(): NodeNetworkSnapshot {
     return {
       status: this.status,
-      serviceType: `_${serviceType}._tcp.local`,
+      serviceType: `_${serviceType}._tcp.local · LAN UDP ${this.discoveryPort || defaultDiscoveryPort}`,
       local: this.identity ? publicNode(this.identity, this.peerPort) : null,
       nearby: [...this.nodes.values()].sort((a, b) => a.name.localeCompare(b.name)),
       error: this.error,
@@ -377,6 +461,131 @@ export class NodeNetwork extends EventEmitter {
     }
   }
 
+  private discoveryResponse(nonce: string): DiscoveryResponse {
+    return {
+      protocol: discoveryProtocol,
+      version: 1,
+      type: 'response',
+      nonce,
+      protocolVersion: nodeProtocolVersion,
+      nodeID: this.identity!.nodeID,
+      fingerprint: this.identity!.fingerprint,
+      brainID: this.identity!.brainID,
+      port: this.peerPort,
+    };
+  }
+
+  private handleDiscoveryMessage(message: Buffer, remote: RemoteInfo, socket: Socket) {
+    if (
+      !this.identity ||
+      message.byteLength > maximumDiscoveryBytes ||
+      !privateNetworkAddress(remote.address)
+    )
+      return;
+    let value: unknown;
+    try {
+      value = JSON.parse(message.toString('utf8')) as unknown;
+    } catch {
+      return;
+    }
+    if (validDiscoveryQuery(value)) {
+      if (value.nodeID === this.identity.nodeID || this.rateLimited(remote.address)) return;
+      const response = Buffer.from(JSON.stringify(this.discoveryResponse(value.nonce)));
+      socket.send(response, remote.port, remote.address, () => undefined);
+      return;
+    }
+    if (
+      !validDiscoveryResponse(value) ||
+      value.nodeID === this.identity.nodeID ||
+      (this.discoveryQueries.get(value.nonce) || 0) < Date.now()
+    )
+      return;
+    void this.probe({
+      fqdn: `Rivloom-${value.nodeID.slice(0, 8)}._${serviceType}._tcp.local`,
+      port: value.port,
+      txt: {
+        pv: String(value.protocolVersion),
+        id: value.nodeID,
+        fp: value.fingerprint,
+        brain: value.brainID,
+      },
+      referer: { address: remote.address },
+    });
+  }
+
+  private async startDiscoveryFallback() {
+    const configuredPort = Number(process.env.RIVLOOM_DISCOVERY_PORT || defaultDiscoveryPort);
+    if (!Number.isInteger(configuredPort) || configuredPort < 1 || configuredPort > 65_535)
+      throw new Error('RIVLOOM_DISCOVERY_PORT 不是有效端口。');
+    const socket = createSocket({ type: 'udp4', reuseAddr: true });
+    this.discoverySocket = socket;
+    socket.on('message', (message, remote) => this.handleDiscoveryMessage(message, remote, socket));
+    socket.on('error', () => {
+      if (this.discoverySocket === socket) this.discoverySocket = null;
+      try {
+        socket.close();
+      } catch {
+        /* The socket may already be closed after a network adapter change. */
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      socket.once('error', onError);
+      socket.bind(configuredPort, '0.0.0.0', () => {
+        socket.off('error', onError);
+        socket.setBroadcast(true);
+        resolve();
+      });
+    });
+    this.discoveryPort = configuredPort;
+    this.sendDiscoveryQuery();
+  }
+
+  private sendDiscoveryQuery() {
+    if (!this.discoverySocket || !this.identity || !this.discoveryPort) return;
+    const now = Date.now();
+    for (const [nonce, expiresAt] of this.discoveryQueries)
+      if (expiresAt < now) this.discoveryQueries.delete(nonce);
+    const nonce = randomBytes(24).toString('base64url');
+    this.discoveryQueries.set(nonce, now + 30_000);
+    const query: DiscoveryQuery = {
+      protocol: discoveryProtocol,
+      version: 1,
+      type: 'query',
+      nonce,
+      nodeID: this.identity.nodeID,
+    };
+    const message = Buffer.from(JSON.stringify(query));
+    const broadcasts = new Set(
+      lanInterfaces()
+        .map(({ address, netmask }) => directedBroadcastAddress(address, netmask))
+        .filter((address): address is string => !!address),
+    );
+    if (!broadcasts.size) return;
+    const socket = createSocket('udp4');
+    this.discoveryQuerySockets.add(socket);
+    const close = () => {
+      if (!this.discoveryQuerySockets.delete(socket)) return;
+      try {
+        socket.close();
+      } catch {
+        /* A send error may already have closed the temporary query socket. */
+      }
+    };
+    socket.on('message', (response, remote) =>
+      this.handleDiscoveryMessage(response, remote, socket),
+    );
+    socket.once('error', close);
+    socket.bind(0, '0.0.0.0', () => {
+      socket.setBroadcast(true);
+      for (const address of broadcasts)
+        socket.send(message, this.discoveryPort, address, () => undefined);
+    });
+    const timeout = setTimeout(close, 5000);
+    timeout.unref();
+    socket.unref();
+  }
+
   async start() {
     if (!this.enabled || this.peerServer) return;
     try {
@@ -397,37 +606,52 @@ export class NodeNetwork extends EventEmitter {
       if (!address || typeof address === 'string') throw new Error('无法获取节点协议端口。');
       this.peerPort = address.port;
 
-      this.bonjour = new Bonjour(undefined, () =>
-        this.fail('局域网发现发生错误，请检查网络配置。'),
-      );
-      this.service = this.bonjour.publish({
-        name: `Rivloom-${this.identity.nodeID.slice(0, 8)}`,
-        type: serviceType,
-        protocol: 'tcp',
-        port: this.peerPort,
-        disableIPv6: true,
-        txt: {
-          pv: String(nodeProtocolVersion),
-          id: this.identity.nodeID,
-          fp: this.identity.fingerprint,
-          brain: this.identity.brainID,
-          cap: capabilities.join(','),
-        },
-      });
-      this.service.on('error', () => this.fail('无法发布 Rivloom 节点，请检查 Windows 防火墙。'));
-      this.browser = this.bonjour.find({ type: serviceType, protocol: 'tcp' }, (found) => {
-        void this.probe(found as MdnsService);
-      });
-      this.browser.on('down', (found) => {
-        const id = serviceIdentity(found as MdnsService).nodeID;
-        if (this.nodes.delete(id)) this.update();
-      });
-      this.browser.on('txt-update', (found) => void this.probe(found as MdnsService));
-      this.browser.on('srv-update', (found) => void this.probe(found as MdnsService));
+      let fallbackStarted = false;
+      if (process.env.RIVLOOM_DISCOVERY_FALLBACK !== 'disabled') {
+        try {
+          await this.startDiscoveryFallback();
+          fallbackStarted = true;
+        } catch {
+          /* Standard mDNS remains available if the Rivloom-specific fallback cannot bind. */
+        }
+      }
+
+      const mdnsEnabled = process.env.RIVLOOM_MDNS_NETWORK !== 'disabled';
+      if (!mdnsEnabled && !fallbackStarted) throw new Error('无法启动局域网自动发现。');
+      if (mdnsEnabled) {
+        this.bonjour = new Bonjour(undefined, () =>
+          this.fail('局域网发现发生错误，请检查网络配置。'),
+        );
+        this.service = this.bonjour.publish({
+          name: `Rivloom-${this.identity.nodeID.slice(0, 8)}`,
+          type: serviceType,
+          protocol: 'tcp',
+          port: this.peerPort,
+          disableIPv6: true,
+          txt: {
+            pv: String(nodeProtocolVersion),
+            id: this.identity.nodeID,
+            fp: this.identity.fingerprint,
+            brain: this.identity.brainID,
+            cap: capabilities.join(','),
+          },
+        });
+        this.service.on('error', () => this.fail('无法发布 Rivloom 节点，请检查 Windows 防火墙。'));
+        this.browser = this.bonjour.find({ type: serviceType, protocol: 'tcp' }, (found) => {
+          void this.probe(found as MdnsService);
+        });
+        this.browser.on('down', (found) => {
+          const id = serviceIdentity(found as MdnsService).nodeID;
+          if (this.nodes.delete(id)) this.update();
+        });
+        this.browser.on('txt-update', (found) => void this.probe(found as MdnsService));
+        this.browser.on('srv-update', (found) => void this.probe(found as MdnsService));
+      }
       this.timer = setInterval(() => {
         this.browser?.update();
         this.browser?.expire();
         for (const found of this.browser?.services || []) void this.probe(found as MdnsService);
+        this.sendDiscoveryQuery();
         const cutoff = Date.now() - 120_000;
         let changed = false;
         for (const [id, node] of this.nodes)
@@ -462,6 +686,15 @@ export class NodeNetwork extends EventEmitter {
     }
     this.bonjour = null;
     this.service = null;
+    if (this.discoverySocket) {
+      const socket = this.discoverySocket;
+      this.discoverySocket = null;
+      await new Promise<void>((resolve) => socket.close(() => resolve()));
+    }
+    for (const socket of this.discoveryQuerySockets) socket.close();
+    this.discoveryQuerySockets.clear();
+    this.discoveryPort = 0;
+    this.discoveryQueries.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;

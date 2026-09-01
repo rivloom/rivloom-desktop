@@ -14,7 +14,7 @@
 
 真实 Windows 窗口检查：**通过**。在全新隔离测试目录启动 Release 可执行程序，实际 WebView2 通过启动期原生令牌自动建立本机操作者并直接进入任务工作台；首次页面没有工作区、显示名称、用户名、密码或终端初始化码表单，节点发现已经启动，原生目录操作可用。缺失令牌返回 403，正确令牌返回 200；关闭桌面后令牌文件和后台进程均被清理。随后通过 Release Tauri WebView2 检查节点页和“模型与额度”页面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-direct-start.png`、`.data/verification/desktop-node-network.json`、`.data/verification/desktop-model-settings.json` 及对应截图。
 
-当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。安装包 71,021,448 字节，SHA-256：`5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`。
+当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。包含 LAN UDP 回退的安装包为 71,011,083 字节，SHA-256：`ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4`。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
@@ -24,11 +24,12 @@
 
 - 两个实例各自生成稳定 Ed25519 身份；私钥 PKCS#8 只以 Windows DPAPI CurrentUser 密文保存在节点身份文件中，重载后 Node ID 不变。
 - 两个实例在本机真实 mDNS/DNS-SD 网络栈发布和发现 `_rivloom._tcp.local`，使用不同数据目录、Node ID、Brain ID 和端口。
+- 单独强制关闭 mDNS 后，两个实例通过 LAN UDP 43531 查询、临时端口单播回复在约 1 秒内发现对方；候选地址随后仍进入相同的 nonce 和 Ed25519 验签流程。
 - 发现方连接对方独立的 `/v1/hello` 端点，发送随机 nonce，并核对公钥派生 Node ID、指纹、响应时间与 Ed25519 签名。
 - 实际 Tauri WebView2 “节点与 Brain”页显示本机节点、Brain 和附近节点；对方明确保持“签名已验证、尚未配对授权”。
 - 节点端点拒绝畸形请求，业务路径返回 404；React 业务服务与 OpenCode 没有暴露到局域网。
 
-机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`。这是同一台 Windows 上的双实例网络验证，尚未覆盖两台物理设备、不同防火墙/网卡环境。配对、撤销、加密业务通信和任务委派属于 M3.2 以后范围；不能把“签名身份已验证”写成“设备已信任”。
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：原 mDNS 版本中 Win10 能看到两台，Win11 只能看到自己；Win11 对 Win10 随机节点 TCP 端口的 `Test-NetConnection` 成功，故障收敛到 Win11 的 mDNS 接收/处理路径。LAN UDP 回退已经实现并完成同机强制降级测试及新安装包烟雾测试，仍需在这两台物理机确认双向发现。配对、撤销、加密业务通信和任务委派属于 M3.2 以后范围；不能把“签名身份已验证”写成“设备已信任”。
 
 ## 模型设置与 DeepSeek 公共接口
 
@@ -96,7 +97,7 @@
 
 - `npm run typecheck`：通过（strict、noUnusedLocals、noUnusedParameters）。
 - `npm run build`：通过，生成 React 生产构建。
-- `npm test`：9 项通过；在原有安全检查外，新增私有地址过滤、Windows DPAPI 稳定身份，以及两个隔离节点的真实 mDNS 发现/随机挑战/签名校验/未授权边界。
+- `npm test`：10 项通过；在原有安全检查外，包含私有地址过滤、Windows DPAPI 稳定身份、独立强制验证的 mDNS 与 LAN UDP 回退，以及随机挑战/签名校验/未授权边界。
 - `npm audit --offline --omit=dev`：当日 0 个已知漏洞；不是安全认证。
 - `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`：通过。
 - 官方版本、npm integrity、二进制 SHA-256、MIT 原文及 123 个已安装依赖的许可证元数据已保存。
@@ -111,7 +112,7 @@
 
 ## 尚未验证或不包含
 
-- 两台物理设备/两个真人协作、不同局域网环境的发现兼容性、设备配对与撤销、加密节点业务通信、单/多 Brain 任务委派和跨网络运行。同机双实例自发现与签名校验已经验证。
+- 新 LAN UDP 回退在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上的双向发现结果、两个真人协作、设备配对与撤销、加密节点业务通信、单/多 Brain 任务委派和跨网络运行。同机双实例两种发现路径与签名校验已经验证。
 - DeepSeek 有效凭据的真实连接回复和完整编程任务；ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

@@ -12,7 +12,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 
 运行状态：用户要求关闭网页端后，`127.0.0.1:4310` 的内部 Web 调试服务及其引擎子进程已于 2026-09-01 停止。本轮所有隔离后端、桌面、安装和引擎测试进程也已停止；不会作为产品入口常驻。
 
-产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。桌面首次启动现已取消工作区/账号表单，通过启动期本机令牌自动建立操作者，直接进入任务界面并发现节点。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD 发现、随机挑战签名验证、受限公开端点和桌面节点页。Brain 任务归属、设备配对和委派仍待后续；OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
+产品方向已修正：M3 不采用“一台主机开启协作空间、另一台作为访客连接”的方案。安装 Rivloom 的实例都是节点，同网段节点自动发现彼此，并可承载一个或多个 Brain。桌面首次启动现已取消工作区/账号表单，通过启动期本机令牌自动建立操作者，直接进入任务界面并发现节点。M3.1 已完成稳定节点身份、DPAPI 私钥保护、mDNS/DNS-SD、LAN UDP 查询/单播回复回退、随机挑战签名验证、受限公开端点和桌面节点页。Brain 任务归属、设备配对和委派仍待后续；OpenCode 始终只在实际执行节点本机监听 loopback。架构边界见 [ADR-0001](adr/0001-self-discovering-brain-network.md)。
 
 ## 阶段状态
 
@@ -21,7 +21,7 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 | M0 真实引擎与任务闭环  | 新 Release 桌面包内真实回归 11 组通过，包含桌面无表单自动身份                 |
 | M1 模型设置与 DeepSeek | 功能已实现并完成无 Key 验证；真实 DeepSeek 调用待用户在客户端本机填入有效 Key |
 | M2 Windows 安装包      | 开发机安装/启动/卸载通过；干净机、升级矩阵和签名待发行阶段                    |
-| M3 自发现节点与 Brain  | M3.1 代码及同机 Release 验证完成；物理双机、配对/撤销和跨 Brain 委派待做      |
+| M3 自发现节点与 Brain  | 物理双机发现暴露单向 mDNS，UDP 回退已实现并通过同机测试；待新包双机复测       |
 | M4 ChatGPT 登录        | 待做、按需验证                                                                |
 | M5 商业内测发布检查    | 待做；锁版和必要开源声明已有                                                  |
 
@@ -38,9 +38,9 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `scripts/model-settings-ui.ts`：实际 Release Tauri WebView2 页面检查与截图。
 - `scripts/desktop-install-smoke.ts`：当前 NSIS 的隔离安装、随包引擎启动、进程清理、卸载和数据保留检查。
 - `server/node-identity.ts`：稳定 Ed25519 节点身份、Node ID/指纹派生和 Windows DPAPI CurrentUser 私钥保护。
-- `server/node-network.ts`：独立受限节点端点、`_rivloom._tcp.local` 发布/发现、私有地址过滤、随机挑战签名校验和节点过期处理。
+- `server/node-network.ts`：独立受限节点端点、`_rivloom._tcp.local` 发布/发现、LAN UDP 查询/单播回复回退、私有来源过滤、限频、随机挑战签名校验和节点过期处理。
 - `src/node-network.tsx`：桌面“节点与 Brain”页，区分本机、签名已验证的附近节点和尚未配对授权状态。
-- `tests/node-network.test.ts` 与 `scripts/node-network-ui.ts`：真实双实例 mDNS/签名边界测试和 Release WebView2 页面验证。
+- `tests/node-network.test.ts` 与 `scripts/node-network-ui.ts`：分别关闭回退或 mDNS 的真实双实例发现/签名边界测试，以及 Release WebView2 页面验证。
 
 ## 当前证据
 
@@ -51,18 +51,17 @@ M1 模型设置产品功能和 M2 开发机桌面交付均已完成。当前 Win
 - `.data/verification/desktop-ui.json` 与 `desktop-direct-start.png`：全新数据目录无账号/工作区表单，自动建立本机操作者并直达任务工作台，发现已启动。
 - `.data/verification/desktop-install.json`：当前安装包开发机隔离安装/启动/卸载通过。
 - `.data/verification/desktop-node-network.json` 与 `.png`：5 项实际 Release 节点页检查通过；第二个隔离实例通过真实 mDNS、nonce 和 Ed25519 签名被发现，保持未授权。
-- 本地检查：TypeScript/生产构建通过；9 项测试通过；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
+- 本地检查：TypeScript/生产构建通过；10 项测试通过，其中 mDNS 与 LAN UDP 回退分别强制验证；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
 
-安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,021,448 字节，SHA-256 `5389521a588fc9ee6e63003cab9ca45bef5d6434ef8a1a59b1698ce2bddd2309`。这是未签名内测包。
+安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,011,083 字节，SHA-256 `ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4`。这是包含 LAN UDP 回退的未签名内测包，开发机隔离安装/启动/卸载已通过。
 
 ## 下一次恢复工作时
 
-1. 用户若准备好 DeepSeek Key，只在 Rivloom 客户端“模型与额度”页面本机输入，不发到聊天、仓库或截图。
-2. 创建者确认额度共享后保存，选择 DeepSeek 模型并确认执行一次真实连接测试；只记录状态，不记录回复原文。
-3. 连接通过后，用专用 slugify fixture 完成一次 DeepSeek 编程任务，再验证流式输出、人工审批、停止、差异和验收。
-4. 准备第二台 Windows 设备，在同一专用局域网验证 M3.1 的自动发现、双向可见、节点重启身份稳定和 Windows 防火墙行为。
-5. 实现 M3.2 双方确认配对、持久信任与撤销；在认证加密通道完成前，不开放任何任务或业务 API。
-6. 配对验证后再做单 Brain 分布式任务和最小跨 Brain 委派；正式发给更多内测者前，完成干净 Windows 虚拟机安装/升级/卸载、代码签名和发布安全审查。
+1. 把 SHA-256 为 `ddd7453081de8d4e31a350e3459440ef74d92ff75786ed8e1beb07e5ef94cea4` 的新包安装到 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`，保持两端打开 20 秒，确认两边都显示两个节点。
+2. 双向发现通过后分别重启客户端，确认 Node ID/Brain ID 稳定；若仍单向，先核对 UDP 43531 监听和随包 `node.exe` 专用网络规则，再记录现场结果。
+3. 实现 M3.2 双方确认配对、持久信任与撤销；在认证加密通道完成前，不开放任何任务或业务 API。
+4. 配对验证后再做单 Brain 分布式任务和最小跨 Brain 委派；正式发给更多内测者前，完成干净 Windows 虚拟机安装/升级/卸载、代码签名和发布安全审查。
+5. 用户若准备好 DeepSeek Key，只在 Rivloom 客户端“模型与额度”页面本机输入，不发到聊天、仓库或截图；确认额度共享后做真实连接测试，再用专用 fixture 回归完整编程闭环。
 
 ## 持续约束
 

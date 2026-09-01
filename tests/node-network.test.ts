@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
+  directedBroadcastAddress,
   discoveryProbeAddresses,
   NodeNetwork,
   privateNetworkAddress,
@@ -34,6 +35,9 @@ test('node network only accepts local and private source addresses', () => {
     }),
     [],
   );
+  assert.equal(directedBroadcastAddress('192.168.5.20', '255.255.255.0'), '192.168.5.255');
+  assert.equal(directedBroadcastAddress('172.18.0.1', '255.255.255.252'), '172.18.0.3');
+  assert.equal(directedBroadcastAddress('bad', '255.255.255.0'), null);
 });
 
 test(
@@ -61,6 +65,8 @@ test(
   'two isolated Rivloom instances discover and cryptographically verify each other',
   { skip: process.platform !== 'win32', timeout: 30_000 },
   async () => {
+    const previous = process.env.RIVLOOM_DISCOVERY_FALLBACK;
+    process.env.RIVLOOM_DISCOVERY_FALLBACK = 'disabled';
     const roots = [
       mkdtempSync(join(tmpdir(), 'rivloom-network-a-')),
       mkdtempSync(join(tmpdir(), 'rivloom-network-b-')),
@@ -89,6 +95,43 @@ test(
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       for (const root of roots) rmSync(root, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.RIVLOOM_DISCOVERY_FALLBACK;
+      else process.env.RIVLOOM_DISCOVERY_FALLBACK = previous;
+    }
+  },
+);
+
+test(
+  'UDP broadcast fallback discovers and verifies two nodes without mDNS',
+  { skip: process.platform !== 'win32', timeout: 30_000 },
+  async () => {
+    const previous = process.env.RIVLOOM_MDNS_NETWORK;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    const roots = [
+      mkdtempSync(join(tmpdir(), 'rivloom-fallback-a-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-fallback-b-')),
+    ];
+    const networks = roots.map((root) => new NodeNetwork(root, true));
+    try {
+      await Promise.all(networks.map((network) => network.start()));
+      const deadline = Date.now() + 20_000;
+      while (
+        Date.now() < deadline &&
+        networks.some((network) => network.snapshot().nearby.length !== 1)
+      )
+        await wait(250);
+      const snapshots = networks.map((network) => network.snapshot());
+      assert(snapshots.every((snapshot) => snapshot.status === 'online'));
+      assert(snapshots.every((snapshot) => snapshot.nearby.length === 1));
+      assert(snapshots.every((snapshot) => snapshot.nearby[0].verified));
+      assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
+      assert.equal(snapshots[0].nearby[0].id, snapshots[1].local?.id);
+      assert.equal(snapshots[1].nearby[0].id, snapshots[0].local?.id);
+    } finally {
+      await Promise.all(networks.map((network) => network.stop()));
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previous;
     }
   },
 );
