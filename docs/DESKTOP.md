@@ -22,7 +22,7 @@
 
 ## 启动和构建
 
-对内测试安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`。安装后从开始菜单启动 Rivloom。当前产物为 71,016,423 字节，SHA-256：`f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`。
+本轮普通文件夹改动已编译到 `src-tauri/target/release/Rivloom.exe`。现有 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 为改动前的历史验证包（71,016,423 字节，SHA-256：`f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`），不应作为本轮最新安装器分发。重新内测前运行 `npm.cmd run desktop:build` 重建并复测 NSIS。
 
 开发者使用：
 

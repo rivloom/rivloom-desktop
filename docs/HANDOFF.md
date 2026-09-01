@@ -38,7 +38,7 @@ M3 产品方向已修正：每个 Rivloom 安装实例都是节点，同网段�
 
 M3.3 又于 2026-09-01 修正并已经落地第一段：受信节点按本机预设策略调用执行能力，自动调用是界面默认，有限调用和每项确认可选。旧版 30 分钟准备记录只作为不可自动执行的迁移历史保留，界面不再暴露租约。实现边界见 [ADR-0002](adr/0002-configurable-node-invocation-policy.md)。
 
-## 锁定运行时与最终安装包
+## 锁定运行时与安装产物
 
 | 组件                   | 版本/状态                                        |
 | ---------------------- | ------------------------------------------------ |
@@ -47,12 +47,14 @@ M3.3 又于 2026-09-01 修正并已经落地第一段：受信节点按本机预
 | Tauri                  | Rust 依赖锁定为 2.11.5 系列，`Cargo.lock` 已保留 |
 | npm                    | `package-lock.json` 已保留                       |
 
-最终内测安装包：
+上一版已验证的内测安装包：
 
 - 路径：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`
 - 大小：71,016,423 字节
 - SHA-256：`f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`
 - 状态：未签名内测包；开发机隔离安装、随包引擎启动、进程清理和卸载通过。
+
+该 NSIS 早于本轮普通文件夹改动，不能作为当前最新安装器分发。本轮已更新 `src-tauri/target/release/Rivloom.exe`；再次发给其他设备前需重建并复测 NSIS。
 
 客户安装 Rivloom 后不需要另装 OpenCode 或本产品所需的 Node。Rivloom 项目不要求 Git；项目自身需要的语言工具链和 WebView2 仍是环境前提。
 
@@ -62,7 +64,7 @@ M3.3 又于 2026-09-01 修正并已经落地第一段：受信节点按本机预
 - 官方 OpenCode 模型设置接口：6 项通过。测试字符串经 `auth.set/remove` 和 `provider.list` 完成保存、刷新、重启恢复与移除；看到 3 个 DeepSeek 模型；没有发送模型请求。
 - DeepSeek 普通文件夹真实任务：`deepseek/deepseek-v4-flash`，任务 `RV-001`，OpenCode 会话 `ses_fa2e2a5f4ffeFyQrlJVwILugr4`；目录无 `.git`，1 项测试通过、测试文件未变并完成验收。官方 `session.diff` 返回空数组，Rivloom 没有用文件快照或哈希兜底。
 - Release Tauri WebView2 模型页面：5 项通过；验证无 Key 状态、密码输入、额度确认、默认模型与审计界面。
-- 当前 NSIS：安装/启动/卸载烟雾测试通过。
+- 上一版 NSIS：安装/启动/卸载烟雾测试通过；本轮普通文件夹改动尚未重建安装器。
 - M3 Release WebView2：17 项通过；真实第二节点完成发现/配对、加密协作任务、默认自动调用、随包 OpenCode 会话和文件生成、有序状态、远端隐私边界、同项目并发拒绝和设备撤销。
 - 本地：TypeScript 检查与生产构建通过；15 项测试通过；Cargo fmt/clippy 通过；生产依赖离线 audit 为 0 个已知漏洞。
 

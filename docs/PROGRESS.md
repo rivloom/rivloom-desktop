@@ -65,7 +65,7 @@ M1 的模型设置产品功能和无 Key 验证已经完成。当前 Windows 客
 - `.data/verification/desktop-node-network.json`、`.png` 与 `desktop-node-pairing.png`：17 项实际 Release 节点页检查通过；真实第二实例完成加密协作任务、默认自动策略、本机项目/模型复用、随包 OpenCode 会话和文件生成、有序远端状态、隐私边界、同项目并发拒绝和设备撤销。
 - 本地检查：TypeScript/生产构建通过；15 项测试通过，其中握手/密文攻击、远端任务幂等、旧记录迁移、策略持久化、唯一任务绑定、单调状态、重启与撤销均有验证；`cargo fmt --check`、`cargo clippy -- -D warnings` 通过；生产依赖离线 audit 为 0 个已知漏洞。
 
-安装包：`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe`，71,016,423 字节，SHA-256 `f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`。这是包含策略化自动调用的未签名内测包；实际 Release WebView2 和该精确 NSIS 的安装/启动/卸载烟雾测试均通过。
+现有安装包 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 为本轮改动前的历史产物：71,016,423 字节，SHA-256 `f3b5085622258e4957c6d92ded9ca54f1c5cf32550c98ba37ec2d8bdc8225ab2`；它的安装/启动/卸载烟雾测试曾通过，但不包含当前普通文件夹改动。本轮最新 `src-tauri/target/release/Rivloom.exe` 已重编译；再次分发前必须重建并复测 NSIS。
 
 ## 下一次恢复工作时
 

@@ -8,9 +8,9 @@
 
 ## 在 Windows 启动
 
-客户使用当前内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 已随包提供。
+客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 
-安装包：`src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe`。双击安装后从开始菜单启动，不需要命令行。
+本轮最新代码已编译为 `src-tauri\target\release\Rivloom.exe`。现有 `src-tauri\target\release\bundle\nsis\Rivloom_0.1.0_x64-setup.exe` 是改动前的历史验证包，不包含本轮普通文件夹语义；重新分发前需运行 `npm.cmd run desktop:build` 重建并复测安装器。
 
 开发环境需要 Node.js **24+**、Rust 和 Visual Studio C++ Build Tools：
 
