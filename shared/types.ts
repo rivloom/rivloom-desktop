@@ -104,6 +104,7 @@ export type RivloomNode = {
   online: boolean;
   local: boolean;
   trusted: boolean;
+  channelReady: boolean;
   verified: boolean;
   lastSeen: string;
   capabilities: string[];

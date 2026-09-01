@@ -33,47 +33,55 @@ try {
   await page.getByRole('button', { name: /节点与 Brain/ }).click();
   await page.getByRole('heading', { name: '节点与 Brain.' }).waitFor();
   await page.getByText('本机身份已由 Windows DPAPI 保护').waitFor();
+  const desktopNodeID = String(
+    await page.locator('.network-node-card.local .network-node-details .mono').first().innerText(),
+  ).trim();
+  const syntheticNodeID = peer.snapshot().local!.id;
+  const syntheticName = peer.snapshot().local!.name;
+  const syntheticCard = page
+    .locator('.network-node-card:not(.local)')
+    .filter({ has: page.getByRole('heading', { name: syntheticName }) });
+  const peerViewOfDesktop = () => peer.snapshot().nearby.find((node) => node.id === desktopNodeID);
 
   const deadline = Date.now() + 20_000;
-  while (
-    Date.now() < deadline &&
-    (await page.getByText('签名身份已验证，尚未配对授权').count()) < 1
-  )
-    await wait(500);
+  while (Date.now() < deadline && (await syntheticCard.count()) !== 1) await wait(500);
+  while (Date.now() < deadline && !peerViewOfDesktop()) await wait(500);
   await expectText(page.locator('.discovery-status'), '正在自动发现');
-  assert((await page.getByText('签名身份已验证，尚未配对授权').count()) >= 1);
+  await syntheticCard.getByText('签名身份已验证，尚未配对授权').waitFor();
   assert((await page.locator('.network-node-card.local').count()) === 1);
-  assert((await page.locator('.network-node-card:not(.local)').count()) >= 1);
+  assert.equal(syntheticNodeID, String(await syntheticCard.locator('dd.mono').first().innerText()));
+  assert(peerViewOfDesktop()?.verified);
 
   const verificationDirectory = resolve('.data', 'verification');
   mkdirSync(verificationDirectory, { recursive: true });
-  await page.getByRole('button', { name: '与此设备配对' }).click();
-  await page.locator('.pairing-code').waitFor();
+  await syntheticCard.getByRole('button', { name: '与此设备配对' }).click();
+  await syntheticCard.locator('.pairing-code').waitFor();
   const pairingDeadline = Date.now() + 5000;
   while (Date.now() < pairingDeadline && peer.snapshot().pairings.length !== 1) await wait(100);
-  const pageCode = String(await page.locator('.pairing-code').innerText()).replace(/\D/g, '');
+  const pageCode = String(await syntheticCard.locator('.pairing-code').innerText()).replace(
+    /\D/g,
+    '',
+  );
   assert.equal(pageCode, peer.snapshot().pairings[0]?.code);
-  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
+  assert.equal(peerViewOfDesktop()?.trusted, false);
   const pairingScreenshot = join(verificationDirectory, 'desktop-node-pairing.png');
   await page.screenshot({ path: pairingScreenshot, fullPage: true });
 
-  await page.getByRole('button', { name: '短码一致，确认' }).click();
-  await page.getByText('本机已确认，等待对方在其设备确认。').waitFor();
-  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
+  await syntheticCard.getByRole('button', { name: '短码一致，确认' }).click();
+  await syntheticCard.getByText('本机已确认，等待对方在其设备确认。').waitFor();
+  assert.equal(peerViewOfDesktop()?.trusted, false);
   assert.equal(peer.snapshot().pairings[0]?.remoteConfirmed, true);
   await peer.confirmPairing(peer.snapshot().pairings[0].id);
-  await page.locator('.network-node-card:not(.local)').getByText('已建立设备信任').waitFor();
-  assert.equal(peer.snapshot().nearby[0]?.trusted, true);
+  await syntheticCard.getByText('已建立设备信任 · 加密通道就绪').waitFor();
+  assert.equal(peerViewOfDesktop()?.channelReady, true);
+  assert.equal(peerViewOfDesktop()?.trusted, true);
 
   const screenshot = join(verificationDirectory, 'desktop-node-network.png');
   await page.screenshot({ path: screenshot, fullPage: true });
   page.once('dialog', (dialog: any) => dialog.accept());
-  await page.getByRole('button', { name: '撤销信任' }).click();
-  await page
-    .locator('.network-node-card:not(.local)')
-    .getByText('签名身份已验证，尚未配对授权')
-    .waitFor();
-  assert.equal(peer.snapshot().nearby[0]?.trusted, false);
+  await syntheticCard.getByRole('button', { name: '撤销信任' }).click();
+  await syntheticCard.getByText('签名身份已验证，尚未配对授权').waitFor();
+  assert.equal(peerViewOfDesktop()?.trusted, false);
   const proof = join(verificationDirectory, 'desktop-node-network.json');
   writeFileSync(
     proof,
@@ -84,8 +92,8 @@ try {
         desktopPID: runtime.desktopPID,
         backendPID: runtime.backendPID,
         url: runtime.url,
-        localNode: peer.snapshot().nearby[0]?.id || null,
-        syntheticPeer: peer.snapshot().local?.id || null,
+        localNode: desktopNodeID,
+        syntheticPeer: syntheticNodeID,
         assertions: [
           'Actual Tauri WebView2 rendered the Node and Brain page',
           'Packaged backend loaded a stable Windows-DPAPI-protected node identity',
@@ -94,12 +102,13 @@ try {
           'Both sides displayed the same six-digit pairing code derived from the signed session',
           'One-sided confirmation did not establish trust',
           'Bilateral confirmation established trust on both nodes',
+          'Mutually authenticated X25519 and AES-GCM channel synchronized the Brain directory',
           'Revocation removed trust on both nodes',
           'Pairing did not expose any project, task, model, or OpenCode business endpoint',
         ],
         limits: [
           'Both instances ran on one Windows machine; a second physical device remains required.',
-          'Encrypted business transport and task delegation remain closed for a later slice.',
+          'Only the Brain directory is open inside the encrypted channel; task delegation remains closed.',
         ],
         screenshot,
         pairingScreenshot,

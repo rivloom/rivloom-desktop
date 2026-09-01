@@ -28,6 +28,24 @@ import {
   type PairingMessage,
   type RevocationMessage,
 } from './node-trust.ts';
+import {
+  acceptSecureChannel,
+  beginSecureChannel,
+  channelMessageWindowMilliseconds,
+  channelSessionLifetimeMilliseconds,
+  decryptChannelPayload,
+  encryptChannelPayload,
+  finishSecureChannel,
+  unsignedChannelAck,
+  unsignedChannelOpen,
+  validChannelAck,
+  validChannelEnvelope,
+  validChannelOpen,
+  type ChannelAck,
+  type ChannelEnvelope,
+  type ChannelOpen,
+  type SecureChannelSession,
+} from './node-channel.ts';
 
 type MdnsService = {
   fqdn: string;
@@ -88,6 +106,18 @@ type PairingSession = NodePairing & {
   peerPublicKey: string;
 };
 
+type BrainDirectoryRequest = {
+  type: 'brain-directory-request';
+  requestID: string;
+};
+
+type BrainDirectoryResponse = {
+  type: 'brain-directory-response';
+  requestID: string;
+  capabilities: string[];
+  brains: { id: string; name: string }[];
+};
+
 export class NodeNetworkError extends Error {
   readonly status: number;
 
@@ -110,6 +140,7 @@ const pairingExpireAfterMilliseconds = 5 * 60_000;
 const pairingReplayWindowMilliseconds = 10 * 60_000;
 const signedMessageWindowMilliseconds = 30_000;
 const maximumPendingPairings = 20;
+const maximumSecureChannels = 32;
 
 function unsignedHello(value: Omit<Hello, 'signature'>) {
   return JSON.stringify({
@@ -235,6 +266,7 @@ function publicNode(identity: NodeIdentity, port: number): RivloomNode {
     online: true,
     local: true,
     trusted: true,
+    channelReady: true,
     verified: true,
     lastSeen: new Date().toISOString(),
     capabilities,
@@ -272,6 +304,43 @@ function validHello(value: unknown): value is Hello {
     item.publicKey.length <= 512 &&
     typeof item.signature === 'string' &&
     item.signature.length <= 256
+  );
+}
+
+function validBrainDirectoryRequest(value: unknown): value is BrainDirectoryRequest {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.type === 'brain-directory-request' &&
+    typeof item.requestID === 'string' &&
+    /^[0-9a-f-]{36}$/i.test(item.requestID)
+  );
+}
+
+function validBrainDirectoryResponse(value: unknown): value is BrainDirectoryResponse {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  const brains = item.brains;
+  return (
+    item.type === 'brain-directory-response' &&
+    typeof item.requestID === 'string' &&
+    /^[0-9a-f-]{36}$/i.test(item.requestID) &&
+    Array.isArray(item.capabilities) &&
+    item.capabilities.length <= 12 &&
+    item.capabilities.every((entry) => typeof entry === 'string' && entry.length <= 30) &&
+    Array.isArray(brains) &&
+    brains.length <= 8 &&
+    brains.every((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const brain = entry as Record<string, unknown>;
+      return (
+        typeof brain.id === 'string' &&
+        /^[0-9a-f-]{36}$/i.test(brain.id) &&
+        typeof brain.name === 'string' &&
+        brain.name.length >= 1 &&
+        brain.name.length <= 80
+      );
+    })
   );
 }
 
@@ -395,6 +464,9 @@ export class NodeNetwork extends EventEmitter {
   private readonly seenPairings = new Map<string, number>();
   private readonly sendingRevocations = new Set<string>();
   private readonly revocationAttempts = new Map<string, number>();
+  private readonly channels = new Map<string, SecureChannelSession>();
+  private readonly openingChannels = new Set<string>();
+  private readonly seenChannelOpens = new Map<string, number>();
   private readonly trustStore: NodeTrustStore;
   private readonly root: string;
   private readonly enabled: boolean;
@@ -521,6 +593,212 @@ export class NodeNetwork extends EventEmitter {
     );
   }
 
+  private channelReady(nodeID: string) {
+    const channel = this.channels.get(nodeID);
+    if (!channel || channel.expiresAt <= Date.now()) {
+      if (channel) this.forgetChannel(nodeID);
+      return false;
+    }
+    return true;
+  }
+
+  private forgetChannel(nodeID: string) {
+    const channel = this.channels.get(nodeID);
+    if (!channel) return false;
+    channel.sendKey.fill(0);
+    channel.receiveKey.fill(0);
+    return this.channels.delete(nodeID);
+  }
+
+  private closeChannel(nodeID: string, notify = true) {
+    const removed = this.forgetChannel(nodeID);
+    const node = this.nodes.get(nodeID);
+    if (node?.channelReady) this.nodes.set(nodeID, { ...node, channelReady: false });
+    if (notify && (removed || node?.channelReady)) this.update();
+  }
+
+  private validChannelOpenFrom(message: ChannelOpen, node: RivloomNode) {
+    if (!this.identity || message.responderNodeID !== this.identity.nodeID) return false;
+    const record = this.trustStore.record(node.id);
+    return (
+      !!record &&
+      message.initiatorNodeID === node.id &&
+      message.initiatorNodeID.localeCompare(message.responderNodeID) < 0 &&
+      message.publicKey === record.publicKey &&
+      Math.abs(Date.now() - message.issuedAt) <= channelMessageWindowMilliseconds &&
+      message.issuedAt >= Date.parse(record.pairedAt) &&
+      verifySignedNodeMessage(
+        message.publicKey,
+        message.initiatorNodeID,
+        record.fingerprint,
+        unsignedChannelOpen({
+          protocol: message.protocol,
+          version: message.version,
+          type: message.type,
+          sessionID: message.sessionID,
+          initiatorNodeID: message.initiatorNodeID,
+          responderNodeID: message.responderNodeID,
+          nonce: message.nonce,
+          issuedAt: message.issuedAt,
+          ephemeralPublicKey: message.ephemeralPublicKey,
+          publicKey: message.publicKey,
+        }),
+        message.signature,
+      )
+    );
+  }
+
+  private validChannelAckFrom(message: ChannelAck, open: ChannelOpen, node: RivloomNode) {
+    const record = this.trustStore.record(node.id);
+    return (
+      !!record &&
+      message.sessionID === open.sessionID &&
+      message.initiatorNodeID === open.initiatorNodeID &&
+      message.responderNodeID === open.responderNodeID &&
+      message.requestNonce === open.nonce &&
+      message.publicKey === record.publicKey &&
+      Math.abs(Date.now() - message.issuedAt) <= channelMessageWindowMilliseconds &&
+      message.issuedAt >= Date.parse(record.pairedAt) &&
+      verifySignedNodeMessage(
+        message.publicKey,
+        message.responderNodeID,
+        record.fingerprint,
+        unsignedChannelAck({
+          protocol: message.protocol,
+          version: message.version,
+          type: message.type,
+          sessionID: message.sessionID,
+          initiatorNodeID: message.initiatorNodeID,
+          responderNodeID: message.responderNodeID,
+          requestNonce: message.requestNonce,
+          responseNonce: message.responseNonce,
+          issuedAt: message.issuedAt,
+          ephemeralPublicKey: message.ephemeralPublicKey,
+          publicKey: message.publicKey,
+        }),
+        message.signature,
+      )
+    );
+  }
+
+  private handleChannelOpen(message: ChannelOpen, remote: string | undefined) {
+    if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
+    const node = this.nodeForRemote(message.initiatorNodeID, remote);
+    if (!node || !this.validChannelOpenFrom(message, node))
+      throw new NodeNetworkError(403, '加密通道握手身份校验失败。');
+    if (this.seenChannelOpens.has(message.sessionID))
+      throw new NodeNetworkError(409, '加密通道握手已处理。');
+    if (!this.channels.has(node.id) && this.channels.size >= maximumSecureChannels)
+      throw new NodeNetworkError(429, '当前加密通道数量已达上限。');
+    try {
+      const accepted = acceptSecureChannel(message, this.identity);
+      this.seenChannelOpens.set(message.sessionID, Date.now() + channelSessionLifetimeMilliseconds);
+      this.forgetChannel(node.id);
+      this.channels.set(node.id, accepted.session);
+      this.nodes.set(node.id, { ...node, channelReady: true });
+      this.update();
+      return accepted.ack;
+    } catch {
+      throw new NodeNetworkError(400, '加密通道临时公钥无效。');
+    }
+  }
+
+  private handleChannelMessage(value: ChannelEnvelope, remote: string | undefined) {
+    const node = this.nodeForRemote(value.senderNodeID, remote);
+    const record = node ? this.trustStore.record(node.id) : null;
+    const channel = node ? this.channels.get(node.id) : null;
+    if (!node || !record || !node.trusted || record.fingerprint !== node.fingerprint) {
+      if (node) this.closeChannel(node.id);
+      throw new NodeNetworkError(403, '加密通道未建立或已经失效。');
+    }
+    if (!channel) throw new NodeNetworkError(403, '加密通道未建立或已经失效。');
+    if (channel.expiresAt <= Date.now()) {
+      this.closeChannel(node.id);
+      throw new NodeNetworkError(403, '加密通道未建立或已经失效。');
+    }
+    // An unauthenticated stale/session-id packet must not be able to tear down the current channel.
+    if (channel.id !== value.sessionID)
+      throw new NodeNetworkError(403, '加密通道未建立或已经失效。');
+    let message: unknown;
+    try {
+      message = decryptChannelPayload(channel, value);
+    } catch {
+      throw new NodeNetworkError(403, '加密消息完整性、顺序或时间校验失败。');
+    }
+    if (!validBrainDirectoryRequest(message))
+      throw new NodeNetworkError(404, '加密消息类型尚未开放。');
+    const response: BrainDirectoryResponse = {
+      type: 'brain-directory-response',
+      requestID: message.requestID,
+      capabilities,
+      brains: [
+        {
+          id: this.identity!.brainID,
+          name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
+        },
+      ],
+    };
+    return encryptChannelPayload(channel, response);
+  }
+
+  private async syncBrainDirectory(node: RivloomNode, channel: SecureChannelSession) {
+    const request: BrainDirectoryRequest = {
+      type: 'brain-directory-request',
+      requestID: randomUUID(),
+    };
+    const value = await this.postToNode(
+      node,
+      '/v1/channel/message',
+      encryptChannelPayload(channel, request),
+    );
+    if (!validChannelEnvelope(value))
+      throw new NodeNetworkError(502, '对方返回的加密消息格式无效。');
+    let message: unknown;
+    try {
+      message = decryptChannelPayload(channel, value);
+    } catch {
+      throw new NodeNetworkError(502, '对方返回的加密消息校验失败。');
+    }
+    if (!validBrainDirectoryResponse(message) || message.requestID !== request.requestID)
+      throw new NodeNetworkError(502, '对方返回的 Brain 目录无效。');
+    const current = this.nodes.get(node.id);
+    if (!current) return;
+    this.nodes.set(node.id, {
+      ...current,
+      channelReady: true,
+      capabilities: [...new Set(message.capabilities)].sort(),
+      brains: message.brains.map((brain) => ({ ...brain })),
+    });
+    this.update();
+  }
+
+  private async openSecureChannel(node: RivloomNode) {
+    if (
+      !this.identity ||
+      !node.online ||
+      !node.trusted ||
+      this.identity.nodeID.localeCompare(node.id) >= 0 ||
+      this.openingChannels.has(node.id) ||
+      this.channelReady(node.id)
+    )
+      return;
+    this.openingChannels.add(node.id);
+    try {
+      const pending = beginSecureChannel(this.identity, node.id);
+      const value = await this.postToNode(node, '/v1/channel/open', pending.message);
+      if (!validChannelAck(value) || !this.validChannelAckFrom(value, pending.message, node))
+        throw new NodeNetworkError(502, '对方返回的加密通道确认无效。');
+      const channel = finishSecureChannel(pending, value);
+      this.forgetChannel(node.id);
+      this.channels.set(node.id, channel);
+      await this.syncBrainDirectory(node, channel);
+    } catch {
+      this.closeChannel(node.id);
+    } finally {
+      this.openingChannels.delete(node.id);
+    }
+  }
+
   private async postToNode(node: RivloomNode, path: string, value: unknown) {
     let unavailable = true;
     for (const address of node.addresses.map(normalizedAddress)) {
@@ -542,10 +820,10 @@ export class NodeNetwork extends EventEmitter {
         throw new NodeNetworkError(
           response.status >= 400 && response.status < 500 ? response.status : 502,
           response.status === 409
-            ? '对方当前已有配对或信任状态，请在两台设备检查后重试。'
+            ? '对方当前会话状态冲突，请在两台设备检查后重试。'
             : response.status === 403
               ? '对方拒绝了节点身份校验。'
-              : '对方没有接受本次配对操作。',
+              : '对方没有接受本次节点操作。',
         );
       } catch (error) {
         if (error instanceof NodeNetworkError) throw error;
@@ -553,7 +831,7 @@ export class NodeNetwork extends EventEmitter {
     }
     throw new NodeNetworkError(
       503,
-      unavailable ? '附近节点暂时无法连接，请确认两台设备仍在线。' : '配对操作未完成。',
+      unavailable ? '附近节点暂时无法连接，请确认两台设备仍在线。' : '节点操作未完成。',
     );
   }
 
@@ -570,9 +848,15 @@ export class NodeNetwork extends EventEmitter {
       publicKey: pairing.peerPublicKey,
       pairedAt: new Date().toISOString(),
     });
-    this.nodes.set(node.id, { ...node, trusted: true });
+    this.nodes.set(node.id, { ...node, trusted: true, channelReady: false });
     this.pairings.delete(pairing.id);
     this.update();
+    // Let the confirm response return so the peer can persist its side of the trust record first.
+    const openAfterConfirmation = setTimeout(() => {
+      const current = this.nodes.get(node.id);
+      if (current) void this.openSecureChannel(current);
+    }, 100);
+    openAfterConfirmation.unref();
   }
 
   private async handlePairingRequest(message: PairingMessage, remote: string | undefined) {
@@ -684,7 +968,8 @@ export class NodeNetwork extends EventEmitter {
     )
       throw new NodeNetworkError(403, '撤销请求身份校验失败。');
     this.trustStore.revoke(node.id, node.fingerprint);
-    this.nodes.set(node.id, { ...node, trusted: false });
+    this.forgetChannel(node.id);
+    this.nodes.set(node.id, { ...node, trusted: false, channelReady: false });
     const pairing = this.pairingForNode(node.id);
     if (pairing) this.pairings.delete(pairing.id);
     this.update();
@@ -732,6 +1017,14 @@ export class NodeNetwork extends EventEmitter {
     if (url.pathname === '/v1/trust/revoke' && validRevocationMessage(value)) {
       this.handleRevocation(value, remote);
       response.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/v1/channel/open' && validChannelOpen(value)) {
+      jsonResponse(response, 200, this.handleChannelOpen(value, remote));
+      return;
+    }
+    if (url.pathname === '/v1/channel/message' && validChannelEnvelope(value)) {
+      jsonResponse(response, 200, this.handleChannelMessage(value, remote));
       return;
     }
     throw new NodeNetworkError(404, '节点接口不存在。');
@@ -856,7 +1149,8 @@ export class NodeNetwork extends EventEmitter {
     if (!record) throw new NodeNetworkError(404, '该节点没有本机信任记录。');
     this.trustStore.revoke(record.nodeID, record.fingerprint);
     const node = this.nodes.get(nodeID);
-    if (node) this.nodes.set(node.id, { ...node, trusted: false });
+    this.forgetChannel(nodeID);
+    if (node) this.nodes.set(node.id, { ...node, trusted: false, channelReady: false });
     const pairing = this.pairingForNode(nodeID);
     if (pairing) this.pairings.delete(pairing.id);
     this.update();
@@ -928,6 +1222,7 @@ export class NodeNetwork extends EventEmitter {
             )
           )
             continue;
+          const trusted = this.trustStore.trusted(value.nodeID, computedFingerprint);
           const node: RivloomNode = {
             id: value.nodeID,
             name: value.name,
@@ -937,7 +1232,8 @@ export class NodeNetwork extends EventEmitter {
             port: value.port,
             online: true,
             local: false,
-            trusted: this.trustStore.trusted(value.nodeID, computedFingerprint),
+            trusted,
+            channelReady: trusted && this.channelReady(value.nodeID),
             verified: true,
             lastSeen: new Date().toISOString(),
             capabilities: [...new Set(value.capabilities)].sort(),
@@ -947,6 +1243,7 @@ export class NodeNetwork extends EventEmitter {
           this.update();
           if (this.trustStore.revocation(node.id, node.fingerprint))
             void this.sendRevocation(node).catch(() => undefined);
+          else if (node.trusted) void this.openSecureChannel(node);
           return;
         } catch {
           /* Try the next private address advertised for the same signed node. */
@@ -1026,8 +1323,10 @@ export class NodeNetwork extends EventEmitter {
       this.nodes.set(value.nodeID, {
         ...node,
         online: false,
+        channelReady: false,
         lastSeen: new Date(Date.now() - nodeOfflineAfterMilliseconds).toISOString(),
       });
+      this.forgetChannel(value.nodeID);
       this.update();
       return;
     }
@@ -1227,6 +1526,7 @@ export class NodeNetwork extends EventEmitter {
         });
         this.browser.on('down', (found) => {
           const id = serviceIdentity(found as MdnsService).nodeID;
+          this.forgetChannel(id);
           if (this.nodes.delete(id)) this.update();
         });
         this.browser.on('txt-update', (found) => void this.probe(found as MdnsService));
@@ -1242,10 +1542,19 @@ export class NodeNetwork extends EventEmitter {
           const presence = nodePresence(node.lastSeen);
           if (presence === 'expired') {
             this.nodes.delete(id);
+            this.forgetChannel(id);
             changed = true;
           } else if (presence === 'offline' && node.online) {
-            this.nodes.set(id, { ...node, online: false });
+            this.nodes.set(id, { ...node, online: false, channelReady: false });
+            this.forgetChannel(id);
             changed = true;
+          } else if (node.trusted && node.online) {
+            const channelReady = this.channelReady(id);
+            if (channelReady !== node.channelReady) {
+              this.nodes.set(id, { ...node, channelReady });
+              changed = true;
+            }
+            if (!channelReady) void this.openSecureChannel(node);
           }
         }
         for (const [id, pairing] of this.pairings)
@@ -1255,6 +1564,8 @@ export class NodeNetwork extends EventEmitter {
           }
         for (const [id, expiresAt] of this.seenPairings)
           if (expiresAt <= Date.now()) this.seenPairings.delete(id);
+        for (const [id, expiresAt] of this.seenChannelOpens)
+          if (expiresAt <= Date.now()) this.seenChannelOpens.delete(id);
         if (changed) this.update();
       }, discoveryIntervalMilliseconds);
       this.timer.unref();
@@ -1295,6 +1606,9 @@ export class NodeNetwork extends EventEmitter {
     this.seenPairings.clear();
     this.sendingRevocations.clear();
     this.revocationAttempts.clear();
+    for (const nodeID of this.channels.keys()) this.forgetChannel(nodeID);
+    this.openingChannels.clear();
+    this.seenChannelOpens.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;

@@ -89,7 +89,9 @@ function NodeCard({
         {node.local
           ? '本机身份已由 Windows DPAPI 保护'
           : node.trusted
-            ? '已建立设备信任'
+            ? node.channelReady
+              ? '已建立设备信任 · 加密通道就绪'
+              : '已建立设备信任 · 正在建立加密通道'
             : '签名身份已验证，尚未配对授权'}
       </div>
       {!node.local && (

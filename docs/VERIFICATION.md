@@ -14,24 +14,24 @@
 
 真实 Windows 窗口检查：**通过**。在全新隔离测试目录启动 Release 可执行程序，实际 WebView2 通过启动期原生令牌自动建立本机操作者并直接进入任务工作台；首次页面没有工作区、显示名称、用户名、密码或终端初始化码表单，节点发现已经启动，原生目录操作可用。缺失令牌返回 403，正确令牌返回 200；关闭桌面后令牌文件和后台进程均被清理。随后通过 Release Tauri WebView2 检查节点页和“模型与额度”页面。证据：`.data/verification/desktop-ui.json`、`.data/verification/desktop-direct-start.png`、`.data/verification/desktop-node-network.json`、`.data/verification/desktop-model-settings.json` 及对应截图。
 
-当前 NSIS current-user 安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。包含 LAN UDP 回退、快速离线、双端配对、持久信任和撤销的安装包为 71,044,500 字节，SHA-256：`d186d258a434a547692a52250e7e6170e55649a2f5ad4ef77f7051e0eda21dcf`。
+当前 NSIS current-user 最终安装包重新通过开发机隔离目录的静默安装烟雾测试：安装后的客户端成功启动随包引擎；关闭后后台进程树清理；卸载移除应用可执行程序并保留独立用户数据目录。报告为 `.data/verification/desktop-install.json`。包含 LAN UDP 回退、快速离线、双端配对、认证加密通道、Brain 目录同步和撤销的最终安装包为 71,009,359 字节，SHA-256：`a198a72c0403a5eaff69f8afe6c3b91446b7cac6611b6599693f5973a89126d1`。
 
 尚未在一台干净 Windows 虚拟机执行完整安装、升级、卸载矩阵，也未代码签名。这里不把开发机 Release 测试宣传成完成商业发行验收。
 
-## M3.1 自发现与 M3.2 双端配对第一切片
+## M3.1 自发现与 M3.2 双端配对/加密 Brain 目录
 
-`npm run test:node-network-ui`：**9 项实际 Release 桌面检查通过**。测试启动安装包对应的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock。
+`npm run test:node-network-ui`：**10 项实际 Release 桌面检查通过**。测试启动安装包对应的 `Rivloom.exe` 和第二个完全隔离的真实节点实例，不使用网络 mock；局域网同时存在真实 Rivloom 时，脚本按精确测试 Node ID 选取节点，避免操作其他设备。
 
 - 两个实例各自生成稳定 Ed25519 身份；私钥 PKCS#8 只以 Windows DPAPI CurrentUser 密文保存在节点身份文件中，重载后 Node ID 不变。
 - 两个实例在本机真实 mDNS/DNS-SD 网络栈发布和发现 `_rivloom._tcp.local`，使用不同数据目录、Node ID、Brain ID 和端口。
 - 单独强制关闭 mDNS 后，两个实例通过 LAN UDP 43531 查询、临时端口单播回复在约 1 秒内发现对方；候选地址随后仍进入相同的 nonce 和 Ed25519 验签流程。
 - 发现方连接对方独立的 `/v1/hello` 端点，发送随机 nonce，并核对公钥派生 Node ID、指纹、响应时间与 Ed25519 签名。
 - 实际 Tauri WebView2 “节点与 Brain”页显示本机节点、Brain 和附近节点；发起后两端得到相同六位短码，页面同时展示完整公钥指纹供人工核对。
-- 只确认桌面一端时两端仍未受信；第二实例确认后两端同时受信。撤销后，两端恢复“签名身份已验证，尚未配对授权”。
-- 自动化还验证同一签名配对请求重放返回 409、重启两个节点后信任保持，以及信任记录冲突时安全失败。
-- 节点端点拒绝畸形请求，业务路径返回 404；React 业务服务与 OpenCode 没有暴露到局域网。
+- 只确认桌面一端时两端仍未受信；第二实例确认后两端同时受信，并显示“已建立设备信任 · 加密通道就绪”。最小 Brain 目录经实际加密消息往返同步；撤销后两端立即回到未配对且清除会话。
+- 自动化还验证同一签名配对请求重放返回 409、重启两个节点后信任和通道重建、伪造/重放 X25519 握手被拒绝、AES-GCM 密文篡改/重放被拒绝、会话过期失效，以及信任记录冲突时安全失败。
+- 节点端点拒绝畸形请求和未开放的加密消息类型；任务、项目、模型和 OpenCode 路径返回 404，React 业务服务与 OpenCode 没有暴露到局域网。
 
-机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：原 mDNS 版本中 Win10 能看到两台，Win11 只能看到自己；Win11 对 Win10 随机节点 TCP 端口的 `Test-NetConnection` 成功，故障收敛到 Win11 的 mDNS 接收/处理路径。LAN UDP 回退包安装后，用户确认两台设备已经双向发现。继续测试发现 Win10 关闭后，Win11 在原 120 秒保活窗口内仍显示在线；现已实现正常关闭的签名离线通知、每 5 秒心跳、异常断线约 15 秒离线/30 秒移除和在线数量过滤。强制关闭 mDNS 的真实双实例回归中，一端正常停止后，另一端在 3 秒测试上限内已显示离线。仍需新包在物理设备确认生命周期、身份稳定、配对、撤销和重新配对。认证加密业务通信和任务委派尚未开放；不能把“设备已受信”写成“任务接口已授权”。
+机器报告和截图：`.data/verification/desktop-node-network.json`、`.data/verification/desktop-node-network.png`、`.data/verification/desktop-node-pairing.png`。物理测试使用 Win10 `192.168.5.18` 与 Win11 `192.168.5.20`：双向发现、签名退出通知、双端短码/指纹核对、单方不授信、双方授信、重启保持和撤销均由用户确认通过。当前新包的加密通道就绪、重启重建和撤销断链仍待相同设备复测；异常结束进程或断网的 15/30 秒兜底也待专项复测。任务业务传输和委派尚未开放；不能把“设备已受信”或“Brain 目录已同步”写成“任务接口已授权”。
 
 ## 模型设置与 DeepSeek 公共接口
 
@@ -99,7 +99,7 @@
 
 - `npm run typecheck`：通过（strict、noUnusedLocals、noUnusedParameters）。
 - `npm run build`：通过，生成 React 生产构建。
-- `npm test`：12 项通过；在原有安全检查外，包含私有地址过滤、Windows DPAPI 稳定身份、信任记录冲突拒绝、独立强制验证的 mDNS 与 LAN UDP 回退，以及重放拒绝、双方确认、信任重启保持和撤销边界。
+- `npm test`：13 项通过；在原有安全检查外，包含私有地址过滤、Windows DPAPI 稳定身份、信任记录冲突拒绝、独立强制验证的 mDNS 与 LAN UDP 回退、双端配对，以及握手伪造/重放、密文篡改/重放、会话过期、信任/通道重启保持和撤销边界。
 - `npm audit --offline --omit=dev`：当日 0 个已知漏洞；不是安全认证。
 - `cargo fmt --check` 与 `cargo clippy --all-targets -- -D warnings`：通过。
 - 官方版本、npm integrity、二进制 SHA-256、MIT 原文及 123 个已安装依赖的许可证元数据已保存。
@@ -114,7 +114,7 @@
 
 ## 尚未验证或不包含
 
-- 新版本在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上的正常关闭、异常断线、离线、移除、恢复、身份稳定、双端配对、撤销和重新配对结果；两个真人协作、认证加密节点业务通信、单/多 Brain 任务委派和跨网络运行。双向发现与同机双实例配对已经验证。
+- Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 上新加密通道的物理复测，以及异常结束进程或断网的离线、移除和恢复结果；两个真人协作、节点任务业务传输、单/多 Brain 任务委派和跨网络运行。双向发现、正常退出、双端配对、重启保持与撤销已经物理验证。
 - DeepSeek 有效凭据的真实连接回复和完整编程任务；ChatGPT 登录。
 - 干净 Windows 虚拟机安装/升级矩阵、自动更新、代码签名、ARM64/macOS/Linux。
 - AI 主动 question 分支的实际模型触发（接口和 UI 已实现）；长期 shell / 已脱离进程树的后台任务的可靠停止。

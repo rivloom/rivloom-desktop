@@ -8,6 +8,15 @@ import { createSocket } from 'node:dgram';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
+  acceptSecureChannel,
+  beginSecureChannel,
+  decryptChannelPayload,
+  encryptChannelPayload,
+  finishSecureChannel,
+  validChannelAck,
+  validChannelEnvelope,
+} from '../server/node-channel.ts';
+import {
   directedBroadcastAddress,
   discoveryProbeAddresses,
   NodeNetwork,
@@ -40,6 +49,16 @@ async function waitForMutualDiscovery(networks: NodeNetwork[]) {
   )
     await wait(250);
   assert(networks.every((network) => network.snapshot().nearby.length === 1));
+}
+
+async function waitForSecureChannels(networks: NodeNetwork[]) {
+  const deadline = Date.now() + 10_000;
+  while (
+    Date.now() < deadline &&
+    networks.some((network) => network.snapshot().nearby[0]?.channelReady !== true)
+  )
+    await wait(100);
+  assert(networks.every((network) => network.snapshot().nearby[0]?.channelReady === true));
 }
 
 test('node network only accepts local and private source addresses', () => {
@@ -129,6 +148,44 @@ test(
 );
 
 test(
+  'secure node channel derives directional keys and rejects tamper, replay and expiry',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const roots = [
+      mkdtempSync(join(tmpdir(), 'rivloom-channel-a-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-channel-b-')),
+    ];
+    try {
+      const identities = roots.map(loadNodeIdentity);
+      const pending = beginSecureChannel(identities[0], identities[1].nodeID);
+      const accepted = acceptSecureChannel(pending.message, identities[1]);
+      const initiator = finishSecureChannel(pending, accepted.ack);
+      const responder = accepted.session;
+      const envelope = encryptChannelPayload(initiator, { type: 'proof', value: 42 });
+      const replacement = envelope.ciphertext[0] === 'A' ? 'B' : 'A';
+      const tampered = {
+        ...envelope,
+        ciphertext: replacement + envelope.ciphertext.slice(1),
+      };
+      assert.throws(() => decryptChannelPayload(responder, tampered), /完整性校验失败/);
+      assert.equal(responder.receiveSequence, 0);
+      assert.deepEqual(decryptChannelPayload(responder, envelope), { type: 'proof', value: 42 });
+      assert.throws(() => decryptChannelPayload(responder, envelope), /会话、顺序或时间无效/);
+
+      const reply = encryptChannelPayload(responder, { type: 'reply', accepted: true });
+      assert.deepEqual(decryptChannelPayload(initiator, reply), {
+        type: 'reply',
+        accepted: true,
+      });
+      initiator.expiresAt = Date.now() - 1;
+      assert.throws(() => encryptChannelPayload(initiator, { type: 'late' }), /已过期/);
+    } finally {
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'two isolated Rivloom instances discover and cryptographically verify each other',
   { skip: process.platform !== 'win32', timeout: 30_000 },
   async () => {
@@ -141,20 +198,25 @@ test(
     const networks = roots.map((root) => new NodeNetwork(root, true));
     try {
       await Promise.all(networks.map((network) => network.start()));
+      const localIDs = networks.map((network) => network.snapshot().local!.id);
       const deadline = Date.now() + 20_000;
       while (
         Date.now() < deadline &&
-        networks.some((network) => network.snapshot().nearby.length !== 1)
+        networks.some((network, index) =>
+          network.snapshot().nearby.every((node) => node.id !== localIDs[index === 0 ? 1 : 0]),
+        )
       )
         await wait(250);
       const snapshots = networks.map((network) => network.snapshot());
+      const testPeers = snapshots.map((snapshot, index) =>
+        snapshot.nearby.find((node) => node.id === localIDs[index === 0 ? 1 : 0]),
+      );
       assert(snapshots.every((snapshot) => snapshot.status === 'online'));
       assert(snapshots.every((snapshot) => snapshot.local?.verified));
-      assert(snapshots.every((snapshot) => snapshot.nearby.length === 1));
-      assert(snapshots.every((snapshot) => snapshot.nearby[0].verified));
-      assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
-      assert.equal(snapshots[0].nearby[0].id, snapshots[1].local?.id);
-      assert.equal(snapshots[1].nearby[0].id, snapshots[0].local?.id);
+      assert(testPeers.every((node) => node?.verified));
+      assert(testPeers.every((node) => !node?.trusted));
+      assert.equal(testPeers[0]?.id, snapshots[1].local?.id);
+      assert.equal(testPeers[1]?.id, snapshots[0].local?.id);
 
       const port = snapshots[0].local!.port;
       assert.equal((await fetch(`http://127.0.0.1:${port}/v1/hello?nonce=bad`)).status, 400);
@@ -279,8 +341,10 @@ test(
       assert.equal(snapshots[1].pairings[0].remoteConfirmed, true);
 
       await networks[1].confirmPairing(snapshots[1].pairings[0].id);
+      await waitForSecureChannels(networks);
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
+      assert(snapshots.every((snapshot) => snapshot.nearby[0].channelReady));
       assert(snapshots.every((snapshot) => snapshot.pairings.length === 0));
       assert(roots.every((root) => readFileSync(join(root, 'trusted-nodes.json'), 'utf8')));
 
@@ -288,12 +352,112 @@ test(
       networks = roots.map((root) => new NodeNetwork(root, true));
       await Promise.all(networks.map((network) => network.start()));
       await waitForMutualDiscovery(networks);
+      await waitForSecureChannels(networks);
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => snapshot.nearby[0].trusted));
+      assert(snapshots.every((snapshot) => snapshot.nearby[0].channelReady));
+
+      const initiatorIndex =
+        snapshots[0].local!.id.localeCompare(snapshots[1].local!.id) < 0 ? 0 : 1;
+      const initiatorIdentity = loadNodeIdentity(roots[initiatorIndex]);
+      const channelTarget = snapshots[initiatorIndex].nearby[0];
+      const channelUrl = `http://${channelTarget.addresses[0]}:${channelTarget.port}`;
+      const pendingChannel = beginSecureChannel(initiatorIdentity, channelTarget.id);
+      const forgedOpen = {
+        ...pendingChannel.message,
+        ephemeralPublicKey:
+          (pendingChannel.message.ephemeralPublicKey[0] === 'A' ? 'B' : 'A') +
+          pendingChannel.message.ephemeralPublicKey.slice(1),
+      };
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(forgedOpen),
+          })
+        ).status,
+        403,
+      );
+      const channelAccepted = await fetch(`${channelUrl}/v1/channel/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pendingChannel.message),
+      });
+      assert.equal(channelAccepted.status, 200);
+      const channelAck = (await channelAccepted.json()) as unknown;
+      assert(validChannelAck(channelAck));
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(pendingChannel.message),
+          })
+        ).status,
+        409,
+      );
+
+      const manualChannel = finishSecureChannel(pendingChannel, channelAck);
+      const directoryRequest = encryptChannelPayload(manualChannel, {
+        type: 'brain-directory-request',
+        requestID: randomUUID(),
+      });
+      const forgedCiphertext = {
+        ...directoryRequest,
+        ciphertext:
+          (directoryRequest.ciphertext[0] === 'A' ? 'B' : 'A') +
+          directoryRequest.ciphertext.slice(1),
+      };
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...directoryRequest, sessionID: randomUUID() }),
+          })
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(forgedCiphertext),
+          })
+        ).status,
+        403,
+      );
+      const directoryAccepted = await fetch(`${channelUrl}/v1/channel/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(directoryRequest),
+      });
+      assert.equal(directoryAccepted.status, 200);
+      const directoryEnvelope = (await directoryAccepted.json()) as unknown;
+      assert(validChannelEnvelope(directoryEnvelope));
+      const directory = decryptChannelPayload(manualChannel, directoryEnvelope) as {
+        type?: unknown;
+        brains?: unknown[];
+      };
+      assert.equal(directory.type, 'brain-directory-response');
+      assert.equal(directory.brains?.length, 1);
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(directoryRequest),
+          })
+        ).status,
+        403,
+      );
 
       await networks[0].revokeTrust(snapshots[0].nearby[0].id);
       snapshots = networks.map((network) => network.snapshot());
       assert(snapshots.every((snapshot) => !snapshot.nearby[0].trusted));
+      assert(snapshots.every((snapshot) => !snapshot.nearby[0].channelReady));
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       for (const root of roots) rmSync(root, { recursive: true, force: true });
