@@ -119,6 +119,15 @@ async fn choose_project_directory(
         .transpose()
 }
 
+fn valid_runtime_url(parsed: &tauri::Url) -> bool {
+    parsed.scheme() == "http"
+        && parsed.host_str() == Some("127.0.0.1")
+        && parsed
+            .port()
+            .is_some_and(|port| (49152..=65535).contains(&port))
+        && parsed.path() == "/"
+}
+
 fn start_runtime(
     root: &PathBuf,
     data_dir: &PathBuf,
@@ -190,11 +199,7 @@ fn start_runtime(
         .recv_timeout(Duration::from_secs(35))
         .map_err(|_| "本地服务未能启动。请确认没有其他实例占用数据目录，且安装文件完整。")?;
     let parsed: tauri::Url = url.parse()?;
-    if parsed.scheme() != "http"
-        || parsed.host_str() != Some("127.0.0.1")
-        || parsed.port().is_none()
-        || parsed.path() != "/"
-    {
+    if !valid_runtime_url(&parsed) {
         return Err("本地服务地址校验失败".into());
     }
     // Local diagnostics contain no credentials. Useful for support and real process tests.
@@ -269,4 +274,27 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_runtime_url;
+
+    #[test]
+    fn runtime_url_requires_owned_loopback_and_high_http_port() {
+        for url in ["http://127.0.0.1:49152", "http://127.0.0.1:65535"] {
+            assert!(valid_runtime_url(&url.parse().unwrap()));
+        }
+        for url in [
+            "http://127.0.0.1:1719",
+            "http://127.0.0.1:49151",
+            "http://127.0.0.1",
+            "http://localhost:55000",
+            "http://192.168.5.33:55000",
+            "https://127.0.0.1:55000",
+            "http://127.0.0.1:55000/unexpected",
+        ] {
+            assert!(!valid_runtime_url(&url.parse().unwrap()));
+        }
+    }
 }

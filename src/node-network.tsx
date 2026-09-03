@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import type {
   ApprovalMode,
+  BrainTask,
+  BrainTopology,
   NodeExecutionPolicy,
   NodeNetwork,
   NodePairing,
@@ -40,11 +42,18 @@ type NetworkActions = {
   confirmPairing(pairingID: string): void;
   cancelPairing(pairingID: string): void;
   revokeTrust(nodeID: string): void;
-  createRemoteTask(
-    nodeID: string,
-    targetBrainID: string,
-    input: { title: string; description: string; criteria: string },
-  ): void;
+  createRemoteTask(input: {
+    title: string;
+    description: string;
+    criteria: string;
+    requestedProjectID: string | null;
+    requirements: {
+      minimumLogicalCores?: number;
+      minimumMemoryBytes?: number;
+      gpu?: boolean;
+      minimumGpuMemoryBytes?: number;
+    };
+  }): void;
   cancelRemoteTask(taskID: string): void;
   controlRemoteTask(
     taskID: string,
@@ -68,20 +77,6 @@ function NodeCard({
   pairing?: NodePairing;
   actions: NetworkActions;
 }) {
-  const [taskForm, setTaskForm] = useState(false);
-  const submitRemoteTask = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const targetBrainID = node.brains[0]?.id;
-    if (!targetBrainID) return;
-    const value = Object.fromEntries(new FormData(event.currentTarget));
-    actions.createRemoteTask(node.id, targetBrainID, {
-      title: String(value.title || ''),
-      description: String(value.description || ''),
-      criteria: String(value.criteria || ''),
-    });
-    event.currentTarget.reset();
-    setTaskForm(false);
-  };
   return (
     <article className={`network-node-card ${node.local ? 'local' : ''}`}>
       <div className="network-node-heading">
@@ -149,14 +144,6 @@ function NodeCard({
                 {actions.owner && (
                   <div className="trusted-task-actions">
                     <button
-                      className="button primary compact"
-                      disabled={actions.busy || !node.channelReady || !node.brains.length}
-                      onClick={() => setTaskForm((visible) => !visible)}
-                    >
-                      <Send size={14} />
-                      发起协作任务
-                    </button>
-                    <button
                       className="button danger compact"
                       disabled={actions.busy}
                       onClick={() => actions.revokeTrust(node.id)}
@@ -167,47 +154,6 @@ function NodeCard({
                   </div>
                 )}
               </div>
-              {taskForm && (
-                <form className="remote-task-form" onSubmit={submitRemoteTask}>
-                  <div>
-                    <span className="eyebrow">ENCRYPTED TASK INVITE</span>
-                    <strong>交给 {node.brains[0]?.name} 协作执行</strong>
-                    <p>
-                      设备信任建立后，对方会按已开放的本机能力自动接收。不要填写密码、密钥或生产敏感信息。
-                    </p>
-                  </div>
-                  <label>
-                    <span>任务标题</span>
-                    <input name="title" required maxLength={120} />
-                  </label>
-                  <label>
-                    <span>任务说明</span>
-                    <textarea name="description" required maxLength={4000} rows={3} />
-                  </label>
-                  <label>
-                    <span>验收标准</span>
-                    <textarea name="criteria" required maxLength={2000} rows={2} />
-                  </label>
-                  <div className="node-pairing-buttons">
-                    <button
-                      className="button primary compact"
-                      disabled={actions.busy}
-                      type="submit"
-                    >
-                      <Send size={14} />
-                      加密发送任务
-                    </button>
-                    <button
-                      className="button compact"
-                      disabled={actions.busy}
-                      type="button"
-                      onClick={() => setTaskForm(false)}
-                    >
-                      取消
-                    </button>
-                  </div>
-                </form>
-              )}
             </>
           ) : pairing ? (
             <div className="pairing-request">
@@ -275,6 +221,288 @@ const remoteTaskStatus: Record<RemoteTaskInvite['status'], string> = {
   expired: '已过期',
 };
 
+const bytes = (value: number | null) => {
+  if (value === null) return '未知';
+  const gib = value / 1024 ** 3;
+  return gib >= 10 ? `${Math.round(gib)} GB` : `${gib.toFixed(1)} GB`;
+};
+
+function BrainTopologyCard({ brain, localNodeID }: { brain: BrainTopology; localNodeID?: string }) {
+  return (
+    <article className={`brain-topology-card ${brain.online ? 'online' : 'paused'}`}>
+      <header>
+        <div>
+          <span className="eyebrow">{brain.hosted ? 'HOSTED BRAIN' : 'REGISTERED BRAIN'}</span>
+          <h3>{brain.name}</h3>
+        </div>
+        <span className={`network-presence ${brain.online ? 'online' : ''}`}>
+          <i />
+          {brain.state === 'provisional' ? '形成中' : brain.online ? '可调度' : '已暂停'}
+        </span>
+      </header>
+      <dl className="brain-topology-details">
+        <div>
+          <dt>Master Host</dt>
+          <dd className="mono">
+            {brain.masterNodeID === localNodeID ? '本机 · ' : ''}
+            {brain.masterNodeID}
+          </dd>
+        </div>
+        <div>
+          <dt>Brain ID</dt>
+          <dd className="mono">{brain.id}</dd>
+        </div>
+        <div>
+          <dt>任务队列</dt>
+          <dd>{brain.queueDepth} 个未结束任务</dd>
+        </div>
+      </dl>
+      <div className="brain-worker-list">
+        {brain.workers.length ? (
+          brain.workers.map((worker) => {
+            const fresh = Date.now() - Date.parse(worker.load.sampledAt) <= 30_000;
+            return (
+              <article key={worker.nodeID} className={!fresh ? 'stale' : ''}>
+                <div className="brain-worker-heading">
+                  <strong>
+                    Worker {worker.nodeID === localNodeID ? '本机' : worker.nodeID.slice(0, 8)}
+                  </strong>
+                  <span>{fresh ? `${worker.load.availableSlots} 个可用槽位` : '报告已过期'}</span>
+                </div>
+                <p>
+                  {worker.hardware.cpuModel} · {worker.hardware.logicalCores} 线程 · 内存{' '}
+                  {bytes(worker.hardware.memoryBytes)}
+                </p>
+                <p>
+                  CPU{' '}
+                  {worker.load.cpuPercent === null
+                    ? '未知'
+                    : `${Math.round(worker.load.cpuPercent)}%`}
+                  {' · '}内存 {Math.round(worker.load.memoryUsedPercent)}%{' · '}磁盘可用{' '}
+                  {bytes(worker.load.diskAvailableBytes)}
+                </p>
+                <p>
+                  GPU{' '}
+                  {worker.hardware.gpus.length
+                    ? worker.hardware.gpus
+                        .map(
+                          (gpu) =>
+                            `${gpu.name}${gpu.memoryBytes ? ` ${bytes(gpu.memoryBytes)}` : ''}`,
+                        )
+                        .join(' / ')
+                    : '无或未检测到'}
+                </p>
+                <small>
+                  {worker.projects.length
+                    ? `授权项目：${worker.projects.map((project) => project.name).join('、')}`
+                    : '没有对 Brain 公开项目资源'}
+                  {' · '}采样 {new Date(worker.load.sampledAt).toLocaleTimeString('zh-CN')}
+                </small>
+              </article>
+            );
+          })
+        ) : (
+          <p className="brain-worker-empty">当前没有带可用槽位的受信 Worker 报告。</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ScheduledTaskForm({
+  network,
+  actions,
+}: {
+  network: NodeNetwork;
+  actions: NetworkActions;
+}) {
+  const hostsBrain = network.brains.some((brain) => brain.hosted);
+  const remoteProjects = [
+    ...new Map(
+      network.brains.flatMap((brain) =>
+        brain.workers
+          .filter((worker) => !hostsBrain || worker.nodeID !== network.local?.id)
+          .flatMap((worker) =>
+            worker.projects.map(
+              (project) => [project.id, { ...project, nodeID: worker.nodeID }] as const,
+            ),
+          ),
+      ),
+    ).values(),
+  ];
+  const eligible = network.brains.some(
+    (brain) =>
+      brain.state === 'established' &&
+      brain.online &&
+      brain.workers.some(
+        (worker) =>
+          (!brain.hosted || worker.nodeID !== network.local?.id) && worker.load.availableSlots > 0,
+      ),
+  );
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const integer = (name: string) => {
+      const value = Number(data.get(name));
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    };
+    const memoryGB = integer('minimumMemoryGB');
+    const gpuMemoryGB = integer('minimumGpuMemoryGB');
+    actions.createRemoteTask({
+      title: String(data.get('title') || ''),
+      description: String(data.get('description') || ''),
+      criteria: String(data.get('criteria') || ''),
+      requestedProjectID: String(data.get('requestedProjectID') || '') || null,
+      requirements: {
+        minimumLogicalCores: integer('minimumLogicalCores'),
+        minimumMemoryBytes: memoryGB ? memoryGB * 1024 ** 3 : undefined,
+        gpu: data.get('gpu') === 'on' ? true : undefined,
+        minimumGpuMemoryBytes: gpuMemoryGB ? gpuMemoryGB * 1024 ** 3 : undefined,
+      },
+    });
+    event.currentTarget.reset();
+  };
+  return (
+    <form className="remote-task-form scheduled-task-form" onSubmit={submit}>
+      <div>
+        <span className="eyebrow">AUTOMATIC PLACEMENT</span>
+        <strong>创建由 Brain 自动安排的任务</strong>
+        <p>
+          系统会先按在线 Brain、项目位置、真实硬件和实时槽位选择
+          Worker，再固定任务归属；提交后不会迁移到另一个 Brain。
+        </p>
+      </div>
+      <label>
+        <span>任务标题</span>
+        <input name="title" required maxLength={120} />
+      </label>
+      <label>
+        <span>项目资源</span>
+        <select name="requestedProjectID" defaultValue="">
+          <option value="">Portable Task（执行节点创建隔离临时文件夹）</option>
+          {remoteProjects.map((project) => (
+            <option value={project.id} key={project.id}>
+              {project.name} · Node {project.nodeID.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>任务说明</span>
+        <textarea name="description" required maxLength={4000} rows={3} />
+      </label>
+      <label>
+        <span>验收标准</span>
+        <textarea name="criteria" required maxLength={2000} rows={2} />
+      </label>
+      <div className="scheduled-requirements">
+        <label>
+          <span>最少 CPU 线程</span>
+          <input name="minimumLogicalCores" type="number" min="1" step="1" />
+        </label>
+        <label>
+          <span>最少内存（GB）</span>
+          <input name="minimumMemoryGB" type="number" min="1" step="1" />
+        </label>
+        <label>
+          <span>最少显存（GB）</span>
+          <input name="minimumGpuMemoryGB" type="number" min="1" step="1" />
+        </label>
+        <label className="checkbox">
+          <input name="gpu" type="checkbox" />
+          必须有 GPU
+        </label>
+      </div>
+      <div className="remote-task-buttons">
+        <button
+          className="button primary compact"
+          disabled={actions.busy || !eligible}
+          type="submit"
+        >
+          <Send size={14} />
+          自动选择 Brain 与 Worker
+        </button>
+        <small>
+          {eligible ? '模型与凭据由最终 Worker 在本机复核。' : '暂无带可用槽位的匹配 Worker。'}
+        </small>
+      </div>
+    </form>
+  );
+}
+
+const brainTaskStatus: Record<BrainTask['status'], string> = {
+  submitting: '正在提交 Master',
+  queued: 'Master 队列中',
+  assigned: '已分配 Worker',
+  running: '正在执行',
+  waiting: '等待处理',
+  review: '等待验收',
+  completed: '已完成',
+  failed: '执行失败',
+};
+
+function BrainTaskCard({ task, network }: { task: BrainTask; network: NodeNetwork }) {
+  const brain = network.brains.find((candidate) => candidate.id === task.brainID);
+  return (
+    <article className={`remote-task-card brain-task-card status-${task.status}`}>
+      <div className="remote-task-heading">
+        <span className="remote-task-icon">
+          <BrainCircuit size={18} />
+        </span>
+        <div>
+          <span className="eyebrow">
+            {task.direction === 'owned' ? 'AUTHORITATIVE BRAIN TASK' : 'SUBMITTED BRAIN TASK'}
+          </span>
+          <h3>{task.title}</h3>
+        </div>
+        <span className="remote-task-status">{brainTaskStatus[task.status]}</span>
+      </div>
+      <p className="remote-task-description">{task.description}</p>
+      <div className="remote-task-criteria">
+        <strong>验收标准</strong>
+        <p>{task.criteria}</p>
+      </div>
+      <div className="remote-task-meta">
+        <span>
+          <BrainCircuit size={13} />
+          {brain?.name || `Brain ${task.brainID.slice(0, 6)}`}
+        </span>
+        <span>Master {task.masterNodeID.slice(0, 8)}</span>
+        <span>
+          {task.selectedWorkerID ? `Worker ${task.selectedWorkerID.slice(0, 8)}` : '等待 Worker'}
+        </span>
+        <span>{task.requestedProjectID ? 'Project Task' : 'Portable Task'}</span>
+      </div>
+      {task.executionAttempt > 0 && (
+        <div className="remote-task-boundary">
+          <strong>Task 与 Execution 已分离</strong>
+          <p>
+            Task {task.id.slice(0, 8)} · 第 {task.executionAttempt} 次尝试 · Execution{' '}
+            {task.executionID ? task.executionID.slice(0, 8) : '等待重新分配'} · 序号{' '}
+            {task.executionSequence}
+          </p>
+          {task.executions.length > 1 && (
+            <p>
+              历史：
+              {task.executions
+                .map(
+                  (execution) =>
+                    `#${execution.attempt} ${execution.executionID.slice(0, 8)} / Worker ${execution.workerNodeID.slice(0, 8)} / ${brainTaskStatus[execution.status]}`,
+                )
+                .join('；')}
+            </p>
+          )}
+          {task.retryNotBefore && Date.parse(task.retryNotBefore) > Date.now() && (
+            <p>原 Worker 冷却至 {new Date(task.retryNotBefore).toLocaleTimeString('zh-CN')}。</p>
+          )}
+        </div>
+      )}
+      {task.executionSummary && <p className="remote-task-description">{task.executionSummary}</p>}
+      {task.deliveryError && <p className="error remote-task-error">{task.deliveryError}</p>}
+    </article>
+  );
+}
+
 function ExecutionPolicyCard({
   policy,
   projects,
@@ -303,8 +531,8 @@ function ExecutionPolicyCard({
         <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
         <strong>{policy.enabled ? '本机执行能力已开放' : '本机执行能力已关闭'}</strong>
         <p>
-          受信任务会照常接收；开启后才使用这里的项目、模型和 AI
-          审批模式执行。路径和凭据只保留在本机。
+          旧版受信邀请可接收后等待；自动调度只在能力开放且有空闲槽位时接受执行。
+          模型和审批模式由本机管理，路径与凭据不外传。Portable 任务使用独立普通文件夹。
         </p>
       </div>
       <form onSubmit={submit}>
@@ -401,7 +629,7 @@ function RemoteTaskCard({
   const peerID = task.direction === 'incoming' ? task.ownerNodeID : task.targetNodeID;
   const peer = network.nearby.find((node) => node.id === peerID);
   const brainID = task.direction === 'incoming' ? task.ownerBrainID : task.targetBrainID;
-  const brain = peer?.brains.find((item) => item.id === brainID);
+  const brain = network.brains.find((item) => item.id === brainID);
   return (
     <article className={`remote-task-card ${task.direction} status-${task.status}`}>
       <div className="remote-task-heading">
@@ -434,6 +662,8 @@ function RemoteTaskCard({
           <BrainCircuit size={13} />
           {brain?.name || `Brain ${brainID.slice(0, 6)}`}
         </span>
+        <span>Worker {task.targetNodeID.slice(0, 8)}</span>
+        <span>{task.requestedProjectID ? '节点本地 Project Task' : 'Portable Task'}</span>
         <span>
           <Clock3 size={13} />
           {new Date(task.expiresAt).toLocaleString('zh-CN')} 前有效
@@ -705,7 +935,7 @@ function RemoteTaskCard({
       {actions.owner &&
         task.direction === 'outgoing' &&
         task.executionSequence === 0 &&
-        (task.status === 'pending' || task.status === 'accepted') && (
+        (task.status === 'pending' || (task.status === 'accepted' && !task.brainTaskID)) && (
           <div className="remote-task-buttons">
             <button
               className="button danger compact"
@@ -747,11 +977,7 @@ export function NodeNetworkView({
   onConfirmPairing(pairingID: string): void;
   onCancelPairing(pairingID: string): void;
   onRevokeTrust(nodeID: string): void;
-  onCreateRemoteTask(
-    nodeID: string,
-    targetBrainID: string,
-    input: { title: string; description: string; criteria: string },
-  ): void;
+  onCreateRemoteTask(input: Parameters<NetworkActions['createRemoteTask']>[0]): void;
   onCancelRemoteTask(taskID: string): void;
   onControlRemoteTask(
     taskID: string,
@@ -788,7 +1014,7 @@ export function NodeNetworkView({
           <h1>
             节点与 Brain<span className="heading-dot">.</span>
           </h1>
-          <p>附近的 Rivloom 自动相遇。Brain 可以独立工作，也可以在信任建立后协同任务。</p>
+          <p>Brain 自动形成并保持独立；受信 Node 可同时为多个 Brain 提供执行资源。</p>
         </div>
         <div className={`discovery-status ${online ? 'online' : ''}`}>
           {online ? <Radio size={18} /> : <WifiOff size={18} />}
@@ -807,10 +1033,7 @@ export function NodeNetworkView({
           <span>在线节点</span>
         </div>
         <div>
-          <strong>
-            {(network.local?.brains.length || 0) +
-              onlineNearby.reduce((total, node) => total + node.brains.length, 0)}
-          </strong>
+          <strong>{network.brains.length}</strong>
           <span>可见 Brain</span>
         </div>
         <div>
@@ -838,6 +1061,40 @@ export function NodeNetworkView({
           </div>
         )}
       </section>
+
+      <section className="network-section">
+        <div className="section-title">
+          <div>
+            <span className="eyebrow">CONTROL PLANES & RESOURCES</span>
+            <h2>Brain 拓扑与共享 Worker</h2>
+          </div>
+          <p>每个 Brain 固定一个 Master Host；同一 Worker 可直接注册给多个 Brain。</p>
+        </div>
+        {network.brains.length ? (
+          <div className="brain-topology-grid">
+            {network.brains.map((brain) => (
+              <BrainTopologyCard brain={brain} localNodeID={network.local?.id} key={brain.id} />
+            ))}
+          </div>
+        ) : (
+          <div className="network-empty compact">
+            <p>正在自动形成 Brain；这里不需要创建或加入按钮。</p>
+          </div>
+        )}
+      </section>
+
+      {owner && (
+        <section className="network-section">
+          <div className="section-title">
+            <div>
+              <span className="eyebrow">BRAIN-OWNED TASK</span>
+              <h2>自动安排跨节点任务</h2>
+            </div>
+            <p>任务只属于一个 Brain；Brain 之间暂不传递或共同管理任务。</p>
+          </div>
+          <ScheduledTaskForm network={network} actions={actions} />
+        </section>
+      )}
 
       {owner && (
         <section className="network-section">
@@ -901,8 +1158,32 @@ export function NodeNetworkView({
       <section className="network-section remote-task-section">
         <div className="section-title">
           <div>
-            <span className="eyebrow">CROSS-DEVICE TASKS</span>
-            <h2>跨设备协作任务</h2>
+            <span className="eyebrow">BRAIN TASKS</span>
+            <h2>Brain 权威任务</h2>
+          </div>
+          <p>
+            {network.brainTasks.length ? `${network.brainTasks.length} 条稳定 Task` : '尚无 Task'}
+          </p>
+        </div>
+        {network.brainTasks.length ? (
+          <div className="remote-task-grid">
+            {network.brainTasks.map((task) => (
+              <BrainTaskCard task={task} network={network} key={task.id} />
+            ))}
+          </div>
+        ) : (
+          <div className="network-empty compact remote-task-empty">
+            <BrainCircuit size={26} />
+            <p>创建任务后，提交节点先固定 Brain；Master 保存权威 Task 并创建独立 Execution。</p>
+          </div>
+        )}
+      </section>
+
+      <section className="network-section remote-task-section">
+        <div className="section-title">
+          <div>
+            <span className="eyebrow">EXECUTION TRANSPORT</span>
+            <h2>执行与兼容记录</h2>
           </div>
           <p>
             {network.remoteTasks.length ? `${network.remoteTasks.length} 条持久记录` : '尚无邀请'}

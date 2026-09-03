@@ -5,15 +5,21 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { listenHttp } from './http-ports.ts';
 import type {
   Approval,
   Artifact,
+  BrainSummary,
   NodeNetwork as NodeNetworkSnapshot,
   NodePairing,
   Question,
   RemoteTaskControlAction,
   RivloomNode,
+  TaskHardwareRequirements,
   TaskState,
+  WorkerRegistration,
 } from '../shared/types.ts';
 import {
   fingerprintForPublicKey,
@@ -64,6 +70,14 @@ import {
   validRemoteTaskResponse,
   type RemoteTaskMessage,
 } from './remote-tasks.ts';
+import { BrainTopologyStore } from './brain-topology.ts';
+import { rankBrainPlacements, rankWorkers, validWorkerRegistration } from './worker-resources.ts';
+import {
+  BrainTaskStore,
+  validBrainTaskSubmission,
+  validBrainTaskUpdate,
+  type BrainTaskMessage,
+} from './brain-tasks.ts';
 
 type MdnsService = {
   fqdn: string;
@@ -78,7 +92,7 @@ type Hello = {
   protocolVersion: number;
   nodeID: string;
   name: string;
-  brain: { id: string; name: string };
+  brain: BrainSummary;
   capabilities: string[];
   port: number;
   nonce: string;
@@ -128,14 +142,18 @@ type BrainDirectoryRequest = {
   type: 'brain-directory-request';
   requestID: string;
   capabilities: string[];
-  brains: { id: string; name: string }[];
+  brains: BrainSummary[];
+  hostedBrains: BrainSummary[];
+  worker: WorkerRegistration | null;
 };
 
 type BrainDirectoryResponse = {
   type: 'brain-directory-response';
   requestID: string;
   capabilities: string[];
-  brains: { id: string; name: string }[];
+  brains: BrainSummary[];
+  hostedBrains: BrainSummary[];
+  worker: WorkerRegistration | null;
 };
 
 export class NodeNetworkError extends Error {
@@ -155,6 +173,7 @@ const capabilities = [
   'remote-execution-v1',
   'remote-control-v1',
   'remote-results-v1',
+  'brain-task-v1',
 ];
 const maximumHelloBytes = 16 * 1024;
 const maximumChannelRequestBytes = 96 * 1024;
@@ -175,7 +194,12 @@ function unsignedHello(value: Omit<Hello, 'signature'>) {
     protocolVersion: value.protocolVersion,
     nodeID: value.nodeID,
     name: value.name,
-    brain: { id: value.brain.id, name: value.brain.name },
+    brain: {
+      id: value.brain.id,
+      name: value.brain.name,
+      masterNodeID: value.brain.masterNodeID,
+      state: value.brain.state,
+    },
     capabilities: [...value.capabilities].sort(),
     port: value.port,
     nonce: value.nonce,
@@ -283,7 +307,12 @@ function serviceIdentity(service: MdnsService) {
   };
 }
 
-function publicNode(identity: NodeIdentity, port: number): RivloomNode {
+function publicNode(
+  identity: NodeIdentity,
+  port: number,
+  brains: BrainSummary[],
+  worker: WorkerRegistration | null,
+): RivloomNode {
   return {
     id: identity.nodeID,
     name: `Rivloom ${identity.nodeID.slice(0, 6)}`,
@@ -298,8 +327,26 @@ function publicNode(identity: NodeIdentity, port: number): RivloomNode {
     verified: true,
     lastSeen: new Date().toISOString(),
     capabilities,
-    brains: [{ id: identity.brainID, name: `Brain ${identity.brainID.slice(0, 6)}` }],
+    brains: brains.map((brain) => ({ ...brain })),
+    worker,
   };
+}
+
+function validBrainSummary(value: unknown): value is BrainSummary {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === 'string' &&
+    /^[0-9a-f-]{36}$/i.test(item.id) &&
+    typeof item.name === 'string' &&
+    item.name.length >= 1 &&
+    item.name.length <= 80 &&
+    typeof item.masterNodeID === 'string' &&
+    /^[A-Za-z0-9_-]{32}$/.test(item.masterNodeID) &&
+    (item.state === 'provisional' || item.state === 'established') &&
+    (item.queueDepth === undefined ||
+      (Number.isSafeInteger(item.queueDepth) && Number(item.queueDepth) >= 0))
+  );
 }
 
 function validHello(value: unknown): value is Hello {
@@ -314,11 +361,7 @@ function validHello(value: unknown): value is Hello {
     item.name.length >= 1 &&
     item.name.length <= 80 &&
     !!brain &&
-    typeof brain.id === 'string' &&
-    /^[0-9a-f-]{36}$/i.test(brain.id) &&
-    typeof brain.name === 'string' &&
-    brain.name.length >= 1 &&
-    brain.name.length <= 80 &&
+    validBrainSummary(brain) &&
     Array.isArray(item.capabilities) &&
     item.capabilities.length <= 12 &&
     item.capabilities.every((entry) => typeof entry === 'string' && entry.length <= 30) &&
@@ -346,18 +389,12 @@ function validBrainDirectoryRequest(value: unknown): value is BrainDirectoryRequ
     item.capabilities.length <= 12 &&
     item.capabilities.every((entry) => typeof entry === 'string' && entry.length <= 30) &&
     Array.isArray(item.brains) &&
-    item.brains.length <= 8 &&
-    item.brains.every((entry) => {
-      if (!entry || typeof entry !== 'object') return false;
-      const brain = entry as Record<string, unknown>;
-      return (
-        typeof brain.id === 'string' &&
-        /^[0-9a-f-]{36}$/i.test(brain.id) &&
-        typeof brain.name === 'string' &&
-        brain.name.length >= 1 &&
-        brain.name.length <= 80
-      );
-    })
+    item.brains.length <= 32 &&
+    item.brains.every(validBrainSummary) &&
+    Array.isArray(item.hostedBrains) &&
+    item.hostedBrains.length <= 8 &&
+    item.hostedBrains.every(validBrainSummary) &&
+    (item.worker === null || validWorkerRegistration(item.worker))
   );
 }
 
@@ -373,18 +410,12 @@ function validBrainDirectoryResponse(value: unknown): value is BrainDirectoryRes
     item.capabilities.length <= 12 &&
     item.capabilities.every((entry) => typeof entry === 'string' && entry.length <= 30) &&
     Array.isArray(brains) &&
-    brains.length <= 8 &&
-    brains.every((entry) => {
-      if (!entry || typeof entry !== 'object') return false;
-      const brain = entry as Record<string, unknown>;
-      return (
-        typeof brain.id === 'string' &&
-        /^[0-9a-f-]{36}$/i.test(brain.id) &&
-        typeof brain.name === 'string' &&
-        brain.name.length >= 1 &&
-        brain.name.length <= 80
-      );
-    })
+    brains.length <= 32 &&
+    brains.every(validBrainSummary) &&
+    Array.isArray(item.hostedBrains) &&
+    item.hostedBrains.length <= 8 &&
+    item.hostedBrains.every(validBrainSummary) &&
+    (item.worker === null || validWorkerRegistration(item.worker))
   );
 }
 
@@ -514,9 +545,16 @@ export class NodeNetwork extends EventEmitter {
   private readonly seenChannelOpens = new Map<string, number>();
   private readonly seenChannelRecoveries = new Map<string, number>();
   private readonly channelSendQueues = new Map<string, Promise<unknown>>();
+  private readonly syncingDirectories = new Set<string>();
   private readonly deliveringRemoteTasks = new Set<string>();
+  private readonly deliveringBrainTasks = new Set<string>();
+  private readonly schedulingBrainTasks = new Set<string>();
   private readonly trustStore: NodeTrustStore;
   private readonly remoteTasks: RemoteTaskStore;
+  private readonly brainTasks: BrainTaskStore;
+  private readonly topology: BrainTopologyStore;
+  private workerRegistrationProvider: ((nodeID: string) => WorkerRegistration | null) | null = null;
+  private provisionalStartedAt = 0;
   private readonly root: string;
   private readonly enabled: boolean;
 
@@ -525,16 +563,53 @@ export class NodeNetwork extends EventEmitter {
     this.root = root;
     this.trustStore = new NodeTrustStore(root);
     this.remoteTasks = new RemoteTaskStore(root);
+    this.brainTasks = new BrainTaskStore(root);
+    this.topology = new BrainTopologyStore(root);
     this.enabled = enabled;
     this.status = enabled ? 'starting' : 'disabled';
   }
 
   snapshot(): NodeNetworkSnapshot {
+    const localWorker = this.currentWorker();
+    const advertisedBrains = this.directoryBrains();
+    const brains = this.topology.all().map((brain) => {
+      const masterNode = this.nodes.get(brain.masterNodeID);
+      const master =
+        brain.masterNodeID === this.identity?.nodeID
+          ? this.status === 'online'
+          : !!masterNode?.online && masterNode.trusted && masterNode.channelReady;
+      const workers = [
+        ...(localWorker ? [localWorker] : []),
+        ...[...this.nodes.values()]
+          .filter(
+            (node) =>
+              node.online &&
+              node.trusted &&
+              node.channelReady &&
+              node.worker &&
+              node.brains.some((candidate) => candidate.id === brain.id),
+          )
+          .map((node) => node.worker!),
+      ].sort((left, right) => left.nodeID.localeCompare(right.nodeID));
+      return {
+        ...brain,
+        hosted: brain.masterNodeID === this.identity?.nodeID,
+        online: master,
+        queueDepth:
+          brain.masterNodeID === this.identity?.nodeID
+            ? this.queueDepth(brain.id)
+            : (masterNode?.brains.find((candidate) => candidate.id === brain.id)?.queueDepth ?? 0),
+        workers,
+      };
+    });
     return {
       status: this.status,
       serviceType: `_${serviceType}._tcp.local · LAN UDP ${this.discoveryPort || defaultDiscoveryPort}`,
-      local: this.identity ? publicNode(this.identity, this.peerPort) : null,
+      local: this.identity
+        ? publicNode(this.identity, this.peerPort, advertisedBrains, localWorker)
+        : null,
       nearby: [...this.nodes.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      brains,
       pairings: [...this.pairings.values()]
         .map(
           ({
@@ -547,11 +622,111 @@ export class NodeNetwork extends EventEmitter {
         )
         .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt)),
       remoteTasks: this.remoteTasks.list(),
+      brainTasks: this.brainTasks.list(),
       error: this.error,
     };
   }
 
+  setWorkerRegistrationProvider(provider: ((nodeID: string) => WorkerRegistration | null) | null) {
+    this.workerRegistrationProvider = provider;
+    this.update();
+  }
+
+  private currentWorker() {
+    if (!this.identity || !this.workerRegistrationProvider) return null;
+    try {
+      const worker = this.workerRegistrationProvider(this.identity.nodeID);
+      return validWorkerRegistration(worker) && worker.nodeID === this.identity.nodeID
+        ? worker
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private advertisedBrain() {
+    const brain = this.topology.hosted()[0] || this.topology.all()[0];
+    if (brain) return brain;
+    return {
+      id: this.identity!.brainID,
+      name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
+      masterNodeID: this.identity!.nodeID,
+      state: 'provisional' as const,
+    };
+  }
+
+  private queueDepth(brainID: string) {
+    return this.brainTasks
+      .list()
+      .filter(
+        (task) =>
+          task.brainID === brainID &&
+          task.direction === 'owned' &&
+          task.status !== 'completed' &&
+          task.status !== 'failed',
+      ).length;
+  }
+
+  private directoryBrains() {
+    return this.topology
+      .all()
+      .map((brain) =>
+        brain.masterNodeID === this.identity?.nodeID
+          ? { ...brain, queueDepth: this.queueDepth(brain.id) }
+          : brain,
+      );
+  }
+
+  private knowsBrain(brainID: string) {
+    return this.topology.all().some((brain) => brain.id === brainID);
+  }
+
+  private hostsBrain(brainID: string) {
+    return this.topology
+      .hosted()
+      .some((brain) => brain.id === brainID && brain.masterNodeID === this.identity?.nodeID);
+  }
+
   private update() {
+    for (const brainTask of this.brainTasks.list()) {
+      if (brainTask.direction !== 'owned' || !brainTask.executionID) continue;
+      let execution = this.remoteTasks
+        .list()
+        .find((candidate) => candidate.id === brainTask.executionID);
+      const worker = execution ? this.nodes.get(execution.targetNodeID) : null;
+      if (
+        execution?.direction === 'outgoing' &&
+        execution.status === 'pending' &&
+        (!worker || !worker.online)
+      ) {
+        try {
+          this.remoteTasks.cancel(execution.id);
+          execution = this.remoteTasks.list().find((candidate) => candidate.id === execution!.id);
+        } catch {
+          /* A concurrently accepted or started Execution is deliberately not reassigned. */
+        }
+      }
+      if (!execution) continue;
+      let changed = this.brainTasks.syncExecution(brainTask.id, execution, !worker?.online);
+      if (
+        execution.executionSequence === 0 &&
+        (execution.status === 'declined' ||
+          execution.status === 'expired' ||
+          execution.status === 'cancelled')
+      ) {
+        const reason =
+          execution.status === 'declined'
+            ? 'Worker 在本机最终准入时拒绝了这次 Execution；Task 保持原 Brain，等待其他 Worker。'
+            : execution.status === 'expired'
+              ? 'Worker 未在邀请期限内接受这次 Execution；Task 保持原 Brain，等待重新调度。'
+              : 'Worker 离线前尚未接受这次 Execution；旧邀请已取消，Task 等待重新调度。';
+        if (this.brainTasks.requeueExecution(brainTask.id, execution, reason)) {
+          changed = true;
+          queueMicrotask(() => void this.scheduleBrainTask(brainTask.id));
+        }
+      }
+      if (changed) queueMicrotask(() => void this.flushBrainTask(brainTask.id));
+    }
     this.emit('update', this.snapshot());
   }
 
@@ -565,13 +740,21 @@ export class NodeNetwork extends EventEmitter {
     return !!remoteAddress && privateNetworkAddress(remoteAddress);
   }
 
-  private rateLimited(remoteAddress: string) {
+  private rateLimited(
+    remoteAddress: string,
+    scope: 'discovery' | 'hello' | 'control' | 'channel' = 'control',
+  ) {
     const at = Date.now();
     for (const [key, value] of this.requests) if (value.until < at) this.requests.delete(key);
-    const bucket = this.requests.get(remoteAddress) || { count: 0, until: at + 60_000 };
+    // Discovery bursts must not consume the budget used by authenticated heartbeats/tasks.
+    // Every class is still bounded before authentication and uses the actual socket address.
+    const key = `${scope}:${normalizedAddress(remoteAddress)}`;
+    const limit = scope === 'channel' ? 600 : scope === 'hello' ? 120 : 60;
+    if (!this.requests.has(key) && this.requests.size >= 1024) return true;
+    const bucket = this.requests.get(key) || { count: 0, until: at + 60_000 };
     bucket.count++;
-    this.requests.set(remoteAddress, bucket);
-    return bucket.count > 60;
+    this.requests.set(key, bucket);
+    return bucket.count > limit;
   }
 
   private nodeForRemote(nodeID: string, remoteAddress: string | undefined) {
@@ -838,16 +1021,23 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(403, '加密消息完整性、顺序或时间校验失败。');
     }
     if (validBrainDirectoryRequest(message)) {
+      if (
+        (message.worker && message.worker.nodeID !== node.id) ||
+        message.hostedBrains.some(
+          (brain) =>
+            brain.masterNodeID !== node.id ||
+            !message.brains.some((candidate) => candidate.id === brain.id),
+        )
+      )
+        throw new NodeNetworkError(409, 'Brain 目录中的 Node 归属无效。');
+      const topologyChanged = this.topology.reconcile(node.id, message.hostedBrains);
       const response: BrainDirectoryResponse = {
         type: 'brain-directory-response',
         requestID: message.requestID,
         capabilities,
-        brains: [
-          {
-            id: this.identity!.brainID,
-            name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
-          },
-        ],
+        brains: this.directoryBrains(),
+        hostedBrains: this.topology.hosted(),
+        worker: this.currentWorker(),
       };
       const envelope = encryptChannelPayload(channel, response);
       const current = this.nodes.get(node.id);
@@ -855,13 +1045,51 @@ export class NodeNetwork extends EventEmitter {
         this.nodes.set(node.id, {
           ...current,
           channelReady: true,
+          online: true,
+          lastSeen: new Date().toISOString(),
           capabilities: [...new Set(message.capabilities)].sort(),
           brains: message.brains.map((brain) => ({ ...brain })),
+          worker: message.worker,
         });
-      this.update();
-      const flushAfterResponse = setTimeout(() => void this.flushRemoteTasks(node.id), 100);
+      if (topologyChanged || current) this.update();
+      const flushAfterResponse = setTimeout(() => {
+        void this.flushRemoteTasks(node.id);
+        void this.flushBrainTasks(node.id);
+      }, 100);
       flushAfterResponse.unref();
       return envelope;
+    }
+    if (validBrainTaskSubmission(message)) {
+      if (
+        message.submitterNodeID !== node.id ||
+        message.masterNodeID !== this.identity!.nodeID ||
+        !this.hostsBrain(message.brainID)
+      )
+        throw new NodeNetworkError(409, 'Brain Task 提交路由与 Master 不匹配。');
+      let changed = false;
+      try {
+        changed = this.brainTasks.receiveSubmission(message);
+      } catch {
+        throw new NodeNetworkError(409, 'Brain Task 提交冲突或已经失效。');
+      }
+      if (changed) this.update();
+      queueMicrotask(() => void this.scheduleBrainTask(message.taskID));
+      return null;
+    }
+    if (validBrainTaskUpdate(message)) {
+      if (
+        message.masterNodeID !== node.id ||
+        message.submitterNodeID !== this.identity!.nodeID ||
+        !node.brains.some((brain) => brain.id === message.brainID && brain.masterNodeID === node.id)
+      )
+        throw new NodeNetworkError(409, 'Brain Task 更新路由与提交节点不匹配。');
+      try {
+        this.brainTasks.receiveUpdate(message);
+      } catch {
+        throw new NodeNetworkError(409, 'Brain Task 更新冲突或已经失效。');
+      }
+      this.update();
+      return null;
     }
     let changed = false;
     let receivedOfferID: string | null = null;
@@ -871,8 +1099,9 @@ export class NodeNetwork extends EventEmitter {
         if (
           message.ownerNodeID !== node.id ||
           message.targetNodeID !== this.identity!.nodeID ||
+          message.ownerBrainID !== message.targetBrainID ||
           !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
-          message.targetBrainID !== this.identity!.brainID
+          !this.knowsBrain(message.targetBrainID)
         )
           throw new Error('远端任务邀请路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveOffer(message);
@@ -881,7 +1110,8 @@ export class NodeNetwork extends EventEmitter {
         if (
           message.ownerNodeID !== this.identity!.nodeID ||
           message.targetNodeID !== node.id ||
-          message.ownerBrainID !== this.identity!.brainID ||
+          !this.knowsBrain(message.ownerBrainID) ||
+          message.ownerBrainID !== message.targetBrainID ||
           !node.brains.some((brain) => brain.id === message.targetBrainID)
         )
           throw new Error('远端任务回复路由与当前节点不匹配。');
@@ -890,7 +1120,8 @@ export class NodeNetwork extends EventEmitter {
         if (
           message.ownerNodeID !== this.identity!.nodeID ||
           message.targetNodeID !== node.id ||
-          message.ownerBrainID !== this.identity!.brainID ||
+          !this.knowsBrain(message.ownerBrainID) ||
+          message.ownerBrainID !== message.targetBrainID ||
           !node.brains.some((brain) => brain.id === message.targetBrainID)
         )
           throw new Error('远端执行准备路由与当前节点不匹配。');
@@ -899,7 +1130,8 @@ export class NodeNetwork extends EventEmitter {
         if (
           message.ownerNodeID !== this.identity!.nodeID ||
           message.targetNodeID !== node.id ||
-          message.ownerBrainID !== this.identity!.brainID ||
+          !this.knowsBrain(message.ownerBrainID) ||
+          message.ownerBrainID !== message.targetBrainID ||
           !node.brains.some((brain) => brain.id === message.targetBrainID)
         )
           throw new Error('远端执行状态路由与当前节点不匹配。');
@@ -909,7 +1141,8 @@ export class NodeNetwork extends EventEmitter {
           message.ownerNodeID !== node.id ||
           message.targetNodeID !== this.identity!.nodeID ||
           !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
-          message.targetBrainID !== this.identity!.brainID
+          message.ownerBrainID !== message.targetBrainID ||
+          !this.knowsBrain(message.targetBrainID)
         )
           throw new Error('远程控制路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveControl(message);
@@ -919,7 +1152,8 @@ export class NodeNetwork extends EventEmitter {
           message.ownerNodeID !== node.id ||
           message.targetNodeID !== this.identity!.nodeID ||
           !node.brains.some((brain) => brain.id === message.ownerBrainID) ||
-          message.targetBrainID !== this.identity!.brainID
+          message.ownerBrainID !== message.targetBrainID ||
+          !this.knowsBrain(message.targetBrainID)
         )
           throw new Error('远端任务取消路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveCancel(message);
@@ -942,43 +1176,72 @@ export class NodeNetwork extends EventEmitter {
     return null;
   }
 
-  private async syncBrainDirectory(node: RivloomNode, channel: SecureChannelSession) {
-    const request: BrainDirectoryRequest = {
-      type: 'brain-directory-request',
-      requestID: randomUUID(),
-      capabilities,
-      brains: [
-        {
-          id: this.identity!.brainID,
-          name: `Brain ${this.identity!.brainID.slice(0, 6)}`,
-        },
-      ],
-    };
-    const value = await this.postToNode(
-      node,
-      '/v1/channel/message',
-      encryptChannelPayload(channel, request),
-    );
-    if (!validChannelEnvelope(value))
-      throw new NodeNetworkError(502, '对方返回的加密消息格式无效。');
-    let message: unknown;
+  private async syncBrainDirectory(node: RivloomNode, initialChannel?: SecureChannelSession) {
+    if (this.syncingDirectories.has(node.id)) return;
+    this.syncingDirectories.add(node.id);
+    const previous = this.channelSendQueues.get(node.id) || Promise.resolve();
+    const operation = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = this.nodes.get(node.id);
+        const channel = this.channels.get(node.id) || initialChannel;
+        if (!current?.online || !current.trusted || !channel)
+          throw new NodeNetworkError(503, '受信节点的加密通道尚未就绪。');
+        const request: BrainDirectoryRequest = {
+          type: 'brain-directory-request',
+          requestID: randomUUID(),
+          capabilities,
+          brains: this.directoryBrains(),
+          hostedBrains: this.topology.hosted(),
+          worker: this.currentWorker(),
+        };
+        const value = await this.postToNode(
+          current,
+          '/v1/channel/message',
+          encryptChannelPayload(channel, request),
+        );
+        if (!validChannelEnvelope(value))
+          throw new NodeNetworkError(502, '对方返回的加密消息格式无效。');
+        let message: unknown;
+        try {
+          message = decryptChannelPayload(channel, value);
+        } catch {
+          throw new NodeNetworkError(502, '对方返回的加密消息校验失败。');
+        }
+        if (!validBrainDirectoryResponse(message) || message.requestID !== request.requestID)
+          throw new NodeNetworkError(502, '对方返回的 Brain 目录无效。');
+        if (
+          (message.worker && message.worker.nodeID !== current.id) ||
+          message.hostedBrains.some(
+            (brain) =>
+              brain.masterNodeID !== current.id ||
+              !message.brains.some((candidate) => candidate.id === brain.id),
+          )
+        )
+          throw new NodeNetworkError(502, '对方返回的 Brain 目录归属无效。');
+        const topologyChanged = this.topology.reconcile(current.id, message.hostedBrains);
+        const latest = this.nodes.get(current.id);
+        if (!latest) return;
+        this.nodes.set(current.id, {
+          ...latest,
+          channelReady: true,
+          online: true,
+          lastSeen: new Date().toISOString(),
+          capabilities: [...new Set(message.capabilities)].sort(),
+          brains: message.brains.map((brain) => ({ ...brain })),
+          worker: message.worker,
+        });
+        if (topologyChanged || latest) this.update();
+        void this.flushRemoteTasks(current.id);
+        void this.flushBrainTasks(current.id);
+      });
+    this.channelSendQueues.set(node.id, operation);
     try {
-      message = decryptChannelPayload(channel, value);
-    } catch {
-      throw new NodeNetworkError(502, '对方返回的加密消息校验失败。');
+      await operation;
+    } finally {
+      this.syncingDirectories.delete(node.id);
+      if (this.channelSendQueues.get(node.id) === operation) this.channelSendQueues.delete(node.id);
     }
-    if (!validBrainDirectoryResponse(message) || message.requestID !== request.requestID)
-      throw new NodeNetworkError(502, '对方返回的 Brain 目录无效。');
-    const current = this.nodes.get(node.id);
-    if (!current) return;
-    this.nodes.set(node.id, {
-      ...current,
-      channelReady: true,
-      capabilities: [...new Set(message.capabilities)].sort(),
-      brains: message.brains.map((brain) => ({ ...brain })),
-    });
-    this.update();
-    void this.flushRemoteTasks(node.id);
   }
 
   private async openSecureChannel(node: RivloomNode) {
@@ -1033,7 +1296,7 @@ export class NodeNetwork extends EventEmitter {
     }
   }
 
-  private async sendChannelEvent(node: RivloomNode, message: RemoteTaskMessage) {
+  private async sendChannelEvent(node: RivloomNode, message: RemoteTaskMessage | BrainTaskMessage) {
     const previous = this.channelSendQueues.get(node.id) || Promise.resolve();
     const operation = previous
       .catch(() => undefined)
@@ -1091,11 +1354,53 @@ export class NodeNetwork extends EventEmitter {
         this.closeChannel(node.id);
     } finally {
       this.deliveringRemoteTasks.delete(taskID);
+      const next = this.remoteTasks.message(taskID);
+      if (next && JSON.stringify(next) !== JSON.stringify(message))
+        queueMicrotask(() => void this.flushRemoteTask(taskID));
     }
   }
 
   private async flushRemoteTasks(nodeID: string) {
     for (const task of this.remoteTasks.pendingForPeer(nodeID)) await this.flushRemoteTask(task.id);
+  }
+
+  private async flushBrainTask(taskID: string) {
+    if (this.deliveringBrainTasks.has(taskID)) return;
+    const task = this.brainTasks.record(taskID);
+    const message = this.brainTasks.message(taskID);
+    if (!task || !message) return;
+    const peerNodeID = task.direction === 'submitted' ? task.masterNodeID : task.submitterNodeID;
+    if (peerNodeID === this.identity?.nodeID) return;
+    const node = this.nodes.get(peerNodeID);
+    if (!node?.online || !node.trusted || !node.channelReady) return;
+    this.deliveringBrainTasks.add(taskID);
+    try {
+      await this.sendChannelEvent(node, message);
+      if (this.brainTasks.markDelivered(taskID, message)) this.update();
+    } catch (error) {
+      if (
+        error instanceof NodeNetworkError &&
+        (error.status === 400 || error.status === 404 || error.status === 409)
+      ) {
+        if (this.brainTasks.markDeliveryFailed(taskID, '对方拒绝了冲突或无效的 Brain Task。'))
+          this.update();
+        return;
+      }
+      if (
+        error instanceof NodeNetworkError &&
+        (error.status === 403 || error.status === 502 || error.status === 503)
+      )
+        this.closeChannel(node.id);
+    } finally {
+      this.deliveringBrainTasks.delete(taskID);
+      const next = this.brainTasks.message(taskID);
+      if (next && JSON.stringify(next) !== JSON.stringify(message))
+        queueMicrotask(() => void this.flushBrainTask(taskID));
+    }
+  }
+
+  private async flushBrainTasks(nodeID: string) {
+    for (const task of this.brainTasks.pendingForPeer(nodeID)) await this.flushBrainTask(task.id);
   }
 
   private async postToNode(node: RivloomNode, path: string, value: unknown) {
@@ -1279,17 +1584,24 @@ export class NodeNetwork extends EventEmitter {
   private async handlePeerRequest(request: IncomingMessage, response: ServerResponse) {
     const remote = request.socket.remoteAddress;
     if (!this.allowed(remote)) throw new NodeNetworkError(403, '只接受局域网节点请求。');
-    if (this.rateLimited(remote!)) throw new NodeNetworkError(429, '节点请求过于频繁。');
     const url = new URL(request.url || '/', 'http://rivloom.local');
+    const scope =
+      request.method === 'GET' && url.pathname === '/v1/hello'
+        ? 'hello'
+        : request.method === 'POST' && url.pathname === '/v1/channel/message'
+          ? 'channel'
+          : 'control';
+    if (this.rateLimited(remote!, scope)) throw new NodeNetworkError(429, '节点请求过于频繁。');
     if (request.method === 'GET' && url.pathname === '/v1/hello') {
       const nonce = url.searchParams.get('nonce') || '';
       if (!/^[A-Za-z0-9_-]{32}$/.test(nonce)) throw new NodeNetworkError(400, '随机挑战无效。');
       const identity = this.identity!;
+      const brain = this.advertisedBrain();
       const value: Omit<Hello, 'signature'> = {
         protocolVersion: nodeProtocolVersion,
         nodeID: identity.nodeID,
         name: `Rivloom ${identity.nodeID.slice(0, 6)}`,
-        brain: { id: identity.brainID, name: `Brain ${identity.brainID.slice(0, 6)}` },
+        brain,
         capabilities,
         port: this.peerPort,
         nonce,
@@ -1479,7 +1791,13 @@ export class NodeNetwork extends EventEmitter {
   async createRemoteTask(
     nodeID: string,
     targetBrainID: string,
-    input: { title: string; description: string; criteria: string },
+    input: {
+      title: string;
+      description: string;
+      criteria: string;
+      requestedProjectID?: string | null;
+      requirements?: TaskHardwareRequirements;
+    },
   ) {
     if (!this.identity || this.status !== 'online')
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
@@ -1488,6 +1806,8 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(409, '请先完成设备互信并等待加密通道就绪。');
     if (!node.brains.some((brain) => brain.id === targetBrainID))
       throw new NodeNetworkError(404, '目标 Brain 当前不可用。');
+    if (!this.knowsBrain(targetBrainID))
+      throw new NodeNetworkError(404, '本机尚未注册目标 Brain。');
     if (!node.capabilities.includes('remote-execution-v1'))
       throw new NodeNetworkError(409, '目标节点版本尚不支持策略化任务执行。');
     const title = input.title.trim();
@@ -1506,10 +1826,16 @@ export class NodeNetwork extends EventEmitter {
     try {
       created = this.remoteTasks.create(
         this.identity.nodeID,
-        this.identity.brainID,
+        targetBrainID,
         node.id,
         targetBrainID,
-        { title, description, criteria },
+        {
+          title,
+          description,
+          criteria,
+          requestedProjectID: input.requestedProjectID ?? null,
+          requirements: input.requirements ?? {},
+        },
       );
     } catch {
       throw new NodeNetworkError(409, '无法保存远端任务邀请。');
@@ -1519,6 +1845,134 @@ export class NodeNetwork extends EventEmitter {
     return this.snapshot();
   }
 
+  async createScheduledTask(input: {
+    title: string;
+    description: string;
+    criteria: string;
+    requestedProjectID: string | null;
+    requirements: TaskHardwareRequirements;
+  }) {
+    if (!this.identity || this.status !== 'online')
+      throw new NodeNetworkError(503, '节点网络尚未就绪。');
+    const topology = this.snapshot().brains.map((brain) => ({
+      ...brain,
+      workers: brain.hosted
+        ? brain.workers.filter((worker) => worker.nodeID !== this.identity!.nodeID)
+        : brain.workers,
+    }));
+    const placement = rankBrainPlacements(topology, {
+      projectID: input.requestedProjectID,
+      requirements: input.requirements,
+    })[0];
+    if (!placement)
+      throw new NodeNetworkError(
+        409,
+        input.requestedProjectID
+          ? '当前没有在线 Brain 同时具备该项目、所需硬件和可用执行槽位。'
+          : '当前没有在线 Brain 同时具备匹配 Worker 和可用执行槽位。',
+      );
+    const direction = placement.brain.hosted ? 'owned' : 'submitted';
+    const master =
+      placement.brain.masterNodeID === this.identity.nodeID
+        ? null
+        : this.nodes.get(placement.brain.masterNodeID);
+    if (
+      placement.brain.masterNodeID !== this.identity.nodeID &&
+      (!master ||
+        !master.online ||
+        !master.trusted ||
+        !master.channelReady ||
+        !master.capabilities.includes('brain-task-v1'))
+    )
+      throw new NodeNetworkError(409, '选中 Brain 的 Master 通道已经失效或版本不兼容。');
+    let created;
+    try {
+      created = this.brainTasks.create(
+        direction,
+        this.identity.nodeID,
+        placement.brain.id,
+        placement.brain.masterNodeID,
+        input,
+      );
+    } catch {
+      throw new NodeNetworkError(409, '无法保存 Brain Task。');
+    }
+    this.update();
+    if (direction === 'owned') await this.scheduleBrainTask(created.id);
+    else await this.flushBrainTask(created.id);
+    return this.snapshot();
+  }
+
+  private async scheduleBrainTask(taskID: string) {
+    if (!this.identity || this.schedulingBrainTasks.has(taskID)) return;
+    const task = this.brainTasks.record(taskID);
+    if (
+      !task ||
+      task.direction !== 'owned' ||
+      task.status !== 'queued' ||
+      task.masterNodeID !== this.identity.nodeID ||
+      !this.hostsBrain(task.brainID)
+    )
+      return;
+    this.schedulingBrainTasks.add(taskID);
+    try {
+      const brain = this.snapshot().brains.find(
+        (candidate) => candidate.id === task.brainID && candidate.hosted,
+      );
+      if (!brain?.online) return;
+      const candidates = rankWorkers(
+        brain.workers.filter((worker) => worker.nodeID !== this.identity!.nodeID),
+        { projectID: task.requestedProjectID, requirements: task.requirements },
+      );
+      const lastExecution = task.executions.at(-1);
+      const lastWorkerCoolingDown =
+        lastExecution && task.retryNotBefore && Date.parse(task.retryNotBefore) > Date.now()
+          ? lastExecution.workerNodeID
+          : null;
+      const worker = candidates.find((candidate) => candidate.nodeID !== lastWorkerCoolingDown);
+      if (!worker) {
+        await this.flushBrainTask(taskID);
+        return;
+      }
+      const node = this.nodes.get(worker.nodeID);
+      if (
+        !node?.online ||
+        !node.trusted ||
+        !node.channelReady ||
+        !node.capabilities.includes('remote-execution-v1')
+      )
+        return;
+      const execution = this.remoteTasks.create(
+        this.identity.nodeID,
+        task.brainID,
+        node.id,
+        task.brainID,
+        {
+          title: task.title,
+          brainTaskID: task.id,
+          description: task.description,
+          criteria: task.criteria,
+          requestedProjectID: task.requestedProjectID,
+          requirements: task.requirements,
+        },
+      );
+      try {
+        this.brainTasks.assign(task.id, node.id, execution.id);
+      } catch (error) {
+        this.remoteTasks.discardUnsent(execution.id);
+        throw error;
+      }
+      this.update();
+      await Promise.all([this.flushRemoteTask(execution.id), this.flushBrainTask(task.id)]);
+    } catch (error) {
+      console.error(
+        `Brain Task ${taskID} 调度失败：${error instanceof Error ? error.message : '未知错误'}`,
+      );
+    } finally {
+      this.schedulingBrainTasks.delete(taskID);
+    }
+  }
+
   async respondRemoteTask(taskID: string, decision: 'accepted' | 'declined') {
     if (!this.identity) throw new NodeNetworkError(503, '本机节点身份尚未就绪。');
     const current = this.remoteTasks.record(taskID);
@@ -1526,7 +1980,7 @@ export class NodeNetwork extends EventEmitter {
       !current ||
       current.direction !== 'incoming' ||
       current.targetNodeID !== this.identity.nodeID ||
-      current.targetBrainID !== this.identity.brainID
+      !this.knowsBrain(current.targetBrainID)
     )
       throw new NodeNetworkError(404, '待处理的远端任务邀请不存在。');
     try {
@@ -1549,7 +2003,7 @@ export class NodeNetwork extends EventEmitter {
       !current ||
       current.direction !== 'outgoing' ||
       current.ownerNodeID !== this.identity.nodeID ||
-      current.ownerBrainID !== this.identity.brainID
+      !this.knowsBrain(current.ownerBrainID)
     )
       throw new NodeNetworkError(404, '可取消的远端任务邀请不存在。');
     try {
@@ -1572,7 +2026,7 @@ export class NodeNetwork extends EventEmitter {
       !current ||
       current.direction !== 'incoming' ||
       current.targetNodeID !== this.identity.nodeID ||
-      current.targetBrainID !== this.identity.brainID
+      !this.knowsBrain(current.targetBrainID)
     )
       throw new NodeNetworkError(404, '可准备执行的远端任务不存在。');
     try {
@@ -1595,7 +2049,7 @@ export class NodeNetwork extends EventEmitter {
       !current ||
       current.direction !== 'incoming' ||
       current.targetNodeID !== this.identity.nodeID ||
-      current.targetBrainID !== this.identity.brainID
+      !this.knowsBrain(current.targetBrainID)
     )
       throw new NodeNetworkError(404, '可撤销的执行准备不存在。');
     try {
@@ -1753,7 +2207,6 @@ export class NodeNetwork extends EventEmitter {
             Math.abs(Date.now() - value.issuedAt) > 120_000 ||
             value.port !== service.port ||
             value.nodeID !== advertised.nodeID ||
-            value.brain.id !== advertised.brainID ||
             computedID !== value.nodeID ||
             computedFingerprint !== advertised.fingerprint ||
             !verify(
@@ -1765,12 +2218,15 @@ export class NodeNetwork extends EventEmitter {
           )
             continue;
           const trusted = this.trustStore.trusted(value.nodeID, computedFingerprint);
+          const previous = this.nodes.get(value.nodeID);
+          const preserveDirectory =
+            previous?.fingerprint === computedFingerprint && previous.trusted && trusted;
           const node: RivloomNode = {
             id: value.nodeID,
             name: value.name,
             fingerprint: computedFingerprint,
             protocolVersion: value.protocolVersion,
-            addresses: [address],
+            addresses: [...new Set([address, ...(previous?.addresses || [])])],
             port: value.port,
             online: true,
             local: false,
@@ -1779,7 +2235,8 @@ export class NodeNetwork extends EventEmitter {
             verified: true,
             lastSeen: new Date().toISOString(),
             capabilities: [...new Set(value.capabilities)].sort(),
-            brains: [value.brain],
+            brains: preserveDirectory ? previous.brains : [value.brain],
+            worker: preserveDirectory ? previous.worker : null,
           };
           this.nodes.set(value.nodeID, node);
           this.update();
@@ -1805,7 +2262,7 @@ export class NodeNetwork extends EventEmitter {
       protocolVersion: nodeProtocolVersion,
       nodeID: this.identity!.nodeID,
       fingerprint: this.identity!.fingerprint,
-      brainID: this.identity!.brainID,
+      brainID: this.advertisedBrain().id,
       port: this.peerPort,
     };
   }
@@ -1824,7 +2281,8 @@ export class NodeNetwork extends EventEmitter {
       return;
     }
     if (validDiscoveryQuery(value)) {
-      if (value.nodeID === this.identity.nodeID || this.rateLimited(remote.address)) return;
+      if (value.nodeID === this.identity.nodeID || this.rateLimited(remote.address, 'discovery'))
+        return;
       const response = Buffer.from(JSON.stringify(this.discoveryResponse(value.nonce)));
       socket.send(response, remote.port, remote.address, () => undefined);
       return;
@@ -2014,21 +2472,22 @@ export class NodeNetwork extends EventEmitter {
   async start() {
     if (!this.enabled || this.peerServer) return;
     try {
+      const legacyIdentityExisted = existsSync(join(this.root, 'node-identity.json'));
       this.identity = loadNodeIdentity(this.root);
+      this.topology.load({
+        nodeID: this.identity.nodeID,
+        legacyBrainID: this.identity.brainID,
+        legacyIdentityExisted,
+      });
+      this.provisionalStartedAt = Date.now();
       this.trustStore.load();
       this.remoteTasks.load();
+      this.brainTasks.load();
       this.peerServer = this.createPeerServer(this.identity);
       const configuredPort = Number(process.env.RIVLOOM_PEER_PORT || 0);
       if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65_535)
         throw new Error('RIVLOOM_PEER_PORT 不是有效端口。');
-      await new Promise<void>((resolve, reject) => {
-        const onError = (error: Error) => reject(error);
-        this.peerServer!.once('error', onError);
-        this.peerServer!.listen(configuredPort, '0.0.0.0', () => {
-          this.peerServer!.off('error', onError);
-          resolve();
-        });
-      });
+      await listenHttp(this.peerServer, '0.0.0.0', configuredPort);
       const address = this.peerServer.address();
       if (!address || typeof address === 'string') throw new Error('无法获取节点协议端口。');
       this.peerPort = address.port;
@@ -2046,6 +2505,7 @@ export class NodeNetwork extends EventEmitter {
       const mdnsEnabled = process.env.RIVLOOM_MDNS_NETWORK !== 'disabled';
       if (!mdnsEnabled && !fallbackStarted) throw new Error('无法启动局域网自动发现。');
       if (mdnsEnabled) {
+        const advertisedBrain = this.advertisedBrain();
         this.bonjour = new Bonjour(undefined, () =>
           this.fail('局域网发现发生错误，请检查网络配置。'),
         );
@@ -2059,7 +2519,7 @@ export class NodeNetwork extends EventEmitter {
             pv: String(nodeProtocolVersion),
             id: this.identity.nodeID,
             fp: this.identity.fingerprint,
-            brain: this.identity.brainID,
+            brain: advertisedBrain.id,
             cap: capabilities.join(','),
           },
         });
@@ -2069,6 +2529,10 @@ export class NodeNetwork extends EventEmitter {
         });
         this.browser.on('down', (found) => {
           const id = serviceIdentity(found as MdnsService).nodeID;
+          const peer = this.nodes.get(id);
+          // Multicast discovery can expire while authenticated unicast remains healthy.
+          if (peer?.trusted && peer.channelReady && nodePresence(peer.lastSeen) === 'online')
+            return;
           this.forgetChannel(id);
           if (this.nodes.delete(id)) this.update();
         });
@@ -2081,6 +2545,15 @@ export class NodeNetwork extends EventEmitter {
         for (const found of this.browser?.services || []) void this.probe(found as MdnsService);
         this.sendDiscoveryQuery();
         let changed = false;
+        if (
+          Date.now() - this.provisionalStartedAt >= nodeOfflineAfterMilliseconds &&
+          this.topology.settleProvisional(
+            [...this.nodes.values()].some((node) =>
+              node.brains.some((brain) => brain.state === 'established'),
+            ),
+          )
+        )
+          changed = true;
         for (const [id, node] of this.nodes) {
           const presence = nodePresence(node.lastSeen);
           if (presence === 'expired') {
@@ -2100,6 +2573,8 @@ export class NodeNetwork extends EventEmitter {
             if (!channelReady) {
               if (this.identity!.nodeID.localeCompare(id) < 0) void this.openSecureChannel(node);
               else void this.requestSecureChannelRecovery(node);
+            } else if (this.identity!.nodeID.localeCompare(id) < 0) {
+              void this.syncBrainDirectory(node).catch(() => this.closeChannel(id));
             }
           }
         }
@@ -2116,7 +2591,13 @@ export class NodeNetwork extends EventEmitter {
           if (expiresAt <= Date.now()) this.seenChannelRecoveries.delete(id);
         if (this.remoteTasks.expire()) changed = true;
         for (const node of this.nodes.values())
-          if (node.online && node.trusted && node.channelReady) void this.flushRemoteTasks(node.id);
+          if (node.online && node.trusted && node.channelReady) {
+            void this.flushRemoteTasks(node.id);
+            void this.flushBrainTasks(node.id);
+          }
+        for (const brainTask of this.brainTasks.list())
+          if (brainTask.direction === 'owned' && brainTask.status === 'queued')
+            void this.scheduleBrainTask(brainTask.id);
         if (changed) this.update();
       }, discoveryIntervalMilliseconds);
       this.timer.unref();
@@ -2128,8 +2609,10 @@ export class NodeNetwork extends EventEmitter {
       this.fail(
         error instanceof Error &&
           (error.message.includes('节点身份') ||
+            error.message.includes('Brain 拓扑') ||
             error.message.includes('信任记录') ||
-            error.message.includes('远端任务邀请记录'))
+            error.message.includes('远端任务邀请记录') ||
+            error.message.includes('Brain Task 记录'))
           ? error.message
           : '无法启动局域网节点发现；本机任务功能仍可继续使用。',
       );
@@ -2166,6 +2649,8 @@ export class NodeNetwork extends EventEmitter {
     this.seenChannelRecoveries.clear();
     this.channelSendQueues.clear();
     this.deliveringRemoteTasks.clear();
+    this.deliveringBrainTasks.clear();
+    this.schedulingBrainTasks.clear();
     if (this.peerServer)
       await new Promise<void>((resolve) => this.peerServer!.close(() => resolve()));
     this.peerServer = null;

@@ -78,6 +78,7 @@ for (const [path, value] of Object.entries(lock.packages) as [
   await mkdir(dirname(join(destination, path)), { recursive: true });
   await cp(join(root, path), join(destination, path), {
     recursive: true,
+    dereference: true,
     filter: (source) => !relative(join(root, path), source).split(/[\\/]/).includes('node_modules'),
   });
   packages.push({ path, version: value.version, integrity: value.integrity });

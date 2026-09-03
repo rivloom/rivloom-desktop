@@ -23,6 +23,37 @@ const projectRoot = join(peerRoot, 'automatic-execution-project');
 mkdirSync(projectRoot, { recursive: true });
 writeFileSync(join(projectRoot, 'README.md'), '# Rivloom automatic execution fixture\n');
 const peer = new NodeNetwork(peerRoot, true);
+peer.setWorkerRegistrationProvider((nodeID) => {
+  const sampledAt = new Date().toISOString();
+  return {
+    nodeID,
+    accepting: true,
+    projects: [],
+    hardware: {
+      platform: process.platform,
+      release: 'verification',
+      architecture: process.arch,
+      cpuModel: 'Release verification Worker',
+      physicalCores: 4,
+      logicalCores: 8,
+      memoryBytes: 16 * 1024 ** 3,
+      gpus: [],
+      diskBytes: 100 * 1024 ** 3,
+      collectedAt: sampledAt,
+    },
+    load: {
+      cpuPercent: 10,
+      memoryAvailableBytes: 8 * 1024 ** 3,
+      memoryUsedPercent: 50,
+      gpuPercent: null,
+      gpuMemoryAvailableBytes: null,
+      diskAvailableBytes: 50 * 1024 ** 3,
+      runningTasks: 0,
+      availableSlots: 1,
+      sampledAt,
+    },
+  };
+});
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
 let page: any = null;
 let runningLocalTaskID: string | null = null;
@@ -125,6 +156,9 @@ try {
   await syntheticCard.getByText('已建立设备信任 · 加密通道就绪').waitFor();
   assert.equal(peerViewOfDesktop()?.channelReady, true);
   assert.equal(peerViewOfDesktop()?.trusted, true);
+  await page.getByRole('heading', { name: 'Brain 拓扑与共享 Worker' }).waitFor();
+  await page.getByText('1 个可用槽位').first().waitFor();
+  await page.getByText(/Release verification Worker/).waitFor();
 
   const waitingTitle = '验证可信任务自动接收';
   await peer.createRemoteTask(desktopNodeID, peerViewOfDesktop()!.brains[0].id, {
@@ -153,13 +187,25 @@ try {
   assert.equal(waitingTask()?.status, 'cancelled');
 
   const remoteTaskTitle = '验证跨设备任务邀请';
-  await syntheticCard.getByRole('button', { name: '发起协作任务' }).click();
-  await syntheticCard.getByLabel('任务标题').fill(remoteTaskTitle);
-  await syntheticCard
+  const scheduledTaskForm = page.locator('.scheduled-task-form');
+  await scheduledTaskForm.getByLabel('任务标题').fill(remoteTaskTitle);
+  await scheduledTaskForm
     .getByLabel('任务说明')
     .fill('只验证邀请、人工接受和持久状态，不绑定项目或启动 OpenCode。');
-  await syntheticCard.getByLabel('验收标准').fill('两端显示同一任务 ID 和已接受状态。');
-  await syntheticCard.getByRole('button', { name: '加密发送任务' }).click();
+  await scheduledTaskForm.getByLabel('验收标准').fill('两端显示同一任务 ID 和已接受状态。');
+  await scheduledTaskForm.getByRole('button', { name: '自动选择 Brain 与 Worker' }).click();
+  const brainTaskCard = page
+    .locator('.brain-task-card')
+    .filter({ has: page.getByRole('heading', { name: remoteTaskTitle }) });
+  await brainTaskCard.getByText('Task 与 Execution 已分离').waitFor();
+  await brainTaskCard
+    .getByText(/Master/)
+    .first()
+    .waitFor();
+  await brainTaskCard
+    .getByText(/Worker/)
+    .first()
+    .waitFor();
   const remoteTask = () =>
     peer.snapshot().remoteTasks.find((task) => task.title === remoteTaskTitle);
   const taskDeadline = Date.now() + 5000;

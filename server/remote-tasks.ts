@@ -15,6 +15,7 @@ import type {
   Question,
   RemoteTaskControlAction,
   RemoteTaskInvite,
+  TaskHardwareRequirements,
   TaskState,
 } from '../shared/types.ts';
 
@@ -30,7 +31,10 @@ export type RemoteTaskOfferMessage = {
   title: string;
   description: string;
   criteria: string;
+  requestedProjectID: string | null;
+  requirements: TaskHardwareRequirements;
   executionProtocol: 1;
+  brainTaskID?: string | null;
   createdAt: string;
   expiresAt: string;
 };
@@ -123,12 +127,13 @@ type StoredRemoteTask = Omit<RemoteTaskInvite, 'controlPending'> & {
   incomingControls: RemoteTaskControlMessage[];
   appliedControlIDs: string[];
 };
-type StoredRemoteTasks = { version: 5; tasks: StoredRemoteTask[] };
+type StoredRemoteTasks = { version: 7; tasks: StoredRemoteTask[] };
 
 const nodePattern = /^[A-Za-z0-9_-]{32}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const maximumLifetimeMilliseconds = 24 * 60 * 60_000;
 const executionLeaseMilliseconds = 30 * 60_000;
+const maximumClockSkewMilliseconds = 60_000;
 const taskStates = [
   'open',
   'ready',
@@ -145,6 +150,37 @@ const taskStates = [
 
 function validDate(value: unknown) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function validRequirements(value: unknown): value is TaskHardwareRequirements {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  const allowed = new Set([
+    'platform',
+    'architecture',
+    'minimumLogicalCores',
+    'minimumMemoryBytes',
+    'gpu',
+    'minimumGpuMemoryBytes',
+  ]);
+  if (Object.keys(item).some((key) => !allowed.has(key))) return false;
+  return (
+    (item.platform === undefined ||
+      (typeof item.platform === 'string' &&
+        item.platform.length >= 1 &&
+        item.platform.length <= 40)) &&
+    (item.architecture === undefined ||
+      (typeof item.architecture === 'string' &&
+        item.architecture.length >= 1 &&
+        item.architecture.length <= 40)) &&
+    (item.minimumLogicalCores === undefined ||
+      (Number.isSafeInteger(item.minimumLogicalCores) && Number(item.minimumLogicalCores) >= 1)) &&
+    (item.minimumMemoryBytes === undefined ||
+      (Number.isSafeInteger(item.minimumMemoryBytes) && Number(item.minimumMemoryBytes) >= 1)) &&
+    (item.gpu === undefined || typeof item.gpu === 'boolean') &&
+    (item.minimumGpuMemoryBytes === undefined ||
+      (Number.isSafeInteger(item.minimumGpuMemoryBytes) && Number(item.minimumGpuMemoryBytes) >= 1))
+  );
 }
 
 function validApproval(value: unknown): value is Approval {
@@ -305,6 +341,15 @@ export function validRemoteTaskOffer(value: unknown): value is RemoteTaskOfferMe
     typeof item.criteria !== 'string' ||
     item.criteria.trim().length < 1 ||
     item.criteria.length > 2000 ||
+    !(
+      item.requestedProjectID === null ||
+      (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))
+    ) ||
+    !validRequirements(item.requirements) ||
+    !(
+      item.brainTaskID == null ||
+      (typeof item.brainTaskID === 'string' && uuidPattern.test(item.brainTaskID))
+    ) ||
     item.executionProtocol !== 1 ||
     !validDate(item.createdAt) ||
     !validDate(item.expiresAt)
@@ -314,8 +359,9 @@ export function validRemoteTaskOffer(value: unknown): value is RemoteTaskOfferMe
   return (
     lifetime > 0 &&
     lifetime <= maximumLifetimeMilliseconds &&
-    Date.parse(String(item.createdAt)) <= Date.now() + 60_000 &&
-    Date.parse(String(item.expiresAt)) <= Date.now() + maximumLifetimeMilliseconds + 60_000
+    Date.parse(String(item.createdAt)) <= Date.now() + maximumClockSkewMilliseconds &&
+    Date.parse(String(item.expiresAt)) <=
+      Date.now() + maximumLifetimeMilliseconds + maximumClockSkewMilliseconds
   );
 }
 
@@ -327,7 +373,7 @@ export function validRemoteTaskResponse(value: unknown): value is RemoteTaskResp
     validBase(item) &&
     (item.decision === 'accepted' || item.decision === 'declined') &&
     validDate(item.decidedAt) &&
-    Date.parse(String(item.decidedAt)) <= Date.now() + 60_000
+    Date.parse(String(item.decidedAt)) <= Date.now() + maximumClockSkewMilliseconds
   );
 }
 
@@ -449,6 +495,11 @@ function validStored(value: unknown): value is StoredRemoteTask {
     typeof item.criteria === 'string' &&
     item.criteria.trim().length >= 1 &&
     item.criteria.length <= 2000 &&
+    (item.requestedProjectID === null ||
+      (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))) &&
+    validRequirements(item.requirements) &&
+    (item.brainTaskID === null ||
+      (typeof item.brainTaskID === 'string' && uuidPattern.test(item.brainTaskID))) &&
     ['pending', 'accepted', 'declined', 'cancelled', 'expired'].includes(String(item.status)) &&
     typeof item.automaticEligible === 'boolean' &&
     ['unprepared', 'ready', 'revoked', 'expired'].includes(String(item.executionStatus)) &&
@@ -548,6 +599,9 @@ function normalizeStored(value: unknown): StoredRemoteTask | null {
   const normalized = {
     ...item,
     automaticEligible: item.automaticEligible ?? false,
+    brainTaskID: item.brainTaskID ?? null,
+    requestedProjectID: item.requestedProjectID ?? null,
+    requirements: item.requirements ?? {},
     executionStatus: item.executionStatus ?? 'unprepared',
     executionLeaseID: item.executionLeaseID ?? null,
     executionLeaseExpiresAt: item.executionLeaseExpiresAt ?? null,
@@ -596,6 +650,9 @@ function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
     task.title === message.title &&
     task.description === message.description &&
     task.criteria === message.criteria &&
+    task.brainTaskID === (message.brainTaskID ?? null) &&
+    task.requestedProjectID === message.requestedProjectID &&
+    JSON.stringify(task.requirements) === JSON.stringify(message.requirements) &&
     task.automaticEligible === (message.executionProtocol === 1) &&
     task.createdAt === message.createdAt &&
     task.expiresAt === message.expiresAt
@@ -646,7 +703,9 @@ export class RemoteTaskStore {
         stored.version !== 2 &&
         stored.version !== 3 &&
         stored.version !== 4 &&
-        stored.version !== 5) ||
+        stored.version !== 5 &&
+        stored.version !== 6 &&
+        stored.version !== 7) ||
       !Array.isArray(stored.tasks) ||
       stored.tasks.length > 500
     )
@@ -657,7 +716,7 @@ export class RemoteTaskStore {
     if (new Set(normalizedTasks.map((task) => task.id)).size !== normalizedTasks.length)
       throw new Error('远端任务邀请记录存在冲突；节点网络保持关闭。');
     for (const task of normalizedTasks) this.values.set(task.id, { ...task });
-    if (stored.version !== 5 || JSON.stringify(normalizedTasks) !== JSON.stringify(stored.tasks))
+    if (stored.version !== 7 || JSON.stringify(normalizedTasks) !== JSON.stringify(stored.tasks))
       this.save();
   }
 
@@ -676,12 +735,20 @@ export class RemoteTaskStore {
     ownerBrainID: string,
     targetNodeID: string,
     targetBrainID: string,
-    input: { title: string; description: string; criteria: string },
+    input: {
+      title: string;
+      description: string;
+      criteria: string;
+      requestedProjectID?: string | null;
+      requirements?: TaskHardwareRequirements;
+      brainTaskID?: string | null;
+    },
   ) {
     if (this.values.size >= 500) throw new Error('远端任务邀请数量已达上限。');
     const createdAt = new Date().toISOString();
     const task: StoredRemoteTask = {
       id: randomUUID(),
+      brainTaskID: input.brainTaskID ?? null,
       idempotencyKey: randomUUID(),
       direction: 'outgoing',
       ownerNodeID,
@@ -691,6 +758,8 @@ export class RemoteTaskStore {
       title: input.title.trim(),
       description: input.description.trim(),
       criteria: input.criteria.trim(),
+      requestedProjectID: input.requestedProjectID ?? null,
+      requirements: structuredClone(input.requirements ?? {}),
       status: 'pending',
       automaticEligible: true,
       executionStatus: 'unprepared',
@@ -721,6 +790,21 @@ export class RemoteTaskStore {
     return publicTask(task);
   }
 
+  discardUnsent(taskID: string) {
+    const task = this.values.get(taskID);
+    if (
+      !task ||
+      task.direction !== 'outgoing' ||
+      task.status !== 'pending' ||
+      !task.deliveryPending ||
+      task.executionSequence !== 0
+    )
+      return false;
+    this.values.delete(taskID);
+    this.save();
+    return true;
+  }
+
   receiveOffer(message: RemoteTaskOfferMessage) {
     const existing = this.values.get(message.taskID);
     if (existing) {
@@ -731,6 +815,7 @@ export class RemoteTaskStore {
     if (Date.parse(message.expiresAt) <= Date.now()) throw new Error('远端任务邀请已经过期。');
     const task: StoredRemoteTask = {
       id: message.taskID,
+      brainTaskID: message.brainTaskID ?? null,
       idempotencyKey: message.idempotencyKey,
       direction: 'incoming',
       ownerNodeID: message.ownerNodeID,
@@ -740,6 +825,8 @@ export class RemoteTaskStore {
       title: message.title,
       description: message.description,
       criteria: message.criteria,
+      requestedProjectID: message.requestedProjectID,
+      requirements: structuredClone(message.requirements),
       status: 'pending',
       automaticEligible: true,
       executionStatus: 'unprepared',
@@ -793,12 +880,16 @@ export class RemoteTaskStore {
     if (!task || task.direction !== 'outgoing' || !sameRoute(task, message))
       throw new Error('远端任务回复与原邀请不匹配。');
     if (
-      Date.parse(message.decidedAt) < Date.parse(task.createdAt) ||
-      Date.parse(message.decidedAt) > Date.parse(task.expiresAt) + 60_000
+      !validRemoteTaskResponse(message) ||
+      // The Worker and Master use different clocks; route/state fence obsolete executions.
+      Date.parse(message.decidedAt) < Date.parse(task.createdAt) - maximumClockSkewMilliseconds ||
+      Date.parse(message.decidedAt) > Date.parse(task.expiresAt) + maximumClockSkewMilliseconds
     )
       throw new Error('远端任务回复时间无效。');
     if (task.status === message.decision) return false;
-    if (task.status !== 'pending') return false;
+    if (task.status !== 'pending') throw new Error('这次 Execution 已失效，不能再接受。');
+    // First acceptance uses the Master's own deadline, even between expiry ticks.
+    if (Date.now() >= Date.parse(task.expiresAt)) throw new Error('这次 Execution 已过期。');
     task.status = message.decision;
     task.deliveryPending = false;
     task.deliveryError = null;
@@ -850,9 +941,15 @@ export class RemoteTaskStore {
     if (!task || task.direction !== 'outgoing' || !sameRoute(task, message))
       throw new Error('远端执行准备与原邀请不匹配。');
     if (task.status !== 'accepted') throw new Error('远端任务尚未接受。');
-    if (Date.parse(message.statusAt) < Date.parse(task.createdAt))
+    if (
+      !validRemoteTaskPreparation(message) ||
+      Date.parse(message.statusAt) < Date.parse(task.createdAt) - maximumClockSkewMilliseconds
+    )
       throw new Error('远端执行准备时间无效。');
-    if (Date.parse(message.leaseExpiresAt) < Date.parse(task.createdAt))
+    if (
+      Date.parse(message.leaseExpiresAt) <
+      Date.parse(task.createdAt) - maximumClockSkewMilliseconds
+    )
       throw new Error('远端执行准备期限无效。');
     if (
       task.executionUpdatedAt &&
@@ -887,7 +984,7 @@ export class RemoteTaskStore {
     const task = this.values.get(taskID);
     if (!task || task.direction !== 'incoming' || !task.automaticEligible)
       throw new Error('可执行的远端任务不存在。');
-    if (task.status !== 'accepted' || task.deliveryPending)
+    if (task.status !== 'accepted' || task.deliveryPending || task.deliveryError)
       throw new Error('远端任务接受状态尚未完成同步。');
     if (!uuidPattern.test(localTaskID)) throw new Error('本机任务标识无效。');
     if (task.localTaskID) {
@@ -962,7 +1059,10 @@ export class RemoteTaskStore {
       throw new Error('远端执行状态与原任务不匹配。');
     if (!task.automaticEligible || task.status !== 'accepted')
       throw new Error('远端任务尚未进入执行阶段。');
-    if (Date.parse(message.statusAt) < Date.parse(task.createdAt))
+    if (
+      !validRemoteTaskExecution(message) ||
+      Date.parse(message.statusAt) < Date.parse(task.createdAt) - maximumClockSkewMilliseconds
+    )
       throw new Error('远端执行状态时间无效。');
     const approvals = message.approvals || [];
     const questions = message.questions || [];
@@ -1144,6 +1244,8 @@ export class RemoteTaskStore {
     if (!task || task.direction !== 'outgoing') throw new Error('可取消的远端任务邀请不存在。');
     if (task.status !== 'pending' && task.status !== 'accepted')
       throw new Error('远端任务邀请当前不能取消。');
+    if (task.brainTaskID && task.status === 'accepted')
+      throw new Error('Worker 已接受，执行状态可能未知；不能按未启动任务取消或重派。');
     if (task.executionSequence > 0) throw new Error('远端任务已经开始执行；请使用停止操作。');
     task.status = 'cancelled';
     task.executionStatus = task.executionStatus === 'unprepared' ? 'unprepared' : 'revoked';
@@ -1206,7 +1308,10 @@ export class RemoteTaskStore {
         title: task.title,
         description: task.description,
         criteria: task.criteria,
+        requestedProjectID: task.requestedProjectID,
+        requirements: structuredClone(task.requirements),
         executionProtocol: 1,
+        brainTaskID: task.brainTaskID,
         createdAt: task.createdAt,
         expiresAt: task.expiresAt,
       };
@@ -1352,7 +1457,7 @@ export class RemoteTaskStore {
   private save() {
     mkdirSync(dirname(this.path), { recursive: true });
     const value: StoredRemoteTasks = {
-      version: 5,
+      version: 7,
       tasks: [...this.values.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     };
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;

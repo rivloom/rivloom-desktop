@@ -1299,11 +1299,9 @@ function App() {
                 )
                   void action(() => api(`/network/trusted/${nodeID}/revoke`, { confirmed: true }));
               }}
-              onCreateRemoteTask={(nodeID, targetBrainID, input) =>
+              onCreateRemoteTask={(input) =>
                 void action(() =>
                   api('/network/tasks', {
-                    nodeID,
-                    targetBrainID,
                     ...input,
                     confirmed: true,
                   }),

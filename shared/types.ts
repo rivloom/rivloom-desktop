@@ -105,9 +105,101 @@ export type Bootstrap = {
 export type BrainSummary = {
   id: string;
   name: string;
+  masterNodeID: string;
+  state: 'provisional' | 'established';
+  queueDepth?: number;
+};
+export type WorkerProject = {
+  id: string;
+  name: string;
+};
+export type WorkerHardware = {
+  platform: string;
+  release: string;
+  architecture: string;
+  cpuModel: string;
+  physicalCores: number | null;
+  logicalCores: number;
+  memoryBytes: number;
+  gpus: { name: string; memoryBytes: number | null }[];
+  diskBytes: number | null;
+  collectedAt: string;
+};
+export type WorkerLoad = {
+  cpuPercent: number | null;
+  memoryAvailableBytes: number;
+  memoryUsedPercent: number;
+  gpuPercent: number | null;
+  gpuMemoryAvailableBytes: number | null;
+  diskAvailableBytes: number | null;
+  runningTasks: number;
+  availableSlots: number;
+  sampledAt: string;
+};
+export type WorkerRegistration = {
+  nodeID: string;
+  accepting: boolean;
+  projects: WorkerProject[];
+  hardware: WorkerHardware;
+  load: WorkerLoad;
+};
+export type TaskHardwareRequirements = {
+  platform?: string;
+  architecture?: string;
+  minimumLogicalCores?: number;
+  minimumMemoryBytes?: number;
+  gpu?: boolean;
+  minimumGpuMemoryBytes?: number;
+};
+export type TaskPlacementRequirements = {
+  projectID: string | null;
+  requirements: TaskHardwareRequirements;
+};
+export type BrainTaskExecution = {
+  attempt: number;
+  executionID: string;
+  workerNodeID: string;
+  status: 'assigned' | 'running' | 'waiting' | 'review' | 'completed' | 'failed';
+  sequence: number;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type BrainTask = {
+  id: string;
+  direction: 'submitted' | 'owned';
+  submitterNodeID: string;
+  brainID: string;
+  masterNodeID: string;
+  title: string;
+  description: string;
+  criteria: string;
+  requestedProjectID: string | null;
+  requirements: TaskHardwareRequirements;
+  status:
+    | 'submitting'
+    | 'queued'
+    | 'assigned'
+    | 'running'
+    | 'waiting'
+    | 'review'
+    | 'completed'
+    | 'failed';
+  selectedWorkerID: string | null;
+  executionID: string | null;
+  executionSequence: number;
+  executionSummary: string;
+  executionAttempt: number;
+  executions: BrainTaskExecution[];
+  retryNotBefore: string | null;
+  deliveryPending: boolean;
+  deliveryError: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 export type RemoteTaskInvite = {
   id: string;
+  brainTaskID: string | null;
   direction: 'incoming' | 'outgoing';
   ownerNodeID: string;
   ownerBrainID: string;
@@ -116,6 +208,8 @@ export type RemoteTaskInvite = {
   title: string;
   description: string;
   criteria: string;
+  requestedProjectID: string | null;
+  requirements: TaskHardwareRequirements;
   status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
   automaticEligible: boolean;
   executionStatus: 'unprepared' | 'ready' | 'revoked' | 'expired';
@@ -162,14 +256,23 @@ export type RivloomNode = {
   lastSeen: string;
   capabilities: string[];
   brains: BrainSummary[];
+  worker: WorkerRegistration | null;
+};
+export type BrainTopology = BrainSummary & {
+  hosted: boolean;
+  online: boolean;
+  queueDepth: number;
+  workers: WorkerRegistration[];
 };
 export type NodeNetwork = {
   status: 'starting' | 'online' | 'degraded' | 'disabled';
   serviceType: string;
   local: RivloomNode | null;
   nearby: RivloomNode[];
+  brains: BrainTopology[];
   pairings: NodePairing[];
   remoteTasks: RemoteTaskInvite[];
+  brainTasks: BrainTask[];
   error: string | null;
 };
 export type NodePairing = {

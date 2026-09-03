@@ -38,6 +38,44 @@ import {
   validRemoteTaskResponse,
 } from '../server/remote-tasks.ts';
 import { ExecutionPolicyStore } from '../server/execution-policy.ts';
+import {
+  rankBrainPlacements,
+  parseNvidiaMemory,
+  rankWorkers,
+  validWorkerRegistration,
+  workerMatchesTask,
+} from '../server/worker-resources.ts';
+import type { BrainTopology, WorkerRegistration } from '../shared/types.ts';
+import { BrainTopologyStore } from '../server/brain-topology.ts';
+import {
+  BrainTaskStore,
+  validBrainTaskSubmission,
+  validBrainTaskUpdate,
+} from '../server/brain-tasks.ts';
+import { WorkerAdmissionGate } from '../server/worker-admission.ts';
+
+test('node rate limits isolate discovery, hello and channel budgets without bypassing caps', () => {
+  // An unstarted store only reads this nonexistent root; no identity or files are created.
+  const network = new NodeNetwork(join(tmpdir(), `rivloom-rate-${randomUUID()}`), false);
+  const limiter = network as unknown as {
+    rateLimited(address: string, scope: 'discovery' | 'hello' | 'control' | 'channel'): boolean;
+  };
+  for (const [scope, limit] of [
+    ['discovery', 60],
+    ['hello', 120],
+    ['control', 60],
+    ['channel', 600],
+  ] as const) {
+    for (let index = 0; index < limit; index++)
+      assert.equal(limiter.rateLimited('192.168.10.2', scope), false, `${scope} legitimate budget`);
+    assert.equal(
+      limiter.rateLimited('::ffff:192.168.10.2', scope),
+      true,
+      `${scope} cap and normalized address`,
+    );
+    assert.equal(limiter.rateLimited('192.168.10.3', scope), false, `${scope} independent address`);
+  }
+});
 
 async function availableUdpPort() {
   const socket = createSocket('udp4');
@@ -71,8 +109,39 @@ async function waitForSecureChannels(networks: NodeNetwork[]) {
   assert(networks.every((network) => network.snapshot().nearby[0]?.channelReady === true));
 }
 
-async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) {
+async function waitForDiscoveredNode(network: NodeNetwork, nodeID: string) {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline && !network.snapshot().nearby.some((node) => node.id === nodeID))
+    await wait(100);
+  assert(network.snapshot().nearby.some((node) => node.id === nodeID));
+}
+
+async function pairNetworks(left: NodeNetwork, right: NodeNetwork) {
+  const leftID = left.snapshot().local!.id;
+  const rightID = right.snapshot().local!.id;
+  await waitForDiscoveredNode(left, rightID);
+  await waitForDiscoveredNode(right, leftID);
+  await left.requestPairing(rightID);
+  let leftPairing = left.snapshot().pairings.find((pairing) => pairing.nodeID === rightID);
+  let rightPairing = right.snapshot().pairings.find((pairing) => pairing.nodeID === leftID);
+  assert(leftPairing && rightPairing);
+  await left.confirmPairing(leftPairing.id);
+  rightPairing = right.snapshot().pairings.find((pairing) => pairing.nodeID === leftID);
+  assert(rightPairing);
+  await right.confirmPairing(rightPairing.id);
   const deadline = Date.now() + 10_000;
+  while (
+    Date.now() < deadline &&
+    (!left.snapshot().nearby.find((node) => node.id === rightID)?.channelReady ||
+      !right.snapshot().nearby.find((node) => node.id === leftID)?.channelReady)
+  )
+    await wait(100);
+  assert(left.snapshot().nearby.find((node) => node.id === rightID)?.channelReady);
+  assert(right.snapshot().nearby.find((node) => node.id === leftID)?.channelReady);
+}
+
+async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) {
+  const deadline = Date.now() + 20_000;
   while (
     Date.now() < deadline &&
     networks.some(
@@ -83,12 +152,27 @@ async function waitForRemoteTaskStatus(networks: NodeNetwork[], status: string) 
     )
   )
     await wait(50);
+  const snapshots = networks.map((network) => network.snapshot());
   assert(
-    networks.every(
+    snapshots.every(
       (network) =>
-        network.snapshot().remoteTasks.length === 1 &&
-        network.snapshot().remoteTasks[0]?.status === status &&
-        !network.snapshot().remoteTasks[0]?.deliveryPending,
+        network.remoteTasks.length === 1 &&
+        network.remoteTasks[0]?.status === status &&
+        !network.remoteTasks[0]?.deliveryPending,
+    ),
+    JSON.stringify(
+      snapshots.map((snapshot) => ({
+        local: snapshot.local?.id,
+        channelReady: snapshot.nearby.map((node) => [node.id, node.channelReady]),
+        tasks: snapshot.remoteTasks.map((task) => ({
+          direction: task.direction,
+          status: task.status,
+          deliveryPending: task.deliveryPending,
+          deliveryError: task.deliveryError,
+          ownerBrainID: task.ownerBrainID,
+          targetNodeID: task.targetNodeID,
+        })),
+      })),
     ),
   );
 }
@@ -112,6 +196,786 @@ async function waitForRemoteExecutionStatus(networks: NodeNetwork[], status: str
     ),
   );
 }
+
+const workerFixture = (
+  nodeID: string,
+  input: Partial<WorkerRegistration> = {},
+): WorkerRegistration => ({
+  nodeID,
+  accepting: true,
+  projects: [{ id: '11111111-1111-4111-8111-111111111111', name: 'alpha' }],
+  hardware: {
+    platform: 'win32',
+    release: '10.0.26100',
+    architecture: 'x64',
+    cpuModel: 'Example CPU',
+    physicalCores: 8,
+    logicalCores: 16,
+    memoryBytes: 32 * 1024 ** 3,
+    gpus: [{ name: 'Example GPU', memoryBytes: 12 * 1024 ** 3 }],
+    diskBytes: 1000 * 1024 ** 3,
+    collectedAt: '2026-09-02T00:00:00.000Z',
+  },
+  load: {
+    cpuPercent: 25,
+    memoryAvailableBytes: 20 * 1024 ** 3,
+    memoryUsedPercent: 37.5,
+    gpuPercent: 10,
+    gpuMemoryAvailableBytes: 10 * 1024 ** 3,
+    diskAvailableBytes: 600 * 1024 ** 3,
+    runningTasks: 0,
+    availableSlots: 1,
+    sampledAt: '2026-09-02T00:00:10.000Z',
+  },
+  ...input,
+});
+
+test('GPU memory parsing preserves values above 4 GiB and treats unavailable values as unknown', () => {
+  const values = parseNvidiaMemory('NVIDIA Test GPU, 16311\nUnknown GPU, [N/A]\nBad GPU, -1\n');
+  assert.equal(values.get('NVIDIA Test GPU'), 16311 * 1024 ** 2);
+  assert.equal(values.size, 1);
+  assert.equal(values.get('Unknown GPU'), undefined);
+});
+
+test('worker resource validation excludes identity and secret-shaped hardware fields', () => {
+  const worker = workerFixture('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  assert(validWorkerRegistration(worker));
+  assert.equal('mac' in worker.hardware, false);
+  assert.equal('serial' in worker.hardware, false);
+  assert.equal('username' in worker.hardware, false);
+  assert.equal('directory' in worker.hardware, false);
+  assert.equal('model' in worker, false);
+  assert(
+    !validWorkerRegistration({
+      ...worker,
+      hardware: { ...worker.hardware, serial: 'must-not-cross-the-node-boundary' },
+    }),
+  );
+});
+
+test('worker scheduling filters stale and incompatible reports before ranking live capacity', () => {
+  const at = Date.parse('2026-09-02T00:00:20.000Z');
+  const lowLoad = workerFixture('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  const highLoad = workerFixture('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', {
+    load: {
+      ...workerFixture('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB').load,
+      cpuPercent: 85,
+      memoryAvailableBytes: 8 * 1024 ** 3,
+      memoryUsedPercent: 75,
+    },
+  });
+  const noGpu = workerFixture('CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC', {
+    hardware: {
+      ...workerFixture('CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC').hardware,
+      gpus: [],
+    },
+    load: {
+      ...workerFixture('CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC').load,
+      gpuPercent: null,
+      gpuMemoryAvailableBytes: null,
+    },
+  });
+  const stale = workerFixture('DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', {
+    load: {
+      ...workerFixture('DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD').load,
+      sampledAt: '2026-09-01T23:59:00.000Z',
+    },
+  });
+  const task = {
+    projectID: '11111111-1111-4111-8111-111111111111',
+    requirements: {
+      platform: 'win32',
+      architecture: 'x64',
+      minimumLogicalCores: 8,
+      minimumMemoryBytes: 16 * 1024 ** 3,
+      gpu: true,
+      minimumGpuMemoryBytes: 8 * 1024 ** 3,
+    },
+  } as const;
+  assert(workerMatchesTask(lowLoad, task, at));
+  assert(!workerMatchesTask(noGpu, task, at));
+  assert(!workerMatchesTask(stale, task, at));
+  assert.deepEqual(
+    rankWorkers([highLoad, stale, noGpu, lowLoad], task, at).map((worker) => worker.nodeID),
+    [lowLoad.nodeID, highLoad.nodeID],
+  );
+});
+
+test('worker scheduling uses stable node IDs to break equal load scores', () => {
+  const at = Date.parse('2026-09-02T00:00:20.000Z');
+  const first = workerFixture('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  const second = workerFixture('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB');
+  assert.deepEqual(
+    rankWorkers([second, first], { projectID: null, requirements: {} }, at).map(
+      (worker) => worker.nodeID,
+    ),
+    [first.nodeID, second.nodeID],
+  );
+});
+
+test('node final admission serializes competing Brains before reserving one global slot', async () => {
+  const gate = new WorkerAdmissionGate();
+  let occupied = false;
+  let reservations = 0;
+  const attempt = () =>
+    gate.run(async () => {
+      if (occupied) return false;
+      await wait(10);
+      occupied = true;
+      reservations += 1;
+      return true;
+    });
+  const results = await Promise.all([attempt(), attempt()]);
+  assert.deepEqual(results.sort(), [false, true]);
+  assert.equal(reservations, 1);
+});
+
+test('brain task placement chooses an established online Brain and its lowest-load Worker', () => {
+  const at = Date.parse('2026-09-02T00:00:20.000Z');
+  const busy = workerFixture('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', {
+    load: {
+      ...workerFixture('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB').load,
+      cpuPercent: 90,
+      memoryUsedPercent: 80,
+    },
+  });
+  const idle = workerFixture('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  const brain = (
+    id: string,
+    workers: WorkerRegistration[],
+    input: Partial<BrainTopology> = {},
+  ): BrainTopology => ({
+    id,
+    name: `Brain ${id.slice(0, 6)}`,
+    masterNodeID: workers[0]?.nodeID || 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    state: 'established',
+    hosted: false,
+    online: true,
+    queueDepth: 0,
+    workers,
+    ...input,
+  });
+  const placements = rankBrainPlacements(
+    [
+      brain('22222222-2222-4222-8222-222222222222', [busy]),
+      brain('11111111-1111-4111-8111-111111111111', [idle]),
+      brain('33333333-3333-4333-8333-333333333333', [idle], { online: false }),
+      brain('44444444-4444-4444-8444-444444444444', [idle], {
+        state: 'provisional',
+      }),
+    ],
+    { projectID: null, requirements: {} },
+    at,
+  );
+  assert.deepEqual(
+    placements.map((placement) => [placement.brain.id, placement.worker.nodeID]),
+    [
+      ['11111111-1111-4111-8111-111111111111', idle.nodeID],
+      ['22222222-2222-4222-8222-222222222222', busy.nodeID],
+    ],
+  );
+  assert.deepEqual(
+    rankBrainPlacements(
+      [
+        brain('11111111-1111-4111-8111-111111111111', [idle], { queueDepth: 3 }),
+        brain('22222222-2222-4222-8222-222222222222', [idle], { queueDepth: 0 }),
+      ],
+      { projectID: null, requirements: {} },
+      at,
+    ).map((placement) => placement.brain.id),
+    ['22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111'],
+  );
+});
+
+test('brain topology migrates a legacy node Brain as established and stable', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-brain-legacy-'));
+  const nodeID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const brainID = '11111111-1111-4111-8111-111111111111';
+  try {
+    const first = new BrainTopologyStore(root);
+    first.load({ nodeID, legacyBrainID: brainID, legacyIdentityExisted: true });
+    assert.deepEqual(first.hosted(), [
+      {
+        id: brainID,
+        name: 'Brain 111111',
+        masterNodeID: nodeID,
+        state: 'established',
+      },
+    ]);
+    const reloaded = new BrainTopologyStore(root);
+    reloaded.load({
+      nodeID,
+      legacyBrainID: '22222222-2222-4222-8222-222222222222',
+      legacyIdentityExisted: true,
+    });
+    assert.equal(reloaded.hosted()[0]?.id, brainID);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('brain task submission gives the Master an authoritative Task and a separate Execution ID', () => {
+  const submitterRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-task-submitter-'));
+  const masterRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-task-master-'));
+  const submitterNodeID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const masterNodeID = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const workerNodeID = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+  const brainID = '11111111-1111-4111-8111-111111111111';
+  try {
+    const submitter = new BrainTaskStore(submitterRoot);
+    const master = new BrainTaskStore(masterRoot);
+    const submitted = submitter.create('submitted', submitterNodeID, brainID, masterNodeID, {
+      title: '两跳提交',
+      description: 'Task 先交给 Brain Master，再产生 Worker Execution。',
+      criteria: 'Task ID 与 Execution ID 分离。',
+      requestedProjectID: null,
+      requirements: { minimumLogicalCores: 4 },
+    });
+    const submission = submitter.message(submitted.id);
+    assert(validBrainTaskSubmission(submission));
+    assert.equal(master.receiveSubmission(submission), true);
+    assert.equal(master.receiveSubmission(submission), false);
+    assert(submitter.markDelivered(submitted.id, submission));
+
+    const executionID = randomUUID();
+    const assigned = master.assign(submitted.id, workerNodeID, executionID);
+    assert.notEqual(assigned.id, assigned.executionID);
+    const update = master.message(submitted.id);
+    assert(validBrainTaskUpdate(update));
+    const mirrored = submitter.receiveUpdate(update);
+    assert.equal(mirrored.status, 'assigned');
+    assert.equal(mirrored.selectedWorkerID, workerNodeID);
+    assert.equal(mirrored.executionID, executionID);
+  } finally {
+    rmSync(submitterRoot, { recursive: true, force: true });
+    rmSync(masterRoot, { recursive: true, force: true });
+  }
+});
+
+test('brain task retries a safely rejected Execution and fences delayed results from the old ID', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-brain-task-retry-'));
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-task-retry-remote-'));
+  const submitterNodeID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const masterNodeID = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const firstWorkerID = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+  const secondWorkerID = 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
+  const brainID = '11111111-1111-4111-8111-111111111111';
+  try {
+    const tasks = new BrainTaskStore(root);
+    const executions = new RemoteTaskStore(remoteRoot);
+    const owned = tasks.create('owned', submitterNodeID, brainID, masterNodeID, {
+      title: '安全重调度',
+      description: 'Worker 明确拒绝后创建新的 Execution。',
+      criteria: '旧 Execution 的迟到状态不能覆盖新尝试。',
+      requestedProjectID: null,
+      requirements: {},
+    });
+    const first = executions.create(masterNodeID, brainID, firstWorkerID, brainID, {
+      title: owned.title,
+      description: owned.description,
+      criteria: owned.criteria,
+    });
+    tasks.assign(owned.id, firstWorkerID, first.id);
+    const offer = executions.message(first.id);
+    assert(validRemoteTaskOffer(offer));
+    const workerExecutions = new RemoteTaskStore(join(remoteRoot, 'worker'));
+    workerExecutions.receiveOffer(offer);
+    workerExecutions.decide(first.id, 'declined');
+    const response = workerExecutions.message(first.id);
+    assert(validRemoteTaskResponse(response));
+    executions.receiveResponse(response);
+    const declined = executions.list()[0];
+    assert(tasks.syncExecution(owned.id, declined));
+    assert(
+      tasks.requeueExecution(owned.id, declined, 'Worker 在本机最终准入时拒绝了这次 Execution。'),
+    );
+    const queued = tasks.list()[0];
+    assert.equal(queued.status, 'queued');
+    assert.equal(queued.executionID, null);
+    assert.equal(queued.executionAttempt, 1);
+    assert.equal(queued.executions[0]?.status, 'failed');
+    assert(queued.retryNotBefore);
+
+    const secondExecutionID = randomUUID();
+    const assigned = tasks.assign(owned.id, secondWorkerID, secondExecutionID);
+    assert.equal(assigned.executionAttempt, 2);
+    assert.equal(assigned.executionID, secondExecutionID);
+    assert.equal(assigned.executions.length, 2);
+    assert.equal(tasks.syncExecution(owned.id, declined), false);
+    assert.equal(tasks.list()[0]?.executionID, secondExecutionID);
+    assert.equal(tasks.list()[0]?.status, 'assigned');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(remoteRoot, { recursive: true, force: true });
+  }
+});
+
+test('brain task store migrates version 1 records into explicit Execution history', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-brain-task-v1-'));
+  try {
+    const store = new BrainTaskStore(root);
+    const task = store.create(
+      'owned',
+      'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      '11111111-1111-4111-8111-111111111111',
+      'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      {
+        title: '迁移 Task',
+        description: '保留既有 Task 与 Execution 标识。',
+        criteria: '升级后形成第一条 Execution 历史。',
+        requestedProjectID: null,
+        requirements: {},
+      },
+    );
+    const executionID = randomUUID();
+    store.assign(task.id, 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC', executionID);
+    const path = join(root, 'brain-tasks.json');
+    const legacy = JSON.parse(readFileSync(path, 'utf8'));
+    legacy.version = 1;
+    for (const record of legacy.tasks) {
+      delete record.executionAttempt;
+      delete record.executions;
+      delete record.retryNotBefore;
+    }
+    writeFileSync(path, JSON.stringify(legacy));
+    const migrated = new BrainTaskStore(root);
+    migrated.load();
+    assert.equal(migrated.list()[0]?.executionAttempt, 1);
+    assert.equal(migrated.list()[0]?.executions[0]?.executionID, executionID);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('automatic brain formation adopts established masters and never merges established Brains', () => {
+  const freshRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-fresh-'));
+  const establishedRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-established-'));
+  const freshNode = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const masterNode = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const freshBrain = '22222222-2222-4222-8222-222222222222';
+  const establishedBrain = '11111111-1111-4111-8111-111111111111';
+  try {
+    const fresh = new BrainTopologyStore(freshRoot);
+    fresh.load({ nodeID: freshNode, legacyBrainID: freshBrain, legacyIdentityExisted: false });
+    assert.equal(fresh.hosted()[0]?.state, 'provisional');
+    fresh.reconcile(masterNode, [
+      {
+        id: establishedBrain,
+        name: 'Brain 111111',
+        masterNodeID: masterNode,
+        state: 'established',
+      },
+    ]);
+    assert.deepEqual(fresh.hosted(), []);
+    assert.equal(fresh.all()[0]?.id, establishedBrain);
+
+    const established = new BrainTopologyStore(establishedRoot);
+    established.load({
+      nodeID: masterNode,
+      legacyBrainID: establishedBrain,
+      legacyIdentityExisted: true,
+    });
+    established.reconcile(freshNode, [
+      {
+        id: freshBrain,
+        name: 'Brain 222222',
+        masterNodeID: freshNode,
+        state: 'established',
+      },
+    ]);
+    assert.deepEqual(
+      established.all().map((brain) => brain.id),
+      [establishedBrain, freshBrain],
+    );
+  } finally {
+    rmSync(freshRoot, { recursive: true, force: true });
+    rmSync(establishedRoot, { recursive: true, force: true });
+  }
+});
+
+test('authenticated Master withdrawal removes only its provisional registration', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-provisional-withdrawal-'));
+  try {
+    const store = new BrainTopologyStore(root);
+    store.load({
+      nodeID: 'A'.repeat(32),
+      legacyBrainID: randomUUID(),
+      legacyIdentityExisted: true,
+    });
+    const provisional = {
+      id: randomUUID(),
+      name: 'Empty bootstrap',
+      masterNodeID: 'B'.repeat(32),
+      state: 'provisional' as const,
+    };
+    const established = {
+      id: randomUUID(),
+      name: 'Existing Brain',
+      masterNodeID: 'C'.repeat(32),
+      state: 'established' as const,
+    };
+    store.reconcile(provisional.masterNodeID, [provisional]);
+    store.reconcile(established.masterNodeID, [established]);
+    store.reconcile('D'.repeat(32), []);
+    assert.equal(store.all().length, 3);
+    assert(store.reconcile(provisional.masterNodeID, []));
+    assert(!store.all().some((brain) => brain.id === provisional.id));
+    store.reconcile(established.masterNodeID, []);
+    assert(store.all().some((brain) => brain.id === established.id));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('automatic brain formation deterministically keeps the lower provisional master', () => {
+  const leftRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-left-'));
+  const rightRoot = mkdtempSync(join(tmpdir(), 'rivloom-brain-right-'));
+  const leftNode = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const rightNode = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const leftBrain = '11111111-1111-4111-8111-111111111111';
+  const rightBrain = '22222222-2222-4222-8222-222222222222';
+  try {
+    const left = new BrainTopologyStore(leftRoot);
+    const right = new BrainTopologyStore(rightRoot);
+    left.load({ nodeID: leftNode, legacyBrainID: leftBrain, legacyIdentityExisted: false });
+    right.load({ nodeID: rightNode, legacyBrainID: rightBrain, legacyIdentityExisted: false });
+    left.reconcile(rightNode, right.hosted());
+    right.reconcile(leftNode, left.hosted());
+    assert.equal(left.hosted()[0]?.id, leftBrain);
+    assert.equal(left.hosted()[0]?.state, 'established');
+    assert.deepEqual(right.hosted(), []);
+    assert.equal(right.all()[0]?.id, leftBrain);
+  } finally {
+    rmSync(leftRoot, { recursive: true, force: true });
+    rmSync(rightRoot, { recursive: true, force: true });
+  }
+});
+
+test(
+  'shared workers register with two Brains and a declined Execution is reassigned safely',
+  { skip: process.platform !== 'win32', timeout: 90_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const roots = [
+      mkdtempSync(join(tmpdir(), 'rivloom-shared-master-a-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-shared-master-b-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-shared-worker-a-')),
+      mkdtempSync(join(tmpdir(), 'rivloom-shared-worker-b-')),
+    ];
+    // Two pre-existing identities migrate as independent established Brains; both Workers are fresh.
+    roots.slice(0, 2).forEach((root) => loadNodeIdentity(root));
+    const networks = roots.map((root) => new NodeNetwork(root, true));
+    try {
+      for (const workerNetwork of networks.slice(2))
+        workerNetwork.setWorkerRegistrationProvider((nodeID) => {
+          const worker = workerFixture(nodeID);
+          const sampledAt = new Date().toISOString();
+          return {
+            ...worker,
+            hardware: { ...worker.hardware, collectedAt: sampledAt },
+            load: { ...worker.load, sampledAt },
+          };
+        });
+      await Promise.all(networks.map((network) => network.start()));
+      for (const master of networks.slice(0, 2))
+        for (const worker of networks.slice(2)) await pairNetworks(master, worker);
+
+      const workerIDs = networks.slice(2).map((network) => network.snapshot().local!.id);
+      const deadline = Date.now() + 15_000;
+      while (
+        Date.now() < deadline &&
+        networks.slice(0, 2).some((network) => {
+          const hosted = network.snapshot().brains.find((brain) => brain.hosted);
+          return workerIDs.some(
+            (workerID) => !hosted?.workers.some((worker) => worker.nodeID === workerID),
+          );
+        })
+      )
+        await wait(100);
+
+      for (const master of networks.slice(0, 2)) {
+        const hosted = master.snapshot().brains.find((brain) => brain.hosted);
+        for (const workerID of workerIDs) {
+          const registered = hosted?.workers.find((worker) => worker.nodeID === workerID);
+          assert(registered);
+          assert(validWorkerRegistration(registered));
+          assert.equal('serial' in registered.hardware, false);
+          assert.equal('model' in registered, false);
+          assert.equal(registered.projects[0]?.name, 'alpha');
+        }
+      }
+
+      for (const worker of networks.slice(2))
+        assert.deepEqual(
+          worker.snapshot().brains.filter((brain) => brain.hosted),
+          [],
+        );
+      await networks[2].createScheduledTask({
+        title: '自动安排到共享 Worker',
+        description: '验证普通 Worker 先固定 Brain，再由 Master 选择 Worker Execution。',
+        criteria: '权威 Task 与 Execution ID 分离，Brain 和目标 Worker 在各端一致。',
+        requestedProjectID: null,
+        requirements: { minimumLogicalCores: 8, minimumMemoryBytes: 8 * 1024 ** 3 },
+      });
+      const brainTaskDeadline = Date.now() + 20_000;
+      while (
+        Date.now() < brainTaskDeadline &&
+        networks[2].snapshot().brainTasks[0]?.status !== 'assigned'
+      )
+        await wait(100);
+      const submittedTask = networks[2].snapshot().brainTasks[0];
+      assert(submittedTask);
+      assert.equal(submittedTask.direction, 'submitted');
+      assert.equal(submittedTask.status, 'assigned');
+      assert(submittedTask.executionID);
+      const master = networks
+        .slice(0, 2)
+        .find((network) => network.snapshot().local!.id === submittedTask.masterNodeID)!;
+      const ownedTask = master.snapshot().brainTasks.find((task) => task.id === submittedTask.id);
+      assert.equal(ownedTask?.direction, 'owned');
+      assert.equal(ownedTask?.executionID, submittedTask.executionID);
+      assert.notEqual(submittedTask.id, submittedTask.executionID);
+      const deliveryDeadline = Date.now() + 20_000;
+      while (
+        Date.now() < deliveryDeadline &&
+        !networks
+          .slice(2)
+          .some((network) =>
+            network
+              .snapshot()
+              .remoteTasks.some(
+                (execution) =>
+                  execution.id === submittedTask.executionID && !execution.deliveryPending,
+              ),
+          )
+      )
+        await wait(50);
+      const scheduled = master
+        .snapshot()
+        .remoteTasks.find((execution) => execution.id === submittedTask.executionID)!;
+      const selectedWorker = networks
+        .slice(2)
+        .find((network) => network.snapshot().local!.id === scheduled.targetNodeID)!;
+      const received = selectedWorker
+        .snapshot()
+        .remoteTasks.find((execution) => execution.id === submittedTask.executionID)!;
+      assert(scheduled);
+      assert(received);
+      assert.equal(scheduled.status, 'pending');
+      assert.equal(received.status, 'pending');
+      assert(workerIDs.includes(scheduled.targetNodeID));
+      assert.equal(scheduled.ownerBrainID, scheduled.targetBrainID);
+      assert.equal(received.ownerBrainID, scheduled.ownerBrainID);
+      assert.equal(received.requestedProjectID, null);
+      assert.deepEqual(received.requirements, {
+        minimumLogicalCores: 8,
+        minimumMemoryBytes: 8 * 1024 ** 3,
+      });
+      const firstExecutionID = submittedTask.executionID;
+      await selectedWorker.respondRemoteTask(firstExecutionID, 'declined');
+      const retryDeadline = Date.now() + 10_000;
+      while (
+        Date.now() < retryDeadline &&
+        networks[2].snapshot().brainTasks[0]?.executionAttempt !== 2
+      )
+        await wait(100);
+      const retried = networks[2].snapshot().brainTasks[0];
+      assert.equal(
+        retried.executionAttempt,
+        2,
+        JSON.stringify({
+          submitted: networks[2].snapshot().brainTasks,
+          master: master.snapshot().brainTasks,
+          executions: master.snapshot().remoteTasks.map((execution) => ({
+            id: execution.id,
+            target: execution.targetNodeID,
+            status: execution.status,
+            pending: execution.deliveryPending,
+          })),
+          workers: master
+            .snapshot()
+            .brains.find((brain) => brain.hosted)
+            ?.workers.map((worker) => ({
+              id: worker.nodeID,
+              accepting: worker.accepting,
+              slots: worker.load.availableSlots,
+              sampledAt: worker.load.sampledAt,
+            })),
+        }),
+      );
+      assert.notEqual(retried.executionID, firstExecutionID);
+      assert.equal(retried.executions[0]?.status, 'failed');
+      assert.equal(retried.executions[1]?.status, 'assigned');
+      assert.notEqual(retried.selectedWorkerID, scheduled.targetNodeID);
+      assert(
+        master
+          .snapshot()
+          .remoteTasks.some(
+            (execution) =>
+              execution.id === retried.executionID &&
+              execution.targetNodeID === retried.selectedWorkerID &&
+              execution.status === 'pending',
+          ),
+      );
+
+      // Simulate missing multicast/broadcast refresh while authenticated unicast still works.
+      for (const network of networks) {
+        const discovery = network as unknown as {
+          probe(): Promise<void>;
+          sendDiscoveryQuery(): void;
+        };
+        discovery.probe = async () => {};
+        discovery.sendDiscoveryQuery = () => {};
+      }
+      await wait(20_000);
+      for (const master of networks.slice(0, 2))
+        for (const workerID of workerIDs)
+          assert(
+            master
+              .snapshot()
+              .nearby.some((node) => node.id === workerID && node.online && node.channelReady),
+            'Authenticated directory heartbeats must keep a live Worker online without discovery refresh',
+          );
+
+      const stoppedBrainID = networks[0].snapshot().brains.find((brain) => brain.hosted)!.id;
+      await networks[0].stop();
+      const offlineDeadline = Date.now() + 5_000;
+      while (
+        Date.now() < offlineDeadline &&
+        networks[2].snapshot().brains.find((brain) => brain.id === stoppedBrainID)?.online
+      )
+        await wait(100);
+      assert.equal(
+        networks[2].snapshot().brains.find((brain) => brain.id === stoppedBrainID)?.online,
+        false,
+      );
+      const survivingBrain = networks[1].snapshot().brains.find((brain) => brain.hosted);
+      assert.equal(survivingBrain?.online, true);
+      assert(survivingBrain?.workers.some((worker) => workerIDs.includes(worker.nodeID)));
+    } finally {
+      await Promise.all(networks.map((network) => network.stop()));
+      roots.forEach((root) => rmSync(root, { recursive: true, force: true }));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'offline pending Execution retries, late acceptance is fenced, accepted unknown waits',
+  { skip: process.platform !== 'win32', timeout: 90_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const roots = Array.from({ length: 3 }, () => mkdtempSync(join(tmpdir(), 'rivloom-fault-')));
+    loadNodeIdentity(roots[0]);
+    const networks = roots.map((root) => new NodeNetwork(root, true));
+    const [master, ...workers] = networks;
+    const until = async (check: () => boolean, label: string, timeout = 15_000) => {
+      const deadline = Date.now() + timeout;
+      while (!check() && Date.now() < deadline) await wait(50);
+      assert(check(), label);
+    };
+    try {
+      for (const worker of workers)
+        worker.setWorkerRegistrationProvider((nodeID) => {
+          const report = workerFixture(nodeID);
+          report.load.sampledAt = new Date().toISOString();
+          return report;
+        });
+      await Promise.all(networks.map((network) => network.start()));
+      for (const worker of workers) await pairNetworks(master, worker);
+      await until(
+        () =>
+          workers.every((worker) =>
+            master
+              .snapshot()
+              .brains.find((brain) => brain.hosted)
+              ?.workers.some((report) => report.nodeID === worker.snapshot().local!.id),
+          ),
+        'two Workers registered',
+      );
+      await master.createScheduledTask({
+        title: '故障注入',
+        description: '不运行工具',
+        criteria: '旧 Execution 不会启动，接受未知不重派',
+        requestedProjectID: null,
+        requirements: {},
+      });
+      const initial = master.snapshot().brainTasks[0];
+      assert(initial.executionID);
+      const first = workers.find(
+        (worker) => worker.snapshot().local!.id === initial.selectedWorkerID,
+      )!;
+      const second = workers.find((worker) => worker !== first)!;
+      await until(() => !!first.remoteTask(initial.executionID!), 'first offer delivered');
+      // Acceptance has been persisted locally, but its network response has not left the Worker.
+      const firstStore = (first as unknown as { remoteTasks: RemoteTaskStore }).remoteTasks;
+      firstStore.decide(initial.executionID, 'accepted');
+      // Lose only the cancellation packet. The late acceptance still travels over real encrypted HTTP.
+      const faultMaster = master as unknown as {
+        sendChannelEvent(node: unknown, message: { type: string; taskID?: string }): Promise<void>;
+      };
+      const originalSend = faultMaster.sendChannelEvent.bind(master);
+      faultMaster.sendChannelEvent = async (node, message) => {
+        if (message.type === 'remote-task-cancel' && message.taskID === initial.executionID)
+          throw new Error('test fault: cancellation packet lost');
+        return originalSend(node, message);
+      };
+      await first.stop();
+      await until(
+        () => master.snapshot().brainTasks[0]?.executionAttempt === 2,
+        'pending offline retries',
+      );
+      const retried = master.snapshot().brainTasks[0];
+      assert.notEqual(retried.executionID, initial.executionID);
+      assert.equal(retried.selectedWorkerID, second.snapshot().local!.id);
+      assert.equal(retried.brainID, initial.brainID);
+      await first.start();
+      await until(
+        () => !!first.remoteTask(initial.executionID!)?.deliveryError,
+        'late acceptance rejected',
+        25_000,
+      );
+      assert.equal(master.remoteTask(initial.executionID)?.status, 'cancelled');
+      assert.equal(first.remoteTask(initial.executionID)?.localTaskID, null);
+      assert.throws(() => firstStore.bindLocalTask(initial.executionID!, randomUUID()), /同步/);
+      faultMaster.sendChannelEvent = originalSend;
+      await until(() => !!second.remoteTask(retried.executionID!), 'second offer delivered');
+      await second.respondRemoteTask(retried.executionID!, 'accepted');
+      await until(
+        () => master.remoteTask(retried.executionID!)?.status === 'accepted',
+        'acceptance acknowledged',
+      );
+      await second.stop();
+      await until(
+        () => master.snapshot().brainTasks[0]?.status === 'waiting',
+        'accepted unknown waits',
+      );
+      await wait(5500); // Cross a real scheduler tick with the other Worker available.
+      const unknown = master.snapshot().brainTasks[0];
+      assert.equal(unknown.executionAttempt, 2);
+      assert.equal(unknown.executionID, retried.executionID);
+      assert.match(unknown.executionSummary, /结果未知/);
+      await assert.rejects(master.cancelRemoteTask(retried.executionID!), /已接受/);
+    } finally {
+      await Promise.all(networks.map((network) => network.stop()));
+      roots.forEach((root) => rmSync(root, { recursive: true, force: true }));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
 
 test('node network only accepts local and private source addresses', () => {
   assert(privateNetworkAddress('127.0.0.1'));
@@ -246,10 +1110,20 @@ test('remote task invitations persist and apply idempotent offer and response me
   try {
     const owner = new RemoteTaskStore(roots[0]);
     const target = new RemoteTaskStore(roots[1]);
+    const unsent = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
+      title: '未提交 Execution',
+      description: '验证 Brain Task 持久化失败时不会遗留可发送的孤儿 Execution。',
+      criteria: '只有尚未发送且未开始的记录可以安全删除。',
+    });
+    assert(owner.discardUnsent(unsent.id));
+    assert(!owner.list().some((task) => task.id === unsent.id));
+    const requestedProjectID = randomUUID();
     const created = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '检查构建失败',
       description: '请先复现失败并说明原因，不要开始执行工具。',
       criteria: '双方确认任务范围后再选择项目和模型。',
+      requestedProjectID,
+      requirements: { minimumLogicalCores: 8, minimumMemoryBytes: 16 * 1024 ** 3 },
     });
     const offer = owner.message(created.id);
     assert(validRemoteTaskOffer(offer));
@@ -266,6 +1140,11 @@ test('remote task invitations persist and apply idempotent offer and response me
     assert(target.markDelivered(created.id, response));
     assert.equal(owner.list()[0].status, 'accepted');
     assert.equal(target.list()[0].status, 'accepted');
+    assert.equal(target.list()[0].requestedProjectID, requestedProjectID);
+    assert.deepEqual(target.list()[0].requirements, {
+      minimumLogicalCores: 8,
+      minimumMemoryBytes: 16 * 1024 ** 3,
+    });
     assert.equal('idempotencyKey' in owner.list()[0], false);
 
     const projectID = randomUUID();
@@ -326,6 +1205,8 @@ test('remote task invitations persist and apply idempotent offer and response me
         'localProjectID',
         'localModel',
         'automaticEligible',
+        'requestedProjectID',
+        'requirements',
         'localTaskID',
         'executionState',
         'executionSequence',
@@ -344,7 +1225,7 @@ test('remote task invitations persist and apply idempotent offer and response me
     migrated.load();
     assert.equal(migrated.list()[0].executionStatus, 'unprepared');
     assert.equal(migrated.list()[0].automaticEligible, false);
-    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 5);
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 7);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',
@@ -834,6 +1715,10 @@ test(
         requestID: randomUUID(),
         capabilities: ['brain', 'executor', 'human-ui'],
         brains: snapshots[initiatorIndex].local!.brains,
+        hostedBrains: snapshots[initiatorIndex].local!.brains.filter(
+          (brain) => brain.masterNodeID === snapshots[initiatorIndex].local!.id,
+        ),
+        worker: null,
       });
       const forgedCiphertext = {
         ...directoryRequest,
@@ -874,7 +1759,27 @@ test(
         brains?: unknown[];
       };
       assert.equal(directory.type, 'brain-directory-response');
-      assert.equal(directory.brains?.length, 1);
+      assert((directory.brains?.length || 0) >= 1);
+      const misboundDirectory = encryptChannelPayload(manualChannel, {
+        type: 'brain-directory-request',
+        requestID: randomUUID(),
+        capabilities: ['brain', 'executor', 'human-ui'],
+        brains: snapshots[initiatorIndex].local!.brains,
+        hostedBrains: snapshots[initiatorIndex].local!.brains.filter(
+          (brain) => brain.masterNodeID === snapshots[initiatorIndex].local!.id,
+        ),
+        worker: workerFixture('Z'.repeat(32)),
+      });
+      assert.equal(
+        (
+          await fetch(`${channelUrl}/v1/channel/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(misboundDirectory),
+          })
+        ).status,
+        409,
+      );
       assert.equal(
         (
           await fetch(`${channelUrl}/v1/channel/message`, {

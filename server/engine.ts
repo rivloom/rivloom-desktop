@@ -4,6 +4,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { isBindConflict, probeHttpPort, withHttpPort } from './http-ports.ts';
 import { createOpencodeClient, type Config, type PermissionRuleset } from '@opencode-ai/sdk/v2';
 import type { ApprovalMode } from '../shared/types.ts';
 
@@ -95,7 +96,7 @@ export function engineEnv(password?: string): NodeJS.ProcessEnv {
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     autoupdate: false,
     share: 'disabled',
-    snapshot: true,
+    snapshot: false,
     permission: permissions,
     agent: { build: { permission: permissions } },
   });
@@ -117,79 +118,129 @@ export function importAuth(source: string) {
 
 export async function startEngine(cwd: string, port = 0) {
   const password = randomBytes(32).toString('hex');
-  let child: ChildProcess;
-  const url = await new Promise<string>((ok, fail) => {
-    child = spawn(
-      process.execPath,
-      [
-        fileURLToPath(new URL('./engine-host.mjs', import.meta.url)),
-        engineBinary(),
-        'serve',
-        '--hostname',
-        '127.0.0.1',
-        '--port',
-        String(port),
-      ],
-      {
-        cwd,
-        env: engineEnv(password),
-        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-        windowsHide: true,
-      },
-    );
-    let output = '';
-    const timeout = setTimeout(() => {
-      if (child.connected) child.disconnect();
-      fail(new Error('OpenCode 启动超时'));
-    }, 45_000);
-    child.once('error', (error) => {
+  return withHttpPort(async (candidate) => {
+    // The official CLI cannot inherit this socket. Probe, release, then validate its actual bind.
+    await probeHttpPort(candidate);
+    return startEngineOnPort(cwd, candidate, password);
+  }, port);
+}
+
+async function stopFailedEngine(child: ChildProcess | undefined) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((ok, fail) => {
+    const finished = () => {
       clearTimeout(timeout);
-      fail(error);
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      fail(new Error(`OpenCode 退出 (${code}): ${output.slice(-1800)}`));
-    });
-    const onData = (data: Buffer) => {
-      output = (output + data.toString()).slice(-4000);
-      const match = output.match(/opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) {
-        clearTimeout(timeout);
-        ok(match[1]);
-      }
+      ok();
     };
-    child.stdout!.on('data', onData);
-    child.stderr!.on('data', onData);
+    const timeout = setTimeout(() => {
+      child.off('exit', finished);
+      fail(new Error('启动失败的 OpenCode 子进程未及时退出；不继续创建新引擎。'));
+    }, 8000);
+    child.once('exit', finished);
+    // engine-host owns and terminates only its official engine child on IPC disconnect.
+    if (child.connected) child.disconnect();
   });
-  const headers = {
-    Authorization: `Basic ${Buffer.from(`rivloom:${password}`).toString('base64')}`,
-  };
-  const client = createOpencodeClient({
-    baseUrl: url,
-    headers,
-    throwOnError: true,
-    fetch: (input, init) => {
-      const address = input instanceof Request ? input.url : String(input);
-      if (new URL(address).pathname.endsWith('/event')) return fetch(input, init);
-      const caller = init?.signal || (input instanceof Request ? input.signal : undefined);
-      const signal = caller
-        ? AbortSignal.any([caller, AbortSignal.timeout(20000)])
-        : AbortSignal.timeout(20000);
-      return fetch(input, { ...init, signal });
-    },
-  });
-  const health = await client.global.health();
-  if (health.data?.version !== ENGINE_VERSION) {
-    child!.disconnect();
-    throw new Error(`引擎版本不匹配：需要 ${ENGINE_VERSION}`);
+}
+
+async function startEngineOnPort(cwd: string, port: number, password: string) {
+  let child: ChildProcess | undefined;
+  let announced = false;
+  try {
+    const url = await new Promise<string>((ok, fail) => {
+      child = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL('./engine-host.mjs', import.meta.url)),
+          engineBinary(),
+          'serve',
+          '--hostname',
+          '127.0.0.1',
+          '--port',
+          String(port),
+        ],
+        {
+          cwd,
+          env: engineEnv(password),
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          windowsHide: true,
+        },
+      );
+      let output = '';
+      const timeout = setTimeout(() => {
+        if (child?.connected) child.disconnect();
+        fail(new Error('OpenCode 启动超时'));
+      }, 45_000);
+      child.once('error', (error) => {
+        clearTimeout(timeout);
+        fail(error);
+      });
+      child.once('exit', (code) => {
+        clearTimeout(timeout);
+        fail(new Error(`OpenCode 退出 (${code}): ${output.slice(-1800)}`));
+      });
+      const onData = (data: Buffer) => {
+        output = (output + data.toString()).slice(-4000);
+        const match = output.match(/opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/);
+        if (match) {
+          announced = true;
+          clearTimeout(timeout);
+          ok(match[1]);
+        }
+      };
+      child.stdout!.on('data', onData);
+      child.stderr!.on('data', onData);
+    });
+    if (url !== `http://127.0.0.1:${port}`)
+      throw new Error('OpenCode 返回了非预期监听地址，不连接该服务。');
+    const headers = {
+      Authorization: `Basic ${Buffer.from(`rivloom:${password}`).toString('base64')}`,
+    };
+    const client = createOpencodeClient({
+      baseUrl: url,
+      headers,
+      throwOnError: true,
+      fetch: (input, init) => {
+        const address = input instanceof Request ? input.url : String(input);
+        if (new URL(address).pathname.endsWith('/event')) return fetch(input, init);
+        const caller = init?.signal || (input instanceof Request ? input.signal : undefined);
+        const signal = caller
+          ? AbortSignal.any([caller, AbortSignal.timeout(20000)])
+          : AbortSignal.timeout(20000);
+        return fetch(input, { ...init, signal });
+      },
+    });
+    const health = await client.global.health();
+    if (health.data?.version !== ENGINE_VERSION) {
+      throw new Error(`引擎版本不匹配：需要 ${ENGINE_VERSION}`);
+    }
+    console.log(`RIVLOOM_ENGINE_READY ${url}`);
+    return {
+      client,
+      url,
+      child: child!,
+      headers,
+      close: () => {
+        if (child!.connected) child!.disconnect();
+      },
+    };
+  } catch (error) {
+    await stopFailedEngine(child);
+    if (!announced) {
+      // Official OpenCode may report only ServeError. Confirm a real bind conflict instead of
+      // classifying every engine failure as a port error. Never retry a reported/health-failed server.
+      try {
+        await probeHttpPort(port);
+      } catch (bindError) {
+        if (isBindConflict(bindError)) {
+          throw Object.assign(
+            new Error(`OpenCode 启动时 HTTP 端口 ${port} 已不可用。`, { cause: error }),
+            {
+              code: (bindError as NodeJS.ErrnoException).code,
+            },
+          );
+        }
+      }
+    }
+    throw error;
   }
-  return {
-    client,
-    url,
-    child: child!,
-    headers,
-    close: () => {
-      if (child!.connected) child!.disconnect();
-    },
-  };
 }
