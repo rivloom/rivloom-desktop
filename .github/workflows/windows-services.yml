@@ -61,6 +61,8 @@ jobs:
       - run: npm.cmd ci
       - name: Build the local service UI
         run: npm.cmd run build
+      - name: Diagnose Windows DPAPI with non-sensitive test data
+        run: node scripts/ci-windows-diagnostics.ts
       - name: Run in a new isolated workspace without model or release secrets
         env:
           CI_SERVICE_CHECK: ${{ matrix.check }}

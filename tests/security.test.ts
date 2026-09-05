@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -68,7 +68,19 @@ test('a normal folder is accepted without Git metadata', async () => {
   const dir = join(process.env.RIVLOOM_DATA_DIR!, 'plain-folder');
   createExample(dir);
   assert(!existsSync(join(dir, '.git')));
-  assert.equal((await validateProject(dir)).toLowerCase(), dir.toLowerCase());
+  // Windows can expose TEMP through an 8.3 alias; accepted projects use the real path.
+  assert.equal(await validateProject(dir), realpathSync.native(dir));
+});
+test('project aliases resolve to the real folder while invalid targets stay rejected', async () => {
+  const dir = join(process.env.RIVLOOM_DATA_DIR!, 'project-target');
+  const alias = join(process.env.RIVLOOM_DATA_DIR!, 'project-alias');
+  createExample(dir);
+  symlinkSync(dir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const canonical = realpathSync.native(dir);
+  assert.notEqual(alias, canonical);
+  assert.equal(await validateProject(alias), canonical);
+  await assert.rejects(validateProject(join(alias, 'slugify.mjs')), /需要选择一个文件夹/);
+  await assert.rejects(validateProject(join(alias, 'missing-folder')), /项目目录不存在/);
 });
 test('only official OpenCode diffs are displayed and sensitive contents stay hidden', () => {
   const visible = openCodeArtifacts([

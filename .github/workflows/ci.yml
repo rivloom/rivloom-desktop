@@ -72,6 +72,8 @@ jobs:
           architecture: x64
           package-manager-cache: false
       - run: npm.cmd ci
+      - name: Diagnose Windows DPAPI with non-sensitive test data
+        run: node scripts/ci-windows-diagnostics.ts
       - name: Run explicitly classified tests
         env:
           CI_TEST_LANE: ${{ matrix.lane }}
