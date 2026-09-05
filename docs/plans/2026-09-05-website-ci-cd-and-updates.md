@@ -8,7 +8,7 @@
 
 **Tech Stack:** GitHub / GitHub Actions；现有 Tauri 2、Node 24.19.0、官方 OpenCode；官网已采用 Astro + TypeScript 静态生成。用户已确认 Cloudflare 面向中国大陆与海外、官网域名 `rivloom.com`，暂不增加国内专用 CDN；R2 下载存储与签名方式仍待落实。
 
-**状态：** 2026-09-05 官网首版已在 [rivloom.com](https://rivloom.com) 部署，SSL 活动；首次 Cloudflare 部署使用源码 `a1b571b`，对应的 [官网 GitHub CI 33951987521](https://github.com/rivloom/rivloom-website/actions/runs/33951987521) 已通过。正式域及桌面、移动端页面检查已通过；站点仍为 `noindex`，收尾仍待获准关闭 RUM 并复核，然后开启正式收录，不能宣称官网全部闭环。候选验证记录已在 `d0ffd4c` 提交，基于源码 `86463bf` 的 CI Preview 候选包已完成本地验证；桌面推送和云端 CI 仍待用户授权。安装包尚未公开发行，应用内更新尚未完成。承接 [RELEASING](../RELEASING.md)、[ADR-0006](../adr/0006-website-distribution-and-safe-updates.md)，不重复定义其安全升级与兼容标准。
+**状态：** 2026-09-05 官网已在 [rivloom.com](https://rivloom.com) 部署，SSL 活动；本轮源码 `9a7bd94` 已推送，[官网 GitHub CI 33955696338](https://github.com/rivloom/rivloom-website/actions/runs/33955696338) 与 Cloudflare Pages 部署均通过。正式域及桌面、移动端页面检查已通过。官网按用户授权保留 Cloudflare RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；CSP、隐私说明与生产索引指令已完成本轮验证，统计面板收到一个自然浏览样本。允许抓取与收录不代表搜索引擎已经实际收录。候选验证记录已在 `d0ffd4c` 提交，基于源码 `86463bf` 的 CI Preview 候选包已完成本地验证；桌面推送和云端 CI 仍待用户授权。安装包尚未公开发行，应用内更新尚未完成。承接 [RELEASING](../RELEASING.md)、[ADR-0006](../adr/0006-website-distribution-and-safe-updates.md)，不重复定义其安全升级与兼容标准。
 
 ## 1. 仓库与目录建议
 
@@ -81,7 +81,11 @@ GitHub 私有仓库的 environments 和 required reviewers 可用性受套餐限
 
 **当前进展：** Cloudflare Pages 项目 `rivloom-website` 使用 Git 集成，以 `main` 为生产分支，执行 `npm run build:cloudflare`，输出 `dist`。正式域 [rivloom.com](https://rivloom.com) 已部署、SSL 活动；首次 Cloudflare 部署使用源码 `a1b571b`，对应的 [GitHub CI 33951987521](https://github.com/rivloom/rivloom-website/actions/runs/33951987521) 已通过。更早的提交 `edd51ed` 已取得首次绿色 [CI 33950924916](https://github.com/rivloom/rivloom-website/actions/runs/33950924916)。DNS/TLS、8 条页面路由 200、未知路径 404、响应头和 8 项静态资源抽样均通过；浏览器已检查桌面和 390px 移动端的首页、菜单、下载页、FAQ。DNS/TLS 验证限于当前 Windows 网络及三组解析器查询，不扩大为全球或中国大陆性能结论。
 
-`site.config.json` 的 `productionIndexing` 仍为 `false`，站点保持 `noindex`。官网收尾仍待获准关闭 RUM 并复核，然后开启正式收录。Cloudflare 自动注入的 RUM beacon 当前被 CSP 阻止；自动审批要求明确隐私授权，已询问用户并等待回复。不能因此写成全部上线事项闭环、零分析脚本或已开启索引；公开下载与客户端升级仍分别属于阶段 D、E。
+本轮源码 `9a7bd94` 已推送且与远端一致，[GitHub CI 33955696338](https://github.com/rivloom/rivloom-website/actions/runs/33955696338) 通过，Cloudflare Pages 部署 `e256a0f4-1c68-4d24-aa02-5c82ab4040b7` 成功。CSP 与官网隐私说明已上线并完成复核；新浏览器检查中的隐私内容正常，本次捕获的警告和错误为空。
+
+用户已明确授权保留 RUM 统计，实际设置已核实为“启用，排除欧盟的访问者数据”。自然浏览后，2026-09-05 08:39:22 UTC 的面板显示访问量 1、页面浏览量 1、页面加载 1105 毫秒，细分数据仍不足。它只证明接收了一个真实样本，不证明流量规模、性能基准或地区排除效果；没有提交模拟遥测。证据见 [RUM 浏览器与面板记录](C:/project/rivloom-opencode/.data/verification/website-rum-browser-20260905.json)。
+
+`site.config.json` 的 `productionIndexing` 已为 `true`，生产站已开放抓取与收录指令。最终 HTTP 复核中，8 条业务页面返回 200、`index, follow`、各自正式域 canonical，且无阻断索引的响应头；未知路径为真实 404 和 `noindex, nofollow`；robots 允许抓取，sitemap 恰好包含 8 条正式页面。这不代表搜索引擎已经实际收录。证据见 [生产索引验证](C:/project/rivloom-opencode/.data/verification/website-indexing-9a7bd94/run-1788597527096/verification.json)。公开下载与客户端升级仍分别属于阶段 D、E。
 
 1. 先完成信息结构与视觉稿：主页、能力/工作方式、Windows 下载、快速开始、版本日志、安全与隐私、反馈入口。只写实际产品能力，素材使用已核对的真实 UI。
 2. 页面适配桌面与移动端，完成语义标题、可访问性、SEO 元信息、sitemap、404 和链接检查；具体收集哪些访问数据在隐私说明中对应，首期不默认增加账号/付费后台。
@@ -124,4 +128,4 @@ GitHub 私有仓库的 environments 和 required reviewers 可用性受套餐限
 
 第一轮可评审交付：两个仓库职责明确、官网视觉与可浏览预览、桌面基础 CI 和可追溯候选包。第二轮交付下载/CD，第三轮完成真实应用内更新。用户已由规划转为实施；本地源码、云端 CI、公开网站、安装包发行和客户端更新分别记录，不以任一环节完成替代其他验收。
 
-域名、托管方向和首批地区已确认；官网 GitHub 仓库为私有，Cloudflare 仓库连接、部署及正式域名验证已完成。官网收尾仍待获准关闭 RUM 并复核，然后开启正式收录；当前索引开关仍关闭，桌面推送及云端 CI 另待用户授权。后续仍需落实下载存储、正式发行签名与密钥保管方式，并核对 GitHub 分支/环境保护能力。现有本机预览和正式客户端数据均保留。
+域名、托管方向和首批地区已确认；官网 GitHub 仓库为私有，Cloudflare 仓库连接、部署及正式域名验证已完成。官网按用户授权保留 RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；本轮 CSP、隐私说明、单个统计接收样本及生产抓取/收录指令均已复核。桌面推送及云端 CI 仍待用户授权。后续仍需落实下载存储、正式发行签名与密钥保管方式，并核对 GitHub 分支/环境保护能力。现有本机预览和正式客户端数据均保留。

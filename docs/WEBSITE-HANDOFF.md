@@ -4,7 +4,7 @@
 
 ## 目标与仓库边界
 
-Rivloom 官网首版已部署到 [rivloom.com](https://rivloom.com)，独立网站 CI 已有通过记录；桌面候选包已完成本地验证。官网隐私配置、正式下载和应用内更新仍按各自验证结果推进，不以网站上线替代发行或升级验收。
+Rivloom 官网首版已部署到 [rivloom.com](https://rivloom.com)，独立网站 CI、统计隐私说明与生产索引指令已完成本轮验证；桌面候选包已完成本地验证。正式下载和应用内更新仍按各自验证结果推进，不以网站上线替代发行或升级验收。
 
 | 范围       | 位置与职责                                                                                                                               |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -49,7 +49,11 @@ M3.5 A–D 已完成工程交付，包括草稿稳定目标、创建幂等、自
 
 正式域验收已通过：DNS/TLS、8 条页面路由返回 200、未知路径返回 404、响应头和 8 项静态资源抽样；浏览器检查覆盖桌面以及 390px 移动端的首页、菜单、下载页和 FAQ。DNS/TLS 结果来自当前 Windows 网络与系统、1.1.1.1、8.8.8.8 查询，不代表全球传播或中国大陆访问性能已经全面验证。
 
-站点仍保持 `noindex`，`site.config.json` 中 `productionIndexing` 为 `false`。官网收尾仍待获准关闭 RUM 并复核，然后开启正式收录。Cloudflare 自动注入的 RUM beacon 当前被浏览器 CSP 阻止；自动审批要求对此隐私相关设置取得明确授权，已询问用户，等待回复。不能宣称官网全部闭环、零分析脚本或已经开启索引。下载存储、正式签名与密钥保管仍属于后续发行工作。官网实现与实测记录见 [IMPLEMENTATION](C:/project/rivloom-website/docs/IMPLEMENTATION.md)。
+本轮官网发布源码 `9a7bd94` 已推送且与远端一致，[GitHub CI 33955696338](https://github.com/rivloom/rivloom-website/actions/runs/33955696338) 通过，Cloudflare Pages 部署 `e256a0f4-1c68-4d24-aa02-5c82ab4040b7` 成功。与统计实际行为相符的 CSP 和官网隐私说明已上线；浏览器检查显示隐私内容正常，本次捕获的警告和错误为空。
+
+用户已明确授权保留 Cloudflare RUM 统计，实际设置已核实为“启用，排除欧盟的访问者数据”。自然浏览后，2026-09-05 08:39:22 UTC 的统计面板显示访问量 1、页面浏览量 1、页面加载 1105 毫秒，细分图表仍提示数据不足。这是一个已接收样本，不能用于证明流量规模、性能基准或地区排除效果；本轮没有提交模拟遥测。浏览器和面板证据见 [RUM 验证记录](C:/project/rivloom-opencode/.data/verification/website-rum-browser-20260905.json)。
+
+`site.config.json` 的 `productionIndexing` 已设为 `true`，生产站已开放抓取与收录指令。最终 HTTP 检查确认 8 条业务页面均为 200、`index, follow`、各自正式域 canonical，且无阻断索引的响应头；未知路径返回 404 并保留 `noindex, nofollow`；robots 允许抓取，sitemap 恰好包含 8 条正式页面。这不代表搜索引擎已经实际收录。证据见 [生产索引验证](C:/project/rivloom-opencode/.data/verification/website-indexing-9a7bd94/run-1788597527096/verification.json)。下载存储、正式签名与密钥保管仍属于后续发行工作。官网实现与实测记录见 [IMPLEMENTATION](C:/project/rivloom-website/docs/IMPLEMENTATION.md)。
 
 ## 从哪里恢复详细背景
 
