@@ -4,7 +4,21 @@
 
 当前里程碑以 [里程碑基线](MILESTONES.md) 为准；长期细节见 [Rivloom MVP 实施计划](plans/2026-08-31-mvp-delivery.md)。
 
-## 当前停点
+## 2026-09-05 当前进展：M2/M5 官网、CI 与发行接口第一轮实施
+
+官网私有 `rivloom/rivloom-website` 位于 `C:/project/rivloom-website`，首版 `f58049f` 已推送；Astro 9 页、234 项引用检查、发行目录测试 13/13 和网站工作流 actionlint 已在本地通过。用户已授权 Cloudflare 仅访问官网仓库、官网推送/部署及 `rivloom.com` 绑定，并已手动完成 GitHub 2FA。首轮官网云 CI 的跨平台锁文件缺项已修复至本地 `edd51ed`，Linux x64 `npm ci --dry-run` 通过，推送重试进行中。Cloudflare 连接与域名绑定仍在实施，目标面向全球（含中国大陆），尚无上线成功或公开下载声明。网站当前事实见 [WEBSITE-HANDOFF](WEBSITE-HANDOFF.md)。
+
+桌面完成四份 Windows 工作流、全量入口与测试分层、版本审计、发行记录契约和 runtime 只读门槛。前一轮 TypeScript/Vite、覆盖审计与 CI 自检 9/9 通过；逻辑 168/168、协议 11/11、官方引擎端口 2/2、UDP 1/1 及四组官方引擎服务检查通过。纯 mDNS 为 0/1、0 跳过，该轮各层累计 182/183；随后 runtime 文件单独 16/16 通过，不混成同轮全量结果。真实 prepare/runtime gate 现已通过，验证 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据 `.data/verification/ci-runtime-precommit.json`；Rust/Cargo 1.98.1 已安装并核对版本。本轮原生构建尚未执行；候选仅使用独立 Preview，并比较构建前后 runtime 文件树摘要。官网云 CI 失败与桌面纯 mDNS 失败是两项独立记录，详见 [CI](CI.md) 和官网交接。
+
+当前供检查的 M3.5 交付包仍是 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，71,096,634 字节、NotSigned、未安装，精确哈希见 [UI-HANDOFF](UI-HANDOFF.md)。官网与发行接口实施不替代 M3.5 用户及双物理机验收；updater、R2、签名和公开发行尚未实施。
+
+## 历史文档补充（2026-09-05，实施启动前）：官网分发与安全更新
+
+已读取用户分享的[《官网分发与更新方案》](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，对照当前 Tauri/NSIS、协议能力与数据持久化实现，核对 Tauri、Cloudflare 和 Microsoft 官方资料。新增 [RELEASING](RELEASING.md) 与建议状态的 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，并同步里程碑、长期计划、桌面说明和交接入口。
+
+该历史检查点将内容归入后续 M2/M5：保留静态分发、签名和不可变发布，修正通用更新 JSON、多平台同时发行及签名免提示的假设；补上 0.1.3 首次手动接入、安全退出/任务恢复、数据迁移、频道隔离和新旧节点验收矩阵。当时仅做文档检查，未实现或部署官网/更新源与发布 CI，也未运行产品测试或变更安装。之后用户已启动上方第一轮实施；本段只保留历史。
+
+## M3.5 交付与待验收状态
 
 **最新进展：M3.5 A–D 工程交付完成，用户验收及本轮双物理机回归待进行。** 完整服务 12/12、真实 session 两崩溃窗口、Debug 原生 12 条/Release 原生 8 条记录和最终二进制闭环通过；最终全量 154/155，唯一已有纯 mDNS 失败保留。Debug/Release 保存 6/4 张截图，真实 Windows IME 候选 Enter 不发送、键盘选目标、认证送达/排位和修正文案通过。伪 HTTP 204 送达、统计刷新与成员读取范围已修复并回归；新独立包已生成，全部自有夹具已清理。失败根和此前 Escape 误触记录保留，详见 VERIFICATION。
 

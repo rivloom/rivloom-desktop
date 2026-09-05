@@ -2,6 +2,10 @@
 
 产品交付形态是 Tauri 桌面客户端。React 只负责窗口内界面；浏览器入口保留作内部调试，不是给客户的启动方式。
 
+用户已启动 M2/M5 官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据为 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和 [官网交接](WEBSITE-HANDOFF.md)。
+
+当前可供检查的 M3.5 交付预览仍为 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装。已有构建、手动升级与文档修订包证据不代表接入了 updater，也不代替本轮新候选的验收；精确产物和版本状态以 [UI-HANDOFF](UI-HANDOFF.md)、[MILESTONES](MILESTONES.md) 和 [VERIFICATION](VERIFICATION.md) 为准。
+
 ## 当前实现
 
 - 原生 Windows 窗口、图标、最小尺寸、单实例聚焦。
@@ -22,7 +26,7 @@
 
 ## 启动和构建
 
-普通文件夹、设备信任、AI 审批和远端结果闭环已编译到 `src-tauri/target/release/Rivloom.exe`（10,264,576 字节，SHA-256：`9da6c7b764f4cef3a33a02508ff4fbb414fba84c3721a47295d31bdf1f5c24cd`）。`src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 也已重建（71,070,646 字节，SHA-256：`d688e2d9a2f978fc7bde08fa09c88ffc17ab3bc86f607e3947bd9e92b281ef01`），但尚未重新执行隔离安装/启动/卸载烟雾测试，仍是未签名开发机内测产物。
+**历史 0.1.0 构建记录：** 普通文件夹、设备信任、AI 审批和远端结果闭环曾编译到 `src-tauri/target/release/Rivloom.exe`（当时 10,264,576 字节，SHA-256：`9da6c7b764f4cef3a33a02508ff4fbb414fba84c3721a47295d31bdf1f5c24cd`）。对应 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 为 71,070,646 字节，SHA-256：`d688e2d9a2f978fc7bde08fa09c88ffc17ab3bc86f607e3947bd9e92b281ef01`；当时未重新执行隔离安装/启动/卸载烟雾测试。这些数值只描述该历史构建，不代表当前同名 EXE 的内容。后续 0.1.3 与独立 UI Preview 的状态和证据见 [README](../README.md) 与 [VERIFICATION](VERIFICATION.md)，不能混用为新版本发行验收。
 
 开发者使用：
 
@@ -70,7 +74,7 @@ npm.cmd run test:installer
 - 这是未签名的内测包，尚未完成代码签名、自动更新、干净 Windows 虚拟机安装/升级/卸载矩阵和商业发行审查。不要关闭系统安全防护来运行它。
 - WebView2 已安装的机器可直接使用；缺失时 NSIS 使用 Microsoft 的联网 bootstrapper，不承诺离线安装。配置依据 [Tauri Windows 安装器文档](https://v2.tauri.app/distribute/windows-installer/) 和 [配置参考](https://v2.tauri.app/reference/config/)。
 - 编程项目自身所需的语言和构建工具链仍需本机准备；只有项目本身依赖 Git 时才需要安装 Git。随包 Node 可以执行 Node 测试，不代表任意项目无需环境配置。
-- 模型配置界面已完成，DeepSeek 官方真实连接和无 `.git` 普通文件夹中的完整编程任务均已通过。ChatGPT 登录和两台设备的伙伴客户端接入仍是后续里程碑。
+- 模型配置界面已完成，DeepSeek 官方真实连接和无 `.git` 普通文件夹中的完整编程任务均已通过。ChatGPT 登录仍为后续里程碑；两设备协作已有 M3.3/M3.4 物理核心证据，完整人员身份与两真人角色回归仍未完成。
 - M3.1 的发现、正常退出和 M3.2 的配对闭环已由用户在 Win10 `192.168.5.18` 与 Win11 `192.168.5.20` 确认。M3.3 又在 `192.168.5.20` 与 `192.168.5.33` 用真实 DeepSeek 完成单人双机文件生成、请求批准、补充要求同会话续跑和最终验收，MVP 范围据此完成。停止、另外两种审批、撤销信任、两真人角色、异常断网和防火墙安装体验保留为后续优化。专用网络首次发现可能出现 Windows 防火墙提示。
 - Windows 当前用户下的本地进程仍可能读取本地文件；不是防恶意本机用户的隔离系统。已运行的命令可能有不可撤销副作用，脱离进程树的外部进程不在停止保证内。
 - 退出会停止执行，不支持关闭窗口后继续无人值守运行。暂无托盘、开机启动；跨节点自动执行和远程批准/回答/停止/补充、官方差异和验收已经可用，但跨设备完整人员角色映射仍未完成。

@@ -5,7 +5,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw==",
-    "licenseFile": "licenses/leichtgewicht__ip-codec.txt"
+    "packagePaths": [
+      "node_modules/@leichtgewicht/ip-codec"
+    ],
+    "licenseFile": "licenses/npm/%40leichtgewicht%2Fip-codec/2.0.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40leichtgewicht%2Fip-codec/2.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "09fd9784b65e00b09b6366845098a2cb6d6f559e84d292528f1e462c9e4acb62"
+      }
+    ]
   },
   {
     "name": "@opencode-ai/sdk",
@@ -13,7 +26,23 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-GwgwhW+vE8FWSDw730SjzqNhsWXB0uJjbFOiqFkmM+USFuG13HuTlGe6SR2ixt+WXxoD6FV1hILWqsXyqej9hQ==",
-    "licenseFile": null
+    "packagePaths": [
+      "node_modules/@opencode-ai/sdk"
+    ],
+    "licenseFile": "licenses/npm/%40opencode-ai%2Fsdk/1.18.25/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40opencode-ai%2Fsdk/1.18.25/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "upstream",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.25",
+        "revision": "v1.18.25",
+        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/sdk/js/package.json",
+        "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ]
   },
   {
     "name": "@oxc-project/types",
@@ -21,7 +50,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-IJ3s6ltHLp45S0bh7phkX+gJO7A1Wuz2EaqpAhb8WjqDwbzMiWKHhyyT42tskaWjEYXtHtVCPpnBJVT9+dcRLg==",
-    "licenseFile": "licenses/oxc-project__types.txt"
+    "packagePaths": [
+      "node_modules/@oxc-project/types"
+    ],
+    "licenseFile": "licenses/npm/%40oxc-project%2Ftypes/0.147.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40oxc-project%2Ftypes/0.147.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3"
+      }
+    ]
   },
   {
     "name": "@rolldown/binding-win32-x64-msvc",
@@ -29,7 +71,23 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-np8iZSLfXlAD4kWhiyq/u0Yt8oZDtRQ8lGhQaCXo2rl37KNjeU0GjJuwr4P3oeZ++ROfofsKNBqR5LTO8aXyWQ==",
-    "licenseFile": null
+    "packagePaths": [
+      "node_modules/@rolldown/binding-win32-x64-msvc"
+    ],
+    "licenseFile": "licenses/npm/%40rolldown%2Fbinding-win32-x64-msvc/1.2.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40rolldown%2Fbinding-win32-x64-msvc/1.2.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "upstream",
+        "url": "https://api.github.com/repos/rolldown/rolldown/contents/LICENSE?ref=v1.2.6",
+        "revision": "v1.2.6",
+        "packageVersionSource": "https://raw.githubusercontent.com/rolldown/rolldown/v1.2.6/packages/rolldown/package.json",
+        "gitBlobSha1": "afc0cdbabfb99ed4030bf9be2b852977f1ed72a0",
+        "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734"
+      }
+    ]
   },
   {
     "name": "@rolldown/pluginutils",
@@ -37,7 +95,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
-    "licenseFile": "licenses/rolldown__pluginutils.txt"
+    "packagePaths": [
+      "node_modules/@rolldown/pluginutils"
+    ],
+    "licenseFile": "licenses/npm/%40rolldown%2Fpluginutils/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40rolldown%2Fpluginutils/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "e1919b3b98b8bf6c1b99fcc60a0ed46027c97ac947432e1278446c9606f50161"
+      }
+    ]
   },
   {
     "name": "@tauri-apps/api",
@@ -45,15 +116,26 @@
     "license": "Apache-2.0 OR MIT",
     "developmentOnly": false,
     "integrity": "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA==",
-    "licenseFile": null
-  },
-  {
-    "name": "@tauri-apps/cli",
-    "version": "2.11.4",
-    "license": "Apache-2.0 OR MIT",
-    "developmentOnly": true,
-    "integrity": "sha512-R8xGtMpwyetawSqm9kYOuMmEqkhUbvcUy8n0aNXIxollKBLESUu5f4Fx+64hgASYm1H+jSWq6jCW6zqTnH6hqQ==",
-    "licenseFile": null
+    "packagePaths": [
+      "node_modules/@tauri-apps/api"
+    ],
+    "licenseFile": "licenses/npm/%40tauri-apps%2Fapi/2.11.1/LICENSE_APACHE-2.0",
+    "licenseFiles": [
+      "licenses/npm/%40tauri-apps%2Fapi/2.11.1/LICENSE_APACHE-2.0",
+      "licenses/npm/%40tauri-apps%2Fapi/2.11.1/LICENSE_MIT"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE_APACHE-2.0",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      },
+      {
+        "kind": "installed-package",
+        "file": "LICENSE_MIT",
+        "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+      }
+    ]
   },
   {
     "name": "@tauri-apps/cli-win32-x64-msvc",
@@ -61,7 +143,59 @@
     "license": "Apache-2.0 OR MIT",
     "developmentOnly": true,
     "integrity": "sha512-+vDiqBIU5dMISg/wNvX3sF+ZHfgJGJ5T0AcO+EHNXV9GGAG+P5fzodlDXD3QdKCRgZxMoCm5PPvj3BqLNjBthw==",
-    "licenseFile": null
+    "packagePaths": [
+      "node_modules/@tauri-apps/cli-win32-x64-msvc"
+    ],
+    "licenseFile": "licenses/npm/%40tauri-apps%2Fcli-win32-x64-msvc/2.11.4/LICENSE_MIT",
+    "licenseFiles": [
+      "licenses/npm/%40tauri-apps%2Fcli-win32-x64-msvc/2.11.4/LICENSE_MIT",
+      "licenses/npm/%40tauri-apps%2Fcli-win32-x64-msvc/2.11.4/LICENSE_APACHE-2.0"
+    ],
+    "licenseSources": [
+      {
+        "kind": "upstream",
+        "url": "https://api.github.com/repos/tauri-apps/tauri/contents/LICENSE_MIT?ref=59585e1aac2d2e3503aa1caececf3568dce51a47",
+        "revision": "59585e1aac2d2e3503aa1caececf3568dce51a47",
+        "packageVersionSource": "https://registry.npmjs.org/%40tauri-apps%2Fcli-win32-x64-msvc/2.11.4",
+        "gitBlobSha1": "b08530d59433b3060f4fad8751ac2610c0b0aff3",
+        "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+      },
+      {
+        "kind": "upstream",
+        "url": "https://api.github.com/repos/tauri-apps/tauri/contents/LICENSE_APACHE-2.0?ref=59585e1aac2d2e3503aa1caececf3568dce51a47",
+        "revision": "59585e1aac2d2e3503aa1caececf3568dce51a47",
+        "packageVersionSource": "https://registry.npmjs.org/%40tauri-apps%2Fcli-win32-x64-msvc/2.11.4",
+        "gitBlobSha1": "f433b1a53f5b830a205fd2df78e2b34974656c7b",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      }
+    ]
+  },
+  {
+    "name": "@tauri-apps/cli",
+    "version": "2.11.4",
+    "license": "Apache-2.0 OR MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-R8xGtMpwyetawSqm9kYOuMmEqkhUbvcUy8n0aNXIxollKBLESUu5f4Fx+64hgASYm1H+jSWq6jCW6zqTnH6hqQ==",
+    "packagePaths": [
+      "node_modules/@tauri-apps/cli"
+    ],
+    "licenseFile": "licenses/npm/%40tauri-apps%2Fcli/2.11.4/LICENSE_APACHE-2.0",
+    "licenseFiles": [
+      "licenses/npm/%40tauri-apps%2Fcli/2.11.4/LICENSE_APACHE-2.0",
+      "licenses/npm/%40tauri-apps%2Fcli/2.11.4/LICENSE_MIT"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE_APACHE-2.0",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+      },
+      {
+        "kind": "installed-package",
+        "file": "LICENSE_MIT",
+        "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+      }
+    ]
   },
   {
     "name": "@types/body-parser",
@@ -69,7 +203,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==",
-    "licenseFile": "licenses/types__body-parser.txt"
+    "packagePaths": [
+      "node_modules/@types/body-parser"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fbody-parser/1.19.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fbody-parser/1.19.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/connect",
@@ -77,15 +224,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==",
-    "licenseFile": "licenses/types__connect.txt"
-  },
-  {
-    "name": "@types/express",
-    "version": "5.0.6",
-    "license": "MIT",
-    "developmentOnly": true,
-    "integrity": "sha512-sKYVuV7Sv9fbPIt/442koC7+IIwK5olP1KWeD88e/idgoJqDm3JV/YUiPwkoKK92ylff2MGxSz1CSjsXelx0YA==",
-    "licenseFile": "licenses/types__express.txt"
+    "packagePaths": [
+      "node_modules/@types/connect"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fconnect/3.4.38/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fconnect/3.4.38/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/express-serve-static-core",
@@ -93,7 +245,41 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-dPfW8NFiOF4wOHc7+N/QSxlY9cfSsenewGbAz8C8U/MULPd/YZ27LvJUIlzaXie7e6Ove9YunJGgC9tbHD2cKw==",
-    "licenseFile": "licenses/types__express-serve-static-core.txt"
+    "packagePaths": [
+      "node_modules/@types/express-serve-static-core"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fexpress-serve-static-core/5.1.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fexpress-serve-static-core/5.1.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/express",
+    "version": "5.0.6",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-sKYVuV7Sv9fbPIt/442koC7+IIwK5olP1KWeD88e/idgoJqDm3JV/YUiPwkoKK92ylff2MGxSz1CSjsXelx0YA==",
+    "packagePaths": [
+      "node_modules/@types/express"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fexpress/5.0.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fexpress/5.0.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/http-errors",
@@ -101,7 +287,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==",
-    "licenseFile": "licenses/types__http-errors.txt"
+    "packagePaths": [
+      "node_modules/@types/http-errors"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fhttp-errors/2.0.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fhttp-errors/2.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/node",
@@ -109,7 +308,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ==",
-    "licenseFile": "licenses/types__node.txt"
+    "packagePaths": [
+      "node_modules/@types/node"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fnode/26.4.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fnode/26.4.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/qs",
@@ -117,7 +329,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==",
-    "licenseFile": "licenses/types__qs.txt"
+    "packagePaths": [
+      "node_modules/@types/qs"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fqs/6.15.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fqs/6.15.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/range-parser",
@@ -125,15 +350,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-hKormJbkJqzQGhziax5PItDUTMAM9uE2XXQmM37dyd4hVM+5aVl7oVxMVUiVQn2oCQFN/LKCZdvSM0pFRqbSmQ==",
-    "licenseFile": "licenses/types__range-parser.txt"
-  },
-  {
-    "name": "@types/react",
-    "version": "19.2.18",
-    "license": "MIT",
-    "developmentOnly": true,
-    "integrity": "sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==",
-    "licenseFile": "licenses/types__react.txt"
+    "packagePaths": [
+      "node_modules/@types/range-parser"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Frange-parser/1.2.7/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Frange-parser/1.2.7/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/react-dom",
@@ -141,7 +371,41 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-fMPwH9v7r/pp43yUd2/Mbiex5KouJwwR3dzHkhLREUC6764VyDsqxhAxv6OFEYR1RhjOyD1naqba8ECDBe7ZQg==",
-    "licenseFile": "licenses/types__react-dom.txt"
+    "packagePaths": [
+      "node_modules/@types/react-dom"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Freact-dom/19.2.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Freact-dom/19.2.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/react",
+    "version": "19.2.18",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==",
+    "packagePaths": [
+      "node_modules/@types/react"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Freact/19.2.18/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Freact/19.2.18/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/send",
@@ -149,7 +413,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-arsCikDvlU99zl1g69TcAB3mzZPpxgw0UQnaHeC1Nwb015xp8bknZv5rIfri9xTOcMuaVgvabfIRA7PSZVuZIQ==",
-    "licenseFile": "licenses/types__send.txt"
+    "packagePaths": [
+      "node_modules/@types/send"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fsend/1.2.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fsend/1.2.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@types/serve-static",
@@ -157,7 +434,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-8mam4H1NHLtu7nmtalF7eyBH14QyOASmcxHhSfEoRyr0nP/YdoesEtU+uSRvMe96TW/HPTtkoKqQLl53N7UXMQ==",
-    "licenseFile": "licenses/types__serve-static.txt"
+    "packagePaths": [
+      "node_modules/@types/serve-static"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fserve-static/2.2.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fserve-static/2.2.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
   },
   {
     "name": "@typescript/typescript-win32-x64",
@@ -165,7 +455,26 @@
     "license": "Apache-2.0",
     "developmentOnly": true,
     "integrity": "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g==",
-    "licenseFile": "licenses/typescript__typescript-win32-x64.txt"
+    "packagePaths": [
+      "node_modules/@typescript/typescript-win32-x64"
+    ],
+    "licenseFile": "licenses/npm/%40typescript%2Ftypescript-win32-x64/7.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40typescript%2Ftypescript-win32-x64/7.0.2/LICENSE",
+      "licenses/npm/%40typescript%2Ftypescript-win32-x64/7.0.2/NOTICE.txt"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+      },
+      {
+        "kind": "installed-package",
+        "file": "NOTICE.txt",
+        "sha256": "f5c708b59114507b8b27b48181b6883d106bbca0c1634bbee45b5e344237b66b"
+      }
+    ]
   },
   {
     "name": "@vitejs/plugin-react",
@@ -173,7 +482,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw==",
-    "licenseFile": "licenses/vitejs__plugin-react.txt"
+    "packagePaths": [
+      "node_modules/@vitejs/plugin-react"
+    ],
+    "licenseFile": "licenses/npm/%40vitejs%2Fplugin-react/6.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40vitejs%2Fplugin-react/6.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5"
+      }
+    ]
   },
   {
     "name": "accepts",
@@ -181,7 +503,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==",
-    "licenseFile": "licenses/accepts.txt"
+    "packagePaths": [
+      "node_modules/accepts"
+    ],
+    "licenseFile": "licenses/npm/accepts/2.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/accepts/2.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6"
+      }
+    ]
   },
   {
     "name": "body-parser",
@@ -189,15 +524,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",
-    "licenseFile": "licenses/body-parser.txt"
-  },
-  {
-    "name": "content-type",
-    "version": "2.1.0",
-    "license": "MIT",
-    "developmentOnly": false,
-    "integrity": "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
-    "licenseFile": "licenses/content-type.txt"
+    "packagePaths": [
+      "node_modules/body-parser"
+    ],
+    "licenseFile": "licenses/npm/body-parser/2.3.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/body-parser/2.3.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "23d466b1b134b415b66fa50c6526b4cf3e7b9258554da88d3abb371721e7ce68"
+      }
+    ]
   },
   {
     "name": "bonjour-service",
@@ -205,7 +545,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-jCZcVv7eoc4QesRscwEZtSROBen+6LpKAmBIsQYQrsAeVHLyMXWX/t6eIV5KiRZYNUBl8eVqImEEMQ8L5+c/Kw==",
-    "licenseFile": "licenses/bonjour-service.txt"
+    "packagePaths": [
+      "node_modules/bonjour-service"
+    ],
+    "licenseFile": "licenses/npm/bonjour-service/1.4.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/bonjour-service/1.4.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "82a4526b2777826043d2ca0e282f7428c2bd1762b13ef70b4fb4a57a48303d73"
+      }
+    ]
   },
   {
     "name": "bytes",
@@ -213,7 +566,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==",
-    "licenseFile": "licenses/bytes.txt"
+    "packagePaths": [
+      "node_modules/bytes"
+    ],
+    "licenseFile": "licenses/npm/bytes/3.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/bytes/3.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "e3b44af066615de2ea48d18d852d0762f18c0b2efcea714fa48a6f729d405b85"
+      }
+    ]
   },
   {
     "name": "call-bind-apply-helpers",
@@ -221,7 +587,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
-    "licenseFile": "licenses/call-bind-apply-helpers.txt"
+    "packagePaths": [
+      "node_modules/call-bind-apply-helpers"
+    ],
+    "licenseFile": "licenses/npm/call-bind-apply-helpers/1.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/call-bind-apply-helpers/1.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "call-bound",
@@ -229,7 +608,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==",
-    "licenseFile": "licenses/call-bound.txt"
+    "packagePaths": [
+      "node_modules/call-bound"
+    ],
+    "licenseFile": "licenses/npm/call-bound/1.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/call-bound/1.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "content-disposition",
@@ -237,7 +629,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g==",
-    "licenseFile": "licenses/content-disposition.txt"
+    "packagePaths": [
+      "node_modules/content-disposition"
+    ],
+    "licenseFile": "licenses/npm/content-disposition/1.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/content-disposition/1.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400"
+      }
+    ]
   },
   {
     "name": "content-type",
@@ -245,15 +650,43 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==",
-    "licenseFile": "licenses/content-type.txt"
+    "packagePaths": [
+      "node_modules/content-type"
+    ],
+    "licenseFile": "licenses/npm/content-type/1.0.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/content-type/1.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "257aed98914108e91a337912727b6a802eef218248507f74b76faffaff517a38"
+      }
+    ]
   },
   {
-    "name": "cookie",
-    "version": "0.7.2",
+    "name": "content-type",
+    "version": "2.1.0",
     "license": "MIT",
     "developmentOnly": false,
-    "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
-    "licenseFile": "licenses/cookie.txt"
+    "integrity": "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
+    "packagePaths": [
+      "node_modules/body-parser/node_modules/content-type",
+      "node_modules/negotiator/node_modules/content-type",
+      "node_modules/type-is/node_modules/content-type"
+    ],
+    "licenseFile": "licenses/npm/content-type/2.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/content-type/2.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "257aed98914108e91a337912727b6a802eef218248507f74b76faffaff517a38"
+      }
+    ]
   },
   {
     "name": "cookie-signature",
@@ -261,7 +694,41 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-D76uU73ulSXrD1UXF4KE2TMxVVwhsnCgfAyTg9k8P6KGZjlXKrOLe4dJQKI3Bxi5wjesZoFXJWElNWBjPZMbhg==",
-    "licenseFile": "licenses/cookie-signature.txt"
+    "packagePaths": [
+      "node_modules/cookie-signature"
+    ],
+    "licenseFile": "licenses/npm/cookie-signature/1.2.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/cookie-signature/1.2.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "0dd4e47333485760cf8c265db5a5e24ae8d7401064c6f2e19793ee81a5bef42f"
+      }
+    ]
+  },
+  {
+    "name": "cookie",
+    "version": "0.7.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
+    "packagePaths": [
+      "node_modules/cookie"
+    ],
+    "licenseFile": "licenses/npm/cookie/0.7.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/cookie/0.7.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c02110eedc16c7114f1a9bdc026c65626ce1d9c7e27fd51a8e0feee8a48a6858"
+      }
+    ]
   },
   {
     "name": "cross-spawn",
@@ -269,7 +736,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
-    "licenseFile": "licenses/cross-spawn.txt"
+    "packagePaths": [
+      "node_modules/cross-spawn"
+    ],
+    "licenseFile": "licenses/npm/cross-spawn/7.0.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/cross-spawn/7.0.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "aaa78451b6fecd1b9c4594c796c133c0e90cad100372ff8bc6de615e9ef9adf1"
+      }
+    ]
   },
   {
     "name": "csstype",
@@ -277,7 +757,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
-    "licenseFile": "licenses/csstype.txt"
+    "packagePaths": [
+      "node_modules/csstype"
+    ],
+    "licenseFile": "licenses/npm/csstype/3.2.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/csstype/3.2.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "11d55bd4541c75ee7879547ac49089c489163dae49551389713c3d026cab383e"
+      }
+    ]
   },
   {
     "name": "debug",
@@ -285,7 +778,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
-    "licenseFile": "licenses/debug.txt"
+    "packagePaths": [
+      "node_modules/debug"
+    ],
+    "licenseFile": "licenses/npm/debug/4.4.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/debug/4.4.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95"
+      }
+    ]
   },
   {
     "name": "depd",
@@ -293,7 +799,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==",
-    "licenseFile": "licenses/depd.txt"
+    "packagePaths": [
+      "node_modules/depd"
+    ],
+    "licenseFile": "licenses/npm/depd/2.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/depd/2.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd134b41da59e452fb5a1d366b660886f741c87c2bf9428e93764c419fbc40f5"
+      }
+    ]
   },
   {
     "name": "detect-libc",
@@ -301,7 +820,20 @@
     "license": "Apache-2.0",
     "developmentOnly": true,
     "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
-    "licenseFile": "licenses/detect-libc.txt"
+    "packagePaths": [
+      "node_modules/detect-libc"
+    ],
+    "licenseFile": "licenses/npm/detect-libc/2.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/detect-libc/2.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+      }
+    ]
   },
   {
     "name": "dns-packet",
@@ -309,7 +841,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-l4gcSouhcgIKRvyy99RNVOgxXiicE+2jZoNmaNmZ6JXiGajBOJAesk1OBlJuM5k2c+eudGdLxDqXuPCKIj6kpw==",
-    "licenseFile": "licenses/dns-packet.txt"
+    "packagePaths": [
+      "node_modules/dns-packet"
+    ],
+    "licenseFile": "licenses/npm/dns-packet/5.6.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/dns-packet/5.6.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "6a134e51aa31496c15a741592fc5d782b2dbf8d8b6b8524e15c8520ae0cd6374"
+      }
+    ]
   },
   {
     "name": "dunder-proto",
@@ -317,7 +862,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
-    "licenseFile": "licenses/dunder-proto.txt"
+    "packagePaths": [
+      "node_modules/dunder-proto"
+    ],
+    "licenseFile": "licenses/npm/dunder-proto/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/dunder-proto/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "2b770a704c15de238c3f622b01b0044ddd60b49ee30608ea6991ebf19db7a7a1"
+      }
+    ]
   },
   {
     "name": "ee-first",
@@ -325,7 +883,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==",
-    "licenseFile": "licenses/ee-first.txt"
+    "packagePaths": [
+      "node_modules/ee-first"
+    ],
+    "licenseFile": "licenses/npm/ee-first/1.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/ee-first/1.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "965ef284f7f4c176842ec2e87fa13e79feed777d56d7a21a5a3b38f1bb6dc288"
+      }
+    ]
   },
   {
     "name": "encodeurl",
@@ -333,7 +904,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==",
-    "licenseFile": "licenses/encodeurl.txt"
+    "packagePaths": [
+      "node_modules/encodeurl"
+    ],
+    "licenseFile": "licenses/npm/encodeurl/2.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/encodeurl/2.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "7585ea7bba616ccbbe43cb54ecb67956688c3c5641bb84f3099a652a73193afe"
+      }
+    ]
   },
   {
     "name": "es-define-property",
@@ -341,7 +925,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
-    "licenseFile": "licenses/es-define-property.txt"
+    "packagePaths": [
+      "node_modules/es-define-property"
+    ],
+    "licenseFile": "licenses/npm/es-define-property/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/es-define-property/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "es-errors",
@@ -349,7 +946,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
-    "licenseFile": "licenses/es-errors.txt"
+    "packagePaths": [
+      "node_modules/es-errors"
+    ],
+    "licenseFile": "licenses/npm/es-errors/1.3.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/es-errors/1.3.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "es-object-atoms",
@@ -357,7 +967,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==",
-    "licenseFile": "licenses/es-object-atoms.txt"
+    "packagePaths": [
+      "node_modules/es-object-atoms"
+    ],
+    "licenseFile": "licenses/npm/es-object-atoms/1.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/es-object-atoms/1.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "escape-html",
@@ -365,7 +988,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-NiSupZ4OeuGwr68lGIeym/ksIZMJodUGOSCZ/FSnTxcrekbvqrgdUxlJOMpijaKZVjAJrWrGs/6Jy8OMuyj9ow==",
-    "licenseFile": "licenses/escape-html.txt"
+    "packagePaths": [
+      "node_modules/escape-html"
+    ],
+    "licenseFile": "licenses/npm/escape-html/1.0.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/escape-html/1.0.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "255aa557a1f55224ce522f311629c0bf20854740a67955cefd798fbd1d3d1ded"
+      }
+    ]
   },
   {
     "name": "etag",
@@ -373,7 +1009,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==",
-    "licenseFile": "licenses/etag.txt"
+    "packagePaths": [
+      "node_modules/etag"
+    ],
+    "licenseFile": "licenses/npm/etag/1.8.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/etag/1.8.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813"
+      }
+    ]
   },
   {
     "name": "express",
@@ -381,7 +1030,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw==",
-    "licenseFile": "licenses/express.txt"
+    "packagePaths": [
+      "node_modules/express"
+    ],
+    "licenseFile": "licenses/npm/express/5.2.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/express/5.2.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c"
+      }
+    ]
   },
   {
     "name": "fast-deep-equal",
@@ -389,7 +1051,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
-    "licenseFile": "licenses/fast-deep-equal.txt"
+    "packagePaths": [
+      "node_modules/fast-deep-equal"
+    ],
+    "licenseFile": "licenses/npm/fast-deep-equal/3.1.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/fast-deep-equal/3.1.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "7bf9b2de73a6b356761c948d0e9eeb4be6c1270bd04c79cd489c1e400ffdfc1a"
+      }
+    ]
   },
   {
     "name": "fdir",
@@ -397,7 +1072,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
-    "licenseFile": "licenses/fdir.txt"
+    "packagePaths": [
+      "node_modules/fdir"
+    ],
+    "licenseFile": "licenses/npm/fdir/6.5.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/fdir/6.5.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86"
+      }
+    ]
   },
   {
     "name": "finalhandler",
@@ -405,7 +1093,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA==",
-    "licenseFile": "licenses/finalhandler.txt"
+    "packagePaths": [
+      "node_modules/finalhandler"
+    ],
+    "licenseFile": "licenses/npm/finalhandler/2.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/finalhandler/2.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "47dcccf62bf40469d23849b0b1dc8df9fc91bce219b880c638d4dc4596e6b5cf"
+      }
+    ]
   },
   {
     "name": "forwarded",
@@ -413,7 +1114,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==",
-    "licenseFile": "licenses/forwarded.txt"
+    "packagePaths": [
+      "node_modules/forwarded"
+    ],
+    "licenseFile": "licenses/npm/forwarded/0.2.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/forwarded/0.2.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400"
+      }
+    ]
   },
   {
     "name": "fresh",
@@ -421,7 +1135,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==",
-    "licenseFile": "licenses/fresh.txt"
+    "packagePaths": [
+      "node_modules/fresh"
+    ],
+    "licenseFile": "licenses/npm/fresh/2.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/fresh/2.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a0ec0dab16b3666f24950f86d257930ac2ad475557b4bfe245620e0817d8a45d"
+      }
+    ]
   },
   {
     "name": "function-bind",
@@ -429,7 +1156,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
-    "licenseFile": "licenses/function-bind.txt"
+    "packagePaths": [
+      "node_modules/function-bind"
+    ],
+    "licenseFile": "licenses/npm/function-bind/1.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/function-bind/1.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "773e131a7684726005a7e4688a80b4620033bc08499bc1404dd1a1eb3bca725e"
+      }
+    ]
   },
   {
     "name": "get-intrinsic",
@@ -437,7 +1177,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
-    "licenseFile": "licenses/get-intrinsic.txt"
+    "packagePaths": [
+      "node_modules/get-intrinsic"
+    ],
+    "licenseFile": "licenses/npm/get-intrinsic/1.3.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/get-intrinsic/1.3.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "39c5ec504cf6bd5cd782a7c695828e09189df79f5d94840e4f08feb97b9fd416"
+      }
+    ]
   },
   {
     "name": "get-proto",
@@ -445,7 +1198,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
-    "licenseFile": "licenses/get-proto.txt"
+    "packagePaths": [
+      "node_modules/get-proto"
+    ],
+    "licenseFile": "licenses/npm/get-proto/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/get-proto/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "be46ce1e3b0479af9ce82d22b465a6d7d2ff084fca0aaf3d54172da2b5eb5781"
+      }
+    ]
   },
   {
     "name": "gopd",
@@ -453,7 +1219,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
-    "licenseFile": "licenses/gopd.txt"
+    "packagePaths": [
+      "node_modules/gopd"
+    ],
+    "licenseFile": "licenses/npm/gopd/1.2.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/gopd/1.2.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "d90bf0a089da4cf43d644ed240a0b3825dcdb705e64e38371d56995a4cc9e4c5"
+      }
+    ]
   },
   {
     "name": "has-symbols",
@@ -461,7 +1240,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
-    "licenseFile": "licenses/has-symbols.txt"
+    "packagePaths": [
+      "node_modules/has-symbols"
+    ],
+    "licenseFile": "licenses/npm/has-symbols/1.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/has-symbols/1.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "206c1adcf206dc0031b11232f5b054ec5f1662407ab1ca415247921cab2068ab"
+      }
+    ]
   },
   {
     "name": "hasown",
@@ -469,7 +1261,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==",
-    "licenseFile": "licenses/hasown.txt"
+    "packagePaths": [
+      "node_modules/hasown"
+    ],
+    "licenseFile": "licenses/npm/hasown/2.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/hasown/2.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a"
+      }
+    ]
   },
   {
     "name": "http-errors",
@@ -477,7 +1282,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==",
-    "licenseFile": "licenses/http-errors.txt"
+    "packagePaths": [
+      "node_modules/http-errors"
+    ],
+    "licenseFile": "licenses/npm/http-errors/2.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/http-errors/2.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "dcb94ff9b1e037a847bc20589dc81a1066d041fd4c16deb18b0fa968c66cf395"
+      }
+    ]
   },
   {
     "name": "iconv-lite",
@@ -485,7 +1303,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
-    "licenseFile": "licenses/iconv-lite.txt"
+    "packagePaths": [
+      "node_modules/iconv-lite"
+    ],
+    "licenseFile": "licenses/npm/iconv-lite/0.7.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/iconv-lite/0.7.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d"
+      }
+    ]
   },
   {
     "name": "inherits",
@@ -493,7 +1324,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
-    "licenseFile": "licenses/inherits.txt"
+    "packagePaths": [
+      "node_modules/inherits"
+    ],
+    "licenseFile": "licenses/npm/inherits/2.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/inherits/2.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
+      }
+    ]
   },
   {
     "name": "ipaddr.js",
@@ -501,7 +1345,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
-    "licenseFile": "licenses/ipaddr.js.txt"
+    "packagePaths": [
+      "node_modules/ipaddr.js"
+    ],
+    "licenseFile": "licenses/npm/ipaddr.js/1.9.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/ipaddr.js/1.9.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "62568a2d1337b77171ecca9db10579163446de1ba6151678e81f06cdc199971b"
+      }
+    ]
   },
   {
     "name": "is-promise",
@@ -509,7 +1366,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==",
-    "licenseFile": "licenses/is-promise.txt"
+    "packagePaths": [
+      "node_modules/is-promise"
+    ],
+    "licenseFile": "licenses/npm/is-promise/4.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/is-promise/4.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "44191656d296391e0ec97e32f5385f0d02b6f2992694082d22ea04ba0f66f9e4"
+      }
+    ]
   },
   {
     "name": "isexe",
@@ -517,15 +1387,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
-    "licenseFile": "licenses/isexe.txt"
-  },
-  {
-    "name": "lightningcss",
-    "version": "1.33.0",
-    "license": "MPL-2.0",
-    "developmentOnly": true,
-    "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
-    "licenseFile": "licenses/lightningcss.txt"
+    "packagePaths": [
+      "node_modules/isexe"
+    ],
+    "licenseFile": "licenses/npm/isexe/2.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/isexe/2.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+      }
+    ]
   },
   {
     "name": "lightningcss-win32-x64-msvc",
@@ -533,7 +1408,41 @@
     "license": "MPL-2.0",
     "developmentOnly": true,
     "integrity": "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA==",
-    "licenseFile": "licenses/lightningcss-win32-x64-msvc.txt"
+    "packagePaths": [
+      "node_modules/lightningcss-win32-x64-msvc"
+    ],
+    "licenseFile": "licenses/npm/lightningcss-win32-x64-msvc/1.33.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/lightningcss-win32-x64-msvc/1.33.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e"
+      }
+    ]
+  },
+  {
+    "name": "lightningcss",
+    "version": "1.33.0",
+    "license": "MPL-2.0",
+    "developmentOnly": true,
+    "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
+    "packagePaths": [
+      "node_modules/lightningcss"
+    ],
+    "licenseFile": "licenses/npm/lightningcss/1.33.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/lightningcss/1.33.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e"
+      }
+    ]
   },
   {
     "name": "lucide-react",
@@ -541,7 +1450,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-xZCyBd/wiVUDactoCc+42TjL0aB7EBOXsuX+tjz+W/sGzw2KhHpL1NOH3FIaVUcpimvUBpIYfz34Ofj9S5JEzQ==",
-    "licenseFile": "licenses/lucide-react.txt"
+    "packagePaths": [
+      "node_modules/lucide-react"
+    ],
+    "licenseFile": "licenses/npm/lucide-react/1.38.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/lucide-react/1.38.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+      }
+    ]
   },
   {
     "name": "math-intrinsics",
@@ -549,7 +1471,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
-    "licenseFile": "licenses/math-intrinsics.txt"
+    "packagePaths": [
+      "node_modules/math-intrinsics"
+    ],
+    "licenseFile": "licenses/npm/math-intrinsics/1.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/math-intrinsics/1.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "2b770a704c15de238c3f622b01b0044ddd60b49ee30608ea6991ebf19db7a7a1"
+      }
+    ]
   },
   {
     "name": "media-typer",
@@ -557,7 +1492,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==",
-    "licenseFile": "licenses/media-typer.txt"
+    "packagePaths": [
+      "node_modules/media-typer"
+    ],
+    "licenseFile": "licenses/npm/media-typer/1.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/media-typer/1.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400"
+      }
+    ]
   },
   {
     "name": "merge-descriptors",
@@ -565,7 +1513,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==",
-    "licenseFile": "licenses/merge-descriptors.txt"
+    "packagePaths": [
+      "node_modules/merge-descriptors"
+    ],
+    "licenseFile": "licenses/npm/merge-descriptors/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/merge-descriptors/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "70b126abc64d7ea06e1243349073935caa16fa47a41a571773ccf0b350b1d574"
+      }
+    ]
   },
   {
     "name": "mime-db",
@@ -573,7 +1534,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ==",
-    "licenseFile": "licenses/mime-db.txt"
+    "packagePaths": [
+      "node_modules/mime-db"
+    ],
+    "licenseFile": "licenses/npm/mime-db/1.54.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/mime-db/1.54.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "cc1dfd4dafa27271e8212cd3b274eeb3f262e40a6fdab36ddc3f9696f706f58b"
+      }
+    ]
   },
   {
     "name": "mime-types",
@@ -581,7 +1555,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==",
-    "licenseFile": "licenses/mime-types.txt"
+    "packagePaths": [
+      "node_modules/mime-types"
+    ],
+    "licenseFile": "licenses/npm/mime-types/3.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/mime-types/3.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6"
+      }
+    ]
   },
   {
     "name": "ms",
@@ -589,7 +1576,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
-    "licenseFile": "licenses/ms.txt"
+    "packagePaths": [
+      "node_modules/ms"
+    ],
+    "licenseFile": "licenses/npm/ms/2.1.3/license.md",
+    "licenseFiles": [
+      "licenses/npm/ms/2.1.3/license.md"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license.md",
+        "sha256": "1662fae9b5314d11cf51284e2dcd1f006a354f7343f08712a730fcff9a359801"
+      }
+    ]
   },
   {
     "name": "multicast-dns",
@@ -597,7 +1597,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-2eznPJP8z2BFLX50tf0LuODrpINqP1RVIm/CObbTcBRITQgmC/TjcREF1NeTBzIcR5XO/ukWo+YHOjBbFwIupg==",
-    "licenseFile": "licenses/multicast-dns.txt"
+    "packagePaths": [
+      "node_modules/multicast-dns"
+    ],
+    "licenseFile": "licenses/npm/multicast-dns/7.2.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/multicast-dns/7.2.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "0aa9add6a9158efad3e6649e3affd607c7e2629f6677af19f9988c8fbb0757b0"
+      }
+    ]
   },
   {
     "name": "nanoid",
@@ -605,7 +1618,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
-    "licenseFile": "licenses/nanoid.txt"
+    "packagePaths": [
+      "node_modules/nanoid"
+    ],
+    "licenseFile": "licenses/npm/nanoid/3.3.18/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/nanoid/3.3.18/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "da4db1480d9beea3483a2eda5c53b22238d0827d57da162b48f122e04d2d9987"
+      }
+    ]
   },
   {
     "name": "negotiator",
@@ -613,15 +1639,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==",
-    "licenseFile": "licenses/negotiator.txt"
-  },
-  {
-    "name": "content-type",
-    "version": "2.1.0",
-    "license": "MIT",
-    "developmentOnly": false,
-    "integrity": "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
-    "licenseFile": "licenses/content-type.txt"
+    "packagePaths": [
+      "node_modules/negotiator"
+    ],
+    "licenseFile": "licenses/npm/negotiator/1.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/negotiator/1.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "553d4d20029a24e315b428a1a54a9e109eaa340f2e958a4f50a92362c2c4070b"
+      }
+    ]
   },
   {
     "name": "object-inspect",
@@ -629,7 +1660,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==",
-    "licenseFile": "licenses/object-inspect.txt"
+    "packagePaths": [
+      "node_modules/object-inspect"
+    ],
+    "licenseFile": "licenses/npm/object-inspect/1.13.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/object-inspect/1.13.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd40cc437e28a3ad7bef2ad34e6b72e757b182e67bda1acadbab4ef0476f8232"
+      }
+    ]
   },
   {
     "name": "on-finished",
@@ -637,7 +1681,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==",
-    "licenseFile": "licenses/on-finished.txt"
+    "packagePaths": [
+      "node_modules/on-finished"
+    ],
+    "licenseFile": "licenses/npm/on-finished/2.4.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/on-finished/2.4.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "8089bcc08845ec143e5761f4a101a65b8c792a0dedbfeeb90a15560c0b77f768"
+      }
+    ]
   },
   {
     "name": "once",
@@ -645,7 +1702,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==",
-    "licenseFile": "licenses/once.txt"
+    "packagePaths": [
+      "node_modules/once"
+    ],
+    "licenseFile": "licenses/npm/once/1.4.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/once/1.4.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+      }
+    ]
   },
   {
     "name": "opencode-windows-x64",
@@ -653,7 +1723,23 @@
     "license": "MIT (upstream)",
     "developmentOnly": false,
     "integrity": "sha512-xW5wtSxWYbI7DcmQWMlNWIiDBdMJON1vDiEmVWo88R9tT/PaahOhWKgp7FoWDqJKf89jS3ZIzkqnkU3F2dio7A==",
-    "licenseFile": null
+    "packagePaths": [
+      "node_modules/opencode-windows-x64"
+    ],
+    "licenseFile": "licenses/npm/opencode-windows-x64/1.18.25/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/opencode-windows-x64/1.18.25/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "upstream",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.25",
+        "revision": "v1.18.25",
+        "packageVersionSource": "https://registry.npmjs.org/opencode-windows-x64/1.18.25",
+        "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
+        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
+      }
+    ]
   },
   {
     "name": "parseurl",
@@ -661,7 +1747,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==",
-    "licenseFile": "licenses/parseurl.txt"
+    "packagePaths": [
+      "node_modules/parseurl"
+    ],
+    "licenseFile": "licenses/npm/parseurl/1.3.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/parseurl/1.3.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "11d017c3b9f1ee3f44caf7203035f0461d5b57e0db8ce1bc03a9af34fa7d3f6b"
+      }
+    ]
   },
   {
     "name": "path-key",
@@ -669,7 +1768,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
-    "licenseFile": "licenses/path-key.txt"
+    "packagePaths": [
+      "node_modules/path-key"
+    ],
+    "licenseFile": "licenses/npm/path-key/3.1.1/license",
+    "licenseFiles": [
+      "licenses/npm/path-key/3.1.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
+      }
+    ]
   },
   {
     "name": "path-to-regexp",
@@ -677,7 +1789,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==",
-    "licenseFile": "licenses/path-to-regexp.txt"
+    "packagePaths": [
+      "node_modules/path-to-regexp"
+    ],
+    "licenseFile": "licenses/npm/path-to-regexp/8.4.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/path-to-regexp/8.4.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4eeb3271453a891df609e5a9f4ee79a68307f730c13417a3bfeffa604ac8cf25"
+      }
+    ]
   },
   {
     "name": "picocolors",
@@ -685,7 +1810,20 @@
     "license": "ISC",
     "developmentOnly": true,
     "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
-    "licenseFile": "licenses/picocolors.txt"
+    "packagePaths": [
+      "node_modules/picocolors"
+    ],
+    "licenseFile": "licenses/npm/picocolors/1.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/picocolors/1.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "6582629e2979466878f6014313dcc2f3756c9616148682227ce3063dde310750"
+      }
+    ]
   },
   {
     "name": "picomatch",
@@ -693,7 +1831,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
-    "licenseFile": "licenses/picomatch.txt"
+    "packagePaths": [
+      "node_modules/picomatch"
+    ],
+    "licenseFile": "licenses/npm/picomatch/4.0.7/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/picomatch/4.0.7/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+      }
+    ]
   },
   {
     "name": "postcss",
@@ -701,7 +1852,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==",
-    "licenseFile": "licenses/postcss.txt"
+    "packagePaths": [
+      "node_modules/postcss"
+    ],
+    "licenseFile": "licenses/npm/postcss/8.5.26/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/postcss/8.5.26/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8"
+      }
+    ]
   },
   {
     "name": "prettier",
@@ -709,7 +1873,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==",
-    "licenseFile": "licenses/prettier.txt"
+    "packagePaths": [
+      "node_modules/prettier"
+    ],
+    "licenseFile": "licenses/npm/prettier/3.9.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/prettier/3.9.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "b0f2417199889f1c0d28ec4e0244eacf1a15de5819d61f641dd7d8f45153ac9c"
+      }
+    ]
   },
   {
     "name": "proxy-addr",
@@ -717,7 +1894,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
-    "licenseFile": "licenses/proxy-addr.txt"
+    "packagePaths": [
+      "node_modules/proxy-addr"
+    ],
+    "licenseFile": "licenses/npm/proxy-addr/2.0.7/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/proxy-addr/2.0.7/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813"
+      }
+    ]
   },
   {
     "name": "qs",
@@ -725,7 +1915,20 @@
     "license": "BSD-3-Clause",
     "developmentOnly": false,
     "integrity": "sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==",
-    "licenseFile": "licenses/qs.txt"
+    "packagePaths": [
+      "node_modules/qs"
+    ],
+    "licenseFile": "licenses/npm/qs/6.16.0/LICENSE.md",
+    "licenseFiles": [
+      "licenses/npm/qs/6.16.0/LICENSE.md"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE.md",
+        "sha256": "e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1"
+      }
+    ]
   },
   {
     "name": "range-parser",
@@ -733,7 +1936,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-hek2mFQpPuI4E1BBKrSto+BU3e3x4xuarsbiwr3+lf7p44juvFMV0XFWQAP3xUyqXA4RrXLIoaSUGbSt056ZMw==",
-    "licenseFile": "licenses/range-parser.txt"
+    "packagePaths": [
+      "node_modules/range-parser"
+    ],
+    "licenseFile": "licenses/npm/range-parser/1.3.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/range-parser/1.3.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "f655e6291356ec0de7a8f0e69f294961a2cea86678ec94588be1e6a492e278ab"
+      }
+    ]
   },
   {
     "name": "raw-body",
@@ -741,15 +1957,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==",
-    "licenseFile": "licenses/raw-body.txt"
-  },
-  {
-    "name": "react",
-    "version": "19.2.8",
-    "license": "MIT",
-    "developmentOnly": false,
-    "integrity": "sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==",
-    "licenseFile": "licenses/react.txt"
+    "packagePaths": [
+      "node_modules/raw-body"
+    ],
+    "licenseFile": "licenses/npm/raw-body/3.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/raw-body/3.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "37876d7de8bdf5e5b9b58a697ebc34044624e493e6f49eff5c938e5226dcac6b"
+      }
+    ]
   },
   {
     "name": "react-dom",
@@ -757,7 +1978,41 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==",
-    "licenseFile": "licenses/react-dom.txt"
+    "packagePaths": [
+      "node_modules/react-dom"
+    ],
+    "licenseFile": "licenses/npm/react-dom/19.2.8/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/react-dom/19.2.8/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
+  },
+  {
+    "name": "react",
+    "version": "19.2.8",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==",
+    "packagePaths": [
+      "node_modules/react"
+    ],
+    "licenseFile": "licenses/npm/react/19.2.8/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/react/19.2.8/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
   },
   {
     "name": "rolldown",
@@ -765,7 +2020,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-vMM4q3aixf46GiF1Kok8jDPFsEpXgFWGjUHXNkNHNm+Y2adXAG2dbX91jkti3i0ZRsOlcmbuzAz1poObSHCmUA==",
-    "licenseFile": "licenses/rolldown.txt"
+    "packagePaths": [
+      "node_modules/rolldown"
+    ],
+    "licenseFile": "licenses/npm/rolldown/1.2.6/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/rolldown/1.2.6/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734"
+      }
+    ]
   },
   {
     "name": "router",
@@ -773,7 +2041,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-nLTrUKm2UyiL7rlhapu/Zl45FwNgkZGaCpZbIHajDYgwlJCOzLSk+cIPAnsEqV955GjILJnKbdQC1nVPz+gAYQ==",
-    "licenseFile": "licenses/router.txt"
+    "packagePaths": [
+      "node_modules/router"
+    ],
+    "licenseFile": "licenses/npm/router/2.2.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/router/2.2.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "d0bca4e517157b7a6120c085f5fe43a35b90c095e3bbeb9e67f220c608506a16"
+      }
+    ]
   },
   {
     "name": "safer-buffer",
@@ -781,7 +2062,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
-    "licenseFile": "licenses/safer-buffer.txt"
+    "packagePaths": [
+      "node_modules/safer-buffer"
+    ],
+    "licenseFile": "licenses/npm/safer-buffer/2.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/safer-buffer/2.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4bc935e71be198c67ddf3c2b5fddb195f6edc182bfc155a96a6db61b44b494b9"
+      }
+    ]
   },
   {
     "name": "scheduler",
@@ -789,7 +2083,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==",
-    "licenseFile": "licenses/scheduler.txt"
+    "packagePaths": [
+      "node_modules/scheduler"
+    ],
+    "licenseFile": "licenses/npm/scheduler/0.27.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/scheduler/0.27.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
   },
   {
     "name": "send",
@@ -797,7 +2104,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-1gnZf7DFcoIcajTjTwjwuDjzuz4PPcY2StKPlsGAQ1+YH20IRVrBaXSWmdjowTJ6u8Rc01PoYOGHXfP1mYcZNQ==",
-    "licenseFile": "licenses/send.txt"
+    "packagePaths": [
+      "node_modules/send"
+    ],
+    "licenseFile": "licenses/npm/send/1.2.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/send/1.2.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "25a328069fe771f8ed5b6f983ed4b0e6c84b3312ac0f69b28c3d52dc277962c9"
+      }
+    ]
   },
   {
     "name": "serve-static",
@@ -805,7 +2125,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw==",
-    "licenseFile": "licenses/serve-static.txt"
+    "packagePaths": [
+      "node_modules/serve-static"
+    ],
+    "licenseFile": "licenses/npm/serve-static/2.2.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/serve-static/2.2.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "63b9a188d7d43e64b0558b7115255045b9fe20a5fc3ff483421cb899e7f52bcb"
+      }
+    ]
   },
   {
     "name": "setprototypeof",
@@ -813,7 +2146,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-E5LDX7Wrp85Kil5bhZv46j8jOeboKq5JMmYM3gVGdGH8xFpPWXUMsNrlODCrkoxMEeNi/XZIwuRvY4XNwYMJpw==",
-    "licenseFile": "licenses/setprototypeof.txt"
+    "packagePaths": [
+      "node_modules/setprototypeof"
+    ],
+    "licenseFile": "licenses/npm/setprototypeof/1.2.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/setprototypeof/1.2.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69"
+      }
+    ]
   },
   {
     "name": "shebang-command",
@@ -821,7 +2167,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
-    "licenseFile": "licenses/shebang-command.txt"
+    "packagePaths": [
+      "node_modules/shebang-command"
+    ],
+    "licenseFile": "licenses/npm/shebang-command/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/shebang-command/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "69dee148a2cc470554dfa7142e830662062394d0fe67cddd379aba90dc60d6b3"
+      }
+    ]
   },
   {
     "name": "shebang-regex",
@@ -829,15 +2188,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==",
-    "licenseFile": "licenses/shebang-regex.txt"
-  },
-  {
-    "name": "side-channel",
-    "version": "1.1.1",
-    "license": "MIT",
-    "developmentOnly": false,
-    "integrity": "sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==",
-    "licenseFile": "licenses/side-channel.txt"
+    "packagePaths": [
+      "node_modules/shebang-regex"
+    ],
+    "licenseFile": "licenses/npm/shebang-regex/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/shebang-regex/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
+      }
+    ]
   },
   {
     "name": "side-channel-list",
@@ -845,7 +2209,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-mjn/0bi/oUURjc5Xl7IaWi/OJJJumuoJFQJfDDyO46+hBWsfaVM65TBHq2eoZBhzl9EchxOijpkbRC8SVBQU0w==",
-    "licenseFile": "licenses/side-channel-list.txt"
+    "packagePaths": [
+      "node_modules/side-channel-list"
+    ],
+    "licenseFile": "licenses/npm/side-channel-list/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/side-channel-list/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "side-channel-map",
@@ -853,7 +2230,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==",
-    "licenseFile": "licenses/side-channel-map.txt"
+    "packagePaths": [
+      "node_modules/side-channel-map"
+    ],
+    "licenseFile": "licenses/npm/side-channel-map/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/side-channel-map/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
   },
   {
     "name": "side-channel-weakmap",
@@ -861,7 +2251,41 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==",
-    "licenseFile": "licenses/side-channel-weakmap.txt"
+    "packagePaths": [
+      "node_modules/side-channel-weakmap"
+    ],
+    "licenseFile": "licenses/npm/side-channel-weakmap/1.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/side-channel-weakmap/1.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "cfc3f455254c0af0655cc3ff46a41ed644b67599f6043346169d285bf2b3cf3b"
+      }
+    ]
+  },
+  {
+    "name": "side-channel",
+    "version": "1.1.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==",
+    "packagePaths": [
+      "node_modules/side-channel"
+    ],
+    "licenseFile": "licenses/npm/side-channel/1.1.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/side-channel/1.1.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "cfc3f455254c0af0655cc3ff46a41ed644b67599f6043346169d285bf2b3cf3b"
+      }
+    ]
   },
   {
     "name": "source-map-js",
@@ -869,7 +2293,20 @@
     "license": "BSD-3-Clause",
     "developmentOnly": true,
     "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
-    "licenseFile": "licenses/source-map-js.txt"
+    "packagePaths": [
+      "node_modules/source-map-js"
+    ],
+    "licenseFile": "licenses/npm/source-map-js/1.2.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/source-map-js/1.2.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd"
+      }
+    ]
   },
   {
     "name": "statuses",
@@ -877,7 +2314,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
-    "licenseFile": "licenses/statuses.txt"
+    "packagePaths": [
+      "node_modules/statuses"
+    ],
+    "licenseFile": "licenses/npm/statuses/2.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/statuses/2.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "512cfa4d5e7a7569c7ae4dd95241cb6ae2aaf648ef9ebd080c01bd24868d26e9"
+      }
+    ]
   },
   {
     "name": "thunky",
@@ -885,7 +2335,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-eHY7nBftgThBqOyHGVN+l8gF0BucP09fMo0oO/Lb0w1OF80dJv+lDVpXG60WMQvkcxAkNybKsrEIE3ZtKGmPrA==",
-    "licenseFile": "licenses/thunky.txt"
+    "packagePaths": [
+      "node_modules/thunky"
+    ],
+    "licenseFile": "licenses/npm/thunky/1.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/thunky/1.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "2281f2db407bdbb54f069eec38128b2dee2c0c952f52b786ef1faecb81767b3c"
+      }
+    ]
   },
   {
     "name": "tinyglobby",
@@ -893,7 +2356,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
-    "licenseFile": "licenses/tinyglobby.txt"
+    "packagePaths": [
+      "node_modules/tinyglobby"
+    ],
+    "licenseFile": "licenses/npm/tinyglobby/0.2.17/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/tinyglobby/0.2.17/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "22c68811e174cbbfb3813d4135918df4f540959c14d872e601d9abe83d3cde8f"
+      }
+    ]
   },
   {
     "name": "toidentifier",
@@ -901,7 +2377,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==",
-    "licenseFile": "licenses/toidentifier.txt"
+    "packagePaths": [
+      "node_modules/toidentifier"
+    ],
+    "licenseFile": "licenses/npm/toidentifier/1.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/toidentifier/1.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a832d679750e49ab433626ab196350b89964b60eb0d3edd3341887c7d5f4c128"
+      }
+    ]
   },
   {
     "name": "type-is",
@@ -909,15 +2398,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==",
-    "licenseFile": "licenses/type-is.txt"
-  },
-  {
-    "name": "content-type",
-    "version": "2.1.0",
-    "license": "MIT",
-    "developmentOnly": false,
-    "integrity": "sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==",
-    "licenseFile": "licenses/content-type.txt"
+    "packagePaths": [
+      "node_modules/type-is"
+    ],
+    "licenseFile": "licenses/npm/type-is/2.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/type-is/2.1.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "23d466b1b134b415b66fa50c6526b4cf3e7b9258554da88d3abb371721e7ce68"
+      }
+    ]
   },
   {
     "name": "typescript",
@@ -925,7 +2419,26 @@
     "license": "Apache-2.0",
     "developmentOnly": true,
     "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
-    "licenseFile": "licenses/typescript.txt"
+    "packagePaths": [
+      "node_modules/typescript"
+    ],
+    "licenseFile": "licenses/npm/typescript/7.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/typescript/7.0.2/LICENSE",
+      "licenses/npm/typescript/7.0.2/NOTICE.txt"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+      },
+      {
+        "kind": "installed-package",
+        "file": "NOTICE.txt",
+        "sha256": "f5c708b59114507b8b27b48181b6883d106bbca0c1634bbee45b5e344237b66b"
+      }
+    ]
   },
   {
     "name": "undici-types",
@@ -933,7 +2446,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==",
-    "licenseFile": "licenses/undici-types.txt"
+    "packagePaths": [
+      "node_modules/undici-types"
+    ],
+    "licenseFile": "licenses/npm/undici-types/8.3.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/undici-types/8.3.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27"
+      }
+    ]
   },
   {
     "name": "unpipe",
@@ -941,7 +2467,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==",
-    "licenseFile": "licenses/unpipe.txt"
+    "packagePaths": [
+      "node_modules/unpipe"
+    ],
+    "licenseFile": "licenses/npm/unpipe/1.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/unpipe/1.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "1a526fbe8d8577f5a4b1c2821842b55b7c0e18862531c62ae4ce69c9b19b74b6"
+      }
+    ]
   },
   {
     "name": "vary",
@@ -949,7 +2488,20 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==",
-    "licenseFile": "licenses/vary.txt"
+    "packagePaths": [
+      "node_modules/vary"
+    ],
+    "licenseFile": "licenses/npm/vary/1.1.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/vary/1.1.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400"
+      }
+    ]
   },
   {
     "name": "vite",
@@ -957,7 +2509,20 @@
     "license": "MIT",
     "developmentOnly": true,
     "integrity": "sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q==",
-    "licenseFile": "licenses/vite.txt"
+    "packagePaths": [
+      "node_modules/vite"
+    ],
+    "licenseFile": "licenses/npm/vite/8.2.2/LICENSE.md",
+    "licenseFiles": [
+      "licenses/npm/vite/8.2.2/LICENSE.md"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE.md",
+        "sha256": "387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c"
+      }
+    ]
   },
   {
     "name": "which",
@@ -965,7 +2530,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
-    "licenseFile": "licenses/which.txt"
+    "packagePaths": [
+      "node_modules/which"
+    ],
+    "licenseFile": "licenses/npm/which/2.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/which/2.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+      }
+    ]
   },
   {
     "name": "wrappy",
@@ -973,7 +2551,20 @@
     "license": "ISC",
     "developmentOnly": false,
     "integrity": "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==",
-    "licenseFile": "licenses/wrappy.txt"
+    "packagePaths": [
+      "node_modules/wrappy"
+    ],
+    "licenseFile": "licenses/npm/wrappy/1.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/wrappy/1.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+      }
+    ]
   },
   {
     "name": "zod",
@@ -981,6 +2572,19 @@
     "license": "MIT",
     "developmentOnly": false,
     "integrity": "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==",
-    "licenseFile": "licenses/zod.txt"
+    "packagePaths": [
+      "node_modules/zod"
+    ],
+    "licenseFile": "licenses/npm/zod/4.5.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/zod/4.5.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+      }
+    ]
   }
 ]

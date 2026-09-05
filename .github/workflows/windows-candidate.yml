@@ -1,0 +1,85 @@
+name: Windows Preview candidate (no publication)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [ci-preview-v*]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  RUSTUP_TOOLCHAIN: 1.98.1
+  CI: 'true'
+
+jobs:
+  candidate:
+    name: Build isolated UI Preview candidate
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Install fixed Rust toolchain and target
+        run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
+      - run: npm.cmd ci
+      - name: Verify candidate source, version and explicit Preview identity
+        run: node scripts/ci-candidate.ts configure
+      - name: Run CI helper guards
+        run: npm.cmd run ci:selftest
+      - name: Cache the locked Windows Cargo sources for read-only license verification
+        run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Prepare the explicit Preview runtime once
+        run: npm.cmd run desktop:prepare -- --profile conversation-preview
+      - name: Verify prepared runtime and notices before bundling
+        run: |
+          node scripts/ci-verify-runtime.ts --profile conversation-preview > test-results/candidate/runtime-before.json
+          if ($LASTEXITCODE -ne 0) { throw 'Pre-build runtime verification failed.' }
+          node scripts/ci-candidate.ts capture-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Could not bind the verified runtime.' }
+      - name: Build NSIS without re-running preparation or signing
+        run: >-
+          node node_modules/@tauri-apps/cli/tauri.js build
+          --config src-tauri/tauri.preview.conf.json
+          --config test-results/candidate/build-config.json
+          --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked
+      - name: Verify runtime again after native build
+        run: |
+          node scripts/ci-verify-runtime.ts --profile conversation-preview > test-results/candidate/runtime-after.json
+          if ($LASTEXITCODE -ne 0) { throw 'Post-build runtime verification failed.' }
+      - name: Record final candidate bytes and unchanged runtime
+        run: node scripts/ci-candidate.ts record
+      - name: Upload only the candidate installer and bounded manifests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conversation-preview-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/candidate/*.exe
+            test-results/candidate/candidate-build.json
+            test-results/candidate/runtime-manifest.json
+            test-results/candidate/runtime-before.json
+            test-results/candidate/runtime-after.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve failed gate results without publishing a candidate
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conversation-preview-candidate-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/candidate/runtime-*.json
+          if-no-files-found: warn
+          retention-days: 14

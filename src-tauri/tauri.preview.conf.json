@@ -1,4 +1,8 @@
 {
   "productName": "Rivloom UI Preview",
-  "identifier": "com.rivloom.conversationpreview"
+  "identifier": "com.rivloom.conversationpreview",
+  "build": {
+    "beforeDevCommand": "npm run desktop:prepare -- --profile conversation-preview",
+    "beforeBuildCommand": "npm run desktop:prepare -- --profile conversation-preview"
+  }
 }

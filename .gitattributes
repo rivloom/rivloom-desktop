@@ -11,3 +11,7 @@
 
 # Preserve upstream license text verbatim without treating its whitespace as a project defect.
 docs/licenses/** -whitespace
+
+# Keep versioned upstream originals byte-for-byte, including their original line endings.
+docs/licenses/npm/** -text
+docs/licenses/rust/** -text

@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, rm, access, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, join, relative, isAbsolute } from 'node:path';
 
@@ -8,6 +8,25 @@ const cache = join(root, '.data', 'desktop-downloads');
 const nodeVersion = '24.19.0';
 const nodeHash = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237';
 const engineHash = 'ef06e41a35795066e95acde276a42fbbf85d7a683c2787f6a19ed20bcde9b6ff';
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== '--profile'))
+  throw new Error(
+    'Usage: node scripts/desktop-prepare.ts [--profile desktop|conversation-preview]',
+  );
+const profile = args[1] ?? 'desktop';
+if (profile !== 'desktop' && profile !== 'conversation-preview')
+  throw new Error('Invalid desktop runtime profile');
+const formalConfig = JSON.parse(await readFile(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
+const productConfig =
+  profile === 'conversation-preview'
+    ? {
+        ...formalConfig,
+        ...JSON.parse(await readFile(join(root, 'src-tauri/tauri.preview.conf.json'), 'utf8')),
+      }
+    : formalConfig;
+const rustInventory = join(root, 'docs', 'desktop-dependency-licenses.json');
+// A missing native license inventory is a preparation failure, never an optional omission.
+await access(rustInventory);
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 async function exists(path: string) {
   try {
@@ -72,11 +91,10 @@ await cp(
   join(root, 'docs', 'dependency-licenses.json'),
   join(destination, 'docs', 'dependency-licenses.json'),
 );
-const rustInventory = join(root, 'docs', 'desktop-dependency-licenses.json');
-if (await exists(rustInventory))
-  await cp(rustInventory, join(destination, 'docs', 'desktop-dependency-licenses.json'));
+await cp(rustInventory, join(destination, 'docs', 'desktop-dependency-licenses.json'));
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
+const lockBytes = await readFile(join(root, 'package-lock.json'));
+const lock = JSON.parse(lockBytes.toString('utf8'));
 const packages: { path: string; version: string; integrity?: string }[] = [];
 for (const [path, value] of Object.entries(lock.packages) as [
   string,
@@ -106,11 +124,44 @@ await writeFile(
     2,
   ),
 );
+async function noticeFiles(path: string): Promise<string[]> {
+  return (
+    await Promise.all(
+      (await readdir(join(destination, path), { withFileTypes: true })).map((entry) =>
+        entry.isDirectory() ? noticeFiles(`${path}/${entry.name}`) : [`${path}/${entry.name}`],
+      ),
+    )
+  ).flat();
+}
+const noticePaths = [
+  'THIRD_PARTY_NOTICES.md',
+  'Node-LICENSE.txt',
+  'docs/dependency-licenses.json',
+  'docs/desktop-dependency-licenses.json',
+  ...(await noticeFiles('docs/licenses')),
+].sort();
+const notices = await Promise.all(
+  noticePaths.map(async (path) => ({
+    path,
+    sha256: sha(await readFile(join(destination, path))),
+  })),
+);
 await writeFile(
   join(destination, 'runtime-manifest.json'),
   JSON.stringify(
     {
+      schemaVersion: 1,
       builtAt: new Date().toISOString(),
+      product: {
+        kind: profile,
+        identifier: productConfig.identifier,
+        version: productConfig.version,
+      },
+      target: { platform: 'win32', arch: 'x64' },
+      inputs: {
+        packageLockSha256: sha(lockBytes),
+        cargoLockSha256: sha(await readFile(join(root, 'src-tauri/Cargo.lock'))),
+      },
       node: {
         version: nodeVersion,
         sha256: nodeHash,
@@ -118,6 +169,7 @@ await writeFile(
       },
       opencode: { version: '1.18.25', sha256: engineHash, source: 'opencode-windows-x64@1.18.25' },
       documents,
+      notices,
       packages,
     },
     null,

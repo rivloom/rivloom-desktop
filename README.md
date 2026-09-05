@@ -4,9 +4,11 @@
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。当前 **M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，完整隔离服务 12/12、真实 session 两崩溃窗口、Debug/Release 原生与最终二进制闭环通过；最终全量 154/155，唯一已有纯 mDNS 失败保留。新独立预览包已生成，未签名、未安装；产物与证据见 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)。M2/M4/M5、P1、任务拆解、人员和 HA 不自动扩大实施。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。**M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，完整隔离服务 12/12、真实 session 两崩溃窗口、Debug/Release 原生与最终二进制闭环通过；该功能交付全量为 154/155，唯一已有纯 mDNS 失败保留。当前检查预览使用文档修订后的 `docs1` 包，未签名、未安装；产物与证据见 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)。用户另已启动 M2/M5 官网、CI 与发行接口第一轮实施；M4、P1、任务拆解、人员和 HA 仍未扩大实施。
 
 ## 在 Windows 启动
+
+官网和发行基础正在实施：独立私有 `rivloom/rivloom-website` 位于 `C:/project/rivloom-website`，首版 `f58049f` 已推送；Astro 9 页、234 项引用检查及发行目录测试 13/13 已在本地通过。用户已授权 Cloudflare 仅访问官网仓库并执行推送、部署和域名绑定，目标服务全球（含中国大陆）的 `rivloom.com`。首轮官网云 CI 的锁文件问题修复与重试、Cloudflare 连接和域名绑定正在推进，尚无站点上线成功或公开下载声明，详见[官网交接](docs/WEBSITE-HANDOFF.md)。桌面四份工作流、发行记录契约和真实 runtime prepare/gate 已本地验证通过，Rust/Cargo 1.98.1 已安装并核对版本；本轮原生构建尚未执行，updater、R2 分发和签名尚未实施。证据与边界见 [CI](docs/CI.md)和[发布方案](docs/RELEASING.md)。
 
 客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 

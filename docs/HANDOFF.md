@@ -8,15 +8,29 @@
 
 - M0、M1、M3.1、M3.2 已完成。
 - 用户已经在 Rivloom 本机保存 DeepSeek Key，并用 `deepseek/deepseek-v4-flash` 完成官方真实连接和无 `.git` 普通文件夹固定编程任务。Key 不进入聊天或仓库。
-- M2 的正式发行完善暂缓。现有安装包事实保留，但当前不投入签名、升级矩阵等工作。
+- 用户已启动 M2/M5 官网、CI 与发行接口第一轮实施，并明确授权 Cloudflare 仅访问官网仓库、推送/部署/绑定域名。官网首版已推送，云 CI 修复与重试、Cloudflare 连接和域名绑定在实施；桌面真实 runtime gate 已通过，本轮原生构建待执行。尚无官网上线成功或公开下载声明；updater、R2 分发和签名未实施，详见下方当前进展、[RELEASING](RELEASING.md) 和 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)。
 - M3.3 的 MVP 范围已经人工验收完成；防火墙体验、停止/自动审批/撤销及两真人回归保留为后续优化，不阻塞产品推进。
 - M3.4 按ADR-0004当前MVP范围结项：0.1.3物理升级、自动接入/双Brain共享目录、跨机执行、指定Project和正常Master离线恢复、真实单槽竞争及原队列续跑均有证据。用户收到结果和纯mDNS专项限制后回复“好，下一步吧”；未解决的mDNS92/93、未测故障边界和后续优化继续保留，不宣称全量绿色。
 
-## 最新交接（2026-09-05）：M3.5 A–D 工程交付完成，用户验收待进行
+## 当前交接（2026-09-05）：M2/M5 官网、CI 与发行接口第一轮实施
+
+官网私有仓库 `rivloom/rivloom-website` 位于 `C:/project/rivloom-website`，首版 `f58049f` 已推送。Astro 静态站 9 页、234 项引用检查、发行目录测试 13/13 与本地 actionlint 通过。用户已明确授权 Cloudflare 仅访问官网仓库，并执行官网推送、部署和域名绑定，且已手动完成 GitHub 2FA。首轮官网云 CI 因跨平台锁文件缺少两个 `@emnapi` 依赖而在 `npm ci` 失败；已在无 `node_modules` 目录修复，Linux x64 `npm ci --dry-run` 通过，本地修复提交 `edd51ed` 的推送网络重试正在进行。Cloudflare 连接与全球（含中国大陆）的 `rivloom.com` 绑定仍在实施，未宣称上线成功或开放下载；最新状态见 [WEBSITE-HANDOFF](WEBSITE-HANDOFF.md)。
+
+桌面已编写四份 Windows 工作流、完整测试映射、发行记录契约与 runtime 门槛，候选只允许独立 Preview 身份。前一轮版本/覆盖审计、TypeScript/Vite、CI 自检 9/9、逻辑 168/168、协议 11/11、引擎端口 2/2、UDP 1/1 和四组官方引擎服务检查通过；纯 mDNS 0/1、0 跳过，该轮累计 182/183。随后 runtime 夹具增至 16/16 并单独通过，不冒充同轮完整逻辑或全量测试。真实 prepare 与只读 runtime gate 现已通过：Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖、722 份 notices；证据 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行。桌面纯 mDNS 失败与官网云 CI 锁文件失败分别追溯；细项见 [CI](CI.md)。updater、R2、签名和公开发行仍未实施。
+
+M3.5 A–D 的工程交付与待验收状态保留。当前检查预览使用 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，71,096,634 字节，SHA-256 `D04EEC8C460D14AB9615D291FF302205E67E672B53393D3DA5C60E95F39AF3D1`，NotSigned、未安装；该包不是本轮 CI 原生候选或公开 stable/beta。新候选验证完成前不替换这一交付基线。
+
+## 历史文档补充（2026-09-05，实施启动前）：官网分发与更新规划
+
+根据用户分享的《官网分发与更新方案》，已记录静态官网与安装包分离、官方 Tauri 签名更新、不可变版本与候选发布流程，并补充首次手动接入 updater、执行中任务的维护/退出、数据迁移、新旧节点兼容和故障版本修复。M2 负责安装与安全更新，M5 负责官网/分发/发布验收；来源、采纳与修正、未来验收矩阵集中在 [RELEASING](RELEASING.md)。
+
+该历史检查点仅整理文档和核对官方资料，当时未改产品/测试源码、构建或安装包、运行节点、云账户或 Git 提交，M2/M5 尚未启动。之后用户已授权上方第一轮实施；本段只保留决策来源，不覆盖当前进展。预览产品身份和正式频道仍须隔离。
+
+## M3.5 工程交付记录（2026-09-05）：A–D 完成，用户验收待进行
 
 当前停点：M3.5 A–D 工程交付完成，用户检查预览和本轮双物理机回归待进行。Debug 12 条记录/6 张截图，Release 8 条记录/4 张截图，包含真实 Windows IME 候选 Enter 不发送、键盘选目标、认证送达/排位、统计刷新与等待文案；最终产物同哈希 exe 的独立启动/配对/1 Task/1 session/review 也通过，模型请求 1/工具 0。全部自有夹具已清理。伪 ACK、统计刷新和成员读取范围已修复并回归；此前 Escape 误触仅为历史。
 
-本轮完成稳定草稿目标/创建幂等/自动候选修复、持久 Node 队列/控制和回执/能力界面，并交付 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，71,107,766 字节，SHA-256 `206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`，NotSigned、未安装。用户尚未验收结项；具体行为与入口见 [UI-HANDOFF](UI-HANDOFF.md)，状态以 [MILESTONES](MILESTONES.md) 为准，A–D 不从头重做。
+本轮完成稳定草稿目标/创建幂等/自动候选修复、持久 Node 队列/控制和回执/能力界面。原功能交付包 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，71,107,766 字节，SHA-256 `206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`，NotSigned、未安装，现保留为历史产物；当前检查使用上方 `docs1` 修订包。用户尚未验收结项；具体行为与入口见 [UI-HANDOFF](UI-HANDOFF.md)，状态以 [MILESTONES](MILESTONES.md) 为准，A–D 不从头重做。
 
 完整隔离服务 `npm.cmd run test:node-p0` 最终 **12/12**：创建丢响应/并发重试、双方重启、固定目标离线/撤信、普通忙碌混合 FIFO、持久调序/暂缓/拒绝、原队列实际执行、双 Brain 同槽竞争、unknown 恢复及成员/owner 权限和脱敏均有本轮证据。证据根 `.data/verification/m35-p0-1788581065722-2746e0ac`，最终 7 业务 Task/7 官方 session/0 工具，6 accepted，最后一个为保守恢复测试注入 interrupted。最终全量 **154/155**，唯一已有纯 mDNS 失败保留；首轮 145/146 和服务 10/10 另存历史。前端/HTTP 最新 **23/23**、typecheck 通过；真实 session 创建前/创建后未绑定两崩溃窗口通过，前两次夹具失败保留。详细证据与安装包最终值集中于 [VERIFICATION](VERIFICATION.md)。
 
@@ -235,7 +249,7 @@ A 端可使用安装 Node 运行 `scripts/m34-physical-race-local.ts`，必须�
 ## 仓库状态
 
 - 本轮开始和最终核对的 `HEAD`、`origin/main` 都是 `f5ce9ed3fdf4ad69cfad2acfc13d9a04e7cf51c2`，分支 `main`。M3.4 核心实现目前是工作区变更，尚未创建提交；不要把基线提交误写成已包含本轮代码。
-- 当前目录已初始化 Git；`main` 跟踪私有远程仓库 `https://github.com/rivloom/rivloom_desktop.git`。
+- 当前目录已初始化 Git；`main` 跟踪私有远程仓库 `https://github.com/rivloom/rivloom-desktop.git`。
 - 远程原有的 Apache 2.0 `LICENSE` 初始提交和 `22eaa3c`（`feat: establish Rivloom desktop MVP`）均已保留；当前里程碑继续提交到 `main`，以 `git log` 的最新提交为准。
 - 旧项目 `C:\project\opencohive` 只读参考过产品文档，没有复制其 Codex monorepo，也没有修改旧项目。
 - `.gitignore` 已排除依赖、构建产物、运行数据、凭据和测试输出：`node_modules/`、`dist/`、`.data/`、`src-tauri/target/`、`src-tauri/resources/runtime/`、`.env*` 等。

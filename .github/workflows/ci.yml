@@ -1,0 +1,86 @@
+name: Windows CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    name: Versions, CI self-checks, TypeScript and frontend build
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: npm.cmd ci
+      - name: Check application versions and distinct product identities
+        run: npm.cmd run ci:versions
+      - name: Audit complete test classification
+        run: npm.cmd run ci:coverage
+      - name: Check CI failure propagation and coverage guards
+        run: npm.cmd run ci:selftest
+      - name: TypeScript check and frontend build
+        run: npm.cmd run build
+      - name: Ensure dependency locks did not change
+        run: git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
+      - name: Upload restricted CI summaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-build-summary
+          path: test-results/ci/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  tests:
+    name: Windows ${{ matrix.lane }} tests
+    runs-on: windows-2022
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [logic, protocol]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The legacy-capability regression reads its pinned M3.4 source via git show.
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - run: npm.cmd ci
+      - name: Run explicitly classified tests
+        env:
+          CI_TEST_LANE: ${{ matrix.lane }}
+        run: node scripts/ci-tests.ts $env:CI_TEST_LANE
+      - name: Upload only test names, outcomes and environment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-${{ matrix.lane }}-summary
+          path: test-results/ci/*.json
+          if-no-files-found: warn
+          retention-days: 14

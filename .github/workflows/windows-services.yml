@@ -1,0 +1,75 @@
+name: Windows official engine checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-services-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  engine-ports:
+    name: Official OpenCode port and lifecycle checks
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - run: npm.cmd ci
+      - run: npm.cmd run test:ci:engine
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-engine-ports-summary
+          path: test-results/ci/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  services:
+    name: Official engine / ${{ matrix.check }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [model-settings, permissions, node-p0, session-crash]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - run: npm.cmd ci
+      - name: Build the local service UI
+        run: npm.cmd run build
+      - name: Run in a new isolated workspace without model or release secrets
+        env:
+          CI_SERVICE_CHECK: ${{ matrix.check }}
+        run: node scripts/ci-services.ts $env:CI_SERVICE_CHECK
+      - name: Upload only service outcome summaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-service-${{ matrix.check }}-summary
+          path: test-results/ci/*.json
+          if-no-files-found: warn
+          retention-days: 14
