@@ -56,6 +56,15 @@ for (const directory of ['server', 'shared', 'dist']) {
 await cp(cachedNode, join(destination, 'node.exe'));
 await cp(nodeLicense, join(destination, 'Node-LICENSE.txt'));
 await cp(join(root, 'THIRD_PARTY_NOTICES.md'), join(destination, 'THIRD_PARTY_NOTICES.md'));
+const documents: { path: string; sha256: string }[] = [];
+for (const [source, path] of [
+  [join(root, 'DESKTOP-README.md'), 'README.md'],
+  [join(root, 'SECURITY.md'), 'SECURITY.md'],
+] as const) {
+  const bytes = await readFile(source);
+  await writeFile(join(destination, path), bytes);
+  documents.push({ path, sha256: sha(bytes) });
+}
 await cp(join(root, 'docs', 'licenses'), join(destination, 'docs', 'licenses'), {
   recursive: true,
 });
@@ -108,6 +117,7 @@ await writeFile(
         source: `https://nodejs.org/dist/v${nodeVersion}/SHASUMS256.txt`,
       },
       opencode: { version: '1.18.25', sha256: engineHash, source: 'opencode-windows-x64@1.18.25' },
+      documents,
       packages,
     },
     null,

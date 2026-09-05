@@ -4,11 +4,13 @@
 
 ## 用户最新决定
 
+**2026-09-05 文档一致性修订：当前检查预览请使用 `docs1` 包。** `SECURITY.md` 已按当前普通文件夹、三种审批模式、远程控制、队列和官方差异实现重写；README 的旧成员/接受任务步骤及原生目录标题已同步。新增根 [DESKTOP-README.md](../DESKTOP-README.md) 作为随包使用说明，与 SECURITY 一起打入 `runtime/`，文档哈希记入运行时清单。修订包为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，**71,096,634 字节**，SHA-256 **`D04EEC8C460D14AB9615D291FF302205E67E672B53393D3DA5C60E95F39AF3D1`**，NotSigned、未安装。构建及实际 NSIS 只读解包核对通过，旧包与正式客户端保留。本次仅改说明、文档打包和目录标题，没有更改任务/审批逻辑，也没有重跑下方原生业务操作或双物理机；详情见 VERIFICATION 的文档修订记录。
+
 **当前停点：M3.5 A–D 工程交付完成；用户验收及本轮双物理机回归待进行。** 本轮完成草稿稳定 Node ID、三处创建幂等、自动分配候选修复、持久 Node 队列/控制、协商统计/任务回执与界面。完整隔离服务 12/12、真实 session 两崩溃窗口、Debug 原生 12 条/Release 原生 8 条记录及最终二进制闭环通过；前端/HTTP 23/23、增量模型消失确认 7/7、typecheck/build 通过。最终全量 154/155，唯一已有纯 mDNS 失败保留；首轮 145/146 另作历史。伪 ACK、统计刷新和成员读取范围已修复并回归，细项见 [VERIFICATION](VERIFICATION.md)。
 
 Debug 原生根 `.data/ui-conversation-c9af0886-f701-4dbb-aa4d-746b24ee8345`：草稿/固定目标、忙碌排队、同一原任务执行、队列控制/回执、断线/重启与 1282×872、最窄 962×872 布局通过，6 张截图。Release 根 `.data/ui-conversation-6fddb6ac-44a5-47e5-922b-a49ce7c47234`：真实 Windows 拼音候选 Enter 不发送、空格长名/备注、键盘选目标、认证送达/排位、等待文案与 signed hello 统计通过，4 张截图。最终重新链接后的 exe 又在独立根 `.data/ui-conversation-f90b3dd1-f6b1-4ca8-987a-bc51c67f0945` 通过启动、加密配对和 1 remote Task → 1 业务 Task → 1 官方 session → review 的实际窗口闭环，模型请求 1/工具 0。全部本轮自有夹具已清理；同机确定性模型不算两物理机或真实模型编程验收。
 
-本轮独立交付为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`：**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**，**NotSigned，未安装**。产品名 Rivloom UI Preview，identifier `com.rivloom.conversationpreview`；正式客户端、旧正式安装器与旧预览包均保留。最终 exe 哈希和首次封装文件占用失败/重试成功的日志见 VERIFICATION。按用户追加授权保存本任务的本地 Git，具体提交号以最终 Git 记录为准；不推送，另任务官网规划留在工作区。
+`f946487` 初次功能交付为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`：**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**，**NotSigned，未安装**；后续文档修订件见本节顶部。产品名 Rivloom UI Preview，identifier `com.rivloom.conversationpreview`；正式客户端、旧正式安装器与旧预览包均保留。初次 exe 哈希和首次封装文件占用失败/重试成功的日志见 VERIFICATION。按用户追加授权保存本任务的本地 Git，具体提交号以最终 Git 记录为准；不推送，另任务官网规划留在工作区。
 
 当前界面：草稿正文与路由一起恢复，删除正文 `@` 不改变已选 Node，取消指定有明确按钮；网络失败保留原 requestID，精确结果 ID 决定会话。新本地发送明确入队后自动启动，旧 open/ready 保留旧授权；所有者通过真实队列快照调序、暂缓/恢复、拒绝或暂停后续启动。请求结果未知使用“重试确认”重放完整原操作。旧节点/过期统计显示未知，断线显示上次确认事实；review/interrupted 保留槽位。
 

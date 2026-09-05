@@ -107,7 +107,7 @@ async fn choose_project_directory(
     let selected = app
         .dialog()
         .file()
-        .set_title("选择可信的 Git 项目文件夹")
+        .set_title("选择可信的普通项目文件夹")
         .set_parent(&window)
         .blocking_pick_folder();
     selected

@@ -2,7 +2,18 @@
 
 日期：2026-09-01 至 2026-09-05；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
-## 2026-09-05：M3.5 A–D 工程交付与验证（当前）
+## 2026-09-05：安全说明与随包文档一致性修订（当前）
+
+用户指出 SECURITY 仍有 Git 前置条件与远程审批未开放的旧表述。本轮按当前代码逐项核对并修正：普通文件夹与无 Git/hash 兜底、ask/auto/full 三种审批、已开放的远程控制、目录与执行消息各自的数据范围、本机成员可见性、队列暂停/准入和保守恢复。控制正文不能承诺自动脱敏；已获得执行槽位的任务不会因暂停队列而停止。README 改为当前会话/自动入队/确认完成流程，原生目录选择标题改为“选择可信的普通项目文件夹”。未改变权限、任务执行或网络业务逻辑；另任务官网规划原文保留。
+
+原 `f946487` 预览 NSIS 经 7-Zip 只读列表确认：runtime 根仅有第三方声明和运行时清单，没有客户 README/SECURITY。新增根 `DESKTOP-README.md`，打包时与 SECURITY 原字节复制到 `runtime/README.md`、`runtime/SECURITY.md`，`runtime-manifest.json.documents` 保存两份 SHA256。文件内容不包含开发机凭据、任务数据或另任务尚未实施的官网规划。
+
+- `npm.cmd run preview:conversation:installer` 退出 0，含 typecheck、Vite 1833 modules、Rust Release 与 NSIS；日志 `.data/verification/m35-security-docs-installer.log`。本次不重复运行完整业务测试、真实模型、原生交互、安装或双物理机验收，下方 154/155 等仍属于初次功能交付证据。
+- 独立修订包 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，**71,096,634 字节**，SHA-256 **`D04EEC8C460D14AB9615D291FF302205E67E672B53393D3DA5C60E95F39AF3D1`**，NotSigned、未安装。旧正式安装器大小/修改时间和两份旧预览 SHA256 核对保持。
+- 实际 NSIS 只读解出两份文档、第三方声明、运行时清单及 exe 到 `.data/verification/m35-security-docs-extracted`；源文档、包中文档与清单的 SHA256 三方一致，5 个随包 Markdown 链接目标均存在，第三方声明字节保持。包内 exe 包含新目录标题、不含旧 Git 标题。证据为 `m35-security-docs-runtime.json` 与 `m35-security-docs-artifact.json`。
+- 初次 exe 哈希直接比较未相等；逐字节核对证实仅 Tauri 的 `__TAURI_BUNDLE_TYPE_VAR_` 标记由 standalone 的 `UNK` 改为 NSIS 的 `NSS`，共 3 字节，其他字节完全相同，见 `m35-security-docs-exe-comparison.json`。包内 exe SHA256 为 `C8E5F85241EEDF3353F0F29FC6AA3357862EA574AB1682B867D2C2A7A6A1F671`；未将其与 standalone 的不同哈希混写成相同。
+
+## 2026-09-05：M3.5 A–D 初次工程交付与验证
 
 本轮从 `main` / `8badf8f6f31e0016a1e1a100dd70c9b43cfe6671` 的既有界面/备注/`@` 改动继续，未重置覆盖。**A–D 工程交付完成，用户验收及本轮双物理机回归待进行**。正式客户端及原验收数据未操作。本地 Git 按用户追加授权只保存本任务范围，不推送；提交号以最终 Git 记录为准。
 
