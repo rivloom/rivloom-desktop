@@ -166,6 +166,7 @@ export type BrainTaskExecution = {
   updatedAt: string;
 };
 export type BrainTask = {
+  queueReceipt?: import('./task-queue-receipts.ts').TaskQueueReceipt | null;
   id: string;
   direction: 'submitted' | 'owned';
   submitterNodeID: string;
@@ -198,6 +199,10 @@ export type BrainTask = {
   updatedAt: string;
 };
 export type RemoteTaskInvite = {
+  queueReceipt?: import('./task-queue-receipts.ts').TaskQueueReceipt | null;
+  /** Local observation of authenticated offer delivery; never inferred from API creation. */
+  deliveredAt?: string | null;
+  transmissionState?: 'saved' | 'sending' | 'delivered' | 'transmission_unknown';
   id: string;
   brainTaskID: string | null;
   direction: 'incoming' | 'outgoing';
@@ -242,8 +247,13 @@ export type NodeExecutionPolicy = {
   updatedAt: string | null;
 };
 export type RivloomNode = {
+  nodeQueue?: import('./task-queue-receipts.ts').NodeQueuePublicStats | null;
   id: string;
   name: string;
+  icon?: string;
+  /** Private metadata from this installation; never sent to the peer. */
+  remark?: string;
+  lastUsedAt?: string;
   fingerprint: string;
   protocolVersion: number;
   addresses: string[];
@@ -269,6 +279,7 @@ export type NodeNetwork = {
   serviceType: string;
   local: RivloomNode | null;
   nearby: RivloomNode[];
+  paired?: RivloomNode[];
   brains: BrainTopology[];
   pairings: NodePairing[];
   remoteTasks: RemoteTaskInvite[];

@@ -9,6 +9,7 @@ import {
   requireThat,
   exclusive,
   isLocked,
+  db,
 } from './store.ts';
 import { openCodeArtifacts, sanitize, redact } from './artifacts.ts';
 import { activeStates, type Task, type User, type Message } from '../shared/types.ts';
@@ -29,6 +30,10 @@ let engine: Awaited<ReturnType<typeof startEngine>> | null = null;
 let shuttingDown = false;
 const streams = new Map<string, AbortController>();
 let monitoring = false;
+let taskStartGuard: ((value: Task) => void) | null = null;
+export function setTaskStartGuard(guard: (value: Task) => void) {
+  taskStartGuard = guard;
+}
 
 export async function initializeEngine() {
   // Never infer successful completion after a restart, or automatically resume a task.
@@ -40,6 +45,18 @@ export async function initializeEngine() {
       error: '应用重启，执行已中断；请检查已有修改后手动继续。',
     });
     activity(t.id, null, 'interrupted', '应用重启，任务转为执行中断，不自动重试。');
+  }
+  for (const row of db
+    .prepare("SELECT task_id FROM task_engine_intents WHERE state='creating'")
+    .all()) {
+    const value = task(String(row.task_id));
+    if (!value.sessionID) {
+      patchTask(value.id, {
+        state: 'interrupted',
+        error: '创建引擎会话的结果尚未确认；保留执行槽位，不自动创建第二个会话。',
+      });
+      activity(value.id, null, 'session_create_uncertain', '恢复时发现未确认的会话创建意图。');
+    }
   }
   try {
     engine = await startEngine(dataRoot);
@@ -260,6 +277,7 @@ timer.unref();
 export async function runTask(taskID: string, actor: User, addition?: string) {
   return exclusive(taskID, async () => {
     let t = task(taskID);
+    taskStartGuard?.(t);
     requireThat(actor.id === t.assigneeID, 403, '只有接受人可以开始或继续执行');
     requireThat(
       ['ready', 'stopped', 'failed', 'interrupted', 'review'].includes(t.state),
@@ -284,20 +302,53 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       '同一项目已有执行、未确认中断或待验收任务，请先处理',
     );
     if (t.sessionID) {
-      const status = (await client().session.status({ directory })).data?.[t.sessionID];
+      const statuses = (await client().session.status({ directory })).data;
+      requireThat(statuses && typeof statuses === 'object', 503, '无法确认引擎会话状态。');
+      const status = statuses[t.sessionID];
       requireThat(!status || status.type === 'idle', 409, '引擎仍在执行，请先停止并确认后再继续');
     }
     await subscribe(directory);
+    taskStartGuard?.(task(t.id));
     if (!t.sessionID) {
-      const session = (
-        await client().session.create({
-          directory,
-          title: t.title,
-          permission: sessionPermissions(t.approvalMode),
-        })
-      ).data!;
-      t = patchTask(t.id, { sessionID: session.id });
+      requireThat(
+        !db.prepare('SELECT task_id FROM task_engine_intents WHERE task_id=?').get(t.id),
+        409,
+        '已有未确认的引擎会话创建记录；请先检查执行现场，不能重复创建。',
+      );
+      db.prepare("INSERT INTO task_engine_intents VALUES(?,'creating',NULL,?)").run(
+        t.id,
+        new Date().toISOString(),
+      );
+      try {
+        const session = (
+          await client().session.create({
+            directory,
+            title: t.title,
+            permission: sessionPermissions(t.approvalMode),
+          })
+        ).data;
+        requireThat(session?.id, 503, '引擎没有返回会话标识。');
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          t = patchTask(t.id, { sessionID: session.id });
+          db.prepare(
+            "UPDATE task_engine_intents SET state='bound',session_id=?,updated_at=? WHERE task_id=?",
+          ).run(session.id, new Date().toISOString(), t.id);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } catch (error) {
+        patchTask(t.id, {
+          state: 'interrupted',
+          error: '创建引擎会话的结果不确定；请检查执行现场，不会自动重试。',
+        });
+        changed(t.id);
+        throw error;
+      }
     }
+    taskStartGuard?.(task(t.id));
     const runAfter = Date.now();
     const instructions =
       addition ||
@@ -351,6 +402,10 @@ export async function stopTask(taskID: string, actor: User) {
     changed(t.id);
     try {
       await client().session.abort({ directory, sessionID: t.sessionID });
+      const statuses = (await client().session.status({ directory })).data;
+      requireThat(statuses && typeof statuses === 'object', 503, '停止后的引擎状态未返回。');
+      const status = statuses[t.sessionID];
+      requireThat(!status || status.type === 'idle', 409, '引擎仍报告执行中，停止尚未确认。');
       const pending = (await client().permission.list({ directory })).data || [];
       for (const p of pending.filter((p) => p.sessionID === t.sessionID))
         await client().permission.reply({ directory, requestID: p.id, reply: 'reject' });

@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { creationFingerprint } from './creation-requests.ts';
 import type {
   Approval,
   Artifact,
@@ -122,6 +123,7 @@ export type RemoteTaskMessage =
   | RemoteTaskControlMessage;
 
 type StoredRemoteTask = Omit<RemoteTaskInvite, 'controlPending'> & {
+  creationFingerprint?: string;
   idempotencyKey: string;
   pendingControl: RemoteTaskControlMessage | null;
   incomingControls: RemoteTaskControlMessage[];
@@ -473,6 +475,14 @@ function validStored(value: unknown): value is StoredRemoteTask {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
   return (
+    (item.creationFingerprint === undefined ||
+      (typeof item.creationFingerprint === 'string' &&
+        /^[0-9a-f]{64}$/.test(item.creationFingerprint))) &&
+    (item.deliveredAt === undefined || item.deliveredAt === null || validDate(item.deliveredAt)) &&
+    (item.transmissionState === undefined ||
+      ['saved', 'sending', 'delivered', 'transmission_unknown'].includes(
+        String(item.transmissionState),
+      )) &&
     typeof item.id === 'string' &&
     uuidPattern.test(item.id) &&
     typeof item.idempotencyKey === 'string' &&
@@ -598,6 +608,7 @@ function normalizeStored(value: unknown): StoredRemoteTask | null {
       : incomingControls;
   const normalized = {
     ...item,
+    ...(item.transmissionState === 'sending' ? { transmissionState: 'transmission_unknown' } : {}),
     automaticEligible: item.automaticEligible ?? false,
     brainTaskID: item.brainTaskID ?? null,
     requestedProjectID: item.requestedProjectID ?? null,
@@ -631,6 +642,7 @@ function normalizeStored(value: unknown): StoredRemoteTask | null {
 function publicTask(task: StoredRemoteTask): RemoteTaskInvite {
   const {
     idempotencyKey: _idempotencyKey,
+    creationFingerprint: _creationFingerprint,
     pendingControl,
     incomingControls: _incomingControls,
     appliedControlIDs: _appliedControlIDs,
@@ -657,6 +669,22 @@ function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
     task.createdAt === message.createdAt &&
     task.expiresAt === message.expiresAt
   );
+}
+
+function creationContent(input: {
+  title: string;
+  description: string;
+  criteria: string;
+  requestedProjectID?: string | null;
+  requirements?: TaskHardwareRequirements;
+}) {
+  return creationFingerprint({
+    title: input.title.trim(),
+    description: input.description.trim(),
+    criteria: input.criteria.trim(),
+    requestedProjectID: input.requestedProjectID ?? null,
+    requirements: input.requirements ?? {},
+  });
 }
 
 function sameRoute(
@@ -730,6 +758,14 @@ export class RemoteTaskStore {
     return this.values.get(taskID) || null;
   }
 
+  matchesCreation(taskID: string, input: Parameters<typeof creationContent>[0]) {
+    const current = this.values.get(taskID);
+    return (
+      !!current &&
+      (current.creationFingerprint ?? creationContent(current)) === creationContent(input)
+    );
+  }
+
   create(
     ownerNodeID: string,
     ownerBrainID: string,
@@ -743,11 +779,30 @@ export class RemoteTaskStore {
       requirements?: TaskHardwareRequirements;
       brainTaskID?: string | null;
     },
+    taskID?: string,
   ) {
+    const existing = taskID ? this.values.get(taskID) : null;
+    if (existing) {
+      if (
+        existing.direction !== 'outgoing' ||
+        existing.ownerNodeID !== ownerNodeID ||
+        existing.ownerBrainID !== ownerBrainID ||
+        existing.targetNodeID !== targetNodeID ||
+        existing.targetBrainID !== targetBrainID ||
+        !this.matchesCreation(existing.id, input) ||
+        existing.brainTaskID !== (input.brainTaskID ?? null) ||
+        JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements ?? {})
+      )
+        throw new Error('远端任务创建 ID 或内容冲突。');
+      return publicTask(existing);
+    }
     if (this.values.size >= 500) throw new Error('远端任务邀请数量已达上限。');
     const createdAt = new Date().toISOString();
     const task: StoredRemoteTask = {
-      id: randomUUID(),
+      id: taskID ?? randomUUID(),
+      creationFingerprint: creationContent(input),
+      deliveredAt: null,
+      transmissionState: 'saved',
       brainTaskID: input.brainTaskID ?? null,
       idempotencyKey: randomUUID(),
       direction: 'outgoing',
@@ -785,8 +840,14 @@ export class RemoteTaskStore {
       updatedAt: createdAt,
       expiresAt: new Date(Date.parse(createdAt) + maximumLifetimeMilliseconds).toISOString(),
     };
+    if (!validStored(task)) throw new Error('远端任务邀请内容无效。');
     this.values.set(task.id, task);
-    this.save();
+    try {
+      this.save();
+    } catch (error) {
+      this.values.delete(task.id);
+      throw error;
+    }
     return publicTask(task);
   }
 
@@ -891,6 +952,8 @@ export class RemoteTaskStore {
     // First acceptance uses the Master's own deadline, even between expiry ticks.
     if (Date.now() >= Date.parse(task.expiresAt)) throw new Error('这次 Execution 已过期。');
     task.status = message.decision;
+    task.deliveredAt ||= new Date().toISOString();
+    task.transmissionState = 'delivered';
     task.deliveryPending = false;
     task.deliveryError = null;
     task.updatedAt = message.decidedAt;
@@ -1361,10 +1424,23 @@ export class RemoteTaskStore {
     return null;
   }
 
-  markDelivered(taskID: string, message: RemoteTaskMessage) {
+  markDelivered(taskID: string, message: RemoteTaskMessage, authenticated = true) {
     const task = this.values.get(taskID);
     const current = this.message(taskID);
     if (!task || !current || JSON.stringify(current) !== JSON.stringify(message)) return false;
+    if (message.type === 'remote-task-offer') {
+      if (authenticated) {
+        task.deliveredAt ||= new Date().toISOString();
+        task.transmissionState = 'delivered';
+      } else {
+        task.transmissionState = task.deliveredAt ? 'delivered' : 'transmission_unknown';
+        // A legacy HTTP response is transport evidence only. Keep the same offer
+        // retryable until an authenticated task response confirms receipt.
+        task.deliveryError = null;
+        this.save();
+        return true;
+      }
+    }
     if (message.type === 'remote-task-control') {
       task.pendingControl = null;
       if (message.action.kind === 'supplement')
@@ -1373,6 +1449,21 @@ export class RemoteTaskStore {
     task.deliveryPending = false;
     task.deliveryError = null;
     task.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  markOfferTransmission(taskID: string, state: 'sending' | 'transmission_unknown') {
+    const task = this.values.get(taskID);
+    if (
+      !task ||
+      task.direction !== 'outgoing' ||
+      task.deliveredAt ||
+      task.transmissionState === state ||
+      task.status !== 'pending'
+    )
+      return false;
+    task.transmissionState = state;
     this.save();
     return true;
   }

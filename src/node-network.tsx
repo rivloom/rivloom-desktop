@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Inbox,
   Link2,
+  Pencil,
   Radio,
   Send,
   ShieldCheck,
@@ -27,6 +28,8 @@ import type {
   RivloomNode,
 } from '../shared/types';
 import { stateLabels } from '../shared/types';
+import { NodeAvatar } from './node-avatar';
+import { nodeDisplayName } from './node-mentions';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -42,6 +45,7 @@ type NetworkActions = {
   confirmPairing(pairingID: string): void;
   cancelPairing(pairingID: string): void;
   revokeTrust(nodeID: string): void;
+  editNodeRemark(nodeID: string): void;
   createRemoteTask(input: {
     title: string;
     description: string;
@@ -80,12 +84,10 @@ function NodeCard({
   return (
     <article className={`network-node-card ${node.local ? 'local' : ''}`}>
       <div className="network-node-heading">
-        <span className="network-node-icon">
-          <BrainCircuit size={22} />
-        </span>
+        <NodeAvatar name={node.name} icon={node.icon} />
         <div>
           <span className="eyebrow">{node.local ? 'THIS DEVICE' : 'NEARBY NODE'}</span>
-          <h3>{node.name}</h3>
+          <h3>{nodeDisplayName(node)}</h3>
         </div>
         <span className={`network-presence ${node.online ? 'online' : ''}`}>
           <i />
@@ -143,6 +145,14 @@ function NodeCard({
                 <span>双方已确认此设备身份，信任记录保存在本机。</span>
                 {actions.owner && (
                   <div className="trusted-task-actions">
+                    <button
+                      className="button compact"
+                      disabled={actions.busy}
+                      onClick={() => actions.editNodeRemark(node.id)}
+                    >
+                      <Pencil size={14} />
+                      编辑备注名
+                    </button>
                     <button
                       className="button danger compact"
                       disabled={actions.busy}
@@ -952,6 +962,7 @@ function RemoteTaskCard({
 }
 
 export function NodeNetworkView({
+  conversationsInSidebar = false,
   network,
   owner,
   projects,
@@ -962,11 +973,13 @@ export function NodeNetworkView({
   onConfirmPairing,
   onCancelPairing,
   onRevokeTrust,
+  onEditNodeRemark,
   onCreateRemoteTask,
   onCancelRemoteTask,
   onControlRemoteTask,
   onSaveExecutionPolicy,
 }: {
+  conversationsInSidebar?: boolean;
   network: NodeNetwork;
   owner: boolean;
   projects: Project[];
@@ -977,6 +990,7 @@ export function NodeNetworkView({
   onConfirmPairing(pairingID: string): void;
   onCancelPairing(pairingID: string): void;
   onRevokeTrust(nodeID: string): void;
+  onEditNodeRemark(nodeID: string): void;
   onCreateRemoteTask(input: Parameters<NetworkActions['createRemoteTask']>[0]): void;
   onCancelRemoteTask(taskID: string): void;
   onControlRemoteTask(
@@ -1001,6 +1015,7 @@ export function NodeNetworkView({
     confirmPairing: onConfirmPairing,
     cancelPairing: onCancelPairing,
     revokeTrust: onRevokeTrust,
+    editNodeRemark: onEditNodeRemark,
     createRemoteTask: onCreateRemoteTask,
     cancelRemoteTask: onCancelRemoteTask,
     controlRemoteTask: onControlRemoteTask,
@@ -1083,7 +1098,7 @@ export function NodeNetworkView({
         )}
       </section>
 
-      {owner && (
+      {owner && !conversationsInSidebar && (
         <section className="network-section">
           <div className="section-title">
             <div>
@@ -1155,53 +1170,57 @@ export function NodeNetworkView({
         )}
       </section>
 
-      <section className="network-section remote-task-section">
-        <div className="section-title">
-          <div>
-            <span className="eyebrow">BRAIN TASKS</span>
-            <h2>Brain 权威任务</h2>
+      {!conversationsInSidebar && (
+        <section className="network-section remote-task-section">
+          <div className="section-title">
+            <div>
+              <span className="eyebrow">BRAIN TASKS</span>
+              <h2>Brain 权威任务</h2>
+            </div>
+            <p>
+              {network.brainTasks.length ? `${network.brainTasks.length} 条稳定 Task` : '尚无 Task'}
+            </p>
           </div>
-          <p>
-            {network.brainTasks.length ? `${network.brainTasks.length} 条稳定 Task` : '尚无 Task'}
-          </p>
-        </div>
-        {network.brainTasks.length ? (
-          <div className="remote-task-grid">
-            {network.brainTasks.map((task) => (
-              <BrainTaskCard task={task} network={network} key={task.id} />
-            ))}
-          </div>
-        ) : (
-          <div className="network-empty compact remote-task-empty">
-            <BrainCircuit size={26} />
-            <p>创建任务后，提交节点先固定 Brain；Master 保存权威 Task 并创建独立 Execution。</p>
-          </div>
-        )}
-      </section>
+          {network.brainTasks.length ? (
+            <div className="remote-task-grid">
+              {network.brainTasks.map((task) => (
+                <BrainTaskCard task={task} network={network} key={task.id} />
+              ))}
+            </div>
+          ) : (
+            <div className="network-empty compact remote-task-empty">
+              <BrainCircuit size={26} />
+              <p>创建任务后，提交节点先固定 Brain；Master 保存权威 Task 并创建独立 Execution。</p>
+            </div>
+          )}
+        </section>
+      )}
 
-      <section className="network-section remote-task-section">
-        <div className="section-title">
-          <div>
-            <span className="eyebrow">EXECUTION TRANSPORT</span>
-            <h2>执行与兼容记录</h2>
+      {!conversationsInSidebar && (
+        <section className="network-section remote-task-section">
+          <div className="section-title">
+            <div>
+              <span className="eyebrow">EXECUTION TRANSPORT</span>
+              <h2>执行与兼容记录</h2>
+            </div>
+            <p>
+              {network.remoteTasks.length ? `${network.remoteTasks.length} 条持久记录` : '尚无邀请'}
+            </p>
           </div>
-          <p>
-            {network.remoteTasks.length ? `${network.remoteTasks.length} 条持久记录` : '尚无邀请'}
-          </p>
-        </div>
-        {network.remoteTasks.length ? (
-          <div className="remote-task-grid">
-            {network.remoteTasks.map((task) => (
-              <RemoteTaskCard task={task} network={network} actions={actions} key={task.id} />
-            ))}
-          </div>
-        ) : (
-          <div className="network-empty compact remote-task-empty">
-            <Inbox size={26} />
-            <p>与受信节点建立加密通道后，可以发出协作任务；对方会按自己的执行设置处理。</p>
-          </div>
-        )}
-      </section>
+          {network.remoteTasks.length ? (
+            <div className="remote-task-grid">
+              {network.remoteTasks.map((task) => (
+                <RemoteTaskCard task={task} network={network} actions={actions} key={task.id} />
+              ))}
+            </div>
+          ) : (
+            <div className="network-empty compact remote-task-empty">
+              <Inbox size={26} />
+              <p>与受信节点建立加密通道后，可以发出协作任务；对方会按自己的执行设置处理。</p>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="collaboration-note network-boundary">
         <ShieldCheck size={25} />

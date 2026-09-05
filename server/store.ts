@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, number INTEGER NOT NULL U
 CREATE TABLE IF NOT EXISTS activities (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id), actor_id TEXT REFERENCES users(id), kind TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS model_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT REFERENCES users(id), kind TEXT NOT NULL, provider TEXT NOT NULL, model TEXT, result TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS task_engine_intents (task_id TEXT PRIMARY KEY REFERENCES tasks(id), state TEXT NOT NULL CHECK(state IN ('creating','bound')), session_id TEXT, updated_at TEXT NOT NULL);
 PRAGMA user_version=3;`);
 
 export const id = () => randomUUID();

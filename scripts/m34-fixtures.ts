@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type ServerResponse } from 'node:http';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -110,6 +110,9 @@ export async function modelFixture(timeout = 120_000) {
     get requests() {
       return requests;
     },
+    get pendingRequests() {
+      return pending.size;
+    },
     configure(root: string) {
       const config = join(root, 'engine', 'config', 'opencode');
       mkdirSync(config, { recursive: true });
@@ -140,6 +143,13 @@ export async function modelFixture(timeout = 120_000) {
           },
         }),
       );
+    },
+    hold() {
+      released = false;
+    },
+    releaseNext(count = 1) {
+      assert(Number.isSafeInteger(count) && count > 0);
+      for (const finish of [...pending].slice(0, count)) finish();
     },
     release() {
       released = true;
@@ -203,15 +213,24 @@ export class ServiceClient {
       runtimeDirectory?: string;
       clockOffsetMilliseconds?: number;
       discovery?: { port: number; mdns: boolean };
+      logPath?: string;
+      sessionCrashPoint?: 'before_create' | 'after_create';
     } = {},
   ) {
-    assert(!this.child || this.child.exitCode !== null, 'Stop this test child before restarting');
+    assert(
+      !this.child || this.child.exitCode !== null || this.child.signalCode !== null,
+      'Stop this test child before restarting',
+    );
     this.base = '';
     this.cookie = '';
     this.output = '';
     const args: string[] = [];
     const clockEnvironment: Record<string, string> = {};
     const discoveryEnvironment: Record<string, string> = {};
+    if (options.sessionCrashPoint) {
+      args.push('--import', pathToFileURL(resolve('scripts/m35-session-crash-fixture.ts')).href);
+      clockEnvironment.RIVLOOM_TEST_SESSION_CRASH_POINT = options.sessionCrashPoint;
+    }
     if (options.discovery) {
       assert(Number.isInteger(options.discovery.port));
       assert(options.discovery.port > 0 && options.discovery.port <= 65_535);
@@ -239,6 +258,7 @@ export class ServiceClient {
       },
     });
     const capture = (chunk: Buffer) => {
+      if (options.logPath) appendFileSync(options.logPath, chunk);
       this.output = (this.output + chunk).slice(-6000);
       const match = this.output.match(/RIVLOOM_DESKTOP_READY (http:\/\/127\.0\.0\.1:\d+)/);
       if (match) this.base = match[1];
@@ -259,7 +279,7 @@ export class ServiceClient {
     );
   }
   async stop() {
-    if (!this.child || this.child.exitCode !== null) return;
+    if (!this.child || this.child.exitCode !== null || this.child.signalCode !== null) return;
     const exited = new Promise<void>((ok) => this.child!.once('exit', () => ok()));
     this.child.stdin!.end('shutdown\n');
     await Promise.race([exited, wait(9000)]);
@@ -275,12 +295,12 @@ export async function pairServices(left: ServiceClient, right: ServiceClient) {
   const rightID = (await right.network()).local!.id;
   await until(
     () => left.network(),
-    (network) => network.nearby.some((node) => node.id === rightID),
+    (network) => network.nearby.some((node) => node.id === rightID && node.online),
     'peer discovery',
   );
   await until(
     () => right.network(),
-    (network) => network.nearby.some((node) => node.id === leftID),
+    (network) => network.nearby.some((node) => node.id === leftID && node.online),
     'reverse discovery',
   );
   await left.call('/network/pairings', { nodeID: rightID }, 201);

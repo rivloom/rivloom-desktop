@@ -377,10 +377,21 @@ export class BrainTaskStore {
       requestedProjectID: string | null;
       requirements: TaskHardwareRequirements;
     },
+    taskID?: string,
   ) {
+    const existing = taskID ? this.tasks.get(taskID) : null;
+    if (existing) {
+      if (existing.direction !== direction || existing.submitterNodeID !== submitterNodeID ||
+          existing.brainID !== brainID || existing.masterNodeID !== masterNodeID ||
+          existing.title !== input.title.trim() || existing.description !== input.description.trim() ||
+          existing.criteria !== input.criteria.trim() || existing.requestedProjectID !== input.requestedProjectID ||
+          JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements))
+        throw new Error('Brain Task 创建 ID 或内容冲突。');
+      return publicTask(existing);
+    }
     const createdAt = new Date().toISOString();
     const task: StoredBrainTask = {
-      id: randomUUID(),
+      id: taskID ?? randomUUID(),
       idempotencyKey: randomUUID(),
       direction,
       submitterNodeID,
@@ -407,7 +418,7 @@ export class BrainTaskStore {
     if (!validStored(task) || this.tasks.size >= 500)
       throw new Error('Brain Task 内容无效或数量已达上限。');
     this.tasks.set(task.id, task);
-    this.save();
+    try { this.save(); } catch (error) { this.tasks.delete(task.id); throw error; }
     return publicTask(task);
   }
 
@@ -456,6 +467,20 @@ export class BrainTaskStore {
     };
     if (!validStored(task) || this.tasks.size >= 500) throw new Error('Brain Task 内容无效。');
     this.tasks.set(task.id, task);
+    this.save();
+    return true;
+  }
+
+  markWaitingForWorker(taskID: string, reason: string) {
+    const task = this.tasks.get(taskID);
+    const summary = reason.trim().slice(0, 12_000);
+    if (!task || task.direction !== 'owned' || task.status !== 'queued' ||
+        task.executionID !== null || !summary || task.executionSummary === summary)
+      return false;
+    task.executionSummary = summary;
+    task.deliveryPending = task.submitterNodeID !== task.masterNodeID;
+    task.deliveryError = null;
+    task.updatedAt = new Date(Math.max(Date.now(), Date.parse(task.updatedAt) + 1)).toISOString();
     this.save();
     return true;
   }

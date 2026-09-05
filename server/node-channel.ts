@@ -78,6 +78,19 @@ export type SecureChannelSession = {
   expiresAt: number;
 };
 
+/** A response authenticates one encrypted request without consuming stream sequence numbers. */
+export type ChannelEventAck = {
+  protocol: 'rivloom-secure-channel';
+  version: 1;
+  type: 'event-ack';
+  sessionID: string;
+  senderNodeID: string;
+  recipientNodeID: string;
+  iv: string;
+  ciphertext: string;
+  tag: string;
+};
+
 export type PendingChannelOpen = {
   message: ChannelOpen;
   privateKey: KeyObject;
@@ -457,5 +470,128 @@ export function decryptChannelPayload(session: SecureChannelSession, envelope: C
     return value;
   } catch {
     throw new Error('加密消息完整性校验失败。');
+  }
+}
+
+function eventAckKey(key: Buffer, sessionID: string) {
+  return Buffer.from(
+    hkdfSync('sha256', key, Buffer.from(sessionID), Buffer.from('rivloom-event-ack-v1'), 32),
+  );
+}
+
+function eventAckAAD(value: Omit<ChannelEventAck, 'ciphertext' | 'tag'>) {
+  return Buffer.from(
+    JSON.stringify({
+      protocol: value.protocol,
+      version: value.version,
+      type: value.type,
+      sessionID: value.sessionID,
+      senderNodeID: value.senderNodeID,
+      recipientNodeID: value.recipientNodeID,
+      iv: value.iv,
+    }),
+  );
+}
+
+function eventRequestDigest(request: ChannelEnvelope) {
+  return createHash('sha256')
+    .update(envelopeAAD(request))
+    .update('\0')
+    .update(request.ciphertext)
+    .update('\0')
+    .update(request.tag)
+    .digest('base64url');
+}
+
+export function encryptChannelEventAck(
+  session: SecureChannelSession,
+  request: ChannelEnvelope,
+): ChannelEventAck {
+  if (
+    session.expiresAt <= Date.now() ||
+    request.sessionID !== session.id ||
+    request.senderNodeID !== session.peerNodeID ||
+    request.recipientNodeID !== session.localNodeID ||
+    request.sequence !== session.receiveSequence
+  )
+    throw new Error('只能确认当前已认证的加密请求。');
+  const header: Omit<ChannelEventAck, 'ciphertext' | 'tag'> = {
+    protocol: 'rivloom-secure-channel',
+    version: 1,
+    type: 'event-ack',
+    sessionID: session.id,
+    senderNodeID: session.localNodeID,
+    recipientNodeID: session.peerNodeID,
+    iv: randomBytes(12).toString('base64url'),
+  };
+  const cipher = createCipheriv(
+    'aes-256-gcm',
+    eventAckKey(session.sendKey, session.id),
+    Buffer.from(header.iv, 'base64url'),
+  );
+  cipher.setAAD(eventAckAAD(header));
+  const plaintext = Buffer.from(
+    JSON.stringify({
+      requestSequence: request.sequence,
+      requestDigest: eventRequestDigest(request),
+    }),
+  );
+  return {
+    ...header,
+    ciphertext: Buffer.concat([cipher.update(plaintext), cipher.final()]).toString('base64url'),
+    tag: cipher.getAuthTag().toString('base64url'),
+  };
+}
+
+export function verifyChannelEventAck(
+  session: SecureChannelSession,
+  request: ChannelEnvelope,
+  value: unknown,
+) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ack = value as ChannelEventAck;
+  if (
+    Object.keys(ack).length !== 9 ||
+    ack.protocol !== 'rivloom-secure-channel' ||
+    ack.version !== 1 ||
+    ack.type !== 'event-ack' ||
+    session.expiresAt <= Date.now() ||
+    ack.sessionID !== session.id ||
+    request.sessionID !== session.id ||
+    ack.senderNodeID !== session.peerNodeID ||
+    ack.recipientNodeID !== session.localNodeID ||
+    request.senderNodeID !== session.localNodeID ||
+    request.recipientNodeID !== session.peerNodeID ||
+    typeof ack.iv !== 'string' ||
+    !/^[A-Za-z0-9_-]{16}$/.test(ack.iv) ||
+    typeof ack.ciphertext !== 'string' ||
+    ack.ciphertext.length > 1024 ||
+    !/^[A-Za-z0-9_-]+$/.test(ack.ciphertext) ||
+    typeof ack.tag !== 'string' ||
+    !/^[A-Za-z0-9_-]{22}$/.test(ack.tag)
+  )
+    return false;
+  try {
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      eventAckKey(session.receiveKey, session.id),
+      Buffer.from(ack.iv, 'base64url'),
+    );
+    decipher.setAAD(eventAckAAD(ack));
+    decipher.setAuthTag(Buffer.from(ack.tag, 'base64url'));
+    const proof = JSON.parse(
+      Buffer.concat([
+        decipher.update(Buffer.from(ack.ciphertext, 'base64url')),
+        decipher.final(),
+      ]).toString('utf8'),
+    );
+    return (
+      proof &&
+      Object.keys(proof).length === 2 &&
+      proof.requestSequence === request.sequence &&
+      proof.requestDigest === eventRequestDigest(request)
+    );
+  } catch {
+    return false;
   }
 }

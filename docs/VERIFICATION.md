@@ -1,19 +1,113 @@
 # 实际验证记录
 
-日期：2026-09-01 至 2026-09-03；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
+日期：2026-09-01 至 2026-09-05；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
+
+## 2026-09-05：M3.5 A–D 工程交付与验证（当前）
+
+本轮从 `main` / `8badf8f6f31e0016a1e1a100dd70c9b43cfe6671` 的既有界面/备注/`@` 改动继续，未重置覆盖。**A–D 工程交付完成，用户验收及本轮双物理机回归待进行**。正式客户端及原验收数据未操作。本地 Git 按用户追加授权只保存本任务范围，不推送；提交号以最终 Git 记录为准。
+
+| 本轮检查 | 实际结果和证据 |
+| --- | --- |
+| 创建幂等与远程时钟定向 | 14/14；`.data/verification/m35-stage-a-creation-after.log`。失败先验保留在 `m35-stage-a-creation-before.log` |
+| 自动分配候选修复 | 共用每个 Brain 的实际 Worker 过滤规则；仅 Master 自身候选明确无候选，合法第三 Worker 可执行；复现/通过记录保留于 `.data/verification/m35-placement/` |
+| 全量 `npm.cmd test` 首轮 | **145/146**；`.data/verification/m35-full-regression-first.log`。唯一失败仍为已有 `two isolated Rivloom instances discover and cryptographically verify each other` 的纯 mDNS verified 断言，不记全绿 |
+| 全量 `npm.cmd test` 最终 | **154/155**，106.8 秒；`.data/verification/m35-full-regression-final.log`。唯一失败仍是上述纯 mDNS 用例，在 `tests/node-network.test.ts:2222` 的 `testPeers.every(...verified)` 断言；本轮其余测试通过，未把整套记为全绿 |
+| 前端/HTTP 最新定向 | **23/23**：`tests/api.test.ts`、`conversation-drafts`、`node-mentions`、`task-receipts`、`conversations`；`.data/verification/m35-drafts/review-tests.log`，typecheck 为 `review-typecheck.log` |
+| 模型目录消失后的本机创建确认 | 增量 **7/7**（API + 草稿），`m35-drafts/model-retry-tests.log` / `model-retry-typecheck.log`；已发出请求可保持原签名和 ID 确认，编辑新工作恢复模型前置校验 |
+| 完整隔离业务服务最终复测 `npm.cmd run test:node-p0` | **12/12**；`.data/verification/m35-p0-1788581065722-2746e0ac/verification.json`、`engine-audit.json`，日志 `m35-placement/service-p0-run3.log`；全部自有服务已 stop。此前 10/10 根 `m35-p0-1788579317453-a5b08eb4` 保留 |
+| 真实 session 创建崩溃窗口 | **2/2 场景通过**；`.data/verification/m35-session-crash-1788580103133-167ac635/verification.json`，运行日志 `m35-session-crash-run3.log`；8 个自有旧/新服务及引擎端口均已关闭，见 `cleanup-ports.json` |
+| Tauri Debug 原生界面 | **12 条记录通过**（含 CLEANUP）；`.data/ui-conversation-c9af0886-f701-4dbb-aa4d-746b24ee8345/native-observations.json`，6 张实际窗口截图；1282×872、最窄 962×872 |
+| 最终 Tauri Release 原生复查 | **8 条记录通过**（含输入模式恢复与 CLEANUP）；`.data/ui-conversation-6fddb6ac-44a5-47e5-922b-a49ce7c47234/native-release-observations.json`，4 张实际窗口截图；包括真实 Windows 拼音候选 Enter 不发送、键盘选定固定 Node、原任务 authenticated delivered/queued 第 1 位、等待文案及 signed hello 后统计保持 |
+| 认证 ACK 定向回归 | `m35-placement/receipt-auth-ack-unit.log` **2/2**；`receipt-auth-ack-network.log` **4/4**，含伪 HTTP 204 拦截和部分重复单元用例，两组不累加为独立总数 |
+| 路由/恢复与旧协议回归 | `m35-placement/receipt-routing-network.log` **1/1**，错误节点/路由/key/task ID、乱序/同序冲突、终态、ACK 丢失和断线重放；`receipt-legacy-network.log` **1/1**，实际 8badf8f 旧 network 模块搭配当前兼容 wire 依赖，双向基本任务通过且不发送新队列消息，未使用完整旧二进制 |
+| signed hello 统计刷新 | `m35-placement/stats-hello-after.log` **1/1**；保留已认证队列统计及原采样时间；此单例不覆盖过期判断 |
+| 新独立预览安装包 | **构建成功，未签名、未安装**；`.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**；`m35-preview-artifact.json` 与 `m35-preview-installer-retry.log` |
+| 最终二进制闭环 | **通过并 CLEANUP**；`.data/ui-conversation-f90b3dd1-f6b1-4ca8-987a-bc51c67f0945/verification.json` 和 `native-final-binary-review.jpg`；与最终产物相同的 Release exe 完成启动、加密配对、1 remote Task → 1 业务 Task → 1 官方 session → review，实际窗口显示结果；模型请求 1/工具 0 |
+
+完整服务使用同机隔离数据、独立发现域、官方 OpenCode 1.18.25 与确定性 loopback 模型。覆盖：丢失创建响应后四次并发重试只有一个邀请；不同内容/目标同 requestID 返回 409；发送/接收端重启保留原 ID；唯一业务 Task/session；review 重启后仍占槽；固定目标离线/撤信 409 且无本机/第三 Node 回退；普通忙碌混合来源 FIFO 不提前批量建远程业务 Task；调序/暂缓/拒绝/暂停重启保持且操作重放幂等；实际顺序与队列一致；双 Brain 同槽竞争，输家原 Task/Brain 保留并沿原任务第二尝试；unknown 重启后不重派。
+
+最终 12/12 服务根为 `.data/verification/m35-p0-1788581065722-2746e0ac`：**7 业务 Task、7 官方 session、7 唯一绑定、0 工具、6 accepted + 1 故障注入 interrupted**；sender/other 两发起端本地 Task 均为 0。追加覆盖 `/bootstrap.network` 与 `/network` 两入口的普通成员可见范围、Brain Master 读取过滤、全队列 403、owner 不受影响、Windows 路径大小写/斜线变化脱敏；unknown 恢复后原 Execution/attempt/Brain 归属保持等候。最后一个 interrupted 是保守恢复的验证对象，不冒称七项均已验收。此结果不等同于两台物理 Windows 设备、两位真人或真实模型编程验证；M3.4 原物理证据不重复计入 M3.5。
+
+实际 Tauri Debug 窗口验证根 `.data/ui-conversation-c9af0886-f701-4dbb-aa4d-746b24ee8345`：`@` 中普通忙碌 Node 可选，原名/备注和固定 ID 正确；切入已有来访 review 会话不污染其输入，返回新会话恢复正文和原目标；从原生发送后准确显示 queued 第 1 位/等待槽，释放 peer review 槽后同一原任务达到 review，未创建本机回退任务。等待项上移、暂缓（无排位）、恢复、拒绝原因和原 sender seq5 回执一致；暂停/恢复保留 review 槽；断线收起右栏、头部本机队列弹窗仍可用；同数据重启保留 Node 资料、Task/session、顺序和拒绝事实；CLEANUP 完成。宽 1282×872、最窄 962×872 控件在窗口内，未据此宣称 700px 或其他未测尺寸通过。
+
+6 张 Debug 证据为 `native-draft-restored.jpg`、`native-directed-queued.jpg`、`native-queue-held.jpg`、`native-narrow.jpg`、`native-offline-narrow.jpg`、`native-offline-local-queue.jpg`。该轮使用原生文本 API 输入中文，Windows IME 候选在下一轮 Release 单独验证。同机两进程和确定性模型不计两物理机/真实 AI 工具验证。原生发现的 signed hello 刷新丢失队列统计及等待输入误导文案已修复并经最终 Release 复查。此前 Escape 误触暂停根 `.data/ui-conversation-19cbea2d-ad72-4360-91c8-ae90bc8cf91d` 保留，用户确认继续后取得新证据，不再作为当前停点。
+
+Release 交互验证根 `.data/ui-conversation-6fddb6ac-44a5-47e5-922b-a49ce7c47234` 使用新独立数据、确定性模型及未安装的独立预览 exe。真实 Windows 拼音候选 `ni'hao` 按 Enter 仅提交 `nihao` 到草稿，没有发送，历史仍为 3 会话、本机 Task 仍为 1；随后恢复原输入模式。带空格 Node 原名与长备注正常显示，Down + Enter 选择可见候选并绑定确切 Node ID，不创建任务；显式发送才产生原远端 Task 的认证送达和 queued 第 1 位。等待区明确说明目标准备执行会话后可补充要求；多次 signed hello 保持队列统计且不冒充刷新原采样时间。8 条记录包含 CLEANUP，4 张截图为 `native-ime-candidate.jpg`、`native-ime-enter-no-send.jpg`、`native-release-mention.jpg` 和 `native-release-queued.jpg`。该轮 exe 为 **10,297,856 字节**，SHA-256 **`C5B1F4664A32F2EC6FA74DB87F2CBFB5C32B4BBFB18B3A09F05C9B377E5ADC8A`**；最终重新链接后的 exe 哈希不同，按下一段另行核对，没有将两份二进制写成相同。该证据不等同于安装器执行、两物理机或真实模型工具操作。
+
+独立预览使用产品名 **Rivloom UI Preview**、identifier **`com.rivloom.conversationpreview`** 和版本 0.1.3。最终 NSIS 构建退出 0，唯一本轮交付文件为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**，Authenticode 为 **NotSigned**，没有运行安装。最终 Release exe SHA-256 为 **`477D2AAF981510EDDF5EB901FEE4783A4632AC96281304A6A5FCF8338043B3F1`**；首次原生交互后源码/前端内容未变化，但重新链接使 exe 哈希变化，因此对最终 exe 单独启动/配对复核，不将中间哈希作为最终产物。`m35-preview-artifact.json` 记录产物事实；旧正式安装器的大小/修改时间与旧预览哈希均核对未变。
+
+NSIS 首次封装失败保留在 `m35-preview-installer-final.log`：封装尚未结束即启动 Release 交互检查导致文件被占用（Windows error 32）。停止本轮自有预览后重新封装，`m35-preview-installer-retry.log` 退出 0；没有删除首次失败记录，也没有安装或覆盖正式客户端。最终独立根 `.data/ui-conversation-f90b3dd1-f6b1-4ca8-987a-bc51c67f0945` 使用与产物相同哈希的 exe，完成启动、加密配对及 1 remote Task → 1 业务 Task → 1 官方 session → review，模型请求 1/工具 0，实际窗口显示结果并保存 `native-final-binary-review.jpg`；`verification.json` 与 CLEANUP 均通过。此轮只确认最终二进制闭环，不重复计入此前 12+8 条交互检查。
+
+追加真实 session 崩溃验证使用 `.data/verification/m35-session-crash-1788580103133-167ac635` 下两个独立根。`before_create` 在 Rivloom 已持久保存创建意图/queue starting、真正调用官方 `POST /session` 前强杀；`after_create` 在官方已创建并返回 session ID、但 Rivloom SDK 调用尚未返回且 Task.sessionID 未绑定时强杀。仅测试 `--import` 夹具拦截 global fetch，官方引擎没有修改。两场景均先核对自有子进程树退出、服务/引擎端口关闭，再同根同身份重启：原 Task 保持 interrupted/sessionID=null；同 requestID 返回原 Task；手动启动 409；新第二 Task ready 并等待槽位。前者官方 session 为 0，后者为 1；重启前后官方 session 列表不变、模型请求均为 0。合计 **4 Task/1 官方 session** 属两个独立根，不是 AI 执行或成果验收。各子目录保存 `verification.json`、`forced-crash.json`、`session-crash-window.json`、`service.log` 与 `restarted.log`。
+
+该专项先前两次失败均保留：`m35-session-crash-1788579764974-3db2b02e` 为强杀后只读 SQLite WAL 读取报 disk I/O；`m35-session-crash-1788579829581-059e964f` 为 taskkill 返回 128，未完成重启。这两次不计通过。修正仅限本轮夹具：允许自有测试 DB 执行 SQLite WAL 恢复、记录 taskkill 输出并以真实进程/端口关闭为前置、独立发现端口且关闭该夹具 mDNS；第三轮另根通过，不删除旧失败证据。
+
+保留失败与修复：`.data/verification/m35-p0-1788579198721-3dc25a40/verification.json` 在前五项通过后，重新配对遇到发现/离线竞争，confirm 返回 404；修复夹具同步后另根完整重跑通过，失败数据不删除。伪 ACK 复现保留在 `m35-placement/receipt-fake-ack-before.log`，signed hello 丢失统计复现为 `stats-hello-before-source.log`；另外两个 `stats-hello-before*.log` 仅属前置夹具无效，不计产品语义失败。前端最初缺少新模块的失败、一次中文标签空格断言与夹具类型错误分别保留在 `m35-drafts/before.log`、`c-tests.log`、`typecheck-c.log`，后续通过记录独立保存。纯 mDNS 失败未修复。
+
+实现还修复了请求期间的 UI 竞态：创建失败保留原草稿/requestID，创建成功使用精确返回 ID；提交中切换会话不抢回当前会话，设置在 busy 时禁用；队列请求结果未知时保留完整原请求（版本与 operationID），只通过“重试确认”重放，其他队列变更暂锁。已有实际执行状态/终态优先于旧队列回执，旧节点或过期统计显示未知。定向测试与上述原生操作分别记录，不互相替代。
+
+原生检查发现：发起方 direct 任务仍在目标排队、尚无 `executionSequence` 时，原有控制协议尚不允许补充正文。输入区已改为说明“等待目标 Node 准备执行会话，开始后可补充要求”，不再误写为归属权限不足，也不将本机保存当作已送达；该文案 typecheck 通过（`m35-drafts/queued-native-copy-typecheck.log`），并经上述最终 Release 实际窗口复查。本机自有 waiting/held Task 的补充只保存，不绕过排队自动启动。发送方修改未绑定的远程正文协议没有在本轮扩大实现。
+
+## 历史：2026-09-05 P0 分析与交接保存，未运行产品测试
+
+用户已确认 [Node 协作 P0 计划](plans/2026-09-05-node-collaboration-p0.md)，并指定新会话实施。本次只核对代码/文档、保存计划和已接受的 [ADR-0005](adr/0005-directed-node-queues-and-receipts.md)、同步交接入口；没有实现 P0、重跑产品测试、操作运行节点、重建或安装桌面包。现有未提交界面源码和旧数据保留，未提交/推送 Git。
+
+文档检查：9 个交接/计划文件的 102 个本地 Markdown 链接均可解析到现有文件，`git diff --check` 通过。此结果仅验证文档，不计入产品测试。
+
+下方通过项仍只证明此前界面、备注、直发及 M3.4 的记录范围。草稿目标绑定、HTTP 创建幂等、真实队列/控制/回执和自动分配修复需要按新计划取得证据；既有自动分配 queued 和纯 mDNS 失败继续保留，不能因计划已接受而标记通过。
+
+## 2026-09-03 至 2026-09-04：会话式桌面改版（8badf8f 之后）
+
+本轮按用户确认的布局实施，保留 Tauri、官方 OpenCode 1.18.25、Task/Execution/Brain 归属和审批边界。开始时 main / 8badf8f 工作区干净。以下均为本轮实际结果；下方此前的测试数字不重复计入。
+
+### 2026-09-04：本地备注和 `@Node`
+
+| 检查                                                                                             | 实际结果                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm.cmd run typecheck` / `npm.cmd run build`                                                    | 通过；Vite 1831 modules                                                                                                                                                                                                          |
+| `node --test tests/node-profile.test.ts tests/node-mentions.test.ts tests/conversations.test.ts` | 9/9；备注验证/持久化、指纹变化隔离、活动 `@` 查询、原名/备注搜索、最近使用排序和原会话/队列行为                                                                                                                                  |
+| `node --test tests/remote-task-clock.test.ts`                                                    | 11/11；远程任务时钟、回复顺序和终态幂等保持                                                                                                                                                                                      |
+| `node --test tests/node-network.test.ts`（正常 Windows 用户上下文）                              | 24/25；DPAPI、信任、加密通道、远程邀请、双向配对及 UDP 后备发现通过；唯一失败为已有的纯 mDNS 同机发现 verified 断言。受限沙箱内先出现的 DPAPI/网络权限失败不计产品结果                                                           |
+| `node scripts/conversation-ui-fixture.ts` 的 `connect` + `mention`                               | 两轮隔离双节点闭环通过（服务与原生 Tauri Debug 各一轮）：来访任务完成，本机备注“设计工作站（小林的电脑）”，本机向该 Node 直发任务并在对端完成；本机记录 `lastUsedAt`，对端快照的备注仍为空；共 2 次确定性模型请求/轮，0 工具调用 |
+| `npm.cmd run preview:conversation:installer`                                                     | 退出 0；Tauri Release 和独立 identifier 的 NSIS 完成，未安装或覆盖正式客户端                                                                                                                                                     |
+| `git diff --check`                                                                               | 通过；修改仍未提交、未推送                                                                                                                                                                                                       |
+
+服务闭环数据根 `.data/ui-conversation-5c2a037a-13c8-4f0c-8973-2f814ea85bf9`，原生闭环数据根 `.data/ui-conversation-b3402955-e79b-4b75-b769-e7ee1c584897`；两者 `verification.json` 均保存 direct `@` task、local display、`lastUsedAt`、remoteRemark=null 和 cleanup。直发走既有认证加密 remote-task 通道，不经过下述自动分配分支，因此不把下述 queued 缺陷写成已修复。目标离线或加密通道未就绪会返回 409。
+
+| 检查                                                                                                                                                                   | 实际结果                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm.cmd run build`                                                                                                                                                    | 通过；TypeScript 与 Vite，1830 modules。原生检查发现的异步加载默认模型/文件夹问题修正后再次通过                                                                                 |
+| `node --test tests/conversations.test.ts tests/node-profile.test.ts`                                                                                                   | 7/7；稳定会话/重试去重、来源分类、本机队列、连接显隐、资料持久化和图片/名称校验                                                                                                 |
+| `node --test --test-name-pattern 'shared workers register\|offline pending Execution\|two nodes require bilateral\|UDP broadcast fallback' tests/node-network.test.ts` | 4/4；共享目录和重试、离线待执行 fencing、双向配对/重放/撤销、UDP 后备发现                                                                                                       |
+| `npx.cmd tauri build --debug --no-bundle --config .data/conversation-native.json`                                                                                      | 通过。配置仅覆盖 identifier=com.rivloom.conversationpreview；同内容已保存为 src-tauri/tauri.preview.conf.json。Debug exe 及内置 Node/OpenCode runtime 就绪，未生成或安装新 NSIS |
+| 原生窗口实际操作                                                                                                                                                       | 桌面自动鉴权、默认空白会话、本机消息发送到官方引擎并返回 review、自己的浅色/来访深色历史、历史切换、本机队列、配对机器状态、断线右栏收起；原生截图已检查                        |
+| 服务/UI 隔离调试                                                                                                                                                       | 改名、预设图标、上传 PNG、同 Task/session 继续、验收、入站执行与本地 ready 共存、700px 布局、离线缓存与重启保留资料/会话；UI 控制台无错误                                       |
+| `git diff --check`                                                                                                                                                     | 通过；源码和文字记录留在工作区，未提交/推送                                                                                                                                     |
+
+服务/UI 数据根 `.data/ui-conversation-57109307-8d03-4142-a7ee-2ade9c735119`：3 个业务 Task，分别 accepted（同一 session 两轮）、入站 review、本地 ready；3 次确定性模型请求；没有真实模型费用或工具调用。`verification.json` 保留状态、资料同步、断开、同身份重启和 cleanup；`blank.png` / `connected.png` / `narrow.png` 为内部渲染检查。此前夹具启动中 DPAPI 沙箱错误、初始化接口期望码修正、非 TTY 输入提前结束未计为通过；原目录均保留。
+
+原生数据根 `.data/ui-conversation-7d7887c4-a421-4425-a56d-7f87fb9aa2ea`：Debug Tauri 与已安装 Release 并存，Computer Use 首次窗口读取授权超时，重试后成功。原生本机会话 `5388032a-1266-467e-a0eb-6df7a9d75948` / 官方 session `ses_f98fd45b1ffeVA8tKV66cB9PNz` 返回 review，1 次本机确定性模型请求，0 工具；自身队列正确显示 1。原生 `restart` 核对同 Node ID、名称、图标、业务 Task ID 保持；`disconnect` 后离线配对资料保留且右侧隐藏。`native-connected.png` / `native-offline.png` 为原生截图证据。
+
+**保留失败：原生双 Brain 自动分配。** 首次 connect 生成 Task `f9b38694-0b5e-446b-9ebd-3432a53ff178`，由 peer 提交给本机承载的 Brain，停在 queued；45 秒等待入站 review 超时，模型请求 0。原 Task 与失败检查仍在 verification.json 中，不重发、不删历史。源码核对确认：createScheduledTask 只在 hosted Brain 候选中排除当前 Node，远端 Brain 的 Master 自身仍可能作为候选；接收 Master 的 scheduleBrainTask 又排除自身，导致没有可执行 Worker。相关代码与 8badf8f 相同，本轮未改调度规则。该结果是后续需处理的既有调度缺陷，不能把原生跨 Brain 完整执行记为通过。另一次独立服务/UI 拓扑中的入站执行通过不覆盖此失败。
+
+自动分配的 HTTP 接口返回网络快照；新 UI 按返回快照中新增的本机提交 Task 选中会话，没有把快照当作单个 Task。此分支做了类型/代码核对，未声称完成上述失败拓扑的端到端修复。本地 ready 队列仍需用户空闲后启动；远端尚无可用控制记录时只读显示真实状态/摘要。2026-09-04 节点网络复查 24/25 再次只留下纯 mDNS 同机发现失败；未做两物理机/真实模型/安装器升级验收。
+
+收尾：两个夹具均输出 CLEANUP 并写入 own processes stopped；交互终端仍持有 stdin 后仅对这两个已清理的终端发送 Ctrl+C（终端退出码 1，不作测试成功退出码）。脚本已补 stdin.pause。最终只读确认 Rivloom 仅剩原安装版 PID 10628，旧 NSIS 仍为 71,083,411 字节、原修改时间；原版没有安装、关闭或重启。
+
+2026-09-04 按用户请求生成另一台机器查看用的独立 NSIS，并在本地备注/`@Node` 完成后重建：`npm.cmd run preview:conversation:installer` 退出 0，产物名 `Rivloom UI Preview_0.1.3_x64-setup.exe`。最新复制件 `.data/distribution/Rivloom_UI_Preview_0.1.3_x64_setup.exe` 为 71,063,972 字节，SHA-256 `76302232ACEC71F35D6854B30F507AEFC703612C0D8A3FBCD9F567EEBE6B0CAA`。preview config 使用 `Rivloom UI Preview` 产品名与 `com.rivloom.conversationpreview` identifier；旧正式 installer 仍为 71,083,411 字节、2026-09-02 原修改时间。预览包未签名，没有在本机或另一台机器执行安装验收。
 
 ## 2026-09-03：新会话前保存检查
 
 用户要求保存文档和 Git，下一会话改界面；本轮没有修改产品或测试源码。为保存现有代码基线重新执行：
 
-| 检查 | 结果 |
-| --- | --- |
-| npm.cmd run build | 通过；TypeScript 无输出错误，Vite 1824 modules，构建退出 0 |
-| node --test tests/remote-task-clock.test.ts tests/http-ports.test.ts tests/physical-resume.test.ts tests/physical-race.test.ts | 59/59 通过，0 失败、取消或跳过 |
-| PowerShell Parser 解析 scripts/desktop-install-smoke.ps1 与 scripts/m34-master-helper-package.ps1 | 两个脚本均 0 语法错误；未执行安装/打包脚本 |
-| git diff --check / git diff --cached --check | 均通过；暂存区 62 个源码/测试/文档文件，无二进制、运行数据或安装包 |
-| 本次交接文档的本地 Markdown 链接检查 | 0 个失效链接 |
-| 待保存源码/文档的常见凭据格式检查 | 原 60 个变更文件 0 命中；仅是提交卫生检查，不声称完整安全审计 |
+| 检查                                                                                                                           | 结果                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| npm.cmd run build                                                                                                              | 通过；TypeScript 无输出错误，Vite 1824 modules，构建退出 0         |
+| node --test tests/remote-task-clock.test.ts tests/http-ports.test.ts tests/physical-resume.test.ts tests/physical-race.test.ts | 59/59 通过，0 失败、取消或跳过                                     |
+| PowerShell Parser 解析 scripts/desktop-install-smoke.ps1 与 scripts/m34-master-helper-package.ps1                              | 两个脚本均 0 语法错误；未执行安装/打包脚本                         |
+| git diff --check / git diff --cached --check                                                                                   | 均通过；暂存区 62 个源码/测试/文档文件，无二进制、运行数据或安装包 |
+| 本次交接文档的本地 Markdown 链接检查                                                                                           | 0 个失效链接                                                       |
+| 待保存源码/文档的常见凭据格式检查                                                                                              | 原 60 个变更文件 0 命中；仅是提交卫生检查，不声称完整安全审计      |
 
 定向测试使用独立隔离数据和必要的本机临时监听，没有启动物理验收、读取模型凭据、调用真实模型或停止正式节点。构建只更新被忽略的 dist，没有重建或安装桌面包。**本轮没有重跑全量测试，历史 92/93 的纯 mDNS 失败及单独复查失败仍保留**；也没有新增 Rust、原生 UI、安装器或两机验收结果。
 

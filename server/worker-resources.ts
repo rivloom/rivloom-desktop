@@ -200,6 +200,20 @@ export function rankWorkers(
     );
 }
 
+export function rankBrainWorkers(
+  brain: Pick<BrainTopology, 'masterNodeID' | 'workers'>,
+  task: TaskPlacementRequirements,
+  at = Date.now(),
+) {
+  // Dispatch currently requires a different Node, even when the caller is a remote submitter.
+  // This Node remains eligible as a Worker for any other Brain's Master.
+  return rankWorkers(
+    brain.workers.filter((worker) => worker.nodeID !== brain.masterNodeID),
+    task,
+    at,
+  );
+}
+
 export function rankBrainPlacements(
   brains: BrainTopology[],
   task: TaskPlacementRequirements,
@@ -208,7 +222,7 @@ export function rankBrainPlacements(
   const placements = brains
     .filter((brain) => brain.state === 'established' && brain.online)
     .flatMap((brain) => {
-      const worker = rankWorkers(brain.workers, task, at)[0];
+      const worker = rankBrainWorkers(brain, task, at)[0];
       return worker ? [{ brain, worker }] : [];
     });
   return placements.sort((left, right) => {

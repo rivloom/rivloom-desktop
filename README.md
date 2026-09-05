@@ -4,13 +4,13 @@
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，详细计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，当前停点见 [实施进度](docs/PROGRESS.md)，继续开发或开启新会话前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1、M3.2、M3.3 和 M3.4 当前 MVP 范围已完成；M2 发行完善暂缓。用户指定下一会话修改界面，先读 [界面改版交接](docs/UI-HANDOFF.md) 并听取具体要求，不自动启动任务编排等新功能。纯 mDNS 专项仍待查，不宣称全量绿色。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。当前 **M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，完整隔离服务 12/12、真实 session 两崩溃窗口、Debug/Release 原生与最终二进制闭环通过；最终全量 154/155，唯一已有纯 mDNS 失败保留。新独立预览包已生成，未签名、未安装；产物与证据见 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)。M2/M4/M5、P1、任务拆解、人员和 HA 不自动扩大实施。
 
 ## 在 Windows 启动
 
 客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 
-当前内测安装器为 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.3_x64-setup.exe`（71,083,411 字节），包含自动 Brain、共享 Worker、时差和高位端口修复。已完成记录在案的本机安装/升级验证及 5.20/5.33 物理核心验收；两机已升级至 0.1.3。助手 v2 的协调改动属于测试工具，不要求重装产品。本次保存交接没有重建或安装桌面包，未完成代码签名或干净机发行矩阵，不作为正式商业发行包。
+原正式版内测安装器为 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.3_x64-setup.exe`（71,083,411 字节），包含 M3.4 自动 Brain、共享 Worker、时差和高位端口修复；记录在案的安装/升级及 5.20/5.33 物理核心验收属于该旧基线。M3.5 使用独立产品标识的预览包，最终产物和验证状态见 [UI-HANDOFF](docs/UI-HANDOFF.md)，不覆盖旧正式客户端。代码签名和干净机发行矩阵仍未完成。
 
 开发环境需要 Node.js **24+**、Rust 和 Visual Studio C++ Build Tools：
 
@@ -23,6 +23,8 @@ npm.cmd start
 `npm start` 会构建随包资源并打开独立的 Tauri 窗口。桌面首次启动会自动建立当前 Windows 用户的本机操作者身份，直接进入任务工作台并开始发现附近节点；不要求先创建“工作区”，也不询问显示名称、用户名或密码。内部 Web 调试仍保留显式初始化和登录，不提供公开注册。
 
 `npm run dev` 与 `npm start` 都启动桌面开发版本。内部 Web 调试必须显式使用 `npm run server:dev`；不要和桌面端共用数据目录。同一数据目录有进程锁。关闭桌面窗口时会提示并停止执行，异常退出也由父子进程监控清理。
+
+M3.5 验证使用 `npm.cmd run test:node-p0` 创建本轮独立数据/多服务夹具；原生预览使用 `npm.cmd run preview:conversation:desktop`。普通 `npm start` 不代替数据隔离，不复用旧物理验收根。
 
 ### 第一个真实任务
 

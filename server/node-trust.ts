@@ -267,6 +267,10 @@ export class NodeTrustStore {
     return this.trustedNodes.get(nodeID) || null;
   }
 
+  records() {
+    return [...this.trustedNodes.values()].map((record) => ({ ...record }));
+  }
+
   revocation(nodeID: string, fingerprint: string) {
     const record = this.revokedNodes.get(nodeID);
     return record?.fingerprint === fingerprint ? record : null;

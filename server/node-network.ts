@@ -8,6 +8,8 @@ import { networkInterfaces } from 'node:os';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { listenHttp } from './http-ports.ts';
+import { NodeProfileStore } from './node-profile.ts';
+import { validNodeProfile, validNodeRemark, type NodeProfile } from '../shared/node-profile.ts';
 import type {
   Approval,
   Artifact,
@@ -16,6 +18,7 @@ import type {
   NodePairing,
   Question,
   RemoteTaskControlAction,
+  RemoteTaskInvite,
   RivloomNode,
   TaskHardwareRequirements,
   TaskState,
@@ -46,6 +49,8 @@ import {
   channelSessionLifetimeMilliseconds,
   decryptChannelPayload,
   encryptChannelPayload,
+  encryptChannelEventAck,
+  verifyChannelEventAck,
   finishSecureChannel,
   unsignedChannelAck,
   unsignedChannelOpen,
@@ -71,13 +76,29 @@ import {
   type RemoteTaskMessage,
 } from './remote-tasks.ts';
 import { BrainTopologyStore } from './brain-topology.ts';
-import { rankBrainPlacements, rankWorkers, validWorkerRegistration } from './worker-resources.ts';
+import {
+  rankBrainPlacements,
+  rankBrainWorkers,
+  validWorkerRegistration,
+} from './worker-resources.ts';
 import {
   BrainTaskStore,
   validBrainTaskSubmission,
   validBrainTaskUpdate,
   type BrainTaskMessage,
 } from './brain-tasks.ts';
+import {
+  queueReceiptCapability,
+  validNodeQueuePublicStats,
+  type NodeQueuePublicStats,
+  type TaskQueueReceipt,
+} from '../shared/task-queue-receipts.ts';
+import {
+  TaskQueueReceiptStore,
+  validQueueReceiptMessage,
+  receiptMatchesRemote,
+  type QueueReceiptMessage,
+} from './task-queue-receipts.ts';
 
 type MdnsService = {
   fqdn: string;
@@ -139,6 +160,8 @@ type PairingSession = NodePairing & {
 };
 
 type BrainDirectoryRequest = {
+  nodeQueue?: NodeQueuePublicStats | null;
+  profile?: NodeProfile;
   type: 'brain-directory-request';
   requestID: string;
   capabilities: string[];
@@ -148,6 +171,8 @@ type BrainDirectoryRequest = {
 };
 
 type BrainDirectoryResponse = {
+  nodeQueue?: NodeQueuePublicStats | null;
+  profile?: NodeProfile;
   type: 'brain-directory-response';
   requestID: string;
   capabilities: string[];
@@ -174,6 +199,7 @@ const capabilities = [
   'remote-control-v1',
   'remote-results-v1',
   'brain-task-v1',
+  queueReceiptCapability,
 ];
 const maximumHelloBytes = 16 * 1024;
 const maximumChannelRequestBytes = 96 * 1024;
@@ -383,6 +409,10 @@ function validBrainDirectoryRequest(value: unknown): value is BrainDirectoryRequ
   const item = value as Record<string, unknown>;
   return (
     item.type === 'brain-directory-request' &&
+    (item.nodeQueue === undefined ||
+      item.nodeQueue === null ||
+      validNodeQueuePublicStats(item.nodeQueue)) &&
+    (item.profile === undefined || validNodeProfile(item.profile)) &&
     typeof item.requestID === 'string' &&
     /^[0-9a-f-]{36}$/i.test(item.requestID) &&
     Array.isArray(item.capabilities) &&
@@ -404,6 +434,10 @@ function validBrainDirectoryResponse(value: unknown): value is BrainDirectoryRes
   const brains = item.brains;
   return (
     item.type === 'brain-directory-response' &&
+    (item.nodeQueue === undefined ||
+      item.nodeQueue === null ||
+      validNodeQueuePublicStats(item.nodeQueue)) &&
+    (item.profile === undefined || validNodeProfile(item.profile)) &&
     typeof item.requestID === 'string' &&
     /^[0-9a-f-]{36}$/i.test(item.requestID) &&
     Array.isArray(item.capabilities) &&
@@ -548,10 +582,17 @@ export class NodeNetwork extends EventEmitter {
   private readonly syncingDirectories = new Set<string>();
   private readonly deliveringRemoteTasks = new Set<string>();
   private readonly deliveringBrainTasks = new Set<string>();
+  private readonly deliveringQueueReceipts = new Set<string>();
+  private readonly replayedQueueChannels = new Map<string, string>();
   private readonly schedulingBrainTasks = new Set<string>();
   private readonly trustStore: NodeTrustStore;
+  private readonly profiles: NodeProfileStore;
   private readonly remoteTasks: RemoteTaskStore;
   private readonly brainTasks: BrainTaskStore;
+  private readonly queueReceipts: TaskQueueReceiptStore;
+  private nodeQueueProvider: (() => NodeQueuePublicStats | null) | null = null;
+  private remoteQueueStartGuard: ((taskID: string) => boolean) | null = null;
+  private remoteTaskQueueIntake: ((task: RemoteTaskInvite) => void) | null = null;
   private readonly topology: BrainTopologyStore;
   private workerRegistrationProvider: ((nodeID: string) => WorkerRegistration | null) | null = null;
   private provisionalStartedAt = 0;
@@ -562,8 +603,10 @@ export class NodeNetwork extends EventEmitter {
     super();
     this.root = root;
     this.trustStore = new NodeTrustStore(root);
+    this.profiles = new NodeProfileStore(root);
     this.remoteTasks = new RemoteTaskStore(root);
     this.brainTasks = new BrainTaskStore(root);
+    this.queueReceipts = new TaskQueueReceiptStore(root);
     this.topology = new BrainTopologyStore(root);
     this.enabled = enabled;
     this.status = enabled ? 'starting' : 'disabled';
@@ -606,9 +649,51 @@ export class NodeNetwork extends EventEmitter {
       status: this.status,
       serviceType: `_${serviceType}._tcp.local · LAN UDP ${this.discoveryPort || defaultDiscoveryPort}`,
       local: this.identity
-        ? publicNode(this.identity, this.peerPort, advertisedBrains, localWorker)
+        ? {
+            ...publicNode(this.identity, this.peerPort, advertisedBrains, localWorker),
+            ...this.profiles.local(this.identity.nodeID),
+            nodeQueue: this.currentNodeQueue(),
+          }
         : null,
-      nearby: [...this.nodes.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      nearby: [...this.nodes.values()]
+        .map((node) => {
+          const metadata = this.profiles.peer(node.id, node.fingerprint);
+          return {
+            ...node,
+            ...(metadata?.remark ? { remark: metadata.remark } : {}),
+            ...(metadata?.lastUsedAt ? { lastUsedAt: metadata.lastUsedAt } : {}),
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      paired: this.trustStore.records().map((record) => {
+        const live = this.nodes.get(record.nodeID);
+        const metadata = this.profiles.peer(record.nodeID, record.fingerprint);
+        if (live?.fingerprint === record.fingerprint)
+          return {
+            ...live,
+            ...(metadata?.remark ? { remark: metadata.remark } : {}),
+            ...(metadata?.lastUsedAt ? { lastUsedAt: metadata.lastUsedAt } : {}),
+          };
+        return {
+          id: record.nodeID,
+          name: `Rivloom ${record.nodeID.slice(0, 6)}`,
+          icon: 'monitor',
+          ...this.profiles.peer(record.nodeID, record.fingerprint),
+          fingerprint: record.fingerprint,
+          protocolVersion: nodeProtocolVersion,
+          addresses: [],
+          port: 0,
+          online: false,
+          local: false,
+          trusted: true,
+          channelReady: false,
+          verified: false,
+          lastSeen: record.pairedAt,
+          capabilities: [],
+          brains: [],
+          worker: null,
+        };
+      }),
       brains,
       pairings: [...this.pairings.values()]
         .map(
@@ -621,8 +706,17 @@ export class NodeNetwork extends EventEmitter {
           }) => pairing,
         )
         .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt)),
-      remoteTasks: this.remoteTasks.list(),
-      brainTasks: this.brainTasks.list(),
+      remoteTasks: this.remoteTasks.list().map((task) => ({
+        ...task,
+        queueReceipt: this.queueReceipts.get(`remote:${task.id}`),
+      })),
+      brainTasks: this.brainTasks.list().map((task) => {
+        const receipt = this.queueReceipts.get(`brain:${task.id}`);
+        return {
+          ...task,
+          queueReceipt: receipt?.remoteTaskID === task.executionID ? receipt : null,
+        };
+      }),
       error: this.error,
     };
   }
@@ -630,6 +724,72 @@ export class NodeNetwork extends EventEmitter {
   setWorkerRegistrationProvider(provider: ((nodeID: string) => WorkerRegistration | null) | null) {
     this.workerRegistrationProvider = provider;
     this.update();
+  }
+
+  setNodeQueueProvider(provider: (() => NodeQueuePublicStats | null) | null) {
+    this.nodeQueueProvider = provider;
+  }
+  private currentNodeQueue() {
+    const value = this.nodeQueueProvider?.() ?? null;
+    return validNodeQueuePublicStats(value) ? value : null;
+  }
+  setRemoteQueueStartGuard(guard: ((taskID: string) => boolean) | null) {
+    this.remoteQueueStartGuard = guard;
+  }
+  setRemoteTaskQueueIntake(intake: ((task: RemoteTaskInvite) => void) | null) {
+    this.remoteTaskQueueIntake = intake;
+  }
+  remoteTaskRecords() {
+    return this.remoteTasks.list();
+  }
+
+  async publishTaskQueueReceipt(
+    taskID: string,
+    input: Pick<TaskQueueReceipt, 'state' | 'position' | 'reason'>,
+  ) {
+    const remote = this.remoteTasks.record(taskID);
+    if (!remote || remote.direction !== 'incoming')
+      throw new NodeNetworkError(404, '接收任务不存在。');
+    const receipt = this.queueReceipts.publish(
+      this.remoteTasks.list().find((task) => task.id === taskID)!,
+      input,
+    );
+    this.update();
+    await this.flushQueueReceipts(remote.ownerNodeID);
+    return receipt;
+  }
+
+  saveProfile(profile: NodeProfile) {
+    if (!this.identity) throw new NodeNetworkError(409, '节点身份尚未就绪。');
+    if (!validNodeProfile(profile)) throw new NodeNetworkError(400, '节点名称或图标无效。');
+    this.profiles.saveLocal(profile);
+    this.update();
+    for (const node of this.nodes.values())
+      if (node.online && node.trusted && node.channelReady)
+        void this.syncBrainDirectory(node).catch(() => undefined);
+    return this.profiles.local(this.identity.nodeID);
+  }
+
+  savePeerRemark(nodeID: string, remark: string | null) {
+    if (remark !== null && !validNodeRemark(remark)) {
+      throw new NodeNetworkError(400, '节点备注名无效。');
+    }
+
+    const trust = this.trustStore.record(nodeID);
+    if (!trust) throw new NodeNetworkError(404, '该节点尚未与本机配对。');
+    const live = this.nodes.get(nodeID);
+    const cached = this.profiles.peer(nodeID, trust.fingerprint);
+    this.profiles.saveRemark(
+      nodeID,
+      trust.fingerprint,
+      {
+        name: live?.name || cached?.name || `Rivloom ${nodeID.slice(0, 6)}`,
+        icon: live?.icon || cached?.icon || 'monitor',
+      },
+      remark,
+    );
+    this.update();
+    return this.snapshot();
   }
 
   private currentWorker() {
@@ -1020,6 +1180,10 @@ export class NodeNetwork extends EventEmitter {
     } catch {
       throw new NodeNetworkError(403, '加密消息完整性、顺序或时间校验失败。');
     }
+    const eventAck = () =>
+      node.capabilities.includes(queueReceiptCapability)
+        ? encryptChannelEventAck(channel, value)
+        : null;
     if (validBrainDirectoryRequest(message)) {
       if (
         (message.worker && message.worker.nodeID !== node.id) ||
@@ -1032,6 +1196,10 @@ export class NodeNetwork extends EventEmitter {
         throw new NodeNetworkError(409, 'Brain 目录中的 Node 归属无效。');
       const topologyChanged = this.topology.reconcile(node.id, message.hostedBrains);
       const response: BrainDirectoryResponse = {
+        ...(message.capabilities.includes(queueReceiptCapability)
+          ? { nodeQueue: this.currentNodeQueue() }
+          : {}),
+        profile: this.profiles.local(this.identity!.nodeID),
         type: 'brain-directory-response',
         requestID: message.requestID,
         capabilities,
@@ -1041,23 +1209,40 @@ export class NodeNetwork extends EventEmitter {
       };
       const envelope = encryptChannelPayload(channel, response);
       const current = this.nodes.get(node.id);
+      if (message.profile) this.profiles.remember(node.id, node.fingerprint, message.profile);
       if (current)
         this.nodes.set(node.id, {
           ...current,
+          ...(message.profile ? { name: message.profile.name, icon: message.profile.icon } : {}),
           channelReady: true,
           online: true,
           lastSeen: new Date().toISOString(),
           capabilities: [...new Set(message.capabilities)].sort(),
           brains: message.brains.map((brain) => ({ ...brain })),
           worker: message.worker,
+          nodeQueue: message.capabilities.includes(queueReceiptCapability)
+            ? (message.nodeQueue ?? null)
+            : null,
         });
       if (topologyChanged || current) this.update();
       const flushAfterResponse = setTimeout(() => {
         void this.flushRemoteTasks(node.id);
         void this.flushBrainTasks(node.id);
+        this.replayQueueForChannel(node.id);
       }, 100);
       flushAfterResponse.unref();
       return envelope;
+    }
+    if (validQueueReceiptMessage(message)) {
+      if (!node.capabilities.includes(queueReceiptCapability))
+        throw new NodeNetworkError(409, '尚未协商队列回执能力。');
+      try {
+        this.receiveQueueReceipt(node.id, message);
+      } catch {
+        throw new NodeNetworkError(409, '队列回执路由、序号或任务状态冲突。');
+      }
+      this.update();
+      return eventAck();
     }
     if (validBrainTaskSubmission(message)) {
       if (
@@ -1074,7 +1259,7 @@ export class NodeNetwork extends EventEmitter {
       }
       if (changed) this.update();
       queueMicrotask(() => void this.scheduleBrainTask(message.taskID));
-      return null;
+      return eventAck();
     }
     if (validBrainTaskUpdate(message)) {
       if (
@@ -1089,7 +1274,7 @@ export class NodeNetwork extends EventEmitter {
         throw new NodeNetworkError(409, 'Brain Task 更新冲突或已经失效。');
       }
       this.update();
-      return null;
+      return eventAck();
     }
     let changed = false;
     let receivedOfferID: string | null = null;
@@ -1105,6 +1290,22 @@ export class NodeNetwork extends EventEmitter {
         )
           throw new Error('远端任务邀请路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveOffer(message);
+        try {
+          this.remoteTaskQueueIntake?.(
+            this.remoteTasks.list().find((task) => task.id === message.taskID)!,
+          );
+        } catch (error) {
+          if (
+            error instanceof NodeNetworkError &&
+            error.status === 409 &&
+            this.remoteTasks.record(message.taskID)?.status === 'pending'
+          ) {
+            this.remoteTasks.decide(message.taskID, 'declined');
+            queueMicrotask(() => void this.flushRemoteTask(message.taskID));
+          }
+          if (error instanceof NodeNetworkError) throw error;
+          throw new NodeNetworkError(503, '目标 Node 尚未确认队列持久化，稍后使用原请求重试。');
+        }
         if (changed) receivedOfferID = message.taskID;
       } else if (validRemoteTaskResponse(message)) {
         if (
@@ -1137,6 +1338,11 @@ export class NodeNetwork extends EventEmitter {
           throw new Error('远端执行状态路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveExecution(message);
       } else if (validRemoteTaskControl(message)) {
+        if (
+          message.action.kind === 'supplement' &&
+          this.remoteQueueStartGuard?.(message.taskID) === false
+        )
+          throw new NodeNetworkError(409, '任务已被执行节点终止，不能重新启动。');
         if (
           message.ownerNodeID !== node.id ||
           message.targetNodeID !== this.identity!.nodeID ||
@@ -1173,7 +1379,7 @@ export class NodeNetwork extends EventEmitter {
       const control = receivedControl;
       queueMicrotask(() => this.emit('remote-task-control', control));
     }
-    return null;
+    return eventAck();
   }
 
   private async syncBrainDirectory(node: RivloomNode, initialChannel?: SecureChannelSession) {
@@ -1188,6 +1394,10 @@ export class NodeNetwork extends EventEmitter {
         if (!current?.online || !current.trusted || !channel)
           throw new NodeNetworkError(503, '受信节点的加密通道尚未就绪。');
         const request: BrainDirectoryRequest = {
+          ...(current.capabilities.includes(queueReceiptCapability)
+            ? { nodeQueue: this.currentNodeQueue() }
+            : {}),
+          profile: this.profiles.local(this.identity!.nodeID),
           type: 'brain-directory-request',
           requestID: randomUUID(),
           capabilities,
@@ -1222,18 +1432,25 @@ export class NodeNetwork extends EventEmitter {
         const topologyChanged = this.topology.reconcile(current.id, message.hostedBrains);
         const latest = this.nodes.get(current.id);
         if (!latest) return;
+        if (message.profile)
+          this.profiles.remember(current.id, current.fingerprint, message.profile);
         this.nodes.set(current.id, {
           ...latest,
+          ...(message.profile ? { name: message.profile.name, icon: message.profile.icon } : {}),
           channelReady: true,
           online: true,
           lastSeen: new Date().toISOString(),
           capabilities: [...new Set(message.capabilities)].sort(),
           brains: message.brains.map((brain) => ({ ...brain })),
           worker: message.worker,
+          nodeQueue: message.capabilities.includes(queueReceiptCapability)
+            ? (message.nodeQueue ?? null)
+            : null,
         });
         if (topologyChanged || latest) this.update();
         void this.flushRemoteTasks(current.id);
         void this.flushBrainTasks(current.id);
+        this.replayQueueForChannel(current.id);
       });
     this.channelSendQueues.set(node.id, operation);
     try {
@@ -1296,7 +1513,10 @@ export class NodeNetwork extends EventEmitter {
     }
   }
 
-  private async sendChannelEvent(node: RivloomNode, message: RemoteTaskMessage | BrainTaskMessage) {
+  private async sendChannelEvent(
+    node: RivloomNode,
+    message: RemoteTaskMessage | BrainTaskMessage | QueueReceiptMessage,
+  ) {
     const previous = this.channelSendQueues.get(node.id) || Promise.resolve();
     const operation = previous
       .catch(() => undefined)
@@ -1311,16 +1531,19 @@ export class NodeNetwork extends EventEmitter {
           channel.expiresAt <= Date.now()
         )
           throw new NodeNetworkError(503, '受信节点的加密通道尚未就绪。');
-        const result = await this.postToNode(
-          current,
-          '/v1/channel/message',
-          encryptChannelPayload(channel, message),
-        );
+        const envelope = encryptChannelPayload(channel, message);
+        const result = await this.postToNode(current, '/v1/channel/message', envelope);
+        if (current.capabilities.includes(queueReceiptCapability)) {
+          if (!verifyChannelEventAck(channel, envelope, result))
+            throw new NodeNetworkError(502, '对方尚未提供与当前请求绑定的认证回执。');
+          return true;
+        }
         if (result !== null) throw new NodeNetworkError(502, '远端任务消息响应格式无效。');
+        return false;
       });
     this.channelSendQueues.set(node.id, operation);
     try {
-      await operation;
+      return await operation;
     } finally {
       if (this.channelSendQueues.get(node.id) === operation) this.channelSendQueues.delete(node.id);
     }
@@ -1336,9 +1559,19 @@ export class NodeNetwork extends EventEmitter {
     if (!node?.online || !node.trusted || !node.channelReady) return;
     this.deliveringRemoteTasks.add(taskID);
     try {
-      await this.sendChannelEvent(node, message);
-      if (this.remoteTasks.markDelivered(taskID, message)) this.update();
+      if (
+        message.type === 'remote-task-offer' &&
+        this.remoteTasks.markOfferTransmission(taskID, 'sending')
+      )
+        this.update();
+      const authenticated = await this.sendChannelEvent(node, message);
+      if (this.remoteTasks.markDelivered(taskID, message, authenticated)) this.update();
     } catch (error) {
+      if (
+        message.type === 'remote-task-offer' &&
+        this.remoteTasks.markOfferTransmission(taskID, 'transmission_unknown')
+      )
+        this.update();
       if (
         error instanceof NodeNetworkError &&
         (error.status === 400 || error.status === 404 || error.status === 409)
@@ -1357,6 +1590,133 @@ export class NodeNetwork extends EventEmitter {
       const next = this.remoteTasks.message(taskID);
       if (next && JSON.stringify(next) !== JSON.stringify(message))
         queueMicrotask(() => void this.flushRemoteTask(taskID));
+    }
+  }
+
+  private receiveQueueReceipt(peerNodeID: string, message: QueueReceiptMessage) {
+    const receipt = message.receipt;
+    if (message.type === 'remote-task-queue') {
+      const remote = this.remoteTasks.record(receipt.remoteTaskID);
+      if (
+        !remote ||
+        remote.direction !== 'outgoing' ||
+        remote.targetNodeID !== peerNodeID ||
+        remote.ownerNodeID !== this.identity?.nodeID ||
+        remote.idempotencyKey !== message.idempotencyKey ||
+        !receiptMatchesRemote(receipt, remote)
+      )
+        throw new Error('route');
+      if (
+        ['cancelled', 'declined', 'expired'].includes(remote.status) &&
+        receipt.state !== 'rejected'
+      )
+        return;
+      if (remote.executionSequence > 0 && ['queued', 'held', 'rejected'].includes(receipt.state))
+        return;
+      this.queueReceipts.receive(`remote:${remote.id}`, receipt);
+      if (remote.brainTaskID) {
+        const brain = this.brainTasks.record(remote.brainTaskID);
+        if (
+          brain?.direction !== 'owned' ||
+          brain.executionID !== remote.id ||
+          brain.selectedWorkerID !== peerNodeID ||
+          brain.masterNodeID !== this.identity?.nodeID
+        )
+          return;
+        this.queueReceipts.receive(
+          `brain:${brain.id}`,
+          receipt,
+          brain.submitterNodeID === this.identity?.nodeID ? null : brain.submitterNodeID,
+        );
+        queueMicrotask(() => void this.flushQueueReceipts(brain.submitterNodeID));
+      }
+      return;
+    }
+    const brain = this.brainTasks.record(message.taskID);
+    if (
+      !brain ||
+      brain.direction !== 'submitted' ||
+      brain.idempotencyKey !== message.idempotencyKey ||
+      brain.masterNodeID !== peerNodeID ||
+      brain.brainID !== message.brainID ||
+      message.masterNodeID !== peerNodeID ||
+      message.submitterNodeID !== this.identity?.nodeID ||
+      brain.submitterNodeID !== message.submitterNodeID ||
+      brain.executionID !== receipt.remoteTaskID ||
+      brain.selectedWorkerID !== receipt.targetNodeID
+    )
+      throw new Error('route');
+    if (['completed', 'failed'].includes(brain.status) && receipt.state !== 'rejected') return;
+    this.queueReceipts.receive(`brain:${brain.id}`, receipt);
+  }
+
+  private replayQueueForChannel(peerNodeID: string) {
+    const node = this.nodes.get(peerNodeID);
+    const channelID = this.channels.get(peerNodeID)?.id;
+    if (!channelID || !node?.capabilities.includes(queueReceiptCapability)) return;
+    if (this.replayedQueueChannels.get(peerNodeID) !== channelID) {
+      this.queueReceipts.replay(peerNodeID);
+      this.replayedQueueChannels.set(peerNodeID, channelID);
+    }
+    void this.flushQueueReceipts(peerNodeID);
+  }
+
+  private async flushQueueReceipts(peerNodeID: string) {
+    const node = this.nodes.get(peerNodeID);
+    if (
+      !node?.online ||
+      !node.trusted ||
+      !node.channelReady ||
+      !node.capabilities.includes(queueReceiptCapability) ||
+      this.deliveringQueueReceipts.has(peerNodeID)
+    )
+      return;
+    this.deliveringQueueReceipts.add(peerNodeID);
+    try {
+      for (const entry of this.queueReceipts.pending(peerNodeID)) {
+        let message: QueueReceiptMessage;
+        if (entry.key.startsWith('remote:')) {
+          const remote = this.remoteTasks.record(entry.receipt.remoteTaskID);
+          if (!remote || remote.direction !== 'incoming' || remote.ownerNodeID !== peerNodeID)
+            continue;
+          message = {
+            type: 'remote-task-queue',
+            version: 1,
+            idempotencyKey: remote.idempotencyKey,
+            receipt: entry.receipt,
+          };
+        } else {
+          const brain = this.brainTasks.record(entry.receipt.brainTaskID!);
+          if (
+            !brain ||
+            brain.direction !== 'owned' ||
+            brain.submitterNodeID !== peerNodeID ||
+            brain.executionID !== entry.receipt.remoteTaskID
+          )
+            continue;
+          message = {
+            type: 'brain-task-queue',
+            version: 1,
+            idempotencyKey: brain.idempotencyKey,
+            taskID: brain.id,
+            brainID: brain.brainID,
+            masterNodeID: brain.masterNodeID,
+            submitterNodeID: brain.submitterNodeID,
+            receipt: entry.receipt,
+          };
+        }
+        try {
+          if (await this.sendChannelEvent(node, message))
+            this.queueReceipts.delivered(entry.key, entry.receipt);
+        } catch (error) {
+          // A lost or unauthenticated response may leave the stream counters apart.
+          // Keep the durable snapshot and recover the authenticated channel before replay.
+          if (error instanceof NodeNetworkError && [403, 502, 503].includes(error.status))
+            this.closeChannel(peerNodeID);
+        }
+      }
+    } finally {
+      this.deliveringQueueReceipts.delete(peerNodeID);
     }
   }
 
@@ -1600,7 +1960,7 @@ export class NodeNetwork extends EventEmitter {
       const value: Omit<Hello, 'signature'> = {
         protocolVersion: nodeProtocolVersion,
         nodeID: identity.nodeID,
-        name: `Rivloom ${identity.nodeID.slice(0, 6)}`,
+        name: this.profiles.local(identity.nodeID).name,
         brain,
         capabilities,
         port: this.peerPort,
@@ -1798,6 +2158,7 @@ export class NodeNetwork extends EventEmitter {
       requestedProjectID?: string | null;
       requirements?: TaskHardwareRequirements;
     },
+    taskID?: string,
   ) {
     if (!this.identity || this.status !== 'online')
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
@@ -1836,30 +2197,117 @@ export class NodeNetwork extends EventEmitter {
           requestedProjectID: input.requestedProjectID ?? null,
           requirements: input.requirements ?? {},
         },
+        taskID,
       );
     } catch {
       throw new NodeNetworkError(409, '无法保存远端任务邀请。');
     }
     this.update();
     await this.flushRemoteTask(created.id);
-    return this.snapshot();
+    return { ...this.snapshot(), createdTaskID: created.id };
   }
 
-  async createScheduledTask(input: {
-    title: string;
-    description: string;
-    criteria: string;
-    requestedProjectID: string | null;
-    requirements: TaskHardwareRequirements;
-  }) {
+  async createTaskForNode(
+    nodeID: string,
+    input: {
+      title: string;
+      description: string;
+      criteria: string;
+      requirements?: TaskHardwareRequirements;
+    },
+    taskID?: string,
+  ) {
+    const existing = taskID ? this.remoteTasks.record(taskID) : null;
+    if (existing) {
+      if (
+        existing.direction !== 'outgoing' ||
+        existing.targetNodeID !== nodeID ||
+        !this.remoteTasks.matchesCreation(existing.id, input) ||
+        existing.brainTaskID !== null ||
+        JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements ?? {})
+      )
+        throw new NodeNetworkError(409, '创建请求的目标或内容与原任务冲突。');
+      return { ...this.snapshot(), createdTaskID: existing.id };
+    }
+    const node = this.nodes.get(nodeID);
+    if (!node?.online || !node.trusted || !node.channelReady)
+      throw new NodeNetworkError(409, '目标 Node 当前不在线或加密通道尚未就绪。');
+    const brain = this.snapshot()
+      .brains.filter(
+        (candidate) =>
+          candidate.state === 'established' &&
+          candidate.online &&
+          node.brains.some((item) => item.id === candidate.id),
+      )
+      .sort(
+        (left, right) =>
+          Number(right.hosted) - Number(left.hosted) || left.id.localeCompare(right.id),
+      )[0];
+    if (!brain) throw new NodeNetworkError(409, '目标 Node 当前没有可用的共同 Brain。');
+    const result = await this.createRemoteTask(
+      nodeID,
+      brain.id,
+      {
+        ...input,
+        requestedProjectID: null,
+      },
+      taskID,
+    );
+    this.profiles.markUsed(node.id, node.fingerprint, {
+      name: node.name,
+      icon: node.icon || 'monitor',
+    });
+    this.update();
+    return { ...this.snapshot(), createdTaskID: result.createdTaskID };
+  }
+
+  async createScheduledTask(
+    input: {
+      title: string;
+      description: string;
+      criteria: string;
+      requestedProjectID: string | null;
+      requirements: TaskHardwareRequirements;
+    },
+    taskID?: string,
+  ) {
+    const existing = taskID ? this.brainTasks.record(taskID) : null;
+    if (existing) {
+      if (
+        existing.submitterNodeID !== this.identity?.nodeID ||
+        existing.title !== input.title.trim() ||
+        existing.description !== input.description.trim() ||
+        existing.criteria !== input.criteria.trim() ||
+        existing.requestedProjectID !== input.requestedProjectID ||
+        JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements)
+      )
+        throw new NodeNetworkError(409, '创建请求的内容与原 Brain Task 冲突。');
+      return { ...this.snapshot(), createdTaskID: existing.id };
+    }
     if (!this.identity || this.status !== 'online')
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
-    const topology = this.snapshot().brains.map((brain) => ({
-      ...brain,
-      workers: brain.hosted
-        ? brain.workers.filter((worker) => worker.nodeID !== this.identity!.nodeID)
-        : brain.workers,
-    }));
+    const topology = this.snapshot()
+      .brains.filter(
+        (brain) =>
+          brain.hosted ||
+          this.nodes.get(brain.masterNodeID)?.capabilities.includes('brain-task-v1'),
+      )
+      .map((brain) => ({
+        ...brain,
+        workers: brain.workers.filter((worker) => {
+          if (worker.nodeID === this.identity!.nodeID) return true;
+          const peer = this.nodes.get(worker.nodeID);
+          // The owning Master rechecks its actual channel before dispatch. A remote
+          // directory candidate need not have a direct channel to the submitter.
+          return (
+            (!peer && !brain.hosted) ||
+            (!!peer?.online &&
+              peer.trusted &&
+              peer.channelReady &&
+              peer.capabilities.includes('remote-execution-v1'))
+          );
+        }),
+      }));
     const placement = rankBrainPlacements(topology, {
       projectID: input.requestedProjectID,
       requirements: input.requirements,
@@ -1893,6 +2341,7 @@ export class NodeNetwork extends EventEmitter {
         placement.brain.id,
         placement.brain.masterNodeID,
         input,
+        taskID,
       );
     } catch {
       throw new NodeNetworkError(409, '无法保存 Brain Task。');
@@ -1900,7 +2349,7 @@ export class NodeNetwork extends EventEmitter {
     this.update();
     if (direction === 'owned') await this.scheduleBrainTask(created.id);
     else await this.flushBrainTask(created.id);
-    return this.snapshot();
+    return { ...this.snapshot(), createdTaskID: created.id };
   }
 
   private async scheduleBrainTask(taskID: string) {
@@ -1920,8 +2369,19 @@ export class NodeNetwork extends EventEmitter {
         (candidate) => candidate.id === task.brainID && candidate.hosted,
       );
       if (!brain?.online) return;
-      const candidates = rankWorkers(
-        brain.workers.filter((worker) => worker.nodeID !== this.identity!.nodeID),
+      const candidates = rankBrainWorkers(
+        {
+          ...brain,
+          workers: brain.workers.filter((worker) => {
+            const peer = this.nodes.get(worker.nodeID);
+            return (
+              !!peer?.online &&
+              peer.trusted &&
+              peer.channelReady &&
+              peer.capabilities.includes('remote-execution-v1')
+            );
+          }),
+        },
         { projectID: task.requestedProjectID, requirements: task.requirements },
       );
       const lastExecution = task.executions.at(-1);
@@ -1931,6 +2391,15 @@ export class NodeNetwork extends EventEmitter {
           : null;
       const worker = candidates.find((candidate) => candidate.nodeID !== lastWorkerCoolingDown);
       if (!worker) {
+        if (
+          this.brainTasks.markWaitingForWorker(
+            taskID,
+            candidates.length
+              ? '合格 Worker 正在重试冷却期；Task 保持原 Brain，稍后继续调度。'
+              : '当前没有满足项目、硬件、空闲槽位和通信条件的可调度 Worker；Task 保持原 Brain 等待，Master 不向自身分配。',
+          )
+        )
+          this.update();
         await this.flushBrainTask(taskID);
         return;
       }
@@ -2085,6 +2554,8 @@ export class NodeNetwork extends EventEmitter {
   }
 
   async bindRemoteTaskExecution(taskID: string, localTaskID: string) {
+    if (this.remoteQueueStartGuard?.(taskID) === false)
+      throw new NodeNetworkError(409, '任务已在本机队列终止，不能绑定执行。');
     try {
       this.remoteTasks.bindLocalTask(taskID, localTaskID);
     } catch (error) {
@@ -2224,6 +2695,7 @@ export class NodeNetwork extends EventEmitter {
           const node: RivloomNode = {
             id: value.nodeID,
             name: value.name,
+            icon: preserveDirectory ? previous.icon : 'monitor',
             fingerprint: computedFingerprint,
             protocolVersion: value.protocolVersion,
             addresses: [...new Set([address, ...(previous?.addresses || [])])],
@@ -2237,7 +2709,16 @@ export class NodeNetwork extends EventEmitter {
             capabilities: [...new Set(value.capabilities)].sort(),
             brains: preserveDirectory ? previous.brains : [value.brain],
             worker: preserveDirectory ? previous.worker : null,
+            nodeQueue:
+              preserveDirectory && value.capabilities.includes(queueReceiptCapability)
+                ? (previous.nodeQueue ?? null)
+                : null,
           };
+          if (trusted)
+            this.profiles.remember(node.id, node.fingerprint, {
+              name: node.name,
+              icon: node.icon || 'monitor',
+            });
           this.nodes.set(value.nodeID, node);
           this.update();
           if (this.trustStore.revocation(node.id, node.fingerprint))
@@ -2483,6 +2964,7 @@ export class NodeNetwork extends EventEmitter {
       this.trustStore.load();
       this.remoteTasks.load();
       this.brainTasks.load();
+      this.queueReceipts.load();
       this.peerServer = this.createPeerServer(this.identity);
       const configuredPort = Number(process.env.RIVLOOM_PEER_PORT || 0);
       if (!Number.isInteger(configuredPort) || configuredPort < 0 || configuredPort > 65_535)
@@ -2593,6 +3075,7 @@ export class NodeNetwork extends EventEmitter {
         for (const node of this.nodes.values())
           if (node.online && node.trusted && node.channelReady) {
             void this.flushRemoteTasks(node.id);
+            void this.flushQueueReceipts(node.id);
             void this.flushBrainTasks(node.id);
           }
         for (const brainTask of this.brainTasks.list())

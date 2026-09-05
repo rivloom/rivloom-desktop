@@ -1,17 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { createSocket } from 'node:dgram';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
   acceptSecureChannel,
   beginSecureChannel,
   decryptChannelPayload,
   encryptChannelPayload,
+  encryptChannelEventAck,
+  verifyChannelEventAck,
+  type SecureChannelSession,
+  type ChannelEnvelope,
   finishSecureChannel,
   validChannelAck,
   validChannelEnvelope,
@@ -20,6 +27,7 @@ import {
   directedBroadcastAddress,
   discoveryProbeAddresses,
   NodeNetwork,
+  NodeNetworkError,
   nodePresence,
   privateNetworkAddress,
 } from '../server/node-network.ts';
@@ -53,6 +61,9 @@ import {
   validBrainTaskUpdate,
 } from '../server/brain-tasks.ts';
 import { WorkerAdmissionGate } from '../server/worker-admission.ts';
+import { TaskQueueReceiptStore, type QueueReceiptMessage } from '../server/task-queue-receipts.ts';
+import { queueReceiptCapability } from '../shared/task-queue-receipts.ts';
+import type { RivloomNode } from '../shared/types.ts';
 
 test('node rate limits isolate discovery, hello and channel budgets without bypassing caps', () => {
   // An unstarted store only reads this nonexistent root; no identity or files are created.
@@ -347,7 +358,7 @@ test('brain task placement chooses an established online Brain and its lowest-lo
   ): BrainTopology => ({
     id,
     name: `Brain ${id.slice(0, 6)}`,
-    masterNodeID: workers[0]?.nodeID || 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    masterNodeID: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
     state: 'established',
     hosted: false,
     online: true,
@@ -385,6 +396,84 @@ test('brain task placement chooses an established online Brain and its lowest-lo
     ).map((placement) => placement.brain.id),
     ['22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111'],
   );
+});
+
+test('brain task placement excludes each Brain Master even when the Brain is remote', () => {
+  const at = Date.parse('2026-09-02T00:00:20.000Z');
+  const master = workerFixture('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  const brain: BrainTopology = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Remote Brain',
+    masterNodeID: master.nodeID,
+    state: 'established',
+    hosted: false,
+    online: true,
+    queueDepth: 0,
+    workers: [master],
+  };
+  const requirement = { projectID: null, requirements: {} };
+  assert.deepEqual(rankBrainPlacements([brain], requirement, at), []);
+  assert.deepEqual(rankBrainPlacements([{ ...brain, hosted: true }], requirement, at), []);
+
+  const thirdWorker = workerFixture('CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC');
+  assert.equal(
+    rankBrainPlacements([{ ...brain, workers: [master, thirdWorker] }], requirement, at)[0]?.worker
+      .nodeID,
+    thirdWorker.nodeID,
+  );
+  // A Master can still serve another Brain; eligibility is relative to that Brain's Master.
+  assert.equal(
+    rankBrainPlacements(
+      [{ ...brain, masterNodeID: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' }],
+      requirement,
+      at,
+    )[0]?.worker.nodeID,
+    master.nodeID,
+  );
+});
+
+test('brain task placement waiting reason persists and syncs without fabricating Execution progress', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-brain-placement-reason-'));
+  const submitter = new BrainTaskStore(join(root, 'submitter'));
+  const master = new BrainTaskStore(join(root, 'master'));
+  const submitterID = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const masterID = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  try {
+    const task = submitter.create('submitted', submitterID, randomUUID(), masterID, {
+      title: 'Original queued Task',
+      description: 'Wait for a real Worker.',
+      criteria: 'Keep identity and execution history.',
+      requestedProjectID: null,
+      requirements: {},
+    });
+    const submission = submitter.message(task.id)!;
+    assert(validBrainTaskSubmission(submission));
+    master.receiveSubmission(submission);
+    assert(master.markWaitingForWorker(task.id, 'No eligible Worker yet.'));
+    const update = master.message(task.id)!;
+    assert(validBrainTaskUpdate(update));
+    const received = submitter.receiveUpdate(update);
+    assert.equal(received.id, task.id);
+    assert.equal(received.brainID, task.brainID);
+    assert.equal(received.status, 'queued');
+    assert.equal(received.executionSequence, 0);
+    assert.equal(received.executionAttempt, 0);
+    assert.deepEqual(received.executions, []);
+    assert.equal(master.markWaitingForWorker(task.id, 'No eligible Worker yet.'), false);
+    assert(master.markWaitingForWorker(task.id, 'Worker cooldown is still active.'));
+    const nextUpdate = master.message(task.id)!;
+    assert(validBrainTaskUpdate(nextUpdate));
+    assert(Date.parse(nextUpdate.updatedAt) > Date.parse(update.updatedAt));
+    submitter.receiveUpdate(nextUpdate);
+    const reloaded = new BrainTaskStore(join(root, 'master'));
+    reloaded.load();
+    assert.equal(reloaded.record(task.id)?.executionSummary, 'Worker cooldown is still active.');
+    master.assign(task.id, 'C'.repeat(32), randomUUID());
+    assert.equal(master.markWaitingForWorker(task.id, 'Do not overwrite active Execution.'), false);
+    assert.equal(master.record(task.id)?.executionSummary, '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('brain topology migrates a legacy node Brain as established and stable', () => {
@@ -651,6 +740,149 @@ test('automatic brain formation deterministically keeps the lower provisional ma
     rmSync(rightRoot, { recursive: true, force: true });
   }
 });
+
+test(
+  'brain task placement rejects remote Master-only capacity and resumes the original queue on a third Worker',
+  { skip: process.platform !== 'win32', timeout: 90_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const evidenceParent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(evidenceParent, { recursive: true });
+    const evidence = mkdtempSync(join(evidenceParent, 'm35-placement-topology-'));
+    const roots = ['master', 'submitter', 'worker'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      return root;
+    });
+    loadNodeIdentity(roots[0]);
+    const [master, submitter, worker] = roots.map((root) => new NodeNetwork(root, true));
+    const networks = [master, submitter, worker];
+    const until = async (check: () => boolean, label: string) => {
+      const deadline = Date.now() + 20_000;
+      while (!check() && Date.now() < deadline) await wait(50);
+      assert(check(), label);
+    };
+    const input = {
+      title: 'Master-only capacity regression',
+      description: 'Keep Task ownership stable while a real Worker becomes available.',
+      criteria: 'No self dispatch, one original Task, separate real remote Execution.',
+      requestedProjectID: null,
+      requirements: {},
+    };
+    try {
+      for (const network of networks)
+        network.setWorkerRegistrationProvider((nodeID) => {
+          const report = workerFixture(nodeID);
+          report.load.sampledAt = new Date().toISOString();
+          if (network === submitter) report.load.availableSlots = 0;
+          return report;
+        });
+      await Promise.all([master.start(), submitter.start()]);
+      await pairNetworks(master, submitter);
+      const masterID = master.snapshot().local!.id;
+      const brainID = master.snapshot().brains.find((brain) => brain.hosted)!.id;
+      await until(
+        () =>
+          submitter
+            .snapshot()
+            .brains.some(
+              (brain) =>
+                brain.id === brainID &&
+                brain.online &&
+                !brain.hosted &&
+                brain.workers.some((report) => report.nodeID === masterID),
+            ),
+        'submitter sees the remote Master as its only idle report',
+      );
+      await assert.rejects(submitter.createScheduledTask(input), /没有在线 Brain/);
+      assert.equal(submitter.snapshot().brainTasks.length, 0);
+      assert.equal(master.snapshot().brainTasks.length, 0);
+      assert.equal(master.snapshot().remoteTasks.length, 0);
+
+      // Preserve an older queued Task instead of replacing it when capacity changes.
+      const internal = master as unknown as {
+        brainTasks: BrainTaskStore;
+        scheduleBrainTask(taskID: string): Promise<void>;
+      };
+      const original = internal.brainTasks.create('owned', masterID, brainID, masterID, input);
+      await internal.scheduleBrainTask(original.id);
+      const queued = master.snapshot().brainTasks.find((task) => task.id === original.id)!;
+      assert.equal(queued.status, 'queued');
+      assert.equal(queued.executionID, null);
+      assert.match(queued.executionSummary, /Worker/);
+
+      await worker.start();
+      await pairNetworks(master, worker);
+      await pairNetworks(submitter, worker);
+      const workerID = worker.snapshot().local!.id;
+      await until(
+        () =>
+          master.snapshot().brainTasks.find((task) => task.id === original.id)?.status ===
+          'assigned',
+        'the original queued Task resumes with the third Worker',
+      );
+      const resumed = master.snapshot().brainTasks.find((task) => task.id === original.id)!;
+      assert.equal(resumed.brainID, brainID);
+      assert.equal(resumed.masterNodeID, masterID);
+      assert.equal(resumed.selectedWorkerID, workerID);
+      assert.equal(resumed.executionAttempt, 1);
+      await until(
+        () => !!worker.remoteTask(resumed.executionID!),
+        'original Task Execution delivered',
+      );
+      assert.equal(worker.remoteTask(resumed.executionID!)?.brainTaskID, original.id);
+
+      await until(
+        () =>
+          submitter
+            .snapshot()
+            .brains.some(
+              (brain) =>
+                brain.id === brainID && brain.workers.some((report) => report.nodeID === workerID),
+            ),
+        'submitter sees the third Worker',
+      );
+      await submitter.createScheduledTask(input);
+      await until(
+        () => submitter.snapshot().brainTasks[0]?.status === 'assigned',
+        'remote Brain accepts and assigns the new Task',
+      );
+      const submitted = submitter.snapshot().brainTasks[0];
+      assert.equal(submitted.brainID, brainID);
+      assert.equal(submitted.masterNodeID, masterID);
+      assert.equal(submitted.selectedWorkerID, workerID);
+      assert.equal(submitted.executionAttempt, 1);
+      await until(
+        () => !!worker.remoteTask(submitted.executionID!),
+        'new Task Execution delivered',
+      );
+      await worker.respondRemoteTask(submitted.executionID!, 'accepted');
+      assert.equal(master.remoteTask(submitted.executionID!)?.status, 'accepted');
+      assert.equal(master.snapshot().brainTasks.length, 2);
+      assert.equal(worker.snapshot().remoteTasks.length, 2);
+      assert(
+        master.snapshot().remoteTasks.every((execution) => execution.targetNodeID === workerID),
+      );
+    } finally {
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify(
+          networks.map((network) => network.snapshot()),
+          null,
+          2,
+        ),
+      );
+      await Promise.all(networks.map((network) => network.stop()));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
 
 test(
   'shared workers register with two Brains and a declined Execution is reassigned safely',
@@ -969,6 +1201,539 @@ test(
     } finally {
       await Promise.all(networks.map((network) => network.stop()));
       roots.forEach((root) => rmSync(root, { recursive: true, force: true }));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test('queue receipt authenticated ACK binds the exact request without consuming stream sequence', () => {
+  const forward = randomBytes(32);
+  const reverse = randomBytes(32);
+  const sender: SecureChannelSession = {
+    id: randomUUID(),
+    localNodeID: 'A'.repeat(32),
+    peerNodeID: 'B'.repeat(32),
+    sendKey: forward,
+    receiveKey: reverse,
+    sendSequence: 0,
+    receiveSequence: 0,
+    expiresAt: Date.now() + 60_000,
+  };
+  const receiver: SecureChannelSession = {
+    ...sender,
+    localNodeID: sender.peerNodeID,
+    peerNodeID: sender.localNodeID,
+    sendKey: reverse,
+    receiveKey: forward,
+  };
+  const request = encryptChannelPayload(sender, {
+    type: 'remote-task-queue',
+    private: 'fixture-body',
+  });
+  decryptChannelPayload(receiver, request);
+  const ack = encryptChannelEventAck(receiver, request);
+  assert(verifyChannelEventAck(sender, request, ack));
+  assert.equal(sender.receiveSequence, 0);
+  assert.equal(receiver.sendSequence, 0);
+  assert(!JSON.stringify(ack).includes('fixture-body'));
+  assert(!verifyChannelEventAck(sender, request, null));
+  assert(
+    !verifyChannelEventAck(sender, request, { ...ack, tag: randomBytes(16).toString('base64url') }),
+  );
+  assert(!verifyChannelEventAck(sender, request, { ...ack, senderNodeID: 'C'.repeat(32) }));
+  assert(!verifyChannelEventAck(sender, request, { ...ack, extra: true }));
+  assert(!verifyChannelEventAck({ ...sender, receiveKey: randomBytes(32) }, request, ack));
+  const next = encryptChannelPayload(sender, { type: 'remote-task-queue', private: 'different' });
+  assert(!verifyChannelEventAck(sender, next, ack));
+  decryptChannelPayload(receiver, next);
+  const reverseMessage = encryptChannelPayload(receiver, { type: 'ordinary-event' });
+  assert.deepEqual(decryptChannelPayload(sender, reverseMessage), { type: 'ordinary-event' });
+  assert(!verifyChannelEventAck({ ...sender, expiresAt: Date.now() - 1 }, request, ack));
+});
+
+test(
+  'queue receipt network does not treat an unauthenticated success response as delivery',
+  { skip: process.platform !== 'win32', timeout: 45_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'm35-receipt-ack-'));
+    const roots = ['sender', 'receiver'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      loadNodeIdentity(root);
+      return root;
+    });
+    const networks = roots.map((root) => new NodeNetwork(root, true));
+    const [sender, receiver] = networks;
+    try {
+      await Promise.all(networks.map((network) => network.start()));
+      await pairNetworks(sender, receiver);
+      const receiverID = receiver.snapshot().local!.id;
+      const transport = sender as unknown as {
+        postToNode(node: unknown, path: string, value: unknown): Promise<unknown>;
+      };
+      const originalPost = transport.postToNode.bind(sender);
+      transport.postToNode = async (node, path, value) =>
+        path === '/v1/channel/message' ? null : originalPost(node, path, value);
+      const created = await sender.createTaskForNode(receiverID, {
+        title: 'Unacknowledged offer',
+        description: 'The encrypted request is dropped.',
+        criteria: 'A fake HTTP 204 must not mean delivered.',
+      });
+      const outgoing = sender.remoteTask(created.createdTaskID)!;
+      assert.equal(receiver.remoteTask(created.createdTaskID), null);
+      assert.notEqual(outgoing.transmissionState, 'delivered');
+      assert.equal(outgoing.deliveredAt, null);
+      assert.equal(outgoing.deliveryPending, true);
+      transport.postToNode = originalPost;
+    } finally {
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify(
+          networks.map((network) => network.snapshot()),
+          null,
+          2,
+        ),
+      );
+      await Promise.all(networks.map((network) => network.stop()));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'queue receipt network preserves fresh authenticated statistics across signed hello refresh',
+  { skip: process.platform !== 'win32', timeout: 45_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'm35-stats-refresh-'));
+    const roots = ['sender', 'receiver'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      loadNodeIdentity(root);
+      return root;
+    });
+    const [sender, receiver] = roots.map((root) => new NodeNetwork(root, true));
+    try {
+      receiver.setNodeQueueProvider(() => ({
+        waitingCount: 5,
+        paused: false,
+        health: 'normal',
+        updatedAt: new Date().toISOString(),
+        sampledAt: new Date().toISOString(),
+      }));
+      await Promise.all([sender.start(), receiver.start()]);
+      await pairNetworks(sender, receiver);
+      const peer = receiver.snapshot().local!;
+      const deadline = Date.now() + 10_000;
+      while (
+        Date.now() < deadline &&
+        sender.snapshot().nearby.find((node) => node.id === peer.id)?.nodeQueue?.waitingCount !== 5
+      )
+        await wait(50);
+      const before = sender.snapshot().nearby.find((node) => node.id === peer.id)!.nodeQueue;
+      assert(before);
+      const discovery = sender as unknown as { probe(service: unknown): Promise<void> };
+      await discovery.probe({
+        fqdn: 'queue-stats-fixture',
+        port: peer.port,
+        addresses: ['127.0.0.1'],
+        referer: { address: '127.0.0.1' },
+        txt: {
+          pv: String(peer.protocolVersion),
+          id: peer.id,
+          fp: peer.fingerprint,
+          brain: peer.brains[0].id,
+        },
+      });
+      assert.deepEqual(
+        sender.snapshot().nearby.find((node) => node.id === peer.id)?.nodeQueue,
+        before,
+      );
+    } finally {
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify([sender.snapshot(), receiver.snapshot()], null, 2),
+      );
+      await Promise.all([sender.stop(), receiver.stop()]);
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'queue receipt network keeps legacy capability peers usable without sending new queue fields',
+  { skip: process.platform !== 'win32', timeout: 60_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'm35-legacy-capability-'));
+    // Execute the committed M3.4 network implementation, not a new peer merely labelled old.
+    // Its dependencies retain their wire formats; imports resolve to the current verified helpers.
+    const oldSource = execFileSync('git', ['show', '8badf8f:server/node-network.ts'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    assert(!oldSource.includes('node-queue-v1'));
+    const legacyModule = join(evidence, 'legacy-node-network.ts');
+    writeFileSync(
+      legacyModule,
+      oldSource.replace(
+        /from (['"])(\.{1,2}\/[^'"]+)\1/g,
+        (_match, _quote, relative) => `from '${pathToFileURL(resolve('server', relative)).href}'`,
+      ),
+    );
+    const LegacyNetwork = (await import(pathToFileURL(legacyModule).href))
+      .NodeNetwork as typeof NodeNetwork;
+    const roots = ['modern', 'legacy'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      loadNodeIdentity(root);
+      return root;
+    });
+    const modern = new NodeNetwork(roots[0], true);
+    const legacy = new LegacyNetwork(roots[1], true);
+    type WirePeer = {
+      channels: Map<string, SecureChannelSession>;
+      handleChannelMessage(value: ChannelEnvelope, remote: string | undefined): unknown;
+      postToNode(node: { id: string }, path: string, value: unknown): Promise<unknown>;
+      syncBrainDirectory(node: unknown): Promise<void>;
+      queueReceipts: TaskQueueReceiptStore;
+    };
+    const oldWire = legacy as unknown as WirePeer;
+    const newWire = modern as unknown as WirePeer;
+    const captured: { direction: string; message: unknown }[] = [];
+    try {
+      modern.setNodeQueueProvider(() => ({
+        waitingCount: 3,
+        paused: false,
+        health: 'normal',
+        updatedAt: new Date().toISOString(),
+        sampledAt: new Date().toISOString(),
+      }));
+      const originalHandle = oldWire.handleChannelMessage.bind(legacy);
+      oldWire.handleChannelMessage = (envelope, remote) => {
+        const channel = oldWire.channels.get(envelope.senderNodeID)!;
+        const message = decryptChannelPayload({ ...channel }, envelope) as Record<string, unknown>;
+        assert(
+          !Object.hasOwn(message, 'nodeQueue'),
+          'new queue statistics must not reach the old decoder',
+        );
+        assert(!['remote-task-queue', 'brain-task-queue'].includes(String(message.type)));
+        captured.push({ direction: 'to-legacy', message });
+        return originalHandle(envelope, remote);
+      };
+      const originalPost = oldWire.postToNode.bind(legacy);
+      oldWire.postToNode = async (node, path, value) => {
+        const result = await originalPost(node, path, value);
+        if (
+          path === '/v1/channel/message' &&
+          result &&
+          typeof result === 'object' &&
+          'ciphertext' in result
+        ) {
+          const channel = oldWire.channels.get(node.id)!;
+          const message = decryptChannelPayload(
+            { ...channel },
+            result as ChannelEnvelope,
+          ) as Record<string, unknown>;
+          assert(
+            !Object.hasOwn(message, 'nodeQueue'),
+            'directory responses also respect the old capability',
+          );
+          captured.push({ direction: 'response-to-legacy', message });
+        }
+        return result;
+      };
+      await Promise.all([modern.start(), legacy.start()]);
+      await pairNetworks(modern, legacy);
+      const modernID = modern.snapshot().local!.id;
+      const legacyID = legacy.snapshot().local!.id;
+      assert(
+        !modern
+          .snapshot()
+          .nearby.find((peer) => peer.id === legacyID)!
+          .capabilities.includes(queueReceiptCapability),
+      );
+      await newWire.syncBrainDirectory(
+        modern.snapshot().nearby.find((peer) => peer.id === legacyID),
+      );
+      await oldWire.syncBrainDirectory(
+        legacy.snapshot().nearby.find((peer) => peer.id === modernID),
+      );
+      assert(captured.some((item) => item.direction === 'response-to-legacy'));
+      assert(captured.some((item) => item.direction === 'to-legacy'));
+      const content = {
+        title: 'Legacy capability task',
+        description: 'Keep encrypted basic delivery usable.',
+        criteria: 'No new queue fields or false delivery guarantee.',
+      };
+      const created = await modern.createTaskForNode(legacyID, content);
+      assert(legacy.remoteTask(created.createdTaskID));
+      assert.equal(
+        modern.remoteTask(created.createdTaskID)!.transmissionState,
+        'transmission_unknown',
+      );
+      assert.equal(modern.remoteTask(created.createdTaskID)!.deliveryPending, true);
+      await legacy.respondRemoteTask(created.createdTaskID, 'accepted');
+      assert.equal(modern.remoteTask(created.createdTaskID)!.transmissionState, 'delivered');
+      assert.equal(modern.remoteTask(created.createdTaskID)!.deliveryPending, false);
+      const brainID = legacy.snapshot().brains.find((brain) => brain.hosted)!.id;
+      await legacy.createRemoteTask(modernID, brainID, { ...content, title: 'Legacy source task' });
+      const incoming = modern.snapshot().remoteTasks.find((task) => task.direction === 'incoming')!;
+      assert(incoming);
+      await modern.publishTaskQueueReceipt(incoming.id, {
+        state: 'queued',
+        position: 1,
+        reason: 'A private queue fact',
+      });
+      assert.equal(newWire.queueReceipts.pending(legacyID).length, 1);
+      assert.equal(
+        legacy.snapshot().remoteTasks.find((task) => task.id === incoming.id)?.queueReceipt,
+        undefined,
+      );
+      await modern.respondRemoteTask(incoming.id, 'accepted');
+      assert.equal(legacy.remoteTask(incoming.id)!.status, 'accepted');
+    } finally {
+      writeFileSync(join(evidence, 'wire-evidence.json'), JSON.stringify(captured, null, 2));
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify([modern.snapshot(), legacy.snapshot()], null, 2),
+      );
+      await Promise.all([modern.stop(), legacy.stop()]);
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'queue receipt network fences wrong routes and reordering and replays after lost ACK and reconnect',
+  { skip: process.platform !== 'win32', timeout: 75_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'm35-receipt-wire-'));
+    const roots = ['sender', 'receiver', 'stranger'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      loadNodeIdentity(root);
+      return root;
+    });
+    const networks = roots.map((root) => new NodeNetwork(root, true));
+    const [sender, receiver, stranger] = networks;
+    type Wire = {
+      queueReceipts: TaskQueueReceiptStore;
+      remoteTasks: RemoteTaskStore;
+      postToNode(node: RivloomNode, path: string, value: unknown): Promise<unknown>;
+      sendChannelEvent(node: RivloomNode, message: QueueReceiptMessage): Promise<boolean>;
+    };
+    const sending = sender as unknown as Wire;
+    const receiving = receiver as unknown as Wire;
+    const outsider = stranger as unknown as Wire;
+    const until = async (check: () => boolean, label: string) => {
+      const deadline = Date.now() + 25_000;
+      while (!check() && Date.now() < deadline) await wait(50);
+      assert(check(), label);
+    };
+    const content = {
+      title: 'PRIVATE task title',
+      description: 'PRIVATE task body',
+      criteria: 'private receipt route fixture',
+    };
+    try {
+      await Promise.all(networks.map((network) => network.start()));
+      await pairNetworks(sender, receiver);
+      await pairNetworks(sender, stranger);
+      const senderID = sender.snapshot().local!.id;
+      const receiverID = receiver.snapshot().local!.id;
+      const strangerID = stranger.snapshot().local!.id;
+      const created = await sender.createTaskForNode(receiverID, content);
+      const id = created.createdTaskID;
+      const first = await receiver.publishTaskQueueReceipt(id, {
+        state: 'queued',
+        position: 2,
+        reason: 'Waiting for slot',
+      });
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === id)!.queueReceipt?.queueSequence,
+        1,
+      );
+      assert.equal(receiving.queueReceipts.pending(senderID).length, 0);
+      assert(!JSON.stringify(first).includes('PRIVATE'));
+      const message: QueueReceiptMessage = {
+        type: 'remote-task-queue',
+        version: 1,
+        idempotencyKey: receiving.remoteTasks.record(id)!.idempotencyKey,
+        receipt: first,
+      };
+      const send = (value: QueueReceiptMessage) =>
+        receiving.sendChannelEvent(
+          receiver.snapshot().nearby.find((peer) => peer.id === senderID)!,
+          value,
+        );
+      await assert.rejects(
+        send({ ...message, idempotencyKey: randomUUID() }),
+        (error: unknown) => error instanceof NodeNetworkError && error.status === 409,
+      );
+      await assert.rejects(
+        send({ ...message, receipt: { ...first, targetNodeID: strangerID } }),
+        (error: unknown) => error instanceof NodeNetworkError && error.status === 409,
+      );
+      await assert.rejects(
+        send({ ...message, receipt: { ...first, remoteTaskID: randomUUID() } }),
+        (error: unknown) => error instanceof NodeNetworkError && error.status === 409,
+      );
+      await assert.rejects(
+        outsider.sendChannelEvent(
+          stranger.snapshot().nearby.find((peer) => peer.id === senderID)!,
+          message,
+        ),
+        (error: unknown) => error instanceof NodeNetworkError && error.status === 409,
+      );
+      const held = await receiver.publishTaskQueueReceipt(id, {
+        state: 'held',
+        position: null,
+        reason: 'Owner held this task',
+      });
+      assert(await send(message)); // An old receipt is harmless and still gets an authenticated ACK.
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === id)!.queueReceipt?.state,
+        'held',
+      );
+      await assert.rejects(
+        send({ ...message, receipt: { ...held, reason: 'conflicting same sequence' } }),
+        (error: unknown) => error instanceof NodeNetworkError && error.status === 409,
+      );
+      await receiver.publishTaskQueueReceipt(id, {
+        state: 'rejected',
+        position: null,
+        reason: 'Owner rejected waiting task',
+      });
+      assert(await send({ ...message, receipt: { ...first, queueSequence: 99 } }));
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === id)!.queueReceipt?.state,
+        'rejected',
+      );
+      assert.equal(outsider.queueReceipts.get(`remote:${id}`), null);
+
+      const retryTask = await sender.createTaskForNode(receiverID, {
+        ...content,
+        title: 'ACK retry fixture',
+      });
+      const retryID = retryTask.createdTaskID;
+      const originalSend = receiving.sendChannelEvent.bind(receiver);
+      const originalPost = receiving.postToNode.bind(receiver);
+      let selectedMessage = false;
+      let lost = false;
+      receiving.sendChannelEvent = async (node, value) => {
+        selectedMessage =
+          value.type === 'remote-task-queue' && value.receipt.remoteTaskID === retryID;
+        try {
+          return await originalSend(node, value);
+        } finally {
+          selectedMessage = false;
+        }
+      };
+      receiving.postToNode = async (node, path, value) => {
+        const response = await originalPost(node, path, value);
+        if (
+          !lost &&
+          selectedMessage &&
+          path === '/v1/channel/message' &&
+          response &&
+          typeof response === 'object' &&
+          'type' in response &&
+          response.type === 'event-ack'
+        ) {
+          lost = true;
+          throw new NodeNetworkError(503, 'fixture: authenticated ACK response lost');
+        }
+        return response;
+      };
+      await receiver.publishTaskQueueReceipt(retryID, {
+        state: 'queued',
+        position: 2,
+        reason: 'ACK loss fixture',
+      });
+      assert(lost);
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === retryID)!.queueReceipt
+          ?.queueSequence,
+        1,
+      );
+      assert.equal(receiving.queueReceipts.pending(senderID).length, 1);
+      receiving.postToNode = originalPost;
+      receiving.sendChannelEvent = originalSend;
+      await until(
+        () =>
+          receiving.queueReceipts.pending(senderID).length === 0 &&
+          !!receiver.snapshot().nearby.find((peer) => peer.id === senderID)?.channelReady,
+        'lost ACK retries after channel recovery',
+      );
+      await sender.stop();
+      await receiver.publishTaskQueueReceipt(retryID, {
+        state: 'queued',
+        position: 1,
+        reason: 'Queue advanced while source offline',
+      });
+      assert.equal(receiving.queueReceipts.pending(senderID).length, 1);
+      await sender.start();
+      await until(
+        () =>
+          sender.snapshot().remoteTasks.find((item) => item.id === retryID)?.queueReceipt
+            ?.queueSequence === 2 && receiving.queueReceipts.pending(senderID).length === 0,
+        'latest receipt replayed after source restart',
+      );
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === retryID)!.queueReceipt?.position,
+        1,
+      );
+      assert.equal(
+        sender.snapshot().remoteTasks.find((item) => item.id === retryID)!.executionSequence,
+        0,
+      );
+      assert.equal(sending.queueReceipts.get(`remote:${id}`)?.state, 'rejected');
+      assert.equal(outsider.queueReceipts.get(`remote:${retryID}`), null);
+    } finally {
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify(
+          networks.map((network) => network.snapshot()),
+          null,
+          2,
+        ),
+      );
+      await Promise.all(networks.map((network) => network.stop()));
       if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
       else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
       if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;

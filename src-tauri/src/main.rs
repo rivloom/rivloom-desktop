@@ -131,6 +131,7 @@ fn valid_runtime_url(parsed: &tauri::Url) -> bool {
 fn start_runtime(
     root: &PathBuf,
     data_dir: &PathBuf,
+    preview: bool,
 ) -> Result<(RuntimeProcess, String), Box<dyn std::error::Error>> {
     fs::create_dir_all(data_dir)?;
     let mut command = Command::new(root.join("node.exe"));
@@ -164,6 +165,13 @@ fn start_runtime(
         }
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
+    // Only the separately identified preview may join an isolated test discovery domain.
+    // The installed product keeps its existing restricted runtime environment.
+    if preview {
+        for key in ["RIVLOOM_DISCOVERY_PORT", "RIVLOOM_MDNS_NETWORK", "RIVLOOM_DISCOVERY_FALLBACK"] {
+            if let Some(value) = std::env::var_os(key) { command.env(key, value); }
+        }
+    }
     let mut paths = vec![root.clone()];
     paths.extend(std::env::split_paths(&path));
     command
@@ -227,7 +235,8 @@ fn main() {
             };
             if !data_dir.is_absolute() { return Err("RIVLOOM_DATA_DIR 必须是绝对路径".into()); }
             let root = app.path().resource_dir()?.join("runtime");
-            let (runtime, url) = match start_runtime(&root, &data_dir) {
+            let preview = app.config().identifier == "com.rivloom.conversationpreview";
+            let (runtime, url) = match start_runtime(&root, &data_dir, preview) {
                 Ok(result) => result,
                 Err(error) => {
                     app.dialog().message(format!("Rivloom 无法启动：{error}")).title("启动失败").blocking_show();
