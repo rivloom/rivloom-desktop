@@ -2,7 +2,34 @@
 
 日期：2026-09-01 至 2026-09-05；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
-## 2026-09-05：安全说明与随包文档一致性修订（当前）
+## 2026-09-05：本地 CI Preview 候选构建与 runtime 门槛
+
+本地 `main` 已保存源码提交 **`86463bf286c6d488fe25e77d9b1e897d58506658`**。配置及最终记录检查点都确认该提交、干净工作树和固定工具链；`test-results/candidate/local-validation.json` 明确记录 **`environment: local`、`cloudRun: false`**，开始于 `2026-09-05T06:51:50.814Z`，结束于 `2026-09-05T07:01:08.120Z`。本段记录该源码产物，之后的文档补充不改变候选来源。
+
+| 检查                    | 实际结果与证据                                                                                                                                                                                                                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 固定工具链              | Node 24.19.0；实际 `rustc 1.98.1 (48a229cea 2026-09-01)`、`cargo 1.98.1 (797e8a9bc 2026-08-05)`。新增固定工具链后默认仍是 `stable-x86_64-pc-windows-msvc`，未改变默认版本；`test-results/ci-tools/rust-1.98.1-install-verification.json`                                                                   |
+| 提交前真实准备          | `desktop:prepare -- --profile conversation-preview` 和只读 gate 通过；`.data/verification/ci-desktop-prepare.log`、`ci-runtime-precommit.json`。此记录先于源码提交，不冒充最终构建证据                                                                                                                     |
+| 干净源码与 Preview 配置 | 以同一真实本地 commit 作为 expectedCommit，分支 `main`、workingTree `clean`；identifier `com.rivloom.conversationpreview`、版本 0.1.3；`test-results/candidate/source-context.json`、`build-config.json`                                                                                                   |
+| 原生构建前 gate         | **passed**；实际 Node/OpenCode 哈希、PE x64 与 CLI 版本、随包 README/SECURITY、88 个运行依赖、267 个 Rust 依赖、722 项 notice 文件通过；`test-results/candidate/runtime-before.json`                                                                                                                       |
+| Tauri Release / NSIS    | **退出 0**，Rust Release 编译耗时 **2m 53s**，生成 1 个 Windows x64 NSIS；目标 `x86_64-pc-windows-msvc`，禁用重复准备钩子、签名及 updater artifacts，使用 `--locked`；`.data/verification/ci-local-native-build.log`                                                                                       |
+| 原生构建后 gate         | **passed**，核对范围与构建前相同；`test-results/candidate/runtime-after.json`                                                                                                                                                                                                                              |
+| 构建前后 runtime 不变   | 完整树 **6,682 文件、735 目录、325,954,687 字节**，聚合 SHA256 **`45710db57e91f85af8aee7b156b36cad9e11f6b81fa6ea2bd2397bfa7223b3c7`**。manifest SHA256 **`f9b66d75089bc627f80afa46dec6509c93666c1b70d05dab7207fca8837a08be`**；`test-results/candidate/runtime-before-hash.json` 与 `candidate-build.json` |
+| 最终候选字节            | `test-results/candidate/Rivloom UI Preview_0.1.3_x64-setup.exe`，**71,115,790 字节**，SHA256 **`c776fd351d4ae7f3150cb2a4f47ff13af16402b4b549f92ecb099ac9ba6782e2`**；`candidate-build.json` 与 `local-validation.json`                                                                                     |
+| 签名、安装与公开状态    | 实际 Authenticode **NotSigned**；未运行安装器、未发布，无下载 URL 或更新频道。未声称签名、干净机安装、升级、应用内 updater 或本轮双物理机验收通过                                                                                                                                                          |
+| 独立 NSIS 解包          | **passed**；7-Zip 22.01 只读提取全部 runtime 文件，与 prepared 逐字节一致，树摘要等于候选记录；`test-results/candidate-extraction-1788592034424/verification.json`。未提取外层 Rivloom.exe，未验证安装脚本语义                                                                                             |
+
+独立解包报告在 `2026-09-05T07:14:11.811Z` 记录 passed，绑定上方同一安装器哈希与源码提交。除完整 runtime 树逐字节核对外，还核对 2 份文档、722 项 notices、88 个包版本、Node/OpenCode 哈希，以及 npm 121 个版本/126 份原文的来源摘要；13 个关键样本覆盖 Tauri API 两份许可、OpenCode SDK/二进制许可和 content-type 1.0.5/2.1.0 的独立版本路径。`generic-array-0.14.7/LICENSE` 的 20 个 CRLF 与 `quick-xml-0.41.0/LICENSE-MIT.md` 的 23 个 CRLF 均从 `86463bf` 提交原字节保留到安装器。
+
+单独记录文档换行差异：提取的 `SECURITY.md` 与 prepared runtime、manifest 字节完全相同，长 12,575 字节；Git blob 为 12,574 字节，少一个经 Git 归一化的 CR。两者规范化换行后的文本相同，不能将该文档写为与 Git blob 原字节一致。7-Zip 22.01 的 NSIS subtype 显示 `BadCmd=13`，全部 runtime 数据仍成功提取、退出 0；这不表示解析或验证了安装脚本语义。未提取或运行外层 `Rivloom.exe`，没有本轮 EXE bundle-marker 差异结论，也未执行安装、原生 UI 或升级。提取前后 `test-results/candidate/` 全部文件哈希保持，原 `candidate-build.json` 的“尚未独立解包”限制描述生成时状态；新独立报告补充同一哈希的后续证据，没有改写原记录。
+
+两个实际随包二进制为 Node **24.19.0** / SHA256 `3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237`，官方 OpenCode **1.18.25** / SHA256 `ef06e41a35795066e95acde276a42fbbf85d7a683c2787f6a19ed20bcde9b6ff`；前后 gate 均独立探测版本。候选 manifest 的 `runtimeUnchangedDuringBuild` 表示构建前后两个测量点一致，不声称监控了中间每一瞬间。
+
+本轮运行器自检为 9/9；先前完整逻辑层为 168/168（当时含 13 个 runtime 夹具），随后 runtime 文件新增 3 项并单独 16/16 通过。协议 11/11、官方引擎端口 2/2、UDP 1/1 与四组官方引擎服务检查保留各轮报告；纯 mDNS 0/1、0 跳过、退出 1，仍未修复。先前分层累计 182/183 属于当时测试集合，不把后续结果合成为同轮 171/171 或一次新全量通过。范围和唯一报告索引见 [CI](CI.md)。官网云 CI 的锁文件问题另见 [官网交接](WEBSITE-HANDOFF.md)，与桌面纯 mDNS 是两个独立失败记录。
+
+桌面在此检查点尚未推送：`origin/main` 为 `f5ce9ed3fdf4ad69cfad2acfc13d9a04e7cf51c2`，本地领先 4 个提交，桌面推送等待明确授权；不能把已授权的官网推送扩大到桌面仓库。本轮不是桌面 GitHub Actions 云运行。**M3.5 当前供用户检查的交付仍为下方 `docs1` 预览包**；此 CI 候选不自动成为正式包、公开下载或新的用户交付。
+
+## 2026-09-05：安全说明与随包文档一致性修订（M3.5 用户交付 docs1）
 
 用户指出 SECURITY 仍有 Git 前置条件与远程审批未开放的旧表述。本轮按当前代码逐项核对并修正：普通文件夹与无 Git/hash 兜底、ask/auto/full 三种审批、已开放的远程控制、目录与执行消息各自的数据范围、本机成员可见性、队列暂停/准入和保守恢复。控制正文不能承诺自动脱敏；已获得执行槽位的任务不会因暂停队列而停止。README 改为当前会话/自动入队/确认完成流程，原生目录选择标题改为“选择可信的普通项目文件夹”。未改变权限、任务执行或网络业务逻辑；另任务官网规划原文保留。
 
@@ -17,23 +44,23 @@
 
 本轮从 `main` / `8badf8f6f31e0016a1e1a100dd70c9b43cfe6671` 的既有界面/备注/`@` 改动继续，未重置覆盖。**A–D 工程交付完成，用户验收及本轮双物理机回归待进行**。正式客户端及原验收数据未操作。本地 Git 按用户追加授权只保存本任务范围，不推送；提交号以最终 Git 记录为准。
 
-| 本轮检查 | 实际结果和证据 |
-| --- | --- |
-| 创建幂等与远程时钟定向 | 14/14；`.data/verification/m35-stage-a-creation-after.log`。失败先验保留在 `m35-stage-a-creation-before.log` |
-| 自动分配候选修复 | 共用每个 Brain 的实际 Worker 过滤规则；仅 Master 自身候选明确无候选，合法第三 Worker 可执行；复现/通过记录保留于 `.data/verification/m35-placement/` |
-| 全量 `npm.cmd test` 首轮 | **145/146**；`.data/verification/m35-full-regression-first.log`。唯一失败仍为已有 `two isolated Rivloom instances discover and cryptographically verify each other` 的纯 mDNS verified 断言，不记全绿 |
-| 全量 `npm.cmd test` 最终 | **154/155**，106.8 秒；`.data/verification/m35-full-regression-final.log`。唯一失败仍是上述纯 mDNS 用例，在 `tests/node-network.test.ts:2222` 的 `testPeers.every(...verified)` 断言；本轮其余测试通过，未把整套记为全绿 |
-| 前端/HTTP 最新定向 | **23/23**：`tests/api.test.ts`、`conversation-drafts`、`node-mentions`、`task-receipts`、`conversations`；`.data/verification/m35-drafts/review-tests.log`，typecheck 为 `review-typecheck.log` |
-| 模型目录消失后的本机创建确认 | 增量 **7/7**（API + 草稿），`m35-drafts/model-retry-tests.log` / `model-retry-typecheck.log`；已发出请求可保持原签名和 ID 确认，编辑新工作恢复模型前置校验 |
-| 完整隔离业务服务最终复测 `npm.cmd run test:node-p0` | **12/12**；`.data/verification/m35-p0-1788581065722-2746e0ac/verification.json`、`engine-audit.json`，日志 `m35-placement/service-p0-run3.log`；全部自有服务已 stop。此前 10/10 根 `m35-p0-1788579317453-a5b08eb4` 保留 |
-| 真实 session 创建崩溃窗口 | **2/2 场景通过**；`.data/verification/m35-session-crash-1788580103133-167ac635/verification.json`，运行日志 `m35-session-crash-run3.log`；8 个自有旧/新服务及引擎端口均已关闭，见 `cleanup-ports.json` |
-| Tauri Debug 原生界面 | **12 条记录通过**（含 CLEANUP）；`.data/ui-conversation-c9af0886-f701-4dbb-aa4d-746b24ee8345/native-observations.json`，6 张实际窗口截图；1282×872、最窄 962×872 |
-| 最终 Tauri Release 原生复查 | **8 条记录通过**（含输入模式恢复与 CLEANUP）；`.data/ui-conversation-6fddb6ac-44a5-47e5-922b-a49ce7c47234/native-release-observations.json`，4 张实际窗口截图；包括真实 Windows 拼音候选 Enter 不发送、键盘选定固定 Node、原任务 authenticated delivered/queued 第 1 位、等待文案及 signed hello 后统计保持 |
-| 认证 ACK 定向回归 | `m35-placement/receipt-auth-ack-unit.log` **2/2**；`receipt-auth-ack-network.log` **4/4**，含伪 HTTP 204 拦截和部分重复单元用例，两组不累加为独立总数 |
-| 路由/恢复与旧协议回归 | `m35-placement/receipt-routing-network.log` **1/1**，错误节点/路由/key/task ID、乱序/同序冲突、终态、ACK 丢失和断线重放；`receipt-legacy-network.log` **1/1**，实际 8badf8f 旧 network 模块搭配当前兼容 wire 依赖，双向基本任务通过且不发送新队列消息，未使用完整旧二进制 |
-| signed hello 统计刷新 | `m35-placement/stats-hello-after.log` **1/1**；保留已认证队列统计及原采样时间；此单例不覆盖过期判断 |
-| 新独立预览安装包 | **构建成功，未签名、未安装**；`.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**；`m35-preview-artifact.json` 与 `m35-preview-installer-retry.log` |
-| 最终二进制闭环 | **通过并 CLEANUP**；`.data/ui-conversation-f90b3dd1-f6b1-4ca8-987a-bc51c67f0945/verification.json` 和 `native-final-binary-review.jpg`；与最终产物相同的 Release exe 完成启动、加密配对、1 remote Task → 1 业务 Task → 1 官方 session → review，实际窗口显示结果；模型请求 1/工具 0 |
+| 本轮检查                                            | 实际结果和证据                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 创建幂等与远程时钟定向                              | 14/14；`.data/verification/m35-stage-a-creation-after.log`。失败先验保留在 `m35-stage-a-creation-before.log`                                                                                                                                                                                                |
+| 自动分配候选修复                                    | 共用每个 Brain 的实际 Worker 过滤规则；仅 Master 自身候选明确无候选，合法第三 Worker 可执行；复现/通过记录保留于 `.data/verification/m35-placement/`                                                                                                                                                        |
+| 全量 `npm.cmd test` 首轮                            | **145/146**；`.data/verification/m35-full-regression-first.log`。唯一失败仍为已有 `two isolated Rivloom instances discover and cryptographically verify each other` 的纯 mDNS verified 断言，不记全绿                                                                                                       |
+| 全量 `npm.cmd test` 最终                            | **154/155**，106.8 秒；`.data/verification/m35-full-regression-final.log`。唯一失败仍是上述纯 mDNS 用例，在 `tests/node-network.test.ts:2222` 的 `testPeers.every(...verified)` 断言；本轮其余测试通过，未把整套记为全绿                                                                                    |
+| 前端/HTTP 最新定向                                  | **23/23**：`tests/api.test.ts`、`conversation-drafts`、`node-mentions`、`task-receipts`、`conversations`；`.data/verification/m35-drafts/review-tests.log`，typecheck 为 `review-typecheck.log`                                                                                                             |
+| 模型目录消失后的本机创建确认                        | 增量 **7/7**（API + 草稿），`m35-drafts/model-retry-tests.log` / `model-retry-typecheck.log`；已发出请求可保持原签名和 ID 确认，编辑新工作恢复模型前置校验                                                                                                                                                  |
+| 完整隔离业务服务最终复测 `npm.cmd run test:node-p0` | **12/12**；`.data/verification/m35-p0-1788581065722-2746e0ac/verification.json`、`engine-audit.json`，日志 `m35-placement/service-p0-run3.log`；全部自有服务已 stop。此前 10/10 根 `m35-p0-1788579317453-a5b08eb4` 保留                                                                                     |
+| 真实 session 创建崩溃窗口                           | **2/2 场景通过**；`.data/verification/m35-session-crash-1788580103133-167ac635/verification.json`，运行日志 `m35-session-crash-run3.log`；8 个自有旧/新服务及引擎端口均已关闭，见 `cleanup-ports.json`                                                                                                      |
+| Tauri Debug 原生界面                                | **12 条记录通过**（含 CLEANUP）；`.data/ui-conversation-c9af0886-f701-4dbb-aa4d-746b24ee8345/native-observations.json`，6 张实际窗口截图；1282×872、最窄 962×872                                                                                                                                            |
+| 最终 Tauri Release 原生复查                         | **8 条记录通过**（含输入模式恢复与 CLEANUP）；`.data/ui-conversation-6fddb6ac-44a5-47e5-922b-a49ce7c47234/native-release-observations.json`，4 张实际窗口截图；包括真实 Windows 拼音候选 Enter 不发送、键盘选定固定 Node、原任务 authenticated delivered/queued 第 1 位、等待文案及 signed hello 后统计保持 |
+| 认证 ACK 定向回归                                   | `m35-placement/receipt-auth-ack-unit.log` **2/2**；`receipt-auth-ack-network.log` **4/4**，含伪 HTTP 204 拦截和部分重复单元用例，两组不累加为独立总数                                                                                                                                                       |
+| 路由/恢复与旧协议回归                               | `m35-placement/receipt-routing-network.log` **1/1**，错误节点/路由/key/task ID、乱序/同序冲突、终态、ACK 丢失和断线重放；`receipt-legacy-network.log` **1/1**，实际 8badf8f 旧 network 模块搭配当前兼容 wire 依赖，双向基本任务通过且不发送新队列消息，未使用完整旧二进制                                   |
+| signed hello 统计刷新                               | `m35-placement/stats-hello-after.log` **1/1**；保留已认证队列统计及原采样时间；此单例不覆盖过期判断                                                                                                                                                                                                         |
+| 新独立预览安装包                                    | **构建成功，未签名、未安装**；`.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_x64_setup.exe`，**71,107,766 字节**，SHA-256 **`206B80AD363FBAC90435E085333F8D61DFB5BF8A3251734AD459A6905ED2DECE`**；`m35-preview-artifact.json` 与 `m35-preview-installer-retry.log`                                  |
+| 最终二进制闭环                                      | **通过并 CLEANUP**；`.data/ui-conversation-f90b3dd1-f6b1-4ca8-987a-bc51c67f0945/verification.json` 和 `native-final-binary-review.jpg`；与最终产物相同的 Release exe 完成启动、加密配对、1 remote Task → 1 业务 Task → 1 官方 session → review，实际窗口显示结果；模型请求 1/工具 0                         |
 
 完整服务使用同机隔离数据、独立发现域、官方 OpenCode 1.18.25 与确定性 loopback 模型。覆盖：丢失创建响应后四次并发重试只有一个邀请；不同内容/目标同 requestID 返回 409；发送/接收端重启保留原 ID；唯一业务 Task/session；review 重启后仍占槽；固定目标离线/撤信 409 且无本机/第三 Node 回退；普通忙碌混合来源 FIFO 不提前批量建远程业务 Task；调序/暂缓/拒绝/暂停重启保持且操作重放幂等；实际顺序与队列一致；双 Brain 同槽竞争，输家原 Task/Brain 保留并沿原任务第二尝试；unknown 重启后不重派。
 

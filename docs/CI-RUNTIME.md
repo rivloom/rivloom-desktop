@@ -2,6 +2,16 @@
 
 更新：2026-09-05。入口为 `scripts/ci-verify-runtime.ts`，夹具测试为 `tests/ci-runtime.test.ts`。校验针对已准备的目录，生成清单本身不算通过。
 
+## 最新真实候选验证（2026-09-05）
+
+已对干净源码提交 `86463bf286c6d488fe25e77d9b1e897d58506658` 完成真实 Preview 准备、构建前 gate、Tauri Release/NSIS、构建后 gate 与候选记录。运行环境为本地 Windows x64，`environment: local`、`cloudRun: false`；Node 24.19.0、Rust/Cargo 1.98.1 已核对，新增工具链没有改变默认 stable。原生 Release 编译耗时 2m 53s，NSIS 退出 0，日志 `.data/verification/ci-local-native-build.log`。
+
+前后 gate 都通过 Node/OpenCode 的固定哈希、PE x64、实际 `--version`、说明文件与许可原文校验，结果为 **88 个运行依赖、267 个 Rust 依赖、722 项 notice 文件**。`test-results/candidate/runtime-before.json` 与 `runtime-after.json` 是本次实际二进制证据；先前 `.data/verification/ci-runtime-precommit.json` 保留为提交前准备检查点。
+
+相邻候选流程已另外确认完整 runtime 树在构建前后相同：6,682 文件、735 目录、325,954,687 字节，树摘要 `45710db57e91f85af8aee7b156b36cad9e11f6b81fa6ea2bd2397bfa7223b3c7`，manifest 摘要 `f9b66d75089bc627f80afa46dec6509c93666c1b70d05dab7207fca8837a08be`。最终 NSIS 为 71,115,790 字节、SHA256 `c776fd351d4ae7f3150cb2a4f47ff13af16402b4b549f92ecb099ac9ba6782e2`，见 `test-results/candidate/candidate-build.json` 与 `local-validation.json`。
+
+该文件使用 `com.rivloom.conversationpreview`，Authenticode 为 NotSigned，未安装、未发布；独立 NSIS runtime 解包已通过，全部 runtime 文件与 prepared/manifest/候选树摘要一致，报告为 `test-results/candidate-extraction-1788592034424/verification.json`。外层 Rivloom.exe 与安装脚本语义不在该核对范围；SECURITY 与 Git blob 存在一个 CR 换行差异，规范化文本相同，未声称该文档与 Git blob 逐字节相等。本地 gate/构建不代表桌面云 CI、安装、更新或双物理机验收；M3.5 用户交付最新版仍为 `docs1`。详细证据及后续核对见 [实际验证记录](VERIFICATION.md)。
+
 ## 调用与输出
 
 ```sh
@@ -50,12 +60,12 @@ Rust 对照使用 `cargo metadata --locked --offline --filter-platform x86_64-pc
 
 此校验不重新验证 npm tarball 内每个 JavaScript 文件，也不计算 server/shared/dist 的完整内容基线。npm integrity 字段比较不等同于重新计算安装后目录的 tarball integrity；许可证清单也不是完整二进制 SBOM。源码来源、干净构建、目录摘要和最终安装包证据属于相邻的候选流程，不能从此报告推断。
 
-## 本轮已知真实缺口
+## 前置检查点与已修复缺口
 
 - 初查时的旧 `src-tauri/resources/runtime/runtime-manifest.json` 没有 `schemaVersion/product/target/inputs/notices`，只读校验按预期退出 1；此为修复前记录。
 - 初查 npm 清单有三个运行依赖和三个开发依赖缺少原文映射。本轮已修复 `scripts/notices.ts` 并实际重新生成：121 个唯一依赖版本、126 份原文，所有条目均明确关联原文。新目录使用 `licenses/npm/<包名>/<版本>/<原文文件名>`；完全相同的重复身份合并，原文或 metadata 冲突拒绝；既有旧文件名未删除。
 - 缺少包内许可的版本仅使用经过核对的上游映射，保存 `licenseSources` 的来源、版本证据、源码 revision、Git blob 与 SHA256。下载内容还须匹配固定的已核对 Git blob。未知版本缺原文直接失败，不使用笼统的当前主分支文本。Tauri 同时保留 MIT 和 Apache 两份原文。
-- 新增准备字段、预览钩子与校验器已完成小夹具验证。主任务随后执行一次 `desktop:prepare -- --profile conversation-preview`，以固定 Rust/Cargo 1.98.1 完成实际只读 gate：两个官方二进制的哈希、PE 架构和版本均匹配，88 个 runtime 依赖、267 个 Rust 依赖与 722 个声明文件通过。记录为 `.data/verification/ci-desktop-prepare.log` 和 `.data/verification/ci-runtime-precommit.json`。此处尚未宣称 NSIS 构建、安装或云端运行通过。
+- 新增准备字段、预览钩子与校验器先完成小夹具验证。提交前随后执行一次 `desktop:prepare -- --profile conversation-preview`，以固定 Rust/Cargo 1.98.1 完成实际只读 gate：两个官方二进制的哈希、PE 架构和版本均匹配，88 个 runtime 依赖、267 个 Rust 依赖与 722 个声明文件通过。记录为 `.data/verification/ci-desktop-prepare.log` 和 `.data/verification/ci-runtime-precommit.json`。当时尚未执行 NSIS；提交后的实际构建与前后 gate 已记在上方最新验证中，安装及桌面云运行仍未完成。
 - `.gitattributes` 对版本化 npm/Rust 原文指定 `-text`，避免 Git 把上游 CRLF 改为 LF。原文完整性按字节验证；不能靠重新计算改写后的摘要放宽该检查。
 
 16 个小夹具测试覆盖旧清单、身份误标、哈希漂移、清单重算掩盖文档漂移、缺许可/缺 Rust 清单、npm 原文覆盖、Rust 漏依赖/错误源码归档、实际包版本/额外包、二进制哈希/架构/版本及失败退出码，以及生成器的版本隔离、重复身份冲突和未知来源拒绝。夹具 PE 和版本探测替身均明确为测试数据，不是正式二进制验证证据。
