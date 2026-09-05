@@ -117,6 +117,32 @@ process.exitCode = result.passed ? 0 : 1;
   }
 });
 
+test('CI environment preserves PowerShell module paths without restoring secrets', () => {
+  const previous = process.env;
+  const modulePath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules;C:\\CI\\Modules';
+  try {
+    for (const name of ['PSModulePath', 'psmodulepath', 'PsMoDuLePaTh']) {
+      process.env = {
+        [name]: modulePath,
+        PATH: 'C:\\Windows\\System32',
+        NODE_OPTIONS: '--require=ci-filter-sentinel',
+        DEEPSEEK_API_KEY: 'ci-filter-sentinel',
+        GITHUB_TOKEN: 'ci-filter-sentinel',
+        RIVLOOM_MODEL: 'ci-filter-sentinel',
+        PSModuleAnalysisCachePath: 'ci-filter-sentinel',
+      };
+      assert.deepEqual(testEnvironment(root), {
+        [name]: modulePath,
+        PATH: 'C:\\Windows\\System32',
+        CI: 'true',
+        RIVLOOM_DATA_DIR: join(root, '.data', 'default'),
+      });
+    }
+  } finally {
+    process.env = previous;
+  }
+});
+
 test('service wrapper propagates nonzero exit without inheriting task or model environment', async () => {
   const file = join(root, 'failure.mjs');
   writeFileSync(file, 'process.exitCode = 7;');

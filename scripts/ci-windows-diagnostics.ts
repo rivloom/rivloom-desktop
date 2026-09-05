@@ -91,9 +91,16 @@ console.log('Windows DPAPI diagnostic observation; actual test failures remain t
 if (process.platform !== 'win32') {
   console.log(JSON.stringify({ kind: 'diagnostic-observation', outcome: 'unsupported-platform' }));
 } else {
+  const fixedEnvironment = testEnvironment(resolve('.data/verification/ci-windows-diagnostics'));
+  // Temporary causal check: remove only the restored variable, leaving every
+  // other CI setting identical. Remove this extra probe after cloud verification.
+  const withoutModulePath = Object.fromEntries(
+    Object.entries(fixedEnvironment).filter(([name]) => name.toUpperCase() !== 'PSMODULEPATH'),
+  );
   const environments = [
     ['inherited', { ...process.env }],
-    ['ci-whitelist', testEnvironment(resolve('.data/verification/ci-windows-diagnostics'))],
+    ['fixed-ci-whitelist', fixedEnvironment],
+    ['fixed-ci-whitelist-minus-only-PSModulePath', withoutModulePath],
   ] as const;
   for (const [environment, env] of environments) {
     const startedAt = Date.now();
@@ -115,6 +122,7 @@ if (process.platform !== 'win32') {
       JSON.stringify({
         kind: 'diagnostic-observation',
         environment,
+        psModulePathPresent: Object.keys(env).some((name) => name.toUpperCase() === 'PSMODULEPATH'),
         outcome:
           !result.error && result.status === 0 && roundTripMatched
             ? 'observed-success'

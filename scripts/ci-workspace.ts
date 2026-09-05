@@ -30,6 +30,8 @@ export function testEnvironment(directory: string): NodeJS.ProcessEnv {
     'SYSTEMROOT',
     'WINDIR',
     'COMSPEC',
+    // Keep Windows PowerShell module discovery available to Add-Type in CI children.
+    'PSMODULEPATH',
     'TEMP',
     'TMP',
     'USERPROFILE',
