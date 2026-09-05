@@ -20,7 +20,9 @@ $taskRepository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $taskBase = Join-Path $taskRepository 'test-results'
 $taskRoot = Join-Path $taskBase ('preview-install-' + [Guid]::NewGuid().ToString('N'))
 $taskInstall = Join-Path $taskRoot 'app'
-$taskNode = (Get-Command node.exe -CommandType Application).Source
+# A hosted runner may expose both setup-node and the image's preinstalled Node.
+# Match command execution's PATH precedence instead of joining every match.
+$taskNode = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $taskScript = Join-Path $PSScriptRoot 'preview-install-smoke.ts'
 $taskCandidate = if ([IO.Path]::IsPathRooted($CandidateDirectory)) { [IO.Path]::GetFullPath($CandidateDirectory) } else { [IO.Path]::GetFullPath((Join-Path $taskRepository $CandidateDirectory)) }
 

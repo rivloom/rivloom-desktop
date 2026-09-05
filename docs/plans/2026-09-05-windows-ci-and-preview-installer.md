@@ -38,3 +38,5 @@
 候选流程已接入独立安装、启动、重启与卸载检查，以及仅限 GitHub 托管 Windows runner 的 WebView2 前置准备。原生启动器同样保留系统 `PSModulePath`，避免其清空环境后重现已查明的 PowerShell 模块发现问题；生产身份加密实现未改。安装报告在元数据恢复后写入当前候选目录，并绑定完整源码 SHA 和安装器哈希。
 
 推送前验证：19/19 CI helper 与安装保护合成测试通过，TypeScript、Vite、actionlint 和两份 PowerShell 语法检查通过。合成测试不执行安装或访问注册表；新候选的真实原生构建和安装验收须继续在云端完成。
+
+首个自动候选 `30426b7` 的基础 CI 再次 10/10 成功，[候选运行 33966800706](https://github.com/rivloom/rivloom-desktop/actions/runs/33966800706) 完成原生/NSIS 编译（9 分 42 秒）、构建前后 runtime 检查与源码绑定。安装前置脚本因 runner 同时存在 setup-node 和预装 Node，把多条 Get-Command 结果拼成一个命令而失败，尚未执行安装。现改为按 PATH 顺序只选择第一份 Node；失败记录保留，下一次候选仍须完成全部安装检查才能交付。
