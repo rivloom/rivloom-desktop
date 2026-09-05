@@ -25,7 +25,7 @@ M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分�
 
 - 正式应用版本为 `0.1.3`，见 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`；正式 identifier 为 `com.rivloom.desktop`。当前 NSIS 为 `currentUser` 安装，缺失 WebView2 时使用联网 bootstrapper。
 - `src-tauri/tauri.preview.conf.json` 使用独立的 `com.rivloom.conversationpreview`。预览包目前复用版本号，但拥有独立产品身份，不能作为正式 stable 或 beta 的覆盖升级包。
-- 当前未接入 Tauri updater：没有 updater 插件依赖、公钥或更新端点。四份 Windows CI 工作流已落地，候选构建显式关闭 updater artifacts，只有内部 Preview 构建路径；尚未验证云端运行或公开发布。现有 NSIS 构建与手动覆盖升级证据不能算自动更新已实现。
+- 当前未接入 Tauri updater：没有 updater 插件依赖、公钥或更新端点。四份 Windows 工作流已落地，基础 CI 已在云端实际执行；候选构建显式关闭 updater artifacts，只有内部 Preview 构建路径。最新云端与安装验证按 [CI](CI.md) 的精确源码记录核对，尚未公开发布。现有 NSIS 构建与手动覆盖升级证据不能算自动更新已实现。
 - `server/node-identity.ts` 已定义 `nodeProtocolVersion = 1`；`server/node-network.ts` 使用协议版本校验与 `remote-execution-v1`、`brain-task-v1`、队列回执等 capability。已有机制应延续，不能随意放宽握手或向旧严格消息结构添加字段。
 - 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，这还不是完整的有序迁移或拒绝降级机制。
 - 客户端管理本地业务服务、Node 和官方 OpenCode 子进程。Task/Execution、Node 身份、信任与 Brain 归属必须跨升级保持；当前固定 Master Host 无自动接管，关闭客户端会影响执行与调度。
@@ -48,7 +48,7 @@ flowchart LR
 
 官网首版提供产品说明、`/download/`、`/guide/`、`/changelog/`、`/security/`、`/privacy/` 和 `/support/`。下载页仅在存在经过发布流程确认的记录时展示版本、发布日期、Windows/架构要求、大小、SHA-256、签名状态、更新说明和已知限制；当前目录为空，未开放下载。
 
-官网已采用 Astro 静态站，用户已确认 `rivloom.com` 与 Cloudflare 同时服务中国大陆及海外，暂不增加国内专用 CDN。用户已授权 Pages 仅连接官网仓库、推送与域名上线；组织连接已确认，生产部署与域名验证正在推进。R2 下载存储尚未配置，首版不包含账户数据库或 License 服务。
+官网已采用 Astro 静态站，用户已确认 `rivloom.com` 与 Cloudflare 同时服务中国大陆及海外，暂不增加国内专用 CDN。用户已授权 Pages 仅连接官网仓库、推送与域名上线；生产部署与域名验证已完成，官网视觉更新也已上线。R2 下载存储尚未配置，首版不包含账户数据库或 License 服务。
 
 源码可以继续保密。若用 GitHub Releases 面向公众下载，应使用明确公开的分发仓库，或由受控 CI 将私有仓库产物上传到公开下载存储；不能把私有仓库访问 token 塞进客户端、静态网页或公开元数据。
 
@@ -148,7 +148,7 @@ Authenticode 完成后再对最终 updater 产物签名并计算哈希，任何�
 4. 先完成候选包的安装/升级验收，再以单个完整对象替换频道 `latest.json`，避免客户端看到引用了缺失文件的清单。频道发布互斥，防止旧构建最后完成却覆盖新频道；更新下载页时复用同一份已验证发行记录。
 5. 从实际公网入口检查频道、安装包与官网的一致性，记录发布时间、操作者/工作流、前后频道版本和证据。仅内部测试通过不等同于已完成公网发布验收。
 
-本地现有构建命令仍见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。未来 release tag 可触发候选构建，stable 提升必须满足发布门槛；本次没有创建 CI、上传文件、购买证书或修改域名。
+本地现有构建命令仍见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。内部 Preview 的自动候选流程见 [CI](CI.md)，正式 stable 提升仍须满足发布门槛；候选 Actions artifact 不作为公开发行或更新频道。
 
 如果上传、签名或验收失败，频道保持原值；若提升后发现故障，立即停止继续推荐坏版本并核对 CDN 缓存。尚未升级的用户可继续使用原版本；已安装坏版本的用户发布**更高版本修复包**。降低频道指针只可能控制后续分发，不能当作已安装用户的自动回滚。不得覆盖原版本文件掩盖事故，也不默认启用强制降级。
 

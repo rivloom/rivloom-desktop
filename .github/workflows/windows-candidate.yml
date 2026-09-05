@@ -4,12 +4,17 @@ on:
   workflow_dispatch:
   push:
     tags: [ci-preview-v*]
+  workflow_run:
+    workflows: [Windows CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: windows-preview-candidate-${{ github.ref }}
+  group: windows-preview-candidate-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 defaults:
@@ -19,21 +24,35 @@ defaults:
 env:
   RUSTUP_TOOLCHAIN: 1.98.1
   CI: 'true'
+  RIVLOOM_CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  RIVLOOM_CANDIDATE_REF_TYPE: ${{ github.event_name == 'workflow_run' && 'branch' || github.ref_type }}
+  RIVLOOM_CANDIDATE_REF_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
 
 jobs:
   candidate:
     name: Build isolated UI Preview candidate
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: windows-2022
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ env.RIVLOOM_CANDIDATE_SHA }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.19.0
           architecture: x64
           package-manager-cache: false
+      - name: Require all Windows CI checks for this exact source commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci-candidate-gate.ts
       - name: Install fixed Rust toolchain and target
         run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
       - run: npm.cmd ci
@@ -63,16 +82,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Post-build runtime verification failed.' }
       - name: Record final candidate bytes and unchanged runtime
         run: node scripts/ci-candidate.ts record
+      - name: Prepare WebView2 only on this disposable GitHub runner
+        run: ./scripts/ci-webview2.ps1
+      - name: Verify isolated Preview install, startup and uninstall
+        run: ./scripts/preview-install-smoke.ps1 -ExpectedCommit $env:RIVLOOM_CANDIDATE_SHA
       - name: Upload only the candidate installer and bounded manifests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conversation-preview-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: conversation-preview-candidate-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             test-results/candidate/*.exe
             test-results/candidate/candidate-build.json
             test-results/candidate/runtime-manifest.json
             test-results/candidate/runtime-before.json
             test-results/candidate/runtime-after.json
+            test-results/candidate/ci-gate.json
+            test-results/candidate/preview-install.json
+            test-results/candidate/webview2.json
           if-no-files-found: error
           retention-days: 14
       - name: Preserve failed gate results without publishing a candidate
@@ -80,6 +106,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conversation-preview-candidate-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          path: test-results/candidate/runtime-*.json
+          path: |
+            test-results/candidate/runtime-*.json
+            test-results/candidate/ci-gate.json
+            test-results/candidate/preview-install.json
+            test-results/candidate/webview2.json
           if-no-files-found: warn
           retention-days: 14

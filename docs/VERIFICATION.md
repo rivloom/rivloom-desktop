@@ -2,6 +2,14 @@
 
 日期：2026-09-01 至 2026-09-05；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
+## 2026-09-05：Windows 云端 CI 失败诊断与修复
+
+视觉源码 `7c5a3f4` 首轮 10 jobs 中 5 成功、5 失败。`32bdc10` 修正路径断言并加入固定非敏感字节的诊断，结果 6 成功、4 失败；它确认正常继承环境可完成 DPAPI 往返，过滤后的测试环境在 Add-Type 阶段超时。`dd92730d337a5bcdab934bbcc936cd78f171e009` 仅保留系统 `PSModulePath` 并增加环境过滤反例测试后，三个工作流的 **10/10 jobs 全部成功**。
+
+对应 [Windows CI 33965432661](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432661)、[官方引擎 33965432663](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432663)、[发现回归 33965432674](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432674)。Protocol 11/11；纯 mDNS 与 UDP 各 1/1、0 skipped；Node P0 退出 0、未超时。四个独立 runner 的第三组对照只去掉 `PSModulePath`，均重新卡在 Add-Type 直到 15 秒超时；固定白名单均成功。诊断不创建身份、不打印输入、密文、环境值或任意 stderr。
+
+证据 `.data/verification/ci-dpapi-dd92730/summary.json` 绑定该完整 SHA、三份 run、十个 job 和有限诊断。之前失败分别留在 `.data/verification/desktop-visual-ci-7c5a3f4/summary.json` 与 `.data/verification/ci-dpapi-32bdc10/summary.json`。生产 `server/node-identity.ts`、目录校验与业务协议未修改；当前云端发现成功也不抹去本机历史纯 mDNS 失败，且不作为双物理机或新安装器验收。
+
 ## 2026-09-05：本地 CI Preview 候选构建与 runtime 门槛
 
 本地 `main` 已保存源码提交 **`86463bf286c6d488fe25e77d9b1e897d58506658`**。配置及最终记录检查点都确认该提交、干净工作树和固定工具链；`test-results/candidate/local-validation.json` 明确记录 **`environment: local`、`cloudRun: false`**，开始于 `2026-09-05T06:51:50.814Z`，结束于 `2026-09-05T07:01:08.120Z`。本段记录该源码产物，之后的文档补充不改变候选来源。

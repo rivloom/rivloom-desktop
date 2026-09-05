@@ -192,10 +192,11 @@ export function captureContext(root: string): CandidateContext {
       .split(/\s+/)[1]!;
   return {
     commit: git(['rev-parse', 'HEAD']),
-    expectedCommit: process.env.GITHUB_SHA || '',
+    expectedCommit: process.env.RIVLOOM_CANDIDATE_SHA || process.env.GITHUB_SHA || '',
     workingTree: git(['status', '--porcelain', '--untracked-files=all']) ? 'dirty' : 'clean',
-    refType: process.env.GITHUB_REF_TYPE as CandidateContext['refType'],
-    refName: process.env.GITHUB_REF_NAME || '',
+    refType: (process.env.RIVLOOM_CANDIDATE_REF_TYPE ||
+      process.env.GITHUB_REF_TYPE) as CandidateContext['refType'],
+    refName: process.env.RIVLOOM_CANDIDATE_REF_NAME || process.env.GITHUB_REF_NAME || '',
     node: process.versions.node,
     rust: version('rustc'),
     cargo: version('cargo'),

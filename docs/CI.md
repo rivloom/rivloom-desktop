@@ -1,8 +1,16 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
-更新日期：2026-09-05。本文记录桌面工作流与本地验证；**本轮本地 Preview 候选构建与前后 runtime 门槛已通过，桌面四份工作流尚未推送或在 GitHub Actions 云 runner 执行**。原生安装、签名、公开上传和 updater 仍按 [实施计划](plans/2026-09-05-website-ci-cd-and-updates.md) 与 [RELEASING](RELEASING.md) 分别验收。
+更新日期：2026-09-05。桌面工作流已推送并实际在 GitHub Actions 执行。当前 CI 修复与自动预览安装包交付见 [本轮计划](plans/2026-09-05-windows-ci-and-preview-installer.md)；各次失败与通过按源码提交分别记录，不能用本地构建或官网 CI 代替桌面云端结果。公开签名发行和 updater 仍按 [RELEASING](RELEASING.md) 分别验收。
 
-## 最新本地候选验证（2026-09-05）
+## 本轮 Windows CI 修复结果
+
+`dd92730d337a5bcdab934bbcc936cd78f171e009` 的三份云端工作流、10 个 jobs 已全部成功：[Windows CI](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432661)、[官方引擎服务](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432663)、[mDNS / UDP](https://github.com/rivloom/rivloom-desktop/actions/runs/33965432674)。协议 11/11，mDNS 与 UDP 各 1/1、零跳过；这仍是同机云 runner 检查，不替代双物理机验收。
+
+路径失败来自测试将规范长路径与 Windows 8.3 输入别名直接比较；修正测试预期并补目录别名、普通文件和缺失目录回归，产品目录校验未改。其余云端失败来自测试环境过滤掉 `PSModulePath`，使 Windows PowerShell 卡在 `Add-Type -AssemblyName System.Security`，尚未进入加密。四个独立 runner 的非敏感对照均显示：继承环境成功、修复后白名单成功、仅删去该变量又在 Add-Type 阶段 15 秒超时。修复只保留该系统变量，签名、加密和测试通过条件未变，凭据仍被过滤。
+
+原始 `7c5a3f4`（5/10）、诊断 `32bdc10`（6/10）和修复 `dd92730`（10/10）的摘要分别保留在 `.data/verification/desktop-visual-ci-7c5a3f4/`、`ci-dpapi-32bdc10/`、`ci-dpapi-dd92730/`。临时负对照已从常规诊断移除；保留两组有限观察。后续新增候选打包逻辑须按它自己的源码和云端结果验收，不能直接沿用本段通过结论。
+
+## 首轮本地候选验证（2026-09-05，历史检查点）
 
 源码为本地 `main` 的干净提交 `86463bf286c6d488fe25e77d9b1e897d58506658`，配置和最终记录均核对同一源码与工具链。`local-validation.json` 明确记录 `environment: local`、`cloudRun: false`。Node 24.19.0、Rust/Cargo 1.98.1 均已实际核对；新增固定 Rust 工具链没有改变默认 stable。配置、构建前 runtime gate、Tauri Release/NSIS、构建后 gate 和候选记录全部通过；Release 编译耗时 2m 53s，NSIS 构建退出 0，日志 `.data/verification/ci-local-native-build.log`。
 
@@ -20,13 +28,13 @@
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、session 崩溃窗口  | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`：手动或 `ci-preview-v<应用版本>` tag 触发，只构建独立 UI Preview 候选，不发布。
+另有 `.github/workflows/windows-candidate.yml`：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-preview-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；只交付独立 UI Preview 安装候选，不公开发布。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
 Rust pin 已包含 2026-09-03 官方补丁对 1.98.0 vtable 误编译的修复；随该工具链发布的 Cargo CLI 版本由 bootstrap 的 `CFG_RELEASE` 决定，不能拿 Cargo crate 的 `0.99.0` 版本推算。最初选型检查点只核对官方发布与源码；随后已完成固定工具链安装、真实版本检查和上方本地原生构建，默认 stable 未改变。[Rust 1.98.1 公告](https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/)、[Cargo 版本逻辑](https://github.com/rust-lang/cargo/blob/797e8a9bca276c1c9f9f738d2a20f484fa4eea9d/src/cargo/version.rs)、[Rust bootstrap](https://github.com/rust-lang/rust/blob/1.98.1/src/bootstrap/src/core/build_steps/tool.rs)
 
-工作流只有 `contents: read`，checkout 不持久保存 Git 凭据，无签名密钥、模型账号或公开存储写凭据。不使用 `pull_request_target` 或有权限的 `workflow_run` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
+测试工作流只有 `contents: read`；候选工作流额外使用 `actions: read` 查询同提交检查，读取 token 仅提供给门禁步骤。checkout 不持久保存 Git 凭据，无签名密钥、模型账号或公开存储写凭据。候选的 `workflow_run` 严格限于本仓库 main push，不通过它或 `pull_request_target` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
 
 GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、commit、镜像名称与版本。固定 runner 标签与锁文件能改善可追溯性，不承诺不同机器的输出天然逐字节一致。[GitHub runner 说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 
@@ -63,7 +71,7 @@ GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、com
 
 包装器先在 `test-results/ci-workspaces/` 建立唯一工作副本，只复制当前源码与已构建的 `dist`，依赖从包含它的仓库解析。它不复制已有 `.data`、随包 runtime、身份或凭据，也不覆盖旧验证报告。现有测试需要的 `.data/verification` 父目录只在新副本中创建。
 
-子进程环境仅保留系统运行所需变量，重新设置隔离数据根；不继承 `RIVLOOM_MODEL`、`NODE_OPTIONS`、GitHub token 或提供方 API Key。测试进程正常退出前按原夹具关闭自有服务；超时只按本包装器拥有的 PID 停止进程树，结果为失败。若本机受限环境拒绝树级停止，包装器停止自己的子进程并明确记录 `child-only`，不能声称完成整个进程树清理。
+子进程环境仅保留系统运行所需变量（包括 PowerShell 模块发现所需的 PSModulePath），重新设置隔离数据根；不继承 `RIVLOOM_MODEL`、`NODE_OPTIONS`、GitHub token 或提供方 API Key。测试进程正常退出前按原夹具关闭自有服务；超时只按本包装器拥有的 PID 停止进程树，结果为失败。若本机受限环境拒绝树级停止，包装器停止自己的子进程并明确记录 `child-only`，不能声称完成整个进程树清理。
 
 `test:integration`、`engine:probe`、原生 WebView/UI、安装器与双物理机验收不在这些自动 PR job 中：它们的真实模型、桌面和安装前置条件单独管理，不能冒用历史报告作为新包证明。
 
@@ -101,15 +109,17 @@ CI 自检包含真实故意失败/skip/空选择的子测试，以及非零退�
 
 候选 job 只接受 `conversation-preview`，identifier 固定为 `com.rivloom.conversationpreview`。它检查 package、npm lock、Cargo、Cargo lock、Tauri 的版本一致性，要求干净源码、完整 commit 与 GitHub 请求的 commit 相符；tag 必须为精确的 `ci-preview-v<应用版本>`。不存在把 Preview 改名为 formal/stable 的输入选项。
 
-流水线按以下顺序执行：锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile conversation-preview`；运行 `ci-verify-runtime.ts --profile conversation-preview`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
+自动触发取 `workflow_run.head_sha`，checkout、候选预期 commit、ref 与产物名称统一绑定该 SHA。不能把该事件中的默认分支最新 `github.sha` 当作触发源码。只接受同仓库 main 的 push 成功事件；手动/tag 构建同样必须通过精确源码 CI 门禁。`ci-candidate-gate.ts` 查询三份工作流的最新 run/attempt，不筛选旧成功结果，不接受其他分支、PR、其他仓库、取消、跳过或缺失检查。最多等待 22 分钟，将检查时间、运行链接与结果写入 `ci-gate.json`；失败时停止打包。构建前通过是该时间点的检查快照。仅重跑另外两份工作流不会再自动触发候选，可在修复检查后重跑 Windows CI 或手动运行候选。[GitHub workflow_run 语义](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+
+流水线按以下顺序执行：精确源码的全 CI 门禁；锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile conversation-preview`；运行 `ci-verify-runtime.ts --profile conversation-preview`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
 
 文件树摘要包含每个相对路径、文件/目录类型、文件字节数和 SHA256，覆盖 server、shared、dist 与依赖文件，也包含空文件和空目录。测量拒绝链接、junction、非普通文件、超过 50,000 个条目或 8 GiB 的树，并检查读取期间的文件身份、大小与修改时间；只输出聚合摘要、文件/目录数和总字节数，不上传文件列表或 runtime 内容。这里比较的是构建前后状态，未声称观测了构建期间每个瞬间。
 
 Tauri 仅在本次 CLI 合并生成的配置，把已执行的 `beforeBuildCommand` 和 `beforeBundleCommand` 置空，防止门槛之后再次准备/改动 runtime。构建显式使用固定目标、`--locked`、`--no-sign`，并关闭 updater artifacts；源配置、正式 app 版本和原安装数据不被这份临时配置修改。参数先对照锁定的 Tauri CLI help/schema 与[官方 CLI 文档](https://v2.tauri.app/reference/cli/)检查，随后已按上方本地记录完成一次真实 NSIS 构建；初始静态检查不再是当前验证停点。
 
-成功后只上传最终 NSIS、候选构建清单、runtime manifest 与前后两份只读检查报告；失败时只保留 gate 报告，不上传候选安装器。该 Actions artifact 是内部待验收候选，不是 GitHub Release、公开下载、签名产品或更新频道。清单明确记录签名未请求/未验证、未发布、无频道和 URL；它也不是公开发行记录或 Tauri updater 清单。
+构建完成后运行独立 Preview 安装检查，验证候选与已安装资源、实际桌面启动、随包官方引擎以及卸载后的隔离数据保留。使用新的 test-results 子目录和 Preview 产品安装元数据；已有 Rivloom 进程时拒绝执行。安装结果单列于 preview-install.json，候选构建清单自身不冒充安装验收。成功后只上传最终 NSIS、候选构建清单、runtime manifest、前后 runtime 报告、ci-gate.json 与 preview-install.json；失败时只保留有限验证报告，不上传候选安装器。该 Actions artifact 是内部待验收候选，不是 GitHub Release、公开下载、签名产品或更新频道。清单明确记录签名未请求/未验证、未发布、无频道和 URL；它也不是公开发行记录或 Tauri updater 清单。
 
-候选 job 不把基础测试或纯 mDNS 的已知失败改写成通过。它检查的是源码/版本、runtime/许可和候选字节的构建门槛；NSIS 内容独立解包由额外验证执行，本轮本地结果已记在上方，原生安装、更新与物理机验收仍未完成。候选 helper 的本地测试使用合成 PE 头验证拒绝逻辑和字节记录，不把该测试文件当作安装器。
+候选 job 不把基础测试或发现测试的失败改写成通过。源码/版本、runtime/许可、候选字节与隔离安装分别核对；每次是否完成以该候选所附报告为准。上方本地历史解包报告仅覆盖其对应旧文件，不能替代新包验证。当前流程不声明自动更新或双物理机验收完成。候选 helper 的本地测试使用合成 PE 头验证拒绝逻辑和字节记录，不把该测试文件当作安装器。
 
 ## Actions 与工作流验证来源
 

@@ -147,6 +147,7 @@ fn start_runtime(
         "WINDIR",
         "COMSPEC",
         "PATHEXT",
+        "PSModulePath",
         "USERPROFILE",
         "APPDATA",
         "LOCALAPPDATA",
