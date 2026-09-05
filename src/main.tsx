@@ -36,7 +36,7 @@ function Auth({ onLogin }: { onLogin: () => void }) {
     <div className="auth-shell">
       <div className="auth-story">
         <a className="brand">
-          <Mark />
+          <Mark variant="white" />
           rivloom<span>PREVIEW</span>
         </a>
         <div className="auth-copy">

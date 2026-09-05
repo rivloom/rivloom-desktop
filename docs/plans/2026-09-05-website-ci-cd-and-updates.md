@@ -8,7 +8,7 @@
 
 **Tech Stack:** GitHub / GitHub Actions；现有 Tauri 2、Node 24.19.0、官方 OpenCode；官网已采用 Astro + TypeScript 静态生成。用户已确认 Cloudflare 面向中国大陆与海外、官网域名 `rivloom.com`，暂不增加国内专用 CDN；R2 下载存储与签名方式仍待落实。
 
-**状态：** 2026-09-05 官网已在 [rivloom.com](https://rivloom.com) 部署，SSL 活动；本轮源码 `9a7bd94` 已推送，[官网 GitHub CI 33955696338](https://github.com/rivloom/rivloom-website/actions/runs/33955696338) 与 Cloudflare Pages 部署均通过。正式域及桌面、移动端页面检查已通过。官网按用户授权保留 Cloudflare RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；CSP、隐私说明与生产索引指令已完成本轮验证，统计面板收到一个自然浏览样本。允许抓取与收录不代表搜索引擎已经实际收录。候选验证记录已在 `d0ffd4c` 提交，基于源码 `86463bf` 的 CI Preview 候选包已完成本地验证；桌面推送和云端 CI 仍待用户授权。安装包尚未公开发行，应用内更新尚未完成。承接 [RELEASING](../RELEASING.md)、[ADR-0006](../adr/0006-website-distribution-and-safe-updates.md)，不重复定义其安全升级与兼容标准。
+**状态：** 2026-09-05 官网已在 [rivloom.com](https://rivloom.com) 部署，SSL 活动；本轮源码 `9a7bd94` 已推送，[官网 GitHub CI 33955696338](https://github.com/rivloom/rivloom-website/actions/runs/33955696338) 与 Cloudflare Pages 部署均通过。正式域及桌面、移动端页面检查已通过。官网按用户授权保留 Cloudflare RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；CSP、隐私说明与生产索引指令已完成本轮验证，统计面板收到一个自然浏览样本。允许抓取与收录不代表搜索引擎已经实际收录。候选验证记录已在 `d0ffd4c` 提交，基于源码 `86463bf` 的 CI Preview 候选包已完成本地验证；桌面推送和云端 CI 已获本轮用户授权，云端结果按实际推送提交核对。安装包尚未公开发行，应用内更新尚未完成。承接 [RELEASING](../RELEASING.md)、[ADR-0006](../adr/0006-website-distribution-and-safe-updates.md)，不重复定义其安全升级与兼容标准。
 
 ## 1. 仓库与目录建议
 
@@ -61,7 +61,7 @@ GitHub 私有仓库的 environments 和 required reviewers 可用性受套餐限
 
 ## 4. 阶段 B：桌面 CI 与可复现候选包
 
-**当前进展：** 四份 Windows workflow、明确测试分层、版本/许可/运行时门禁和候选记录已实现；基于源码 `86463bf` 的 CI Preview 已完成本地运行时前后门禁、原生构建、候选记录与独立 NSIS 解包核对。候选验证记录已在 `d0ffd4c` 提交，桌面推送与云端 CI 仍待用户授权，没有桌面云端通过结论。该候选包未安装、签名或公开发行，纯 mDNS 已知失败仍保留。证据见 [CI](../CI.md)、[CI-RUNTIME](../CI-RUNTIME.md) 和 [VERIFICATION](../VERIFICATION.md)。
+**当前进展：** 四份 Windows workflow、明确测试分层、版本/许可/运行时门禁和候选记录已实现；基于源码 `86463bf` 的 CI Preview 已完成本地运行时前后门禁、原生构建、候选记录与独立 NSIS 解包核对。候选验证记录已在 `d0ffd4c` 提交，桌面推送与云端 CI 已获本轮用户授权，此前本地验证不代表新增云端结果。该候选包未安装、签名或公开发行，纯 mDNS 已知失败仍保留。证据见 [CI](../CI.md)、[CI-RUNTIME](../CI-RUNTIME.md) 和 [VERIFICATION](../VERIFICATION.md)。
 
 **实施范围与验收清单：** `package.json`、测试入口、`scripts/desktop-prepare.ts`、许可检查、`scripts/desktop-install-smoke.ps1`，以及 `.github/workflows/ci.yml`、`windows-services.yml`、`lan-regression.yml`、`windows-candidate.yml`。下列条目同时包含已实现要求和后续安装/云端验收，不表示均已完成。
 
@@ -128,4 +128,4 @@ GitHub 私有仓库的 environments 和 required reviewers 可用性受套餐限
 
 第一轮可评审交付：两个仓库职责明确、官网视觉与可浏览预览、桌面基础 CI 和可追溯候选包。第二轮交付下载/CD，第三轮完成真实应用内更新。用户已由规划转为实施；本地源码、云端 CI、公开网站、安装包发行和客户端更新分别记录，不以任一环节完成替代其他验收。
 
-域名、托管方向和首批地区已确认；官网 GitHub 仓库为私有，Cloudflare 仓库连接、部署及正式域名验证已完成。官网按用户授权保留 RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；本轮 CSP、隐私说明、单个统计接收样本及生产抓取/收录指令均已复核。桌面推送及云端 CI 仍待用户授权。后续仍需落实下载存储、正式发行签名与密钥保管方式，并核对 GitHub 分支/环境保护能力。现有本机预览和正式客户端数据均保留。
+域名、托管方向和首批地区已确认；官网 GitHub 仓库为私有，Cloudflare 仓库连接、部署及正式域名验证已完成。官网按用户授权保留 RUM 统计，已核实设置为“启用，排除欧盟的访问者数据”；本轮 CSP、隐私说明、单个统计接收样本及生产抓取/收录指令均已复核。桌面推送及云端 CI 已获本轮用户授权，云端结果按实际推送提交核对。后续仍需落实下载存储、正式发行签名与密钥保管方式，并核对 GitHub 分支/环境保护能力。现有本机预览和正式客户端数据均保留。

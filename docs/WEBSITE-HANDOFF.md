@@ -37,7 +37,7 @@ M3.5 A–D 已完成工程交付，包括草稿稳定目标、创建幂等、自
 
 当前供本机检查的文档修订预览为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装；它是独立 Preview 身份，不直接作为正式 stable/beta 下载发布。精确大小、哈希和历史证据以 `docs/UI-HANDOFF.md`、`docs/VERIFICATION.md` 为准。
 
-候选验证记录已在 `d0ffd4c` 提交；基于源码 `86463bf` 的 CI Preview 候选包已完成本地运行时前后门禁、原生构建、候选记录和独立 NSIS 解包核对，仍未安装、签名或公开发行。候选包不自动替代上述功能交付预览。桌面仓库推送和云端 CI 运行仍待用户授权，不能把本地验证或官网 CI 通过写成桌面云端 CI 通过；证据见 [CI](C:/project/rivloom-opencode/docs/CI.md)、[VERIFICATION](C:/project/rivloom-opencode/docs/VERIFICATION.md)。
+候选验证记录已在 `d0ffd4c` 提交；基于源码 `86463bf` 的 CI Preview 候选包已完成本地运行时前后门禁、原生构建、候选记录和独立 NSIS 解包核对，仍未安装、签名或公开发行。候选包不自动替代上述功能交付预览。桌面仓库推送和云端 CI 运行已获本轮用户授权，云端结果按实际推送提交核对，不能把本地验证或官网 CI 通过写成桌面云端 CI 通过；证据见 [CI](C:/project/rivloom-opencode/docs/CI.md)、[VERIFICATION](C:/project/rivloom-opencode/docs/VERIFICATION.md)。
 
 ## 官网和发布计划
 

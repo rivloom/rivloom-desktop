@@ -20,7 +20,6 @@ import {
   PanelLeft,
   FileCode2,
   Bot,
-  Sparkles,
   ShieldCheck,
   ChevronRight,
   AtSign,
@@ -50,7 +49,7 @@ import {
   type ConversationDraft,
   type ConversationRouting,
 } from './conversation-drafts';
-import { Button, Field, Modal } from './ui';
+import { Button, Field, Mark, Modal, Wordmark } from './ui';
 import {
   conversations,
   conversationState,
@@ -879,7 +878,7 @@ export function ConversationWorkspace({
             <ChevronRight size={14} />
           </button>
           <div className="sidebar-signature">
-            <span className="rivloom-wordmark">rivloom</span>
+            <Wordmark />
             <small>0.1.3</small>
           </div>
         </nav>
@@ -1166,7 +1165,7 @@ export function ConversationWorkspace({
               ) : (
                 <div className="blank-conversation">
                   <span className="blank-mark">
-                    <Sparkles size={30} strokeWidth={1.3} />
+                    <Mark />
                   </span>
                   <span className="blank-eyebrow">RIVLOOM</span>
                   <h1>{awaitingCreatedConversation ? '会话已保存' : '今天，想完成什么？'}</h1>
