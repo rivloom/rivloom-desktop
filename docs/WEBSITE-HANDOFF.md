@@ -4,13 +4,13 @@
 
 ## 目标与仓库边界
 
-当前正在设计和上线 Rivloom 官网、建立 Git CI/CD，并为客户端安全更新准备发行基础。用户已创建官网仓库，本任务已将其克隆并开始首版实现；托管上线、正式下载和应用内更新按各自验证结果推进。
+Rivloom 官网首版已部署到 [rivloom.com](https://rivloom.com)，独立网站 CI 已有通过记录；桌面候选包已完成本地验证。官网隐私配置、正式下载和应用内更新仍按各自验证结果推进，不以网站上线替代发行或升级验收。
 
-| 范围 | 位置与职责 |
-| --- | --- |
-| 桌面客户端 | 现有 `rivloom/rivloom-desktop`；`C:/project/rivloom-opencode`。负责桌面 UI、本地服务、Node 协作、安装包、客户端更新与桌面发布流水线。 |
-| 官网 | 已建 `rivloom/rivloom-website`，已克隆到 `C:/project/rivloom-website`。独立 Git 仓库，负责产品介绍、下载、公开文档、更新日志和网站部署。 |
-| 发行产物 | 独立下载存储/CDN，提供不可变安装包、签名、哈希和版本记录；不把安装包提交进官网源码。 |
+| 范围       | 位置与职责                                                                                                                               |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 桌面客户端 | 现有 `rivloom/rivloom-desktop`；`C:/project/rivloom-opencode`。负责桌面 UI、本地服务、Node 协作、安装包、客户端更新与桌面发布流水线。    |
+| 官网       | 已建 `rivloom/rivloom-website`，已克隆到 `C:/project/rivloom-website`。独立 Git 仓库，负责产品介绍、下载、公开文档、更新日志和网站部署。 |
+| 发行产物   | 独立下载存储/CDN，提供不可变安装包、签名、哈希和版本记录；不把安装包提交进官网源码。                                                     |
 
 官网目录与桌面目录并列，不在桌面仓库里嵌套另一个 Git 仓库。桌面 `src/` 和 `dist/` 是 WebView 应用，不是可直接上线的官网。
 
@@ -37,13 +37,19 @@ M3.5 A–D 已完成工程交付，包括草稿稳定目标、创建幂等、自
 
 当前供本机检查的文档修订预览为 `.data/distribution/Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装；它是独立 Preview 身份，不直接作为正式 stable/beta 下载发布。精确大小、哈希和历史证据以 `docs/UI-HANDOFF.md`、`docs/VERIFICATION.md` 为准。
 
+候选验证记录已在 `d0ffd4c` 提交；基于源码 `86463bf` 的 CI Preview 候选包已完成本地运行时前后门禁、原生构建、候选记录和独立 NSIS 解包核对，仍未安装、签名或公开发行。候选包不自动替代上述功能交付预览。桌面仓库推送和云端 CI 运行仍待用户授权，不能把本地验证或官网 CI 通过写成桌面云端 CI 通过；证据见 [CI](C:/project/rivloom-opencode/docs/CI.md)、[VERIFICATION](C:/project/rivloom-opencode/docs/VERIFICATION.md)。
+
 ## 官网和发布计划
 
 官网已采用 Astro + TypeScript 静态站。用户确认域名为 `rivloom.com`，Cloudflare 同时面向中国大陆与海外，暂不增加国内专用 CDN；R2 下载存储仍待配置。首期页面包括主页、工作方式、Windows 下载状态、快速开始、更新日志、安全与隐私、反馈入口。使用已检查的真实客户端预览图，并注明演示任务。
 
 网站与桌面分别运行 CI/CD。下载页与客户端更新源共用已发布版本记录，不在两个仓库手工维护两份版本信息。当前 0.1.3 尚无 updater：计划先手动升级到首个带 updater 的正式版本，再验证后续应用内升级；实现仍在桌面仓库。
 
-推进顺序：A 确认公开范围、账户和版本约定；B 桌面 CI 与 C 官网设计/网站 CI 可并行；D 完成下载与发行 CD；E 完成客户端退出、数据迁移和真实升级验证。首版官网提交 `f58049f` 已推送，9页静态构建、234个本地引用及13项发行目录测试通过。首次云 CI 因锁文件缺少跨平台依赖而失败；修复提交 `edd51ed` 已通过 Linux x64 的 `npm ci --dry-run`，推送及后续云验证进行中。用户已明确授权 Cloudflare 仅访问官网仓库并继续部署、绑定 `rivloom.com`；已完成 GitHub 二次验证并确认组织连接。正式签名与密钥保管仍待落实。官网当前实现和验证见其 `docs/IMPLEMENTATION.md`。
+推进顺序：A 确认公开范围、账户和版本约定；B 桌面 CI 与 C 官网设计/网站 CI 可并行；D 完成下载与发行 CD；E 完成客户端退出、数据迁移和真实升级验证。官网仓库为 `rivloom/rivloom-website`，本机位于 `C:/project/rivloom-website`。Cloudflare Pages 项目 `rivloom-website` 已通过 Git 集成部署 `main`，构建命令为 `npm run build:cloudflare`，输出目录为 `dist`；正式域名 [rivloom.com](https://rivloom.com) 已部署，SSL 状态为活动。首次 Cloudflare 部署使用源码 `a1b571b`，对应的 [官网 GitHub CI 33951987521](https://github.com/rivloom/rivloom-website/actions/runs/33951987521) 已通过；更早的提交 `edd51ed` 已取得首次绿色 [CI 33950924916](https://github.com/rivloom/rivloom-website/actions/runs/33950924916)。锁文件导致的失败是此前历史记录。
+
+正式域验收已通过：DNS/TLS、8 条页面路由返回 200、未知路径返回 404、响应头和 8 项静态资源抽样；浏览器检查覆盖桌面以及 390px 移动端的首页、菜单、下载页和 FAQ。DNS/TLS 结果来自当前 Windows 网络与系统、1.1.1.1、8.8.8.8 查询，不代表全球传播或中国大陆访问性能已经全面验证。
+
+站点仍保持 `noindex`，`site.config.json` 中 `productionIndexing` 为 `false`。官网收尾仍待获准关闭 RUM 并复核，然后开启正式收录。Cloudflare 自动注入的 RUM beacon 当前被浏览器 CSP 阻止；自动审批要求对此隐私相关设置取得明确授权，已询问用户，等待回复。不能宣称官网全部闭环、零分析脚本或已经开启索引。下载存储、正式签名与密钥保管仍属于后续发行工作。官网实现与实测记录见 [IMPLEMENTATION](C:/project/rivloom-website/docs/IMPLEMENTATION.md)。
 
 ## 从哪里恢复详细背景
 
