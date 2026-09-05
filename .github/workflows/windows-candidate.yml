@@ -125,6 +125,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    outputs:
+      artifact-id: ${{ steps.upload_release.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,10 +149,63 @@ jobs:
           RIVLOOM_CANDIDATE_ARTIFACT_ID: ${{ needs.candidate.outputs.artifact-id }}
         run: node scripts/ci-preview-release.ts
       - name: Preserve the bounded release result
+        id: upload_release
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conversation-preview-release-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: test-results/preview-release/release.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  website-download:
+    name: Publish the same Preview to the website
+    needs: [candidate, publish]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: public-preview-download
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ env.RIVLOOM_CANDIDATE_SHA }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Download the exact installed candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.candidate.outputs.artifact-id }}
+          path: test-results/candidate
+          digest-mismatch: error
+      - name: Download the successful publication record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publish.outputs.artifact-id }}
+          path: test-results/preview-release
+          digest-mismatch: error
+      - name: Verify public download and update the website
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RIVLOOM_CANDIDATE_ARTIFACT_ID: ${{ needs.candidate.outputs.artifact-id }}
+          RIVLOOM_R2_ACCOUNT_ID: ${{ vars.RIVLOOM_R2_ACCOUNT_ID }}
+          RIVLOOM_R2_BUCKET: ${{ vars.RIVLOOM_R2_BUCKET }}
+          RIVLOOM_R2_ACCESS_KEY_ID: ${{ secrets.RIVLOOM_R2_ACCESS_KEY_ID }}
+          RIVLOOM_R2_SECRET_ACCESS_KEY: ${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}
+          RIVLOOM_PAGES_DEPLOY_HOOK: ${{ secrets.RIVLOOM_PAGES_DEPLOY_HOOK }}
+        run: node scripts/ci-website-download.ts
+      - name: Preserve the bounded website download result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conversation-preview-website-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/website-download/result.json
           if-no-files-found: warn
           retention-days: 14

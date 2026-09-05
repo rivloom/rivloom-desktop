@@ -28,13 +28,13 @@
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、session 崩溃窗口  | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-preview-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选构建与安装验收通过后，独立发布 job 自动创建 GitHub Preview Release。
+另有 `.github/workflows/windows-candidate.yml`：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-preview-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选构建与安装验收通过后，独立发布 job 自动创建 GitHub Preview Release，随后 `website-download` job 将同一安装包同步至官网公开下载存储。当前公开同步的接通状态见[下文](#同步-preview-到官网公开下载)。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
 Rust pin 已包含 2026-09-03 官方补丁对 1.98.0 vtable 误编译的修复；随该工具链发布的 Cargo CLI 版本由 bootstrap 的 `CFG_RELEASE` 决定，不能拿 Cargo crate 的 `0.99.0` 版本推算。最初选型检查点只核对官方发布与源码；随后已完成固定工具链安装、真实版本检查和上方本地原生构建，默认 stable 未改变。[Rust 1.98.1 公告](https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/)、[Cargo 版本逻辑](https://github.com/rust-lang/cargo/blob/797e8a9bca276c1c9f9f738d2a20f484fa4eea9d/src/cargo/version.rs)、[Rust bootstrap](https://github.com/rust-lang/rust/blob/1.98.1/src/bootstrap/src/core/build_steps/tool.rs)
 
-测试工作流只有 `contents: read`；候选构建额外使用 `actions: read` 查询同提交检查，读取 token 仅提供给门禁步骤。只有依赖候选成功的发布 job 获得 `contents: write` 和 `actions: read`，写 token 仅显式提供给发布脚本步骤，发布 job 不安装 npm 依赖或运行安装器。checkout 不持久保存 Git 凭据，无签名密钥、模型账号或公开存储写凭据。候选的 `workflow_run` 严格限于本仓库 main push，不通过它或 `pull_request_target` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
+测试工作流只有 `contents: read`；候选构建额外使用 `actions: read` 查询同提交检查，读取 token 仅提供给门禁步骤。只有依赖候选成功的 `publish` job 获得 `contents: write` 和 `actions: read`，写 token 仅显式提供给发布脚本步骤。`website-download` 依赖候选与发布均成功，GitHub 权限只有 `contents: read`、`actions: read`；R2 对象读写凭据与 Pages Hook 只提供给该 job 的同步步骤。两个后续 job 均不安装 npm 依赖或运行安装器，所有 checkout 不持久保存 Git 凭据。测试和候选构建不获得公开存储写凭据；本流程不配置签名密钥或模型账号。候选的 `workflow_run` 严格限于本仓库 main push，不通过它或 `pull_request_target` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
 
 GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、commit、镜像名称与版本。固定 runner 标签与锁文件能改善可追溯性，不承诺不同机器的输出天然逐字节一致。[GitHub runner 说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 
@@ -136,6 +136,34 @@ Tauri 仅在本次 CLI 合并生成的配置，把已执行的 `beforeBuildComma
 按 tag 的 REST 查询只返回已发布 Release，草稿重试需额外查询精确标签。已存在 tag 时 GitHub 会忽略 `target_commitish`，因此必须独立核验标签指向。若 main 前进且修改了工作流，GitHub 可能拒绝普通 Actions token 为含不同工作流的历史提交创建标签；此时发布失败并保留记录，不改用最新 main 冒充候选源码。[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)
 
 仓库当前为私有仓库，Release 下载仍要求有仓库访问权限。自动发布不改变仓库可见性，不配置 Windows 签名或客户端自动更新。此前手工发布的 [Preview 0.1.3 / 2ac60df](https://github.com/rivloom/rivloom-desktop/releases/tag/preview-v0.1.3-2ac60df) 保留原有文件。
+
+## 同步 Preview 到官网公开下载
+
+`windows-candidate.yml` 的 `website-download` job 在 `candidate` 与 `publish` 均成功后运行 `scripts/ci-website-download.ts`。它 checkout 同一完整源码 SHA，分别按两个上游上传步骤输出的 artifact ID 下载候选和 `release.json`，放在各自目录，摘要不匹配立即失败。同步脚本再次核对干净源码、候选安装器与 CI/安装/runtime 证据，再通过 GitHub 只读 API 核对实际已发布的 Preview Release、两个附件的大小和 SHA-256、标签与源码指向。不会重新构建安装器，也不会将失败或草稿 Release 同步到公开入口。
+
+桌面仓库 Actions 配置使用以下名称，值只由工作流注入同步步骤：
+
+| 类型 | 名称 | 用途与范围 |
+| --- | --- | --- |
+| Variable | `RIVLOOM_R2_ACCOUNT_ID` | 下载桶所属 Cloudflare 账户 ID |
+| Variable | `RIVLOOM_R2_BUCKET` | 专属桶名 `rivloom-downloads` |
+| Secret | `RIVLOOM_R2_ACCESS_KEY_ID` | 限该桶对象读写的 R2 S3 Access Key ID |
+| Secret | `RIVLOOM_R2_SECRET_ACCESS_KEY` | 对应的 R2 S3 Secret Access Key |
+| Secret | `RIVLOOM_PAGES_DEPLOY_HOOK` | 为 `rivloom-website` 项目的 `main` 分支创建的 Deploy Hook URL |
+
+`GITHUB_TOKEN` 使用该 job 的只读临时 token；`RIVLOOM_CANDIDATE_ARTIFACT_ID` 来自候选上传输出，不手工挑选其他运行的产物。Hook 完整 URL 是秘密，不写入文档、报告、源码或官网。官网构建只读取公开 JSON，不持有 GitHub 或 R2 凭据。两个源码仓库继续保持私有。
+
+公开文件固定放在 `https://downloads.rivloom.com/previews/<完整 Preview 标签>/`，仅包含 `Rivloom-UI-Preview_<版本>_x64-setup.exe` 和 `SHA256SUMS.txt`。同一路径的文件不可覆盖：首次上传使用 `If-None-Match: *`，已有对象必须具有相同长度和 SHA-256 元数据。随后匿名完整 GET 两个公开文件，核对实际字节数与 SHA-256；只看到上传成功、HEAD 或哈希元数据不算通过。文件按一年 immutable 缓存交付；安装包、内部验证报告和桌面源码不进入官网 Git 或 Pages `dist`。
+
+两个公开文件验证通过后，才推进 `previews/latest.json`。这是独立的 `rivloom-preview-download` 记录，绑定版本、源码、构建、Release、不可变 URL、大小、SHA-256 与验收状态，明确 `conversation-preview` / `com.rivloom.conversationpreview`、未签名和未配置 updater。它不是 stable/beta 的发行记录或 Tauri updater 清单，不能让已安装客户端自动更新。
+
+全仓库 `public-preview-download` 并发组不取消正在执行的同步；写入 latest 还使用条件更新（CAS）：首次写入要求对象不存在，替换要求 `If-Match` 匹配刚读取的强 ETag。409/412 后重新读取并重新判断，最多尝试四次。不同源码只允许 GitHub compare 证明为原源码后代的构建前进；落后或分叉的源码不提升。同一源码按 artifact ID 判断，较旧构建不覆盖较新构建，相同 artifact 必须完整绑定一致才可复用。防回退不依赖任务完成时间或应用版本字符串。
+
+latest 使用 `no-store`；脚本匿名读取公开 latest 并核对完整记录后，才 POST 上述 Pages main Hook。官网 `build:cloudflare` 在生产 main 再读取并严格校验该固定公开 JSON 后构建；生产 404、超时、重定向或无效记录都会阻止新部署。Hook 返回成功只表示触发请求成功，仍须检查实际 Pages 构建结果和线上下载页是否与记录一致。
+
+同步结果保存为 `test-results/website-download/result.json`，`if: always()` 上传有限报告并保留 14 天。上传或公开文件校验失败时不推进 latest；旧构建记录为 `superseded`，不改指针、不触发 Hook。latest 已推进后若公开 latest 核对或 Hook 失败，报告保留失败阶段，不自动回退对象；重跑同一同步可复用相同文件和记录并重新核验、触发部署，无需重发 GitHub Release。公开 URL 中只有发行标识和文件信息，不携带仓库凭据或私有报告。
+
+**当前接通状态（2026-09-05）：** 专属 R2 桶 `rivloom-downloads` 已创建，`downloads.rivloom.com` 自定义域活动，最低 TLS 为 1.2；工作流、同步脚本与官网消费逻辑已实现。实际 Actions 凭据、Pages main Hook、首轮同步 job、公开文件字节校验与最终 Pages 部署仍待验证，不能将桶或域名活动视为公开下载已经完成。
 
 ## Actions 与工作流验证来源
 
