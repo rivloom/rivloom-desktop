@@ -18,7 +18,7 @@
     "test": "node --test tests/security.test.ts tests/node-network.test.ts tests/remote-task-clock.test.ts tests/http-ports.test.ts tests/engine-ports.test.ts tests/physical-resume.test.ts tests/physical-race.test.ts tests/conversations.test.ts tests/node-profile.test.ts tests/node-mentions.test.ts tests/conversation-drafts.test.ts tests/directed-node-tasks.test.ts tests/node-queue.test.ts tests/node-queue-recovery.test.ts tests/node-queue-controls.test.ts tests/node-health.test.ts tests/task-queue-receipts.test.ts tests/task-receipts.test.ts tests/api.test.ts tests/release-record.test.ts tests/ci-runtime.test.ts",
     "ci:versions": "node scripts/ci-version-check.ts",
     "ci:coverage": "node scripts/ci-tests.ts --list",
-    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/preview-install-smoke.test.ts",
+    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/preview-install-smoke.test.ts scripts/ci-preview-release.test.ts",
     "test:ci:logic": "node scripts/ci-tests.ts logic",
     "test:ci:protocol": "node scripts/ci-tests.ts protocol",
     "test:ci:engine": "node scripts/ci-tests.ts engine",

@@ -2,7 +2,7 @@
 
 更新日期：2026-09-05。状态：**第一轮官网、CI 与发行记录接口已实施并在本地验证，云端部署与公开发行待完成**。本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合仓库实际实现筛选、修正并补充；不是原对话的逐字记录，也不把其中建议视为已经验证的产品能力。
 
-M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分发和发布运营。用户已要求启动第一轮建设；官网源码位于独立仓库，桌面测试分层、Preview 候选工作流及发行记录校验已落地。安装包签名、R2 公开分发与 updater 尚未实施。当前状态见[里程碑基线](MILESTONES.md)、[CI](CI.md) 与[实施计划](plans/2026-09-05-website-ci-cd-and-updates.md)；M3.5 用户与双物理机验收仍待进行。架构取舍见 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，已发生的构建/安装事实见 [VERIFICATION](VERIFICATION.md)。
+M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分发和发布运营。用户已要求启动第一轮建设；官网源码位于独立仓库，桌面测试分层、Preview 候选工作流及发行记录校验已落地。用户随后要求将已验收候选自动发布为 GitHub Preview Release，流程与重试规则见 [CI](CI.md#自动发布到-github-releases) 和[本轮计划](plans/2026-09-05-automatic-preview-releases.md)。安装包签名、R2 公开分发与 updater 尚未实施。当前状态见[里程碑基线](MILESTONES.md)、[CI](CI.md) 与[实施计划](plans/2026-09-05-website-ci-cd-and-updates.md)；M3.5 用户与双物理机验收仍待进行。架构取舍见 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，已发生的构建/安装事实见 [VERIFICATION](VERIFICATION.md)。
 
 ## 1. 从对话中保留与修正的内容
 
@@ -25,7 +25,7 @@ M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分�
 
 - 正式应用版本为 `0.1.3`，见 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`；正式 identifier 为 `com.rivloom.desktop`。当前 NSIS 为 `currentUser` 安装，缺失 WebView2 时使用联网 bootstrapper。
 - `src-tauri/tauri.preview.conf.json` 使用独立的 `com.rivloom.conversationpreview`。预览包目前复用版本号，但拥有独立产品身份，不能作为正式 stable 或 beta 的覆盖升级包。
-- 当前未接入 Tauri updater：没有 updater 插件依赖、公钥或更新端点。四份 Windows 工作流已落地，基础 CI 已在云端实际执行；候选构建显式关闭 updater artifacts，只有内部 Preview 构建路径。最新云端与安装验证按 [CI](CI.md) 的精确源码记录核对，尚未公开发布。现有 NSIS 构建与手动覆盖升级证据不能算自动更新已实现。
+- 当前未接入 Tauri updater：没有 updater 插件依赖、公钥或更新端点。四份 Windows 工作流已落地，基础 CI 已在云端实际执行；候选构建显式关闭 updater artifacts，安装验收成功后独立发布 job 负责 GitHub Preview Release。仓库保持私有，当前预发布是供有访问权限的用户下载的内测包。最新云端、安装和发布验证按 [CI](CI.md) 的精确源码记录核对；现有 NSIS 与 Release 下载不代表客户端自动更新已经实现。
 - `server/node-identity.ts` 已定义 `nodeProtocolVersion = 1`；`server/node-network.ts` 使用协议版本校验与 `remote-execution-v1`、`brain-task-v1`、队列回执等 capability。已有机制应延续，不能随意放宽握手或向旧严格消息结构添加字段。
 - 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，这还不是完整的有序迁移或拒绝降级机制。
 - 客户端管理本地业务服务、Node 和官方 OpenCode 子进程。Task/Execution、Node 身份、信任与 Brain 归属必须跨升级保持；当前固定 Master Host 无自动接管，关闭客户端会影响执行与调度。
@@ -148,7 +148,7 @@ Authenticode 完成后再对最终 updater 产物签名并计算哈希，任何�
 4. 先完成候选包的安装/升级验收，再以单个完整对象替换频道 `latest.json`，避免客户端看到引用了缺失文件的清单。频道发布互斥，防止旧构建最后完成却覆盖新频道；更新下载页时复用同一份已验证发行记录。
 5. 从实际公网入口检查频道、安装包与官网的一致性，记录发布时间、操作者/工作流、前后频道版本和证据。仅内部测试通过不等同于已完成公网发布验收。
 
-本地现有构建命令仍见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。内部 Preview 的自动候选流程见 [CI](CI.md)，正式 stable 提升仍须满足发布门槛；候选 Actions artifact 不作为公开发行或更新频道。
+本地现有构建命令仍见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。内部 Preview 的 main 自动构建、验收与 GitHub 预发布流程见 [CI](CI.md)，正式 stable 提升仍须满足发布门槛；Actions artifact 和独立 Preview Release 都不作为正式更新频道。
 
 如果上传、签名或验收失败，频道保持原值；若提升后发现故障，立即停止继续推荐坏版本并核对 CDN 缓存。尚未升级的用户可继续使用原版本；已安装坏版本的用户发布**更高版本修复包**。降低频道指针只可能控制后续分发，不能当作已安装用户的自动回滚。不得覆盖原版本文件掩盖事故，也不默认启用强制降级。
 

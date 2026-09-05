@@ -28,13 +28,13 @@
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、session 崩溃窗口  | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-preview-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；只交付独立 UI Preview 安装候选，不公开发布。
+另有 `.github/workflows/windows-candidate.yml`：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-preview-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选构建与安装验收通过后，独立发布 job 自动创建 GitHub Preview Release。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
 Rust pin 已包含 2026-09-03 官方补丁对 1.98.0 vtable 误编译的修复；随该工具链发布的 Cargo CLI 版本由 bootstrap 的 `CFG_RELEASE` 决定，不能拿 Cargo crate 的 `0.99.0` 版本推算。最初选型检查点只核对官方发布与源码；随后已完成固定工具链安装、真实版本检查和上方本地原生构建，默认 stable 未改变。[Rust 1.98.1 公告](https://blog.rust-lang.org/2026/09/03/Rust-1.98.1/)、[Cargo 版本逻辑](https://github.com/rust-lang/cargo/blob/797e8a9bca276c1c9f9f738d2a20f484fa4eea9d/src/cargo/version.rs)、[Rust bootstrap](https://github.com/rust-lang/rust/blob/1.98.1/src/bootstrap/src/core/build_steps/tool.rs)
 
-测试工作流只有 `contents: read`；候选工作流额外使用 `actions: read` 查询同提交检查，读取 token 仅提供给门禁步骤。checkout 不持久保存 Git 凭据，无签名密钥、模型账号或公开存储写凭据。候选的 `workflow_run` 严格限于本仓库 main push，不通过它或 `pull_request_target` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
+测试工作流只有 `contents: read`；候选构建额外使用 `actions: read` 查询同提交检查，读取 token 仅提供给门禁步骤。只有依赖候选成功的发布 job 获得 `contents: write` 和 `actions: read`，写 token 仅显式提供给发布脚本步骤，发布 job 不安装 npm 依赖或运行安装器。checkout 不持久保存 Git 凭据，无签名密钥、模型账号或公开存储写凭据。候选的 `workflow_run` 严格限于本仓库 main push，不通过它或 `pull_request_target` 执行 PR 代码。矩阵失败不取消同组其他检查；没有 `continue-on-error`、自动重跑直至成功或隐式测试排除。每个 job 的结果须分别查看，不能只引用基础构建的绿勾。
 
 GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、commit、镜像名称与版本。固定 runner 标签与锁文件能改善可追溯性，不承诺不同机器的输出天然逐字节一致。[GitHub runner 说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 
@@ -121,14 +121,31 @@ Tauri 仅在本次 CLI 合并生成的配置，把已执行的 `beforeBuildComma
 
 候选 job 不把基础测试或发现测试的失败改写成通过。源码/版本、runtime/许可、候选字节与隔离安装分别核对；每次是否完成以该候选所附报告为准。上方本地历史解包报告仅覆盖其对应旧文件，不能替代新包验证。当前流程不声明自动更新或双物理机验收完成。候选 helper 的本地测试使用合成 PE 头验证拒绝逻辑和字节记录，不把该测试文件当作安装器。
 
+## 自动发布到 GitHub Releases
+
+用户已要求 main 更新后自动发布可下载安装包，实施计划见 [自动 Preview 发布](plans/2026-09-05-automatic-preview-releases.md)。流程为：推送 main → 三组 CI 全部通过 → 原生构建与安装验收 → 上传精确候选 artifact → 独立发布 job → GitHub Preview Release。本地 commit 不触发云端任务；PR 不发布。被更新提交取消、失败或未完成验收的运行不发布安装包。
+
+`publish` 依赖 `candidate` 成功，按上传步骤输出的唯一 artifact ID 下载当前运行的产物，并在新 checkout 中再次校验八份候选文件、实际源码 SHA、CI/安装报告、runtime 和安装器哈希。下载使用固定的官方 action，并把 artifact 摘要不匹配视为失败。发布脚本只使用 Node 原生模块。
+
+每个已验证构建有独立标签 `preview-v<应用版本>-<源码前12位>-<artifactID>`，标签指向完整源码 SHA；Release 标题显示应用版本和提交编号。仅发布两个附件：`Rivloom-UI-Preview_<版本>_x64-setup.exe` 和 `SHA256SUMS.txt`。安装器字节保持为安装验收通过的那一份，文件名中的空格统一为连字符。
+
+发布先创建 `prerelease: true` 的草稿，上传完成并复核两个附件的名称、大小和 SHA256 后才公开为仓库内可见的预发布版本，且不标记为 Latest 稳定版。发布说明包含源码、构建记录和未签名 Preview 的验收范围。构建/安装清单保留原验证时点的状态，发布结果另存 `test-results/preview-release/release.json`，Release 链接写入 job summary。
+
+重跑失败的发布 job 会使用原候选 artifact ID，复用同一草稿/Release；只有缺失附件可以补传，已存在附件必须与待发布字节一致。重新构建会产生新的 artifact ID 和独立预发布标签。遇到相同名称的不同文件、错误标签目标或异常上传状态时停止，不删除或覆盖原附件。GitHub 上传失败若遗留空的 `starter` 附件，需要检查该草稿或重新构建，不能把它算作上传成功。
+
+按 tag 的 REST 查询只返回已发布 Release，草稿重试需额外查询精确标签。已存在 tag 时 GitHub 会忽略 `target_commitish`，因此必须独立核验标签指向。若 main 前进且修改了工作流，GitHub 可能拒绝普通 Actions token 为含不同工作流的历史提交创建标签；此时发布失败并保留记录，不改用最新 main 冒充候选源码。[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)
+
+仓库当前为私有仓库，Release 下载仍要求有仓库访问权限。自动发布不改变仓库可见性，不配置 Windows 签名或客户端自动更新。此前手工发布的 [Preview 0.1.3 / 2ac60df](https://github.com/rivloom/rivloom-desktop/releases/tag/preview-v0.1.3-2ac60df) 保留原有文件。
+
 ## Actions 与工作流验证来源
 
-2026-09-05 通过各官方仓库的 GitHub release/ref API 核对标签到 commit，并读取该 commit 的 `action.yml`；三个 Actions 均使用 Node 24 runtime。工作流固定完整 SHA，不依赖可变标签。以后升级需重新核对官方来源和输入兼容性。[GitHub 固定 SHA 建议](https://docs.github.com/en/actions/reference/security/secure-use)
+2026-09-05 通过各官方仓库的 GitHub release/ref API 核对标签到 commit，并读取该 commit 的 `action.yml`；下列 Actions 均使用 Node 24 runtime。工作流固定完整 SHA，不依赖可变标签。以后升级需重新核对官方来源和输入兼容性。[GitHub 固定 SHA 建议](https://docs.github.com/en/actions/reference/security/secure-use)
 
 | 官方 Action                                                                               | 已核对版本 | 工作流锁定 commit                          |
 | ----------------------------------------------------------------------------------------- | ---------- | ------------------------------------------ |
 | [actions/checkout](https://github.com/actions/checkout/releases/tag/v7.0.1)               | v7.0.1     | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
 | [actions/setup-node](https://github.com/actions/setup-node/releases/tag/v7.0.0)           | v7.0.0     | `820762786026740c76f36085b0efc47a31fe5020` |
 | [actions/upload-artifact](https://github.com/actions/upload-artifact/releases/tag/v7.0.1) | v7.0.1     | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
+| [actions/download-artifact](https://github.com/actions/download-artifact/releases/tag/v8.0.1) | v8.0.1 | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` |
 
 四份 YAML 已用官方 [actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12) 本地校验通过。Windows amd64 ZIP 的官方 SHA256 为 `6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9`，下载后核对一致才运行；工具保存在被忽略的 `test-results/ci-tools/`，不成为产品依赖。该结果只证明本地工作流检查，不代表云运行、分支保护或远端发布环境已经配置。
