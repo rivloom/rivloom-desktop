@@ -2,6 +2,20 @@
 
 日期：2026-09-01 至 2026-09-06；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
+## 2026-09-06：Rivloom 0.1.4 普通 Release 与真实公开下载
+
+源码 `31579065d318853a83c8a6ee344454c0f7d2e887` 的三组基础 CI **10/10 jobs 通过**（`34006177247`、`34006177249`、`34006177250`）。[Windows build and release 34006275579](https://github.com/rivloom/rivloom-desktop/actions/runs/34006275579) 完成原生构建与真实 NSIS 安装、启动、重启、卸载及受检数据保留验证；默认 UDP 43531 仅由受检 backend 占用，安装元数据已恢复、旧 Preview 元数据不变、模型请求数为 0。没有把全新安装扩大为旧版本升级、实体多机或交互式 GUI 验收。
+
+普通 [Release v0.1.4-31579065d318-9981226725](https://github.com/rivloom/rivloom-desktop/releases/tag/v0.1.4-31579065d318-9981226725) 于 `2026-09-06T02:36:37Z` 发布，`draft=false / prerelease=false`。候选 artifact `9981226725`、发布报告 artifact `9981236275` 与 Release `383438831` 绑定同一源码。实际重新下载的 Release EXE 与原候选哈希一致，证据在 `.data/verification/rivloom-release-3157906/`。
+
+用户随后授权了限 `rivloom-downloads` 桶的对象读写凭据、官网 main Hook 与指定桌面 Actions Secrets。同步开关启用后，第 2 次执行仅重跑此前跳过的 website-download job `101420876495`，没有重新生成安装包。同步报告 artifact `9981816384` 为 `synced / complete`：本地证据、实际 Release、镜像文件、匿名完整文件校验、latest 条件更新、公开 latest 及 Hook 全部通过，`hookTriggered=true`。
+
+2026-09-06 03:23 UTC，独立匿名完整下载公开 EXE 与 SHA256SUMS.txt。EXE 为 **72,720,230 字节**，SHA-256 **`cea1d9251c978858482bb474e0289395e4734c5447e5e06be85036041c5c10d7`**；校验文件为 94 字节，SHA-256 `3a2f4a864a74355d8cabbd65c078dfe65d31c26671757323ef562be6c976a536`。两者与原 Release 和公开记录完全一致。EXE 响应为 200、正确 attachment 文件名及一年 immutable；latest 为 200、JSON MIME、no-store。只下载核验，没有运行该公开安装器。
+
+官网提交 `7264cee4b0f6b831cfb461029f55432682f20441` 将源码下载开关设为 true。[官网 CI 34009205761](https://github.com/rivloom/rivloom-website/actions/runs/34009205761) 与 Pages 生产部署 `903cf8b8-a853-4ddb-ab30-9fbd75a8e8f8` 成功；实际云端读取了同一公开记录，35/35 测试、26 个 Astro 文件（0 错误/警告/提示）、9 页和 238 个本地引用通过，生成 1 份普通下载。
+
+正式域 [下载页](https://rivloom.com/download/) 返回 200，安装包、校验链接、构建标识及哈希与公开记录一致，关闭提示已消失；未签名与手动更新说明正确保留。实际浏览器复核桌面与 390×844 手机布局、长哈希换行、构建验证说明及手动更新 FAQ，手机文档宽 375px、没有水平溢出，所捕获警告/错误为空。公开字节、HTTP、同步报告和页面比对证据在 `.data/verification/public-download-3157906/`。下方待发布或待授权措辞均为历史检查点。
+
 ## 2026-09-06：0.1.4 首轮云端与官网部署
 
 桌面源码 `db23b542e84bbb0455fe65bb0687604fc2ea42cb` 已推送，三组基础 CI **10/10 jobs 通过**：[Windows CI 34004776457](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776457)、[官方引擎 34004776473](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776473)、[发现回归 34004776496](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776496)。自动触发的[构建与发行 34004864442](https://github.com/rivloom/rivloom-desktop/actions/runs/34004864442) 完成原生编译、NSIS、前后 runtime 门禁和安装后资源校验，但安装验收子命令随后因 `spawnSync powershell.exe ETIMEDOUT` 失败；没有发布新的普通 Release，网站同步也没有执行。

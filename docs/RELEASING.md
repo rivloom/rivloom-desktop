@@ -25,7 +25,7 @@ M2 负责 Windows 安装与客户端更新，M5 负责官网与分发。main 上
 
 - 正式应用版本为 `0.1.4`，名称 Rivloom，identifier 为 `com.rivloom.desktop`。当前 NSIS 为 currentUser 安装，缺失 WebView2 时使用联网 bootstrapper。
 - `tauri.preview.conf.json` 继续供开发验证使用，其独立身份为 `com.rivloom.conversationpreview`；普通发行不加载它。旧 Preview 的安装和数据保留，不自动迁移为正式身份。既有正式 0.1.3 的覆盖升级仍需独立验收，不能用 Preview 改名或全新安装检查代替。
-- 当前没有 updater 插件、公钥或更新端点。候选显式关闭 updater artifacts，安装验收通过后 publish 创建 `prerelease:false` 的普通 Release；这不代表已签名或具备安全自动更新。website-download 由明确的启用变量控制，当前关闭。两个源码仓库保持私有，GitHub 下载仍需仓库访问权限；R2 入口接通后用于匿名下载。
+- 当前没有 updater 插件、公钥或更新端点。候选显式关闭 updater artifacts，安装验收通过后 publish 创建 `prerelease:false` 的普通 Release；这不代表已签名或具备安全自动更新。website-download 由明确的启用变量控制，当前已启用并完成首轮真实同步。两个源码仓库保持私有，GitHub 下载仍需仓库访问权限；官网 R2 入口提供匿名下载。
 - `server/node-identity.ts` 已定义 `nodeProtocolVersion = 1`；`server/node-network.ts` 使用协议版本校验与 `remote-execution-v1`、`brain-task-v1`、队列回执等 capability。已有机制应延续，不能随意放宽握手或向旧严格消息结构添加字段。
 - 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，这还不是完整的有序迁移或拒绝降级机制。
 - 客户端管理本地业务服务、Node 和官方 OpenCode 子进程。Task/Execution、Node 身份、信任与 Brain 归属必须跨升级保持；当前固定 Master Host 无自动接管，关闭客户端会影响执行与调度。
@@ -48,9 +48,9 @@ flowchart LR
     D --> U[客户端验签与安全安装]
 ```
 
-官网提供产品说明、下载、指南、更新、安全、隐私和支持页面。下载卡片统一使用 Rivloom 名称；只展示经过对应流程确认的记录，并明确未签名和手动更新。新公开记录与现有 stable/beta 签名契约分开校验，不通过改名降低签名断言要求；首次匿名公开下载仍待接通验证。
+官网提供产品说明、下载、指南、更新、安全、隐私和支持页面。下载卡片统一使用 Rivloom 名称；只展示经过对应流程确认的记录，并明确未签名和手动更新。新公开记录与现有 stable/beta 签名契约分开校验，不通过改名降低签名断言要求；0.1.4 的首次匿名完整下载已通过字节核验。
 
-官网已采用 Astro 静态站，用户已确认 `rivloom.com` 与 Cloudflare 同时服务中国大陆及海外，暂不增加国内专用 CDN。Pages 仅连接官网仓库；生产部署与域名验证已完成，官网视觉更新也已上线。专属 R2 桶 `rivloom-downloads` 已创建，下载自定义域 `downloads.rivloom.com` 活动且最低 TLS 为 1.2；实际 Actions 凭据、Pages main Hook、首轮公开文件与最终页面核验尚待完成。首版不包含账户数据库或 License 服务。
+官网已采用 Astro 静态站，用户已确认 `rivloom.com` 与 Cloudflare 同时服务中国大陆及海外，暂不增加国内专用 CDN。Pages 仅连接官网仓库；生产部署与域名验证已完成，官网视觉更新也已上线。专属 R2 桶为 `rivloom-downloads`，下载自定义域 `downloads.rivloom.com` 活动且最低 TLS 为 1.2；2026-09-06 已配置 Actions 凭据与 Pages main Hook，完成首轮公开文件及正式下载页核验。首版不包含账户数据库或 License 服务。
 
 源码可以继续保密。若用 GitHub Releases 面向公众下载，应使用明确公开的分发仓库，或由受控 CI 将私有仓库产物上传到公开下载存储；不能把私有仓库访问 token 塞进客户端、静态网页或公开元数据。
 
@@ -76,9 +76,9 @@ https://releases.example.com/beta/latest.json
 
 latest 的推进同时受全局同步并发组、源码祖先关系和条件写入（CAS）约束：跨源码只提升到当前源码的后代；同源码只允许更大的 artifact ID，相同 artifact 必须绑定一致才可复用。更新使用刚读取的 ETag，初次创建要求对象不存在；竞争冲突后重新读取与判断，不能盲目覆盖。旧构建或分叉构建不推进指针、不触发官网。版本文件使用 immutable 长缓存，latest 使用 `no-store`，公开读取成功后才触发构建。
 
-R2 凭据仅限专属桶对象读写，Pages Hook 绑定官网 main；秘密只存桌面 Actions，见 [配置表](CI.md#同步-rivloom-到官网公开下载)。本次 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网源码 `publicDownloadsEnabled` 均未启用，品牌页面可以先上线。凭据获授权、真实文件通过校验后显式启用官网同步；启用后的生产 404、超时、重定向或校验失败均保留原成功部署。新快照独立于旧 Preview，不能按干净 checkout 猜线上没有发行。
+R2 凭据仅限专属桶对象读写，Pages Hook 绑定官网 main；秘密只存桌面 Actions，见 [配置表](CI.md#同步-rivloom-到官网公开下载)。`RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网源码 `publicDownloadsEnabled` 已在获得授权及真实文件校验后启用。生产 404、超时、重定向或校验失败均保留原成功部署。新快照独立于旧 Preview，不能按干净 checkout 猜线上没有发行。
 
-上传或公开文件核验失败时 latest 保持原值。指针已更新而公开 latest 核验或 Hook 失败时，保留阶段报告，重跑同一同步复用已核对文件并重新触发，不自动回退指针。Hook 成功不是页面上线证明；首轮仍须核对 `website-download` 的 `result.json`、实际 Pages 构建、公开记录、完整安装包/校验文件以及线上下载卡片的一致性。本轮桶和域活动事实不等同于上述闭环已经验收。
+上传或公开文件核验失败时 latest 保持原值。指针已更新而公开 latest 核验或 Hook 失败时，保留阶段报告，重跑同一同步复用已核对文件并重新触发，不自动回退指针。Hook 成功不是页面上线证明；每次交付须分别核对 `website-download` 的 `result.json`、实际 Pages 构建、公开记录、完整安装包/校验文件以及线上下载卡片的一致性。首轮 0.1.4 的实际结果见 [VERIFICATION](VERIFICATION.md)。
 
 ## 4. 更新清单、签名与频道
 

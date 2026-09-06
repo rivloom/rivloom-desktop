@@ -160,11 +160,11 @@ Tauri 仅在本次 CLI 合并生成的配置，把已执行的 `beforeBuildComma
 
 全仓库 `public-rivloom-download` 并发组不取消正在执行的同步；latest 首次创建要求不存在，替换要求 If-Match 匹配刚读取的强 ETag。409/412 后最多四次重新读取和判断。不同源码只允许被 GitHub compare 证明为原源码后代的构建前进；同源码按 artifact ID 判断，相同 artifact 必须完整绑定一致才可复用。防回退不依赖完成时间或版本字符串。
 
-latest 使用 no-store；公开 latest 复核成功后才 POST Pages main Hook。官网另有源码开关 `publicDownloadsEnabled`，本次 false；先完成公开文件验证，再将它启用。启用后的生产 main 构建严格读取新固定 JSON，404、超时、重定向或无效记录均阻止新部署；新快照路径不会读取旧 Preview 缓存。Hook 成功仅表示已触发，仍须核对实际 Pages 与线上卡片。
+latest 使用 no-store；公开 latest 复核成功后才 POST Pages main Hook。官网另有源码开关 `publicDownloadsEnabled`，已在首次真实公开文件验证后设为 true。生产 main 构建严格读取新固定 JSON，404、超时、重定向或无效记录均阻止新部署；新快照路径不会读取旧 Preview 缓存。Hook 成功仅表示已触发，仍须核对实际 Pages 与线上卡片。
 
 同步结果保存为 `test-results/website-download/result.json`，`if: always()` 上传有限报告并保留 14 天。上传或公开文件校验失败时不推进 latest；旧构建记录为 `superseded`，不改指针、不触发 Hook。latest 已推进后若公开 latest 核对或 Hook 失败，报告保留失败阶段，不自动回退对象；重跑同一同步可复用相同文件和记录并重新核验、触发部署，无需重发 GitHub Release。公开 URL 中只有发行标识和文件信息，不携带仓库凭据或私有报告。
 
-**当前接通状态（2026-09-06）：** 专属桶与 downloads.rivloom.com 已创建活动、最低 TLS 1.2；非秘密账户 ID 和桶名已保存。R2 密钥、Pages Hook 的新增持续访问授权仍待用户确认，因此本次只切换名称与普通发行，公开文件同步和官网展示开关均未启用。后续需完成真实文件校验及 Pages 验证，不能以桶活动或同步代码通过代替公开下载已完成。
+**当前接通状态（2026-09-06）：** 用户已授权并配置专属桶 R2 密钥与 Pages main Hook，桌面同步和官网展示开关均为 true。运行 `34006275579` 的第 2 次执行成功复用原候选 `9981226725` 与发布报告 `9981236275`，完成 R2 上传、匿名完整文件校验、latest 条件更新和 Hook 触发；同步报告 artifact 为 `9981816384`。官网提交 `7264cee` 的 CI 与 Pages 部署成功，正式域名已展示同一 0.1.4 下载。完整哈希、实际安装验证和浏览器验收见 [VERIFICATION](VERIFICATION.md)。
 
 ## Actions 与工作流验证来源
 
