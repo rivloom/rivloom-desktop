@@ -1,8 +1,8 @@
 # 官网分发与安全更新方案
 
-更新日期：2026-09-05。状态：**官网已上线，桌面 CI 与 GitHub Preview 发布流程已落地；R2 公开同步代码已实现，首次真实同步与官网展示待验证。正式签名发行与 updater 尚未实施。** 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合仓库实际实现筛选、修正并补充；不是原对话的逐字记录，也不把其中建议视为已经验证的产品能力。
+更新日期：2026-09-06。状态：**从 0.1.4 起统一以 Rivloom 正式身份发布普通 GitHub Release；官网去掉对外 Preview 标记。R2 公开文件同步尚未启用，签名与 updater 尚未实施。** 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合实际实现维护；本轮去 Preview 的用户决定取代此前仅发布独立预览的命名安排，不改写历史验证结果。
 
-M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分发和发布运营。官网源码位于独立仓库，桌面测试分层、Preview 候选工作流及发行记录校验已落地。用户已要求将已验收候选自动发布为 GitHub Preview Release，并将同一安装包同步至官网公开下载；流程、配置和重试规则见 [CI](CI.md#同步-preview-到官网公开下载)。R2 专属桶与下载域已创建活动，凭据、Pages Hook 及实际同步仍待验证；安装包签名与 updater 尚未实施。当前状态见[里程碑基线](MILESTONES.md)、[CI](CI.md) 与[实施计划](plans/2026-09-05-website-ci-cd-and-updates.md)；M3.5 用户与双物理机验收仍待进行。架构取舍见 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，已发生的构建/安装事实见 [VERIFICATION](VERIFICATION.md)。
+M2 负责 Windows 安装与客户端更新，M5 负责官网与分发。main 上已验收候选通过 `ci-release.ts` 自动发布普通 Release；公开文件同步采用新的严格 desktop 下载记录，配置和重试规则见 [CI](CI.md#同步-rivloom-到官网公开下载)。R2 桶与下载域已活动，新增持续访问密钥和 Pages Hook 仍待此前授权，本次不创建凭据。新版云端、安装和发布结果须按实际源码另行核对；M3.5 用户与双物理机验收、签名和升级矩阵仍分别推进。历史事实见 [VERIFICATION](VERIFICATION.md)。
 
 ## 1. 从对话中保留与修正的内容
 
@@ -23,18 +23,18 @@ M2 负责 Windows 安装与客户端安全更新，M5 负责官网、产物分�
 
 ## 2. 当前仓库基线
 
-- 正式应用版本为 `0.1.3`，见 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`；正式 identifier 为 `com.rivloom.desktop`。当前 NSIS 为 `currentUser` 安装，缺失 WebView2 时使用联网 bootstrapper。
-- `src-tauri/tauri.preview.conf.json` 使用独立的 `com.rivloom.conversationpreview`。预览包目前复用版本号，但拥有独立产品身份，不能作为正式 stable 或 beta 的覆盖升级包。
-- 当前未接入 Tauri updater：没有 updater 插件依赖、公钥或更新端点。四份 Windows 工作流已落地，基础 CI 已在云端实际执行；候选构建显式关闭 updater artifacts，安装验收成功后独立 `publish` job 负责 GitHub Preview Release，`website-download` job 再负责同一产物的 R2 公开镜像与官网更新。仓库保持私有，GitHub Release 下载仍要求仓库访问权限；R2 入口用于无需仓库账号的公开 Preview 下载，实际接通尚待验证。最新云端、安装和发布验证按 [CI](CI.md) 的精确源码记录核对；现有 NSIS 与 Release 下载不代表客户端自动更新已经实现。
+- 正式应用版本为 `0.1.4`，名称 Rivloom，identifier 为 `com.rivloom.desktop`。当前 NSIS 为 currentUser 安装，缺失 WebView2 时使用联网 bootstrapper。
+- `tauri.preview.conf.json` 继续供开发验证使用，其独立身份为 `com.rivloom.conversationpreview`；普通发行不加载它。旧 Preview 的安装和数据保留，不自动迁移为正式身份。既有正式 0.1.3 的覆盖升级仍需独立验收，不能用 Preview 改名或全新安装检查代替。
+- 当前没有 updater 插件、公钥或更新端点。候选显式关闭 updater artifacts，安装验收通过后 publish 创建 `prerelease:false` 的普通 Release；这不代表已签名或具备安全自动更新。website-download 由明确的启用变量控制，当前关闭。两个源码仓库保持私有，GitHub 下载仍需仓库访问权限；R2 入口接通后用于匿名下载。
 - `server/node-identity.ts` 已定义 `nodeProtocolVersion = 1`；`server/node-network.ts` 使用协议版本校验与 `remote-execution-v1`、`brain-task-v1`、队列回执等 capability。已有机制应延续，不能随意放宽握手或向旧严格消息结构添加字段。
 - 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，这还不是完整的有序迁移或拒绝降级机制。
 - 客户端管理本地业务服务、Node 和官方 OpenCode 子进程。Task/Execution、Node 身份、信任与 Brain 归属必须跨升级保持；当前固定 Master Host 无自动接管，关闭客户端会影响执行与调度。
 
-官网已在 Cloudflare Pages 上线，本轮独立 Preview 下载同步与展示已实现。桌面各层检查及边界详见 [CI](CI.md)、[runtime 校验](CI-RUNTIME.md) 与[发行记录契约](releases/README.md)。已有官网上线和本地测试结果不代表本轮 R2 公开同步、签名发行或 updater 已通过。
+官网已通过 Cloudflare Pages 上线，本轮去掉对外 Preview。桌面各层检查及边界见 [CI](CI.md)、[runtime 校验](CI-RUNTIME.md) 与[签名发行契约](releases/README.md)。已有官网上线和本地测试不代表 R2 公开同步、签名或 updater 已通过。
 
 ## 3. 最小分发架构
 
-下面是正式签名发行与客户端安全更新的目标架构；当前独立未签名 Preview 的已实现流程另见本节后半部分。
+下面是签名发行与客户端安全更新的目标架构；当前未签名普通 Rivloom 发行另见本节后半部分。
 
 ```mermaid
 flowchart LR
@@ -48,7 +48,7 @@ flowchart LR
     D --> U[客户端验签与安全安装]
 ```
 
-官网提供产品说明、`/download/`、`/guide/`、`/changelog/`、`/security/`、`/privacy/` 和 `/support/`。下载页只展示经过对应发布流程确认的记录。正式 stable/beta 仍要求原有签名发行契约，当前正式目录为空；独立 Preview 使用单独记录和卡片，显示源码构建、日期、大小、SHA-256、未签名状态及手动更新说明。首次公开 Preview 记录与线上展示仍待本轮真实同步验证。
+官网提供产品说明、下载、指南、更新、安全、隐私和支持页面。下载卡片统一使用 Rivloom 名称；只展示经过对应流程确认的记录，并明确未签名和手动更新。新公开记录与现有 stable/beta 签名契约分开校验，不通过改名降低签名断言要求；首次匿名公开下载仍待接通验证。
 
 官网已采用 Astro 静态站，用户已确认 `rivloom.com` 与 Cloudflare 同时服务中国大陆及海外，暂不增加国内专用 CDN。Pages 仅连接官网仓库；生产部署与域名验证已完成，官网视觉更新也已上线。专属 R2 桶 `rivloom-downloads` 已创建，下载自定义域 `downloads.rivloom.com` 活动且最低 TLS 为 1.2；实际 Actions 凭据、Pages main Hook、首轮公开文件与最终页面核验尚待完成。首版不包含账户数据库或 License 服务。
 
@@ -68,15 +68,15 @@ https://releases.example.com/beta/latest.json
 
 首期只选一个主要下载源并测通。出现明确地域可用性问题后再增加镜像；各源必须分发同一版本的完全相同字节和签名。静态站故障不应影响已安装客户端的本地工作；更新源故障不应阻塞应用启动。
 
-### 独立 Preview 的公开同步
+### 普通 Rivloom 发行的公开同步
 
-当前实现的链路是：同一源码三组 CI 通过 → 候选构建与隔离安装通过 → 私有 GitHub Preview Release 发布 → `website-download` job 核对原候选与实际 Release → 上传 R2 不可变文件 → 匿名完整下载并核对两个文件的字节数和 SHA-256 → 条件更新公开 latest → 再核对公开 latest → 调用官网 main 的 Pages Deploy Hook。安装器始终使用通过安装验收的原始字节，网站仓库与 Pages `dist` 不存放安装器或内部验证报告。
+链路为：同一源码三组 CI 通过 → desktop 候选构建与安装验收 → 私有仓库普通 GitHub Release → 已启用的 website-download 核对原候选与实际 Release → 上传 R2 不可变文件 → 匿名完整校验两份文件 → 条件更新并核对公开 latest → Pages main Hook。安装器始终使用通过验收的原字节，网站 Git 和 dist 不存安装器或内部报告。发布器保留 make_latest:false，不额外竞争 GitHub Latest。
 
-公开安装包和 `SHA256SUMS.txt` 位于 `https://downloads.rivloom.com/previews/<完整 Preview 标签>/`，同名对象只可复用相同字节。固定记录地址为 `https://downloads.rivloom.com/previews/latest.json`；它绑定版本、源码、artifact、Release、两个文件的 URL/大小/哈希及验收状态，明确 `com.rivloom.conversationpreview`、未签名与无 updater。该 JSON 仅供官网选择最新 Preview，不是正式更新频道，也不能更新现有客户端。
+公开安装包和 SHA256SUMS.txt 位于 `https://downloads.rivloom.com/releases/<完整标签>/`，同名对象只可复用相同字节。固定记录为 `https://downloads.rivloom.com/releases/latest.json`，kind 为 rivloom-download，绑定 desktop/com.rivloom.desktop、普通 Release 和两份文件的 URL/大小/摘要/验收状态。普通版本不能带预发布后缀；旧 Preview 记录、安装身份与 previews 路径被拒绝。该 JSON 供官网选择下载，不是客户端更新清单。
 
 latest 的推进同时受全局同步并发组、源码祖先关系和条件写入（CAS）约束：跨源码只提升到当前源码的后代；同源码只允许更大的 artifact ID，相同 artifact 必须绑定一致才可复用。更新使用刚读取的 ETag，初次创建要求对象不存在；竞争冲突后重新读取与判断，不能盲目覆盖。旧构建或分叉构建不推进指针、不触发官网。版本文件使用 immutable 长缓存，latest 使用 `no-store`，公开读取成功后才触发构建。
 
-R2 凭据限专属桶对象读写，Pages Hook 必须在 `rivloom-website` 项目创建并绑定 `main`；所有秘密只配置在桌面仓库 Actions 中，具体 Variable/Secret 名称见 [CI 配置表](CI.md#同步-preview-到官网公开下载)。两个源码仓库继续私有，官网构建匿名读取固定公开记录。生产 Pages main 遇到记录 404、超时、重定向或校验失败即停止构建并保留当前成功部署；不能用新 checkout 没有本地快照来推断线上没有发布。
+R2 凭据仅限专属桶对象读写，Pages Hook 绑定官网 main；秘密只存桌面 Actions，见 [配置表](CI.md#同步-rivloom-到官网公开下载)。本次 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网源码 `publicDownloadsEnabled` 均未启用，品牌页面可以先上线。凭据获授权、真实文件通过校验后显式启用官网同步；启用后的生产 404、超时、重定向或校验失败均保留原成功部署。新快照独立于旧 Preview，不能按干净 checkout 猜线上没有发行。
 
 上传或公开文件核验失败时 latest 保持原值。指针已更新而公开 latest 核验或 Hook 失败时，保留阶段报告，重跑同一同步复用已核对文件并重新触发，不自动回退指针。Hook 成功不是页面上线证明；首轮仍须核对 `website-download` 的 `result.json`、实际 Pages 构建、公开记录、完整安装包/校验文件以及线上下载卡片的一致性。本轮桶和域活动事实不等同于上述闭环已经验收。
 
@@ -154,7 +154,7 @@ Authenticode 完成后再对最终 updater 产物签名并计算哈希，任何�
 
 ## 7. 发布流水线与故障处置
 
-独立 Preview 的当前实现见[前述公开同步流程](#独立-preview-的公开同步)。以下是仍待实施和验收的正式签名发行与 updater 流水线要求：
+当前普通发行见[前述公开同步流程](#普通-rivloom-发行的公开同步)。以下是仍待实施和验收的签名发行与 updater 流水线要求：
 
 1. 从明确的源码版本构建，核对应用版本和目标身份，使用锁文件、固定工具链及既有 `desktop-prepare` 来源校验；运行与改动相关的测试、构建和干净机验证。测试用数据、个人凭据和 `.data` 不进入产物。
 2. 生成候选安装包、必要的完整组件/许可清单、变更说明和验证结果；完成平台签名，再生成 updater 文件/签名及最终哈希。Node/OpenCode/SDK 作为本次完整发布的一部分验证。
@@ -162,7 +162,7 @@ Authenticode 完成后再对最终 updater 产物签名并计算哈希，任何�
 4. 先完成候选包的安装/升级验收，再以单个完整对象替换频道 `latest.json`，避免客户端看到引用了缺失文件的清单。频道发布互斥，防止旧构建最后完成却覆盖新频道；更新下载页时复用同一份已验证发行记录。
 5. 从实际公网入口检查频道、安装包与官网的一致性，记录发布时间、操作者/工作流、前后频道版本和证据。仅内部测试通过不等同于已完成公网发布验收。
 
-本地现有构建命令仍见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。独立 Preview 的 main 自动构建、验收、GitHub 预发布与 R2 公开同步流程见 [CI](CI.md)，正式 stable 提升仍须满足发布门槛；Actions artifact、独立 Preview Release 和 `previews/latest.json` 都不作为正式更新频道。
+本地构建命令见 [DESKTOP](DESKTOP.md)，它们不会自动签名或发布。main 自动构建、验收、普通 Release 与 R2 同步见 [CI](CI.md)；签名 stable 提升仍须满足其门槛。Actions artifact、普通 Release 与 releases/latest.json 都不代表客户端安全更新频道。
 
 如果上传、签名或验收失败，频道保持原值；若提升后发现故障，立即停止继续推荐坏版本并核对 CDN 缓存。尚未升级的用户可继续使用原版本；已安装坏版本的用户发布**更高版本修复包**。降低频道指针只可能控制后续分发，不能当作已安装用户的自动回滚。不得覆盖原版本文件掩盖事故，也不默认启用强制降级。
 

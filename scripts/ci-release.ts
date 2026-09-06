@@ -1,4 +1,4 @@
-// Publish only a verified, current-run Preview artifact. No installer execution,
+// Publish only a verified, current-run Rivloom artifact. No installer execution,
 // npm dependencies, signing, updater records, asset deletion or replacement.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -33,17 +33,18 @@ const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).diges
 const shaPattern = /^[0-9a-f]{64}$/;
 const commitPattern = /^(?!0{40}$)[0-9a-f]{40}$/;
 const versionPattern =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const positiveID = (value: unknown) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-const numericID = (value: string) => /^[1-9]\d{0,15}$/.test(value) && positiveID(Number(value));
+const numericID = (value: string) =>
+  /^[1-9]\d{0,15}$/.exec(value)?.[0] === value && positiveID(Number(value));
 const metadataFiles = [
   'candidate-build.json',
   'runtime-manifest.json',
   'runtime-before.json',
   'runtime-after.json',
   'ci-gate.json',
-  'preview-install.json',
+  'desktop-install.json',
   'webview2.json',
 ];
 
@@ -59,7 +60,9 @@ export function releaseContext(environment: NodeJS.ProcessEnv): ReleaseContext {
     'Invalid release repository',
   );
   requireProof(
-    commitPattern.test(context.commit) && numericID(context.runID) && numericID(context.artifactID),
+    commitPattern.exec(context.commit)?.[0] === context.commit &&
+      numericID(context.runID) &&
+      numericID(context.artifactID),
     'Full source SHA and numeric run/artifact IDs required',
   );
   return context;
@@ -138,7 +141,7 @@ async function measurePE(path: string) {
   }
 }
 
-export async function preparePreview(root: string, context: ReleaseContext) {
+export async function prepareRelease(root: string, context: ReleaseContext) {
   releaseContext({
     GITHUB_REPOSITORY: context.repository,
     RIVLOOM_CANDIDATE_SHA: context.commit,
@@ -150,15 +153,17 @@ export async function preparePreview(root: string, context: ReleaseContext) {
   const candidate = await jsonFile(join(directory, 'candidate-build.json'));
   const version = candidate.product?.version;
   requireProof(
-    typeof version === 'string' && version.length <= 100 && versionPattern.test(version),
+    typeof version === 'string' &&
+      version.length <= 100 &&
+      versionPattern.exec(version)?.[0] === version,
     'Invalid candidate version',
   );
   const product = {
-    kind: 'conversation-preview',
-    identifier: 'com.rivloom.conversationpreview',
+    kind: 'desktop',
+    identifier: 'com.rivloom.desktop',
     version,
   };
-  same(candidate.product, product, 'Candidate is not this Preview product');
+  same(candidate.product, product, 'Candidate is not this Rivloom product');
   requireProof(
     candidate.schemaVersion === 1 &&
       candidate.status === 'candidate' &&
@@ -178,7 +183,7 @@ export async function preparePreview(root: string, context: ReleaseContext) {
   );
   requireProof(
     (source.refType === 'branch' && source.refName === 'main') ||
-      (source.refType === 'tag' && source.refName === `ci-preview-v${version}`),
+      (source.refType === 'tag' && source.refName === `ci-v${version}`),
     'Candidate ref does not match its version',
   );
   same(
@@ -201,7 +206,7 @@ export async function preparePreview(root: string, context: ReleaseContext) {
     version,
     'Checkout version differs from candidate',
   );
-  const installerName = `Rivloom UI Preview_${version}_x64-setup.exe`;
+  const installerName = `Rivloom_${version}_x64-setup.exe`;
   same(
     (await readdir(directory)).sort(),
     [...metadataFiles, installerName].sort(),
@@ -277,7 +282,7 @@ export async function preparePreview(root: string, context: ReleaseContext) {
       positiveID(candidate.runtimeTree.size),
     'Runtime tree evidence is missing',
   );
-  const installed = await jsonFile(join(directory, 'preview-install.json'));
+  const installed = await jsonFile(join(directory, 'desktop-install.json'));
   requireProof(
     installed.schemaVersion === 1 &&
       installed.status === 'passed' &&
@@ -290,7 +295,7 @@ export async function preparePreview(root: string, context: ReleaseContext) {
   );
   requireProof(
     installed.installationMetadataRestored === true &&
-      installed.formalMetadataUnchanged === true &&
+      installed.previewMetadataUnchanged === true &&
       installed.modelRequests === 0 &&
       !installed.wrapperFailure &&
       !installed.error &&
@@ -353,17 +358,17 @@ export async function preparePreview(root: string, context: ReleaseContext) {
         webview.installerExitCode === 0),
     'WebView2 provenance failed',
   );
-  const name = `Rivloom-UI-Preview_${version}_x64-setup.exe`;
+  const name = `Rivloom_${version}_x64-setup.exe`;
   const sums = Buffer.from(`${measured.sha256}  ${name}\n`);
   const assets: Asset[] = [
     { name, path: installer, ...measured },
     { name: 'SHA256SUMS.txt', bytes: sums, size: sums.length, sha256: sha(sums) },
   ];
-  const tag = `preview-v${version}-${context.commit.slice(0, 12)}-${context.artifactID}`;
-  const title = `Rivloom UI Preview ${version} (${context.commit.slice(0, 12)} / ${context.artifactID})`;
+  const tag = `v${version}-${context.commit.slice(0, 12)}-${context.artifactID}`;
+  const title = `Rivloom ${version} (${context.commit.slice(0, 12)} / ${context.artifactID})`;
   const body = [
-    '<!-- rivloom-managed-preview-release-v1 -->',
-    '这是未签名的独立 UI Preview 预发布安装包。不会设为正式 Latest，也不生成或更新自动更新记录。',
+    '<!-- rivloom-managed-release-v1 -->',
+    '这是 Rivloom 的 Windows x64 安装包。目前尚未签名，也没有应用内自动更新。',
     '',
     `源码：\`${context.commit}\``,
     `构建：[${context.runID}](https://github.com/${context.repository}/actions/runs/${context.runID})`,
@@ -379,12 +384,12 @@ export async function preparePreview(root: string, context: ReleaseContext) {
   return { ...context, version, tag, title, body, assets };
 }
 
-export async function publishPreview(
+export async function publishRelease(
   root: string,
   context: ReleaseContext,
   transport: ReleaseTransport,
 ) {
-  const plan = await preparePreview(root, context); // Must precede every network write.
+  const plan = await prepareRelease(root, context); // Must precede every network write.
   const base = `https://api.github.com/repos/${context.repository}`;
   const api = async (
     method: ReleaseRequest['method'],
@@ -406,9 +411,9 @@ export async function publishPreview(
     artifact?.id === Number(context.artifactID) &&
       artifact.expired === false &&
       typeof artifact.name === 'string' &&
-      new RegExp(
-        `^conversation-preview-candidate-${context.commit}-${context.runID}-[1-9]\\d*$`,
-      ).test(artifact.name) &&
+      new RegExp(`^rivloom-candidate-${context.commit}-${context.runID}-[1-9]\\d*$`).test(
+        artifact.name,
+      ) &&
       numericID(artifact.name.split('-').at(-1)!),
     'Artifact identity does not match this candidate run',
   );
@@ -472,7 +477,7 @@ export async function publishPreview(
         value.target_commitish === context.commit &&
         value.name === plan.title &&
         value.body === plan.body &&
-        value.prerelease === true &&
+        value.prerelease === false &&
         typeof value.draft === 'boolean',
       'Existing release bindings conflict with this candidate',
     );
@@ -515,7 +520,7 @@ export async function publishPreview(
       name: plan.title,
       body: plan.body,
       draft: true,
-      prerelease: true,
+      prerelease: false,
       make_latest: 'false',
     });
     validateRelease(release!);
@@ -547,13 +552,13 @@ export async function publishPreview(
     requireProof(release!.draft === true, 'Draft state changed during publication');
     release = await api('PATCH', `/releases/${release!.id}`, {
       draft: false,
-      prerelease: true,
+      prerelease: false,
       make_latest: 'false',
     });
   }
   release = await api('GET', `/releases/${release!.id}`);
   validateRelease(release!);
-  requireProof(release!.draft === false, 'Preview release is still a draft');
+  requireProof(release!.draft === false, 'Rivloom release is still a draft');
   await inspectAssets(release!.id, true);
   await checkTag(true);
   return {
@@ -667,23 +672,23 @@ async function main() {
       head === context.commit && state === '',
       'Publication requires the exact source SHA and a clean checkout',
     );
-    report = await publishPreview(root, context, githubTransport(process.env.GITHUB_TOKEN || ''));
+    report = await publishRelease(root, context, githubTransport(process.env.GITHUB_TOKEN || ''));
     if (process.env.GITHUB_STEP_SUMMARY)
       await appendFile(
         process.env.GITHUB_STEP_SUMMARY,
-        `Preview 预发布：[${report.tag}](${report.url})\n`,
+        `Rivloom 发行：[${report.tag}](${report.url})\n`,
       );
-    console.log(`Preview release published: ${report.url}`);
+    console.log(`Rivloom release published: ${report.url}`);
   } catch (error) {
     report.error =
       error instanceof ReleaseFailure
         ? error.message.slice(0, 240)
-        : 'Preview release verification failed';
+        : 'Rivloom release verification failed';
     console.error(report.error);
     process.exitCode = 1;
   } finally {
     try {
-      const directory = join(root, 'test-results', 'preview-release');
+      const directory = join(root, 'test-results', 'release');
       await mkdir(directory, { recursive: true });
       await regular(join(root, 'test-results'), true);
       await regular(directory, true);
@@ -691,7 +696,7 @@ async function main() {
         flag: 'wx',
       });
     } catch {
-      console.error('Could not write the bounded Preview release report');
+      console.error('Could not write the bounded Rivloom release report');
       process.exitCode = 1;
     }
   }

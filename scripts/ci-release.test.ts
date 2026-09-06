@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
   githubTransport,
-  preparePreview,
-  publishPreview,
+  prepareRelease,
+  publishRelease,
   releaseContext,
   type ReleaseContext,
   type ReleaseRequest,
   type ReleaseTransport,
-} from './ci-preview-release.ts';
+} from './ci-release.ts';
 
 const context: ReleaseContext = {
   repository: 'rivloom/rivloom-desktop',
@@ -21,11 +21,11 @@ const context: ReleaseContext = {
 };
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const encode = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
-const installerName = 'Rivloom UI Preview_0.1.3_x64-setup.exe';
+const installerName = 'Rivloom_0.1.3_x64-setup.exe';
 async function fixture() {
   const parent = resolve(import.meta.dirname, '..', 'test-results');
   await mkdir(parent, { recursive: true });
-  const root = await mkdtemp(join(parent, 'preview-release-selftest-'));
+  const root = await mkdtemp(join(parent, 'release-selftest-'));
   const directory = join(root, 'test-results', 'candidate');
   await mkdir(directory, { recursive: true });
   await mkdir(join(root, 'src-tauri'));
@@ -33,8 +33,8 @@ async function fixture() {
   await writeFile(join(root, 'package-lock.json'), 'synthetic npm lock');
   await writeFile(join(root, 'src-tauri', 'Cargo.lock'), 'synthetic cargo lock');
   const product = {
-    kind: 'conversation-preview',
-    identifier: 'com.rivloom.conversationpreview',
+    kind: 'desktop',
+    identifier: 'com.rivloom.desktop',
     version: '0.1.3',
   };
   const manifest = {
@@ -113,7 +113,7 @@ async function fixture() {
     identifier: product.identifier,
     candidateSha256: sha(bytes),
     installationMetadataRestored: true,
-    formalMetadataUnchanged: true,
+    previewMetadataUnchanged: true,
     wrapperErrors: [],
     modelRequests: 0,
     runtime,
@@ -155,7 +155,7 @@ async function fixture() {
     'runtime-manifest.json': manifest,
     'runtime-before.json': runtime,
     'runtime-after.json': runtime,
-    'preview-install.json': installed,
+    'desktop-install.json': installed,
     'ci-gate.json': gate,
     'webview2.json': webview,
   }))
@@ -179,6 +179,8 @@ function mockGithub() {
     failUpload: '',
     wrongRepository: false,
     expiredArtifact: false,
+    legacyArtifact: false,
+    historicalReleases: [] as Array<Record<string, any>>,
   };
   const transport: ReleaseTransport = async (request) => {
     state.calls.push(request);
@@ -189,7 +191,7 @@ function mockGithub() {
     if (request.method === 'GET' && path.startsWith('/actions/artifacts/'))
       return ok({
         id: Number(context.artifactID),
-        name: `conversation-preview-candidate-${context.commit}-${context.runID}-2`,
+        name: `${state.legacyArtifact ? 'conversation-preview-candidate' : 'rivloom-candidate'}-${context.commit}-${context.runID}-2`,
         expired: state.expiredArtifact,
         workflow_run: {
           id: Number(context.runID),
@@ -210,14 +212,14 @@ function mockGithub() {
     if (request.method === 'GET' && path.startsWith('/git/ref/tags/'))
       return state.tag ? ok({ object: { type: 'commit', sha: state.tag } }) : ok(null, 404);
     if (request.method === 'GET' && path === '/releases')
-      return ok(state.release ? [state.release] : []);
+      return ok([...state.historicalReleases, ...(state.release ? [state.release] : [])]);
     if (request.method === 'GET' && path === '/releases/100') return ok(state.release);
     if (request.method === 'GET' && path === '/releases/100/assets') return ok(state.assets);
     if (request.method === 'GET' && path.startsWith('/releases/assets/'))
       return ok(state.assets.find((asset) => asset.id === Number(path.split('/').at(-1))));
     if (request.method === 'POST' && path === '/releases') {
       assert.equal(request.json?.draft, true);
-      assert.equal(request.json?.prerelease, true);
+      assert.equal(request.json?.prerelease, false);
       assert.equal(request.json?.make_latest, 'false');
       assert.equal(request.json?.target_commitish, context.commit);
       state.release = { id: 100, ...request.json };
@@ -245,6 +247,7 @@ function mockGithub() {
     }
     if (request.method === 'PATCH' && path === '/releases/100') {
       assert.equal(state.assets.length, 2, 'Never publish partial assets');
+      assert.equal(request.json?.prerelease, false);
       assert.equal(request.json?.make_latest, 'false');
       state.release = { ...state.release, ...request.json };
       state.tag = context.commit;
@@ -270,19 +273,56 @@ test('failed local evidence or extra files cause zero GitHub calls', async () =>
       },
     ],
     [
-      'preview-install.json',
+      'candidate-build.json',
+      (record: any) => {
+        record.product = {
+          ...record.product,
+          kind: 'conversation-preview',
+          identifier: 'com.rivloom.conversationpreview',
+        };
+        record.profile = 'conversation-preview';
+      },
+    ],
+    [
+      'candidate-build.json',
+      (record: any) => {
+        record.product.version = '0.1.3-rc.1';
+      },
+    ],
+    [
+      'candidate-build.json',
+      (record: any) => {
+        record.source.refType = 'tag';
+        record.source.refName = 'ci-preview-v0.1.3';
+      },
+    ],
+    [
+      'desktop-install.json',
+      (record: any) => {
+        record.identifier = 'com.rivloom.conversationpreview';
+      },
+    ],
+    [
+      'desktop-install.json',
+      (record: any) => {
+        delete record.previewMetadataUnchanged;
+        record.formalMetadataUnchanged = true;
+      },
+    ],
+    [
+      'desktop-install.json',
       (record: any) => {
         record.installationMetadataRestored = false;
       },
     ],
     [
-      'preview-install.json',
+      'desktop-install.json',
       (record: any) => {
         record.candidateSha256 = 'd'.repeat(64);
       },
     ],
     [
-      'preview-install.json',
+      'desktop-install.json',
       (record: any) => {
         record.modelRequests = 1;
       },
@@ -309,14 +349,14 @@ test('failed local evidence or extra files cause zero GitHub calls', async () =>
     const { root, change } = await fixture();
     await change(file, mutate);
     const github = mockGithub();
-    await assert.rejects(() => publishPreview(root, context, github.transport));
+    await assert.rejects(() => publishRelease(root, context, github.transport));
     assert.equal(github.state.calls.length, 0);
   }
   const { root, directory } = await fixture();
   await writeFile(join(directory, 'unexpected.json'), '{}');
   const github = mockGithub();
   await assert.rejects(
-    () => publishPreview(root, context, github.transport),
+    () => publishRelease(root, context, github.transport),
     /original eight files/,
   );
   assert.equal(github.state.calls.length, 0);
@@ -326,14 +366,14 @@ test('draft upload failure is resumable with the same artifact; completed releas
   const { root } = await fixture();
   const github = mockGithub();
   github.state.failUpload = 'SHA256SUMS.txt';
-  await assert.rejects(() => publishPreview(root, context, github.transport), /upload failed/);
+  await assert.rejects(() => publishRelease(root, context, github.transport), /upload failed/);
   assert.equal(github.state.release?.draft, true);
   assert.equal(github.state.assets.length, 1);
   assert.equal(github.state.tag, null);
   const priorWrites = github.state.writes.length;
-  const result = await publishPreview(root, context, github.transport);
+  const result = await publishRelease(root, context, github.transport);
   assert.equal(result.status, 'published');
-  assert.equal(result.tag, `preview-v0.1.3-${context.commit.slice(0, 12)}-${context.artifactID}`);
+  assert.equal(result.tag, `v0.1.3-${context.commit.slice(0, 12)}-${context.artifactID}`);
   assert.equal(result.assets.length, 2);
   assert.equal(github.state.writes.slice(priorWrites).filter((request) => request.asset).length, 1);
   assert.equal(
@@ -341,7 +381,7 @@ test('draft upload failure is resumable with the same artifact; completed releas
     1,
   );
   const writesAfterPublish = github.state.writes.length;
-  const retry = await publishPreview(root, context, github.transport);
+  const retry = await publishRelease(root, context, github.transport);
   assert.equal(retry.reusedPublishedRelease, true);
   assert.equal(github.state.writes.length, writesAfterPublish);
 });
@@ -349,7 +389,7 @@ test('draft upload failure is resumable with the same artifact; completed releas
 test('existing asset digest or source/title bindings conflict without deletion or replacement', async () => {
   const { root } = await fixture();
   const github = mockGithub();
-  await publishPreview(root, context, github.transport);
+  await publishRelease(root, context, github.transport);
   for (const change of [
     () => {
       github.state.assets[0].digest = 'sha256:' + 'f'.repeat(64);
@@ -367,6 +407,9 @@ test('existing asset digest or source/title bindings conflict without deletion o
       github.state.release!.name = 'Unrelated release';
     },
     () => {
+      github.state.release!.prerelease = true;
+    },
+    () => {
       github.state.tag = '2'.repeat(40);
     },
   ]) {
@@ -377,7 +420,7 @@ test('existing asset digest or source/title bindings conflict without deletion o
     });
     change();
     const writes = github.state.writes.length;
-    await assert.rejects(() => publishPreview(root, context, github.transport));
+    await assert.rejects(() => publishRelease(root, context, github.transport));
     assert.equal(github.state.writes.length, writes);
     Object.assign(github.state, saved);
   }
@@ -385,30 +428,52 @@ test('existing asset digest or source/title bindings conflict without deletion o
 
 test('wrong tag target or artifact repository is rejected before creating a release', async () => {
   const { root } = await fixture();
-  for (const variant of ['tag', 'repository', 'expired']) {
+  for (const variant of ['tag', 'repository', 'expired', 'legacy-artifact']) {
     const github = mockGithub();
     if (variant === 'tag') github.state.tag = '2'.repeat(40);
     if (variant === 'repository') github.state.wrongRepository = true;
     if (variant === 'expired') github.state.expiredArtifact = true;
-    await assert.rejects(() => publishPreview(root, context, github.transport));
+    if (variant === 'legacy-artifact') github.state.legacyArtifact = true;
+    await assert.rejects(() => publishRelease(root, context, github.transport));
     assert.equal(github.state.writes.length, 0);
   }
+});
+
+test('historical Preview releases remain unchanged when a new Rivloom release is published', async () => {
+  const { root } = await fixture();
+  const github = mockGithub();
+  const historical = {
+    id: 90,
+    tag_name: `preview-v0.1.3-${context.commit.slice(0, 12)}-${context.artifactID}`,
+    target_commitish: context.commit,
+    name: 'Rivloom UI Preview 0.1.3',
+    body: '<!-- rivloom-managed-preview-release-v1 -->',
+    prerelease: true,
+    draft: false,
+  };
+  github.state.historicalReleases = [structuredClone(historical)];
+  const result = await publishRelease(root, context, github.transport);
+  assert.equal(result.status, 'published');
+  assert.equal(github.state.release?.prerelease, false);
+  assert.deepEqual(github.state.historicalReleases, [historical]);
+  assert(github.state.writes.every((request) => !request.url.includes('/releases/90')));
 });
 
 test('publication metadata keeps original evidence and allows a new artifact ID to produce a new immutable tag', async () => {
   const { root, directory } = await fixture();
   const before = await readFile(join(directory, 'candidate-build.json'));
-  const first = await preparePreview(root, context);
-  const second = await preparePreview(root, { ...context, artifactID: '67891' });
+  const first = await prepareRelease(root, context);
+  const second = await prepareRelease(root, { ...context, artifactID: '67891' });
   assert.notEqual(first.tag, second.tag);
   assert.deepEqual(await readFile(join(directory, 'candidate-build.json')), before);
-  assert.equal(first.assets[0].name, 'Rivloom-UI-Preview_0.1.3_x64-setup.exe');
+  assert.equal(first.assets[0].name, 'Rivloom_0.1.3_x64-setup.exe');
   assert.equal(
     first.assets[1].bytes?.toString(),
     `${first.assets[0].sha256}  ${first.assets[0].name}\n`,
   );
   assert.match(first.body, /未签名/);
   assert.match(first.body, /真实模型/);
+  assert.doesNotMatch(first.body + first.title, /Preview|预发布/);
 });
 
 test('environment and transport reject invalid identity or external endpoints without network access', async () => {

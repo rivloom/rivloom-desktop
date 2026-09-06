@@ -2,28 +2,30 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^(?!0{40}$)[0-9a-f]{40}$')]
     [string]$ExpectedCommit,
-    [string]$CandidateDirectory = 'test-results\candidate',
-    [switch]$AllowLocalIsolatedTest
+    [string]$CandidateDirectory = 'test-results\candidate'
 )
 
-# This switch is only for an explicitly authorized local isolated test. It is not
-# permission to replace an installed Rivloom or to use its application data.
+# This test installs the real product identity only on a fresh hosted runner.
+# It never replaces a registered installation or adopts old Preview data.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Platform -ne 'Win32NT') {
-    throw 'Preview installation verification requires Windows x64.'
+function Assert-GitHubHostedRunner([string]$Actions, [string]$RunnerEnvironment) {
+    if ($Actions -cne 'true' -or $RunnerEnvironment -cne 'github-hosted') {
+        throw 'Rivloom installation verification requires a GitHub-hosted runner; local execution is not supported.'
+    }
 }
-if (-not ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') -and -not $AllowLocalIsolatedTest) {
-    throw 'Use a GitHub-hosted runner, or explicitly authorize a local isolated test with -AllowLocalIsolatedTest.'
+Assert-GitHubHostedRunner $env:GITHUB_ACTIONS $env:RUNNER_ENVIRONMENT
+if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Platform -ne 'Win32NT') {
+    throw 'Rivloom installation verification requires Windows x64.'
 }
 $taskRepository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $taskBase = Join-Path $taskRepository 'test-results'
-$taskRoot = Join-Path $taskBase ('preview-install-' + [Guid]::NewGuid().ToString('N'))
+$taskRoot = Join-Path $taskBase ('desktop-install-' + [Guid]::NewGuid().ToString('N'))
 $taskInstall = Join-Path $taskRoot 'app'
 # A hosted runner may expose both setup-node and the image's preinstalled Node.
 # Match command execution's PATH precedence instead of joining every match.
 $taskNode = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
-$taskScript = Join-Path $PSScriptRoot 'preview-install-smoke.ts'
+$taskScript = Join-Path $PSScriptRoot 'ci-desktop-install-smoke.ts'
 $taskCandidate = if ([IO.Path]::IsPathRooted($CandidateDirectory)) { [IO.Path]::GetFullPath($CandidateDirectory) } else { [IO.Path]::GetFullPath((Join-Path $taskRepository $CandidateDirectory)) }
 
 function Assert-RegularDirectory([string]$Path) {
@@ -40,7 +42,7 @@ function Assert-NoRivloom {
 Assert-RegularDirectory $taskRepository
 Assert-RegularDirectory $taskBase
 if (-not $taskRoot.StartsWith($taskBase + '\', [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $taskRoot)) {
-    throw 'Preview test directory must be new and remain within test-results.'
+    throw 'Rivloom test directory must be new and remain within test-results.'
 }
 if ($taskInstall.Contains('"') -or $taskInstall -match '[\r\n]') { throw 'Unexpected installer path characters.' }
 Assert-NoRivloom
@@ -70,7 +72,7 @@ function Invoke-SmokeNode([string]$Operation) {
     if ($Operation -ne 'uninstalled') { $taskArguments += @('--candidate-directory', $taskCandidate) }
     if ($Operation -ne 'verify') { $taskArguments += @('--root', $taskRoot) }
     $taskOutput = & $taskNode @taskArguments
-    if ($LASTEXITCODE -ne 0) { throw "Preview smoke $Operation failed (exit $LASTEXITCODE)." }
+    if ($LASTEXITCODE -ne 0) { throw "Rivloom smoke $Operation failed (exit $LASTEXITCODE)." }
     return ($taskOutput -join "`n" | ConvertFrom-Json)
 }
 
@@ -78,15 +80,16 @@ function Invoke-SmokeNode([string]$Operation) {
 # product resource, sidecar and installer-byte verification succeeds.
 Push-Location $taskRepository
 try { $taskPlan = Invoke-SmokeNode 'verify' } finally { Pop-Location }
-$taskReportArtifact = Join-Path $taskCandidate 'preview-install.json'
+$taskReportArtifact = Join-Path $taskCandidate 'desktop-install.json'
 if (Test-Path -LiteralPath $taskReportArtifact) { throw 'This candidate already has an installation report; use a fresh candidate directory.' }
 
-$taskPreviewProductKey = 'Software\rivloom\Rivloom UI Preview'
-$taskPreviewUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom UI Preview'
-$taskFormalKeys = @('Software\rivloom\Rivloom', 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom')
+$taskRivloomProductKey = 'Software\rivloom\Rivloom'
+$taskRivloomUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom'
+$taskPreviewKeys = @('Software\rivloom\Rivloom UI Preview', 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom UI Preview')
 $taskViews = @([Microsoft.Win32.RegistryView]::Registry32, [Microsoft.Win32.RegistryView]::Registry64)
-function Read-Metadata([string]$Key, [Microsoft.Win32.RegistryView]$View) {
-    $taskRegistry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $View)
+$taskHives = @([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryHive]::LocalMachine)
+function Read-Metadata([string]$Key, [Microsoft.Win32.RegistryView]$View, [Microsoft.Win32.RegistryHive]$Hive = [Microsoft.Win32.RegistryHive]::CurrentUser) {
+    $taskRegistry = [Microsoft.Win32.RegistryKey]::OpenBaseKey($Hive, $View)
     try {
         $taskKeyHandle = $taskRegistry.OpenSubKey($Key)
         if ($null -eq $taskKeyHandle) { return [ordered]@{ Exists = $false; Values = @() } }
@@ -105,12 +108,36 @@ function Same-Metadata($Left, $Right) {
 function Read-Value($Metadata, [string]$Name) {
     return ,@($Metadata.Values | Where-Object { $_.Name -ceq $Name })
 }
+function Assert-AbsentInstallationMetadata($Snapshots) {
+    foreach ($taskSnapshot in $Snapshots) {
+        if ($taskSnapshot.Exists) { throw 'An existing Rivloom installation is registered; only a fresh hosted-runner installation is allowed.' }
+    }
+}
+function Assert-FreshInstallation {
+    $taskSnapshots = @()
+    foreach ($taskHive in $taskHives) {
+        foreach ($taskView in $taskViews) {
+            foreach ($taskKey in @($taskRivloomProductKey, $taskRivloomUninstallKey)) {
+                $taskSnapshots += Read-Metadata $taskKey $taskView $taskHive
+            }
+        }
+    }
+    Assert-AbsentInstallationMetadata $taskSnapshots
+}
+function Assert-DefaultDiscoveryAvailable {
+    $taskEndpoints = @(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object { $_.LocalPort -eq 43531 })
+    if ($taskEndpoints.Count -ne 0) { throw 'The default Rivloom discovery port is already in use; this runner is not fresh.' }
+}
+Assert-FreshInstallation
+Assert-DefaultDiscoveryAvailable
 $taskBefore = @{}
-$taskFormalBefore = @{}
+$taskPreviewBefore = @{}
 $taskVendorBefore = @{}
 foreach ($taskView in $taskViews) {
-    foreach ($taskKey in @($taskPreviewProductKey, $taskPreviewUninstallKey)) { $taskBefore["$taskView|$taskKey"] = Read-Metadata $taskKey $taskView }
-    foreach ($taskKey in $taskFormalKeys) { $taskFormalBefore["$taskView|$taskKey"] = Read-Metadata $taskKey $taskView }
+    foreach ($taskKey in @($taskRivloomProductKey, $taskRivloomUninstallKey)) { $taskBefore["$taskView|$taskKey"] = Read-Metadata $taskKey $taskView }
+    foreach ($taskHive in $taskHives) {
+        foreach ($taskKey in $taskPreviewKeys) { $taskPreviewBefore["$taskHive|$taskView|$taskKey"] = Read-Metadata $taskKey $taskView $taskHive }
+    }
     $taskRegistry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $taskView)
     try {
         $taskVendor = $taskRegistry.OpenSubKey('Software\rivloom')
@@ -123,22 +150,24 @@ foreach ($taskView in $taskViews) {
 function Assert-SafePreviousBinary($Metadata) {
     $taskOldBinary = Read-Value $Metadata 'MainBinaryName'
     if ($taskOldBinary.Count -gt 0 -and ($taskOldBinary.Count -ne 1 -or $taskOldBinary[0].Kind -ne 'String' -or $taskOldBinary[0].Value -cne 'Rivloom.exe')) {
-        throw 'Existing Preview MainBinaryName is not the expected executable; its metadata will not be modified.'
+        throw 'Existing Rivloom MainBinaryName is not the expected executable; its metadata will not be modified.'
     }
 }
-foreach ($taskView in $taskViews) { Assert-SafePreviousBinary $taskBefore["$taskView|$taskPreviewUninstallKey"] }
-function Assert-FormalUnchanged {
-    foreach ($taskView in $taskViews) {
-        foreach ($taskKey in $taskFormalKeys) {
-            if (-not (Same-Metadata (Read-Metadata $taskKey $taskView) $taskFormalBefore["$taskView|$taskKey"])) {
-                throw 'Formal Rivloom installation metadata changed; this test will not write or restore formal keys.'
+foreach ($taskView in $taskViews) { Assert-SafePreviousBinary $taskBefore["$taskView|$taskRivloomUninstallKey"] }
+function Assert-PreviewUnchanged {
+    foreach ($taskHive in $taskHives) {
+        foreach ($taskView in $taskViews) {
+            foreach ($taskKey in $taskPreviewKeys) {
+                if (-not (Same-Metadata (Read-Metadata $taskKey $taskView $taskHive) $taskPreviewBefore["$taskHive|$taskView|$taskKey"])) {
+                    throw 'Old Preview installation metadata changed; this test will not write or restore Preview keys.'
+                }
             }
         }
     }
 }
 
 # Check that the unique target does not sit inside an existing installation.
-foreach ($taskOriginal in @($taskBefore.Values) + @($taskFormalBefore.Values)) {
+foreach ($taskOriginal in @($taskBefore.Values) + @($taskPreviewBefore.Values)) {
     foreach ($taskValue in @($taskOriginal.Values | Where-Object { $_.Name -in @('', 'InstallLocation') })) {
         $taskExisting = ([string]$taskValue.Value).Trim('"').TrimEnd('\')
         if ($taskExisting -and [IO.Path]::IsPathRooted($taskExisting) -and $taskInstall.StartsWith($taskExisting + '\', [StringComparison]::OrdinalIgnoreCase)) {
@@ -152,6 +181,8 @@ function Invoke-IsolatedNSIS([string]$File, [string[]]$Arguments) {
     $taskFileInfo = Get-Item -LiteralPath $File -Force
     if ($taskFileInfo.PSIsContainer -or ($taskFileInfo.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'NSIS must be a regular executable file.' }
     if ($File -ceq [string]$taskPlan.installer) {
+        Assert-FreshInstallation
+        Assert-DefaultDiscoveryAvailable
         if ((Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant() -cne $taskPlan.record.artifact.sha256) { throw 'Candidate changed after verification.' }
     } elseif ($File -ceq (Join-Path $taskInstall 'uninstall.exe')) {
         Assert-RegularDirectory $taskInstall
@@ -169,22 +200,22 @@ function Invoke-IsolatedNSIS([string]$File, [string[]]$Arguments) {
 
 function Assert-InstalledMetadata {
     $taskExpected = @{
-        DisplayName = 'Rivloom UI Preview'; DisplayVersion = [string]$taskPlan.version; Publisher = 'rivloom';
+        DisplayName = 'Rivloom'; DisplayVersion = [string]$taskPlan.version; Publisher = 'rivloom';
         MainBinaryName = 'Rivloom.exe'; InstallLocation = ('"' + $taskInstall + '"');
         UninstallString = ('"' + (Join-Path $taskInstall 'uninstall.exe') + '"')
     }
     foreach ($taskView in $taskViews) {
-        $taskProduct = Read-Metadata $taskPreviewProductKey $taskView
+        $taskProduct = Read-Metadata $taskRivloomProductKey $taskView
         $taskProductPath = Read-Value $taskProduct ''
-        if (-not $taskProduct.Exists -or $taskProductPath.Count -ne 1 -or $taskProductPath[0].Value -cne $taskInstall) { throw 'Preview product metadata did not point to the isolated installation.' }
-        $taskUninstall = Read-Metadata $taskPreviewUninstallKey $taskView
-        if (-not $taskUninstall.Exists) { throw 'Preview uninstall metadata was not created.' }
+        if (-not $taskProduct.Exists -or $taskProductPath.Count -ne 1 -or $taskProductPath[0].Value -cne $taskInstall) { throw 'Rivloom product metadata did not point to the isolated installation.' }
+        $taskUninstall = Read-Metadata $taskRivloomUninstallKey $taskView
+        if (-not $taskUninstall.Exists) { throw 'Rivloom uninstall metadata was not created.' }
         foreach ($taskName in $taskExpected.Keys) {
             $taskActual = Read-Value $taskUninstall $taskName
-            if ($taskActual.Count -ne 1 -or $taskActual[0].Kind -ne 'String' -or $taskActual[0].Value -cne $taskExpected[$taskName]) { throw "Preview uninstall metadata mismatch: $taskName" }
+            if ($taskActual.Count -ne 1 -or $taskActual[0].Kind -ne 'String' -or $taskActual[0].Value -cne $taskExpected[$taskName]) { throw "Rivloom uninstall metadata mismatch: $taskName" }
         }
     }
-    Assert-FormalUnchanged
+    Assert-PreviewUnchanged
 }
 
 # Metadata snapshots stay in memory; never upload users' existing registry values.
@@ -194,19 +225,19 @@ $taskUninstallAttempted = $false
 $taskUninstalled = $false
 $taskFailure = $null
 $taskErrors = [Collections.Generic.List[string]]::new()
-$taskEnvNames = @('RIVLOOM_PREVIEW_INSTALL_GUARDED', 'RIVLOOM_PREVIEW_INSTALL_ROOT')
+$taskEnvNames = @('RIVLOOM_CI_DESKTOP_INSTALL_GUARDED', 'RIVLOOM_CI_DESKTOP_INSTALL_ROOT')
 $taskOldEnvironment = @{}
 foreach ($taskName in $taskEnvNames) { $taskOldEnvironment[$taskName] = [Environment]::GetEnvironmentVariable($taskName, 'Process') }
 
 function Safe-PartialMetadata([string]$Key, $Current, $Original) {
-    if (-not $Current.Exists) { return $taskUninstallAttempted -and $Key -eq $taskPreviewUninstallKey }
-    $taskPathName = if ($Key -eq $taskPreviewProductKey) { '' } else { 'InstallLocation' }
+    if (-not $Current.Exists) { return $taskUninstallAttempted -and $Key -eq $taskRivloomUninstallKey }
+    $taskPathName = if ($Key -eq $taskRivloomProductKey) { '' } else { 'InstallLocation' }
     $taskPathValue = Read-Value $Current $taskPathName
-    $taskPathExpected = if ($Key -eq $taskPreviewProductKey) { $taskInstall } else { '"' + $taskInstall + '"' }
+    $taskPathExpected = if ($Key -eq $taskRivloomProductKey) { $taskInstall } else { '"' + $taskInstall + '"' }
     if ($taskPathValue.Count -ne 1 -or $taskPathValue[0].Kind -ne 'String' -or $taskPathValue[0].Value -cne $taskPathExpected) { return $false }
-    $taskExpectedStrings = if ($Key -eq $taskPreviewProductKey) { @{ '' = $taskInstall } } else {
+    $taskExpectedStrings = if ($Key -eq $taskRivloomProductKey) { @{ '' = $taskInstall } } else {
         @{
-            MainBinaryName = 'Rivloom.exe'; DisplayName = 'Rivloom UI Preview';
+            MainBinaryName = 'Rivloom.exe'; DisplayName = 'Rivloom';
             DisplayIcon = ('"' + (Join-Path $taskInstall 'Rivloom.exe') + '"');
             DisplayVersion = [string]$taskPlan.version; Publisher = 'rivloom';
             InstallLocation = ('"' + $taskInstall + '"');
@@ -223,7 +254,7 @@ function Safe-PartialMetadata([string]$Key, $Current, $Original) {
         if ($taskOld.Count -eq 1 -and (Same-Metadata $taskValue $taskOld[0])) { continue }
         if ($taskExpectedStrings.ContainsKey($taskValue.Name)) {
             if ($taskValue.Kind -ne 'String' -or $taskValue.Value -cne $taskExpectedStrings[$taskValue.Name]) { return $false }
-        } elseif ($Key -eq $taskPreviewUninstallKey -and $taskValue.Name -cin @('NoModify', 'NoRepair')) {
+        } elseif ($Key -eq $taskRivloomUninstallKey -and $taskValue.Name -cin @('NoModify', 'NoRepair')) {
             if ($taskValue.Kind -ne 'DWord' -or $taskValue.Value -ne 1) { return $false }
         } else {
             # EstimatedSize is accepted only via the complete captured install
@@ -236,8 +267,8 @@ function Safe-PartialMetadata([string]$Key, $Current, $Original) {
 
 try {
     New-Item -ItemType Directory -Path $taskRoot | Out-Null
-    $env:RIVLOOM_PREVIEW_INSTALL_GUARDED = '1'
-    $env:RIVLOOM_PREVIEW_INSTALL_ROOT = $taskRoot
+    $env:RIVLOOM_CI_DESKTOP_INSTALL_GUARDED = '1'
+    $env:RIVLOOM_CI_DESKTOP_INSTALL_ROOT = $taskRoot
     Push-Location $taskRepository
     try {
         $taskInstallerStarted = $true
@@ -245,7 +276,7 @@ try {
         Assert-RegularDirectory $taskInstall
         Assert-InstalledMetadata
         foreach ($taskView in $taskViews) {
-            foreach ($taskKey in @($taskPreviewProductKey, $taskPreviewUninstallKey)) { $taskInstalled["$taskView|$taskKey"] = Read-Metadata $taskKey $taskView }
+            foreach ($taskKey in @($taskRivloomProductKey, $taskRivloomUninstallKey)) { $taskInstalled["$taskView|$taskKey"] = Read-Metadata $taskKey $taskView }
         }
         Invoke-SmokeNode 'installed' | Out-Null
         $taskUninstallAttempted = $true
@@ -267,7 +298,7 @@ finally {
     }
     foreach ($taskName in $taskEnvNames) { [Environment]::SetEnvironmentVariable($taskName, $taskOldEnvironment[$taskName], 'Process') }
     foreach ($taskView in $taskViews) {
-        foreach ($taskKey in @($taskPreviewProductKey, $taskPreviewUninstallKey)) {
+        foreach ($taskKey in @($taskRivloomProductKey, $taskRivloomUninstallKey)) {
             try {
                 $taskCurrent = Read-Metadata $taskKey $taskView
                 $taskOriginal = $taskBefore["$taskView|$taskKey"]
@@ -307,19 +338,19 @@ finally {
             finally { $taskRegistry.Dispose() }
         }
     }
-    $taskFormalUnchanged = $true
-    try { Assert-FormalUnchanged } catch { $taskFormalUnchanged = $false; $taskErrors.Add($_.Exception.Message) }
+    $taskPreviewUnchanged = $true
+    try { Assert-PreviewUnchanged } catch { $taskPreviewUnchanged = $false; $taskErrors.Add($_.Exception.Message) }
     if (Test-Path -LiteralPath $taskRoot) {
         $taskReportPath = Join-Path $taskRoot 'verification.json'
-        $taskReport = if (Test-Path -LiteralPath $taskReportPath) { Get-Content -Raw -Encoding UTF8 -LiteralPath $taskReportPath | ConvertFrom-Json } else { [pscustomobject]@{ schemaVersion = 1; status = 'failed'; commit = $ExpectedCommit; identifier = 'com.rivloom.conversationpreview' } }
-        if ($taskReport.commit -cne $ExpectedCommit -or $taskReport.identifier -cne 'com.rivloom.conversationpreview') { throw 'Installation report belongs to another candidate.' }
+        $taskReport = if (Test-Path -LiteralPath $taskReportPath) { Get-Content -Raw -Encoding UTF8 -LiteralPath $taskReportPath | ConvertFrom-Json } else { [pscustomobject]@{ schemaVersion = 1; status = 'failed'; commit = $ExpectedCommit; identifier = 'com.rivloom.desktop' } }
+        if ($taskReport.commit -cne $ExpectedCommit -or $taskReport.identifier -cne 'com.rivloom.desktop') { throw 'Installation report belongs to another candidate.' }
         if ($taskReport.PSObject.Properties.Name -contains 'candidateSha256' -and $taskReport.candidateSha256 -cne $taskPlan.record.artifact.sha256) { throw 'Installation report belongs to different installer bytes.' }
         $taskPassed = $null -eq $taskFailure -and $taskErrors.Count -eq 0 -and $taskReport.status -eq 'awaiting-metadata-restore'
         $taskReport.status = if ($taskPassed) { 'passed' } else { 'failed' }
         $taskReport | Add-Member -NotePropertyName sourceCommit -NotePropertyValue $ExpectedCommit -Force
         $taskReport | Add-Member -NotePropertyName candidateSha256 -NotePropertyValue $taskPlan.record.artifact.sha256 -Force
         $taskReport | Add-Member -NotePropertyName installationMetadataRestored -NotePropertyValue ($taskErrors.Count -eq 0) -Force
-        $taskReport | Add-Member -NotePropertyName formalMetadataUnchanged -NotePropertyValue $taskFormalUnchanged -Force
+        $taskReport | Add-Member -NotePropertyName previewMetadataUnchanged -NotePropertyValue $taskPreviewUnchanged -Force
         $taskReport | Add-Member -NotePropertyName wrapperErrors -NotePropertyValue $taskErrors.ToArray() -Force
         if ($null -ne $taskFailure) { $taskReport | Add-Member -NotePropertyName wrapperFailure -NotePropertyValue $taskFailure -Force }
         $taskReportBytes = [Text.UTF8Encoding]::new($false).GetBytes(($taskReport | ConvertTo-Json -Depth 20) + "`n")
@@ -328,10 +359,10 @@ finally {
         # restoration; never glob the isolated data or previous test reports.
         $taskReportFile = [IO.File]::Open($taskReportArtifact, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         try { $taskReportFile.Write($taskReportBytes, 0, $taskReportBytes.Length) } finally { $taskReportFile.Dispose() }
-        Write-Output "Preview installation report: $taskReportPath"
+        Write-Output "Rivloom installation report: $taskReportPath"
     }
 }
 if ($null -ne $taskFailure) { throw $taskFailure }
 if ($taskErrors.Count -gt 0) { throw ($taskErrors -join ' | ') }
-if (-not $taskPassed) { throw 'Preview installation did not complete all guarded checks.' }
-Write-Output 'PASS isolated Preview install/start/restart/uninstall; original Preview metadata restored and formal metadata unchanged.'
+if (-not $taskPassed) { throw 'Rivloom installation did not complete all guarded checks.' }
+Write-Output 'PASS fresh hosted-runner Rivloom install/start/restart/uninstall; test installation metadata removed and old Preview metadata unchanged.'

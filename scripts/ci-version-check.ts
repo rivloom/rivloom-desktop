@@ -35,6 +35,7 @@ export function checkVersions(root = ciRoot) {
     assert.equal(version, packageManifest.version, `Application version mismatch: ${source}`);
   }
   assert.equal(tauri.identifier, 'com.rivloom.desktop', 'Unexpected formal product identifier');
+  assert.equal(tauri.productName, 'Rivloom', 'Unexpected desktop product name');
   assert.equal(
     preview.identifier,
     'com.rivloom.conversationpreview',

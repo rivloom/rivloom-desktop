@@ -67,16 +67,19 @@ test('R2 credentials, object paths and conditional headers reject ambiguous inpu
     );
   for (const key of [
     '../private',
-    'previews/latest.json?x=1',
-    'previews/latest.json\n',
-    'previews/x/private.zip',
-    'previews/preview-v0.1.3/../../secret',
-    'previews/latest.json#x',
+    'releases/latest.json?x=1',
+    'releases/latest.json\n',
+    'releases/x/private.zip',
+    'releases/v0.1.3/../../secret',
+    'releases/latest.json#x',
+    'previews/latest.json',
+    'releases/preview-v0.1.3-111111111111-1/SHA256SUMS.txt',
+    'releases/v0.1.3-111111111111-1/Rivloom-UI-Preview_0.1.3_x64-setup.exe',
   ])
     assert.throws(() => encodedObjectKey(key));
   assert.equal(
-    encodedObjectKey('previews/preview-v0.1.3+build-111111111111-1/SHA256SUMS.txt'),
-    'previews/preview-v0.1.3%2Bbuild-111111111111-1/SHA256SUMS.txt',
+    encodedObjectKey('releases/v0.1.3+build-111111111111-1/SHA256SUMS.txt'),
+    'releases/v0.1.3%2Bbuild-111111111111-1/SHA256SUMS.txt',
   );
   for (const value of [null, 'unquoted', 'W/"abc"', '"abc"\n', '"abc\r\nx: y"'])
     assert.throws(() => strongEtag(value));
@@ -92,7 +95,7 @@ test('R2 signs a conditional payload for the fixed account endpoint and never fo
   const body = Buffer.from('{"synthetic":true}\n');
   await transport({
     method: 'PUT',
-    key: 'previews/latest.json',
+    key: 'releases/latest.json',
     payload: { body, bytes: body.length, sha256: digest(body) },
     condition: { etag: '"existing"' },
     contentType: 'application/json',
@@ -101,7 +104,7 @@ test('R2 signs a conditional payload for the fixed account endpoint and never fo
   assert.equal(calls.length, 1);
   assert.equal(
     calls[0].url,
-    `https://${configuration.accountID}.r2.cloudflarestorage.com/rivloom-downloads/previews/latest.json`,
+    `https://${configuration.accountID}.r2.cloudflarestorage.com/rivloom-downloads/releases/latest.json`,
   );
   const headers = new Headers(calls[0].init?.headers);
   assert.equal(headers.get('if-match'), '"existing"');
@@ -114,13 +117,14 @@ test('R2 signs a conditional payload for the fixed account endpoint and never fo
     () =>
       transport({
         method: 'PUT',
-        key: 'previews/latest.json',
+        key: 'releases/latest.json',
         payload: { body, bytes: body.length, sha256: 'f'.repeat(64) },
         condition: { absent: true },
       }),
     /payload-changed/,
   );
   await assert.rejects(() => transport({ method: 'GET', key: '../other-bucket/key' }));
+  await assert.rejects(() => transport({ method: 'GET', key: 'previews/latest.json' }));
   assert.equal(calls.length, 1);
 });
 
@@ -137,7 +141,7 @@ test('transport failures discard raw credential-bearing errors', async () => {
     throw new Error(`secret ${configuration.secretAccessKey}`);
   });
   await assert.rejects(
-    () => transport({ method: 'HEAD', key: 'previews/latest.json' }),
+    () => transport({ method: 'HEAD', key: 'releases/latest.json' }),
     (error: Error) =>
       error.message === 'r2-request-failed' &&
       !error.message.includes(configuration.secretAccessKey),

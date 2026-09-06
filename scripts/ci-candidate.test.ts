@@ -21,31 +21,39 @@ const context: CandidateContext = {
   expectedCommit: '1'.repeat(40),
   workingTree: 'clean',
   refType: 'tag',
-  refName: 'ci-preview-v0.1.3',
+  refName: 'ci-v0.1.3',
   node: '24.19.0',
   rust: '1.98.1',
   cargo: '1.98.1',
 };
 
-test('Preview candidate context rejects tag, source, dirty-tree and toolchain drift', () => {
+test('Rivloom candidate context rejects tag, source, dirty-tree and toolchain drift', () => {
   validateCandidateContext('0.1.3', context);
   for (const change of [
     { expectedCommit: '2'.repeat(40) },
     { workingTree: 'dirty' as const },
     { refName: 'v0.1.3' },
-    { refName: 'ci-preview-v0.1.4' },
+    { refName: 'ci-v0.1.4' },
+    { refName: 'ci-preview-v0.1.3' },
     { node: '24.18.0' },
     { rust: '1.97.0' },
     { cargo: '1.97.0' },
   ])
     assert.throws(() => validateCandidateContext('0.1.3', { ...context, ...change }));
   const config = candidateConfig('0.1.3', context);
+  assert.equal(candidateProfile, 'desktop');
+  assert.equal(config.productName, 'Rivloom');
+  assert.equal(config.identifier, 'com.rivloom.desktop');
   assert.equal(config.identifier, candidateIdentifier);
   assert.equal(config.build.beforeBuildCommand, null);
   assert.equal(config.bundle.createUpdaterArtifacts, false);
+  assert.throws(
+    () => validateCandidateContext('0.1.3-beta.1', { ...context, refName: 'ci-v0.1.3-beta.1' }),
+    /requires a release version/,
+  );
 });
 
-test('candidate record binds verified unchanged Preview runtime and cannot imply publication', async () => {
+test('candidate record binds verified unchanged Rivloom runtime and cannot imply publication', async () => {
   mkdirSync(join(ciRoot, 'test-results'), { recursive: true });
   const root = mkdtempSync(join(ciRoot, 'test-results', 'ci-candidate-selftest-'));
   mkdirSync(join(root, 'src-tauri', 'resources', 'runtime'), { recursive: true });
@@ -59,7 +67,7 @@ test('candidate record binds verified unchanged Preview runtime and cannot imply
   ])
     cpSync(join(ciRoot, file), join(root, file));
   const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
-  const source = { ...context, refName: `ci-preview-v${version}` };
+  const source = { ...context, refName: `ci-v${version}` };
   configureCandidate(root, source);
   const directory = join(root, 'test-results', 'candidate');
   const manifestPath = join(root, 'src-tauri', 'resources', 'runtime', 'runtime-manifest.json');
@@ -89,7 +97,7 @@ test('candidate record binds verified unchanged Preview runtime and cannot imply
   executable.write('MZ');
   executable.writeUInt32LE(128, 0x3c);
   executable.write('PE\0\0', 128);
-  writeFileSync(join(bundle, `Rivloom UI Preview_${version}_x64-setup.exe`), executable);
+  writeFileSync(join(bundle, `Rivloom_${version}_x64-setup.exe`), executable);
   const record = await recordCandidate(root, source);
   assert.equal(record.status, 'candidate');
   assert.equal(record.product.identifier, candidateIdentifier);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { preparePreview, type ReleaseContext } from './ci-preview-release.ts';
+import { prepareRelease, type ReleaseContext } from './ci-release.ts';
 import { digest, type ObjectRequest } from './ci-r2-storage.ts';
 import {
   pagesDeployHook,
@@ -10,11 +10,7 @@ import {
   websiteServices,
   type WebsiteServices,
 } from './ci-website-download.ts';
-import {
-  parsePreviewDownloadRecord,
-  PREVIEW_DOWNLOAD_ORIGIN,
-  type PreviewDownloadRecord,
-} from './preview-download-record.ts';
+import { parseDownloadRecord, DOWNLOAD_ORIGIN, type DownloadRecord } from './download-record.ts';
 
 const context: ReleaseContext = {
   repository: 'rivloom/rivloom-desktop',
@@ -24,7 +20,7 @@ const context: ReleaseContext = {
 };
 const checkedAt = '2026-09-05T09:00:00.000Z';
 const publishedAt = '2026-09-05T08:00:00Z';
-const latestKey = 'previews/latest.json';
+const latestKey = 'releases/latest.json';
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 const response = (body: Buffer | null, status = 200, headers?: HeadersInit) =>
   new Response(body ? Uint8Array.from(body) : null, { status, headers });
@@ -36,13 +32,13 @@ async function fixture() {
   const directory = join(root, 'test-results', 'candidate');
   await mkdir(directory, { recursive: true });
   await mkdir(join(root, 'src-tauri'));
-  await mkdir(join(root, 'test-results', 'preview-release'));
+  await mkdir(join(root, 'test-results', 'release'));
   await writeFile(join(root, 'package.json'), encode({ version: '0.1.3' }));
   await writeFile(join(root, 'package-lock.json'), 'synthetic npm lock');
   await writeFile(join(root, 'src-tauri', 'Cargo.lock'), 'synthetic cargo lock');
   const product = {
-    kind: 'conversation-preview',
-    identifier: 'com.rivloom.conversationpreview',
+    kind: 'desktop',
+    identifier: 'com.rivloom.desktop',
     version: '0.1.3',
   };
   const manifest = {
@@ -75,7 +71,7 @@ async function fixture() {
   bytes.writeUInt32LE(128, 60);
   bytes.write('PE\0\0', 128);
   bytes.write('Synthetic, non-executable test structure', 180);
-  const installerName = 'Rivloom UI Preview_0.1.3_x64-setup.exe';
+  const installerName = 'Rivloom_0.1.3_x64-setup.exe';
   const candidate = {
     schemaVersion: 1,
     status: 'candidate',
@@ -114,7 +110,7 @@ async function fixture() {
     identifier: product.identifier,
     candidateSha256: digest(bytes),
     installationMetadataRestored: true,
-    formalMetadataUnchanged: true,
+    previewMetadataUnchanged: true,
     wrapperErrors: [],
     modelRequests: 0,
     runtime,
@@ -156,13 +152,13 @@ async function fixture() {
     'runtime-manifest.json': manifest,
     'runtime-before.json': runtime,
     'runtime-after.json': runtime,
-    'preview-install.json': installed,
+    'desktop-install.json': installed,
     'ci-gate.json': gate,
     'webview2.json': webview,
   }))
     await writeFile(join(directory, name), encode(value));
   await writeFile(join(directory, installerName), bytes);
-  const plan = await preparePreview(root, context);
+  const plan = await prepareRelease(root, context);
   const published = {
     schemaVersion: 1,
     status: 'published',
@@ -177,16 +173,16 @@ async function fixture() {
     reusedPublishedRelease: false,
     assets: plan.assets.map(({ name, size, sha256 }) => ({ name, bytes: size, sha256 })),
   };
-  await writeFile(join(root, 'test-results', 'preview-release', 'release.json'), encode(published));
+  await writeFile(join(root, 'test-results', 'release', 'release.json'), encode(published));
   const file = (index: number) => ({
     fileName: plan.assets[index].name,
     bytes: plan.assets[index].size,
     sha256: plan.assets[index].sha256,
-    url: `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${plan.tag}/${plan.assets[index].name}`,
+    url: `${DOWNLOAD_ORIGIN}/releases/${plan.tag}/${plan.assets[index].name}`,
   });
-  const record = parsePreviewDownloadRecord({
+  const record = parseDownloadRecord({
     schemaVersion: 1,
-    kind: 'rivloom-preview-download',
+    kind: 'rivloom-download',
     status: 'published',
     version: plan.version,
     product: { kind: product.kind, identifier: product.identifier },
@@ -202,20 +198,20 @@ async function fixture() {
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Stored = { body: Buffer; sha256: string; etag: string };
-function differentRecord(record: PreviewDownloadRecord, commit: string, artifactID: string) {
-  const tag = `preview-v${record.version}-${commit.slice(0, 12)}-${artifactID}`;
-  return parsePreviewDownloadRecord({
+function differentRecord(record: DownloadRecord, commit: string, artifactID: string) {
+  const tag = `v${record.version}-${commit.slice(0, 12)}-${artifactID}`;
+  return parseDownloadRecord({
     ...record,
     source: { commit },
     build: { runID: '10000', artifactID },
     release: { ...record.release, id: 99, tag },
     artifact: {
       ...record.artifact,
-      url: `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${tag}/${record.artifact.fileName}`,
+      url: `${DOWNLOAD_ORIGIN}/releases/${tag}/${record.artifact.fileName}`,
     },
     checksum: {
       ...record.checksum,
-      url: `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${tag}/SHA256SUMS.txt`,
+      url: `${DOWNLOAD_ORIGIN}/releases/${tag}/SHA256SUMS.txt`,
     },
   });
 }
@@ -251,7 +247,7 @@ function mockServices(f: Fixture) {
         return {
           id: 100,
           draft: state.githubFault === 'draft',
-          prerelease: true,
+          prerelease: state.githubFault === 'prerelease',
           name: f.plan.title,
           body: f.plan.body,
           tag_name: f.plan.tag,
@@ -346,14 +342,10 @@ test('invalid local candidate or publication evidence makes no external calls', 
       mock = mockServices(f);
     if (fault === 'publication')
       await writeFile(
-        join(f.root, 'test-results', 'preview-release', 'release.json'),
+        join(f.root, 'test-results', 'release', 'release.json'),
         encode({ ...f.published, status: 'failed' }),
       );
-    else
-      await writeFile(
-        join(f.directory, 'Rivloom UI Preview_0.1.3_x64-setup.exe'),
-        Buffer.alloc(512),
-      );
+    else await writeFile(join(f.directory, 'Rivloom_0.1.3_x64-setup.exe'), Buffer.alloc(512));
     const result = await synchronizeWebsiteDownload(f.root, context, mock.services);
     assert.equal(result.status, 'failed');
     assert.equal(result.stage, 'local-proof');
@@ -363,7 +355,7 @@ test('invalid local candidate or publication evidence makes no external calls', 
 
 test('real release metadata, asset digest and tag source must pass before storage writes', async () => {
   const f = await fixture();
-  for (const fault of ['draft', 'digest', 'tag']) {
+  for (const fault of ['draft', 'prerelease', 'digest', 'tag']) {
     const mock = mockServices(f);
     mock.state.githubFault = fault;
     const result = await synchronizeWebsiteDownload(f.root, context, mock.services);
@@ -402,10 +394,10 @@ test('existing matching objects are reused while conflicting objects are never r
     const mock = mockServices(f);
     for (const asset of f.plan.assets)
       mock.store(
-        `previews/${f.plan.tag}/${asset.name}`,
+        `releases/${f.plan.tag}/${asset.name}`,
         asset.path ? await readFile(asset.path) : asset.bytes!,
       );
-    const installerKey = `previews/${f.plan.tag}/${f.plan.assets[0].name}`;
+    const installerKey = `releases/${f.plan.tag}/${f.plan.assets[0].name}`;
     if (conflict) mock.state.objects.get(installerKey)!.sha256 = 'f'.repeat(64);
     const before = {
       ...mock.state.objects.get(installerKey)!,
@@ -490,12 +482,14 @@ test('hook failure retries the same verified latest without reuploading or leaki
 
 test('invalid latest data and exhausted CAS conflicts fail without replacing the pointer', async () => {
   const f = await fixture();
-  for (const fault of ['invalid', 'races']) {
+  for (const fault of ['invalid', 'null', 'races']) {
     const mock = mockServices(f);
     const previous =
       fault === 'invalid'
         ? encode({ invalid: true })
-        : encode(differentRecord(f.record, '2'.repeat(40), '60000'));
+        : fault === 'null'
+          ? encode(null)
+          : encode(differentRecord(f.record, '2'.repeat(40), '60000'));
     mock.store(latestKey, previous);
     if (fault === 'races') mock.state.conflicts = 10;
     const result = await synchronizeWebsiteDownload(f.root, context, mock.services);
@@ -507,6 +501,39 @@ test('invalid latest data and exhausted CAS conflicts fail without replacing the
       fault === 'races' ? 4 : 0,
     );
   }
+});
+
+test('legacy Preview storage is never read or migrated and cannot populate the Rivloom pointer', async () => {
+  const f = await fixture();
+  const legacy: any = structuredClone(f.record);
+  legacy.kind = 'rivloom-preview-download';
+  legacy.product = { kind: 'conversation-preview', identifier: 'com.rivloom.conversationpreview' };
+  legacy.release.tag = `preview-${legacy.release.tag}`;
+  legacy.artifact.fileName = `Rivloom-UI-Preview_${legacy.version}_x64-setup.exe`;
+  legacy.artifact.url = `${DOWNLOAD_ORIGIN}/previews/${legacy.release.tag}/${legacy.artifact.fileName}`;
+  legacy.checksum.url = `${DOWNLOAD_ORIGIN}/previews/${legacy.release.tag}/SHA256SUMS.txt`;
+  legacy.checksum.bytes = `${legacy.artifact.sha256}  ${legacy.artifact.fileName}\n`.length;
+  const oldKey = 'previews/latest.json';
+  const bytes = encode(legacy);
+  const initial = mockServices(f);
+  initial.store(oldKey, bytes);
+  const published = await synchronizeWebsiteDownload(f.root, context, initial.services);
+  assert.equal(published.status, 'synced');
+  assert.deepEqual(initial.state.objects.get(oldKey)!.body, bytes);
+  assert(initial.state.calls.every((call) => !call.includes('previews/')));
+  assert.equal(
+    JSON.parse(initial.state.objects.get(latestKey)!.body.toString()).kind,
+    'rivloom-download',
+  );
+
+  const misplaced = mockServices(f);
+  misplaced.store(latestKey, bytes);
+  const failed = await synchronizeWebsiteDownload(f.root, context, misplaced.services);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.stage, 'latest');
+  assert.deepEqual(misplaced.state.objects.get(latestKey)!.body, bytes);
+  assert.equal(misplaced.state.hooks, 0);
+  assert(misplaced.state.writes.every((write) => write.key !== latestKey));
 });
 
 test('production service configuration rejects foreign hooks and keeps public and hook requests credential-free', async () => {
@@ -543,13 +570,15 @@ test('production service configuration rejects foreign hooks and keeps public an
   );
   await services.publicRead(latestKey);
   await services.deploy();
-  assert.equal(calls[0].url, `${PREVIEW_DOWNLOAD_ORIGIN}/${latestKey}`);
+  assert.equal(calls[0].url, `${DOWNLOAD_ORIGIN}/${latestKey}`);
   assert.equal(calls[1].url, hook);
   for (const call of calls) {
     assert.equal(new Headers(call.init?.headers).has('authorization'), false);
     assert.equal(call.init?.redirect, 'error');
   }
   await assert.rejects(() => services.publicRead('../private.json'));
+  await assert.rejects(() => services.publicRead('previews/latest.json'));
+  await assert.rejects(() => services.github('/git/ref/tags/preview-v0.1.3-111111111111-1'));
   await assert.rejects(() => services.github('/../../other/repo/releases/1'));
   assert.equal(calls.length, 2);
 });

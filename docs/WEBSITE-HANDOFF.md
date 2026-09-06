@@ -1,6 +1,20 @@
 # Rivloom 官网项目交接
 
-更新：2026-09-05。供官网新任务恢复产品背景和既有决策使用；这是内部交接资料，不直接作为公开网页发布。
+更新：2026-09-06。供官网新任务恢复产品背景和既有决策使用；这是内部交接资料，不直接作为公开网页发布。
+
+## 当前摘要（2026-09-06）
+
+下一版源码版本为 **0.1.4**，安装包、GitHub Release 和官网下载文案统一使用 **Rivloom**。构建采用 `desktop` profile 和 `com.rivloom.desktop`，安装包名为 `Rivloom_0.1.4_x64-setup.exe`。旧 Preview 安装、数据、Release 和下载对象保持原状，本次没有自动迁移或合并旧 Preview 数据。
+
+当前实现的发行顺序为：同一源码的三组 CI 通过 → Rivloom 候选构建 → 全新 GitHub 托管 Windows runner 的安装、启动、重启、卸载与受检数据保留检查 → 普通 GitHub Release。发布器要求 `prerelease:false`，标签绑定版本、源码和原始 artifact ID；`make_latest:false` 保留，官网通过独立清单选择新版。两个源码仓库保持私有，GitHub Release 下载仍需仓库访问权限。本次 0.1.4 的云端构建、安装验收与普通 Release 尚待新提交的实际运行结果，不能沿用下方旧 Preview 或官网部署的通过记录。
+
+专用 R2 桶 `rivloom-downloads` 与 `downloads.rivloom.com` 已创建，自定义域名已激活，最低 TLS 版本为 1.2。长期 R2 访问凭据和官网 Pages `main` 部署 Hook 尚未获授权，尚未创建或接通；桌面 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网 `publicDownloadsEnabled` 均未启用，公开下载仍关闭。新链路使用 `releases/latest.json` 和 `releases/v<版本>-<源码前12位>-<artifactID>/Rivloom_<版本>_x64-setup.exe`，不沿用旧 `previews/` 记录。接通后才按原始候选和发布 artifact ID 同步，匿名完整下载核对大小与 SHA-256，通过条件写入防止清单回退，再调用官网部署 Hook。
+
+当前安装包仍未签名，客户端没有 updater 插件、公钥或更新端点，需要手动安装更新。统一名称和普通 GitHub Release 标记不代表已完成签名、stable/beta 更新频道或旧版本升级验收。详细当前流程见 [CI](CI.md)、[RELEASING](RELEASING.md)、[名称变更计划](plans/2026-09-06-rivloom-release-name.md) 与 [ADR-0008](adr/0008-rivloom-release-name.md)。
+
+## 历史快照（2026-09-05，以下原文保留）
+
+从下方“目标与仓库边界”至文末是 2026-09-05 的交接原文。其中“当前”“本轮”“R2 仍待配置”等措辞只描述当时检查点；旧版本、安装包和云端链接用于追溯历史，不覆盖上方当前摘要，也不证明 0.1.4 已完成云端发行或公开下载。
 
 ## 目标与仓库边界
 

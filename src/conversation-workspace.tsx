@@ -879,7 +879,7 @@ export function ConversationWorkspace({
           </button>
           <div className="sidebar-signature">
             <Wordmark />
-            <small>0.1.3</small>
+            <small>0.1.4</small>
           </div>
         </nav>
       </aside>

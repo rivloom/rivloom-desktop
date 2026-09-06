@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createSocket } from 'node:dgram';
 import {
   closeSync,
   existsSync,
@@ -24,8 +23,9 @@ import { releaseVersionSchema } from './release-record.ts';
 import { verifyRuntime } from './ci-verify-runtime.ts';
 import { modelFixture, ServiceClient, until } from './m34-fixtures.ts';
 
-export const previewProduct = 'Rivloom UI Preview';
-export const previewIdentifier = 'com.rivloom.conversationpreview';
+export const desktopProduct = 'Rivloom';
+export const desktopIdentifier = 'com.rivloom.desktop';
+export const desktopDiscoveryPort = 43_531;
 const repository = resolve(import.meta.dirname, '..');
 const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -45,10 +45,10 @@ const candidateSchema = z
   .object({
     schemaVersion: z.literal(1),
     status: z.literal('candidate'),
-    profile: z.literal('conversation-preview'),
+    profile: z.literal('desktop'),
     product: z.object({
-      kind: z.literal('conversation-preview'),
-      identifier: z.literal(previewIdentifier),
+      kind: z.literal('desktop'),
+      identifier: z.literal(desktopIdentifier),
       version: releaseVersionSchema,
     }),
     target: z.literal('x86_64-pc-windows-msvc'),
@@ -99,6 +99,10 @@ type Candidate = z.infer<typeof candidateSchema>;
 export function validateCandidateRecord(value: unknown, expectedCommit: string): Candidate {
   sourceCommit.parse(expectedCommit);
   const record = candidateSchema.parse(value);
+  assert(
+    !record.product.version.split('+')[0].includes('-'),
+    'Rivloom candidate requires a release version',
+  );
   assert.equal(
     record.source.commit,
     expectedCommit,
@@ -111,13 +115,13 @@ export function validateCandidateRecord(value: unknown, expectedCommit: string):
   );
   assert.equal(
     record.artifact.fileName,
-    `${previewProduct}_${record.product.version}_x64-setup.exe`,
+    `${desktopProduct}_${record.product.version}_x64-setup.exe`,
     'Unexpected candidate installer name',
   );
   if (record.source.refType === 'tag')
     assert.equal(
       record.source.refName,
-      `ci-preview-v${record.product.version}`,
+      `ci-v${record.product.version}`,
       'Candidate tag/version mismatch',
     );
   return record;
@@ -237,15 +241,15 @@ export async function verifyCandidate(root: string, directory: string, expectedC
   );
   assert.equal(process.platform, 'win32', 'Installer resource inspection requires Windows');
   const resource = powershellJson(
-    '$taskInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($env:RIVLOOM_PREVIEW_INSPECT_FILE); @{ ProductName = $taskInfo.ProductName; ProductVersion = $taskInfo.ProductVersion; FileDescription = $taskInfo.FileDescription } | ConvertTo-Json -Compress',
-    { RIVLOOM_PREVIEW_INSPECT_FILE: installer },
+    '$taskInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($env:RIVLOOM_CI_DESKTOP_INSPECT_FILE); @{ ProductName = $taskInfo.ProductName; ProductVersion = $taskInfo.ProductVersion; FileDescription = $taskInfo.FileDescription } | ConvertTo-Json -Compress',
+    { RIVLOOM_CI_DESKTOP_INSPECT_FILE: installer },
   );
   assert.equal(
     resource.ProductName,
-    previewProduct,
-    'Installer PE resource is not the Preview product',
+    desktopProduct,
+    'Installer PE resource is not the Rivloom product',
   );
-  assert.equal(resource.FileDescription, previewProduct, 'Installer PE description is not Preview');
+  assert.equal(resource.FileDescription, desktopProduct, 'Installer PE description is not Rivloom');
   assert.equal(resource.ProductVersion, record.product.version, 'Installer PE version differs');
   return {
     record,
@@ -253,7 +257,7 @@ export async function verifyCandidate(root: string, directory: string, expectedC
     candidateDirectory: resolve(directory),
     version: record.product.version,
     commit: expectedCommit,
-    productName: previewProduct,
+    productName: desktopProduct,
   };
 }
 
@@ -351,8 +355,8 @@ export function measureInstalledTree(directory: string) {
 export function verifyIsolatedRoot(root: string, testRoot: string) {
   const suffix = requireDescendant(join(root, 'test-results'), testRoot);
   assert(
-    /^preview-install-[a-f0-9]{32}$/.test(suffix),
-    'Unexpected Preview installation test directory',
+    /^desktop-install-[a-f0-9]{32}$/.test(suffix),
+    'Unexpected Rivloom installation test directory',
   );
   return regularPath(root, testRoot, 'directory');
 }
@@ -384,16 +388,51 @@ function noRivloom() {
   );
 }
 
+export function requireHostedRunner(environment: NodeJS.ProcessEnv) {
+  assert(
+    environment.GITHUB_ACTIONS === 'true' && environment.RUNNER_ENVIRONMENT === 'github-hosted',
+    'Rivloom installation verification requires a GitHub-hosted runner',
+  );
+}
+
+export function assertDefaultDiscoveryBindings(value: unknown, backendPID?: number) {
+  const endpoints = z
+    .array(
+      z.object({
+        LocalPort: z.literal(desktopDiscoveryPort),
+        OwningProcess: z.number().int().positive(),
+      }),
+    )
+    .max(1024)
+    .parse(value);
+  if (backendPID === undefined) {
+    assert.equal(endpoints.length, 0, 'Default discovery port is already in use');
+    return;
+  }
+  assert(Number.isSafeInteger(backendPID) && backendPID > 0, 'Invalid owned backend process');
+  assert(
+    endpoints.length > 0 && endpoints.every((endpoint) => endpoint.OwningProcess === backendPID),
+    'Default discovery port is not exclusively owned by the installed backend',
+  );
+}
+
+function discoveryBindings() {
+  return powershellJson(
+    `ConvertTo-Json -Compress -InputObject @(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object { $_.LocalPort -eq ${desktopDiscoveryPort} } | Select-Object LocalPort,OwningProcess)`,
+  );
+}
+
 function guardedRoot(root: string, testRoot: string) {
   assert.equal(process.platform, 'win32');
   assert.equal(process.arch, 'x64');
+  requireHostedRunner(process.env);
   assert.equal(
-    process.env.RIVLOOM_PREVIEW_INSTALL_GUARDED,
+    process.env.RIVLOOM_CI_DESKTOP_INSTALL_GUARDED,
     '1',
-    'Use preview-install-smoke.ps1 for HKCU protection',
+    'Use ci-desktop-install-smoke.ps1 for HKCU protection',
   );
   assert.equal(
-    resolve(process.env.RIVLOOM_PREVIEW_INSTALL_ROOT || '.'),
+    resolve(process.env.RIVLOOM_CI_DESKTOP_INSTALL_ROOT || '.'),
     resolve(testRoot),
     'PowerShell guard belongs to another test',
   );
@@ -476,19 +515,20 @@ async function runInstalled(
   const runtime = regularPath(installation, join(installation, 'runtime'), 'directory');
   regularPath(installation, join(installation, 'uninstall.exe'), 'file');
   const data = join(testRoot, 'data');
-  assert(!existsSync(data), 'Preview smoke data must be new');
+  assert(!existsSync(data), 'Rivloom smoke data must be new');
   const assertions: string[] = [];
   const proof: Record<string, unknown> = {
     schemaVersion: 1,
     status: 'running',
     commit: expectedCommit,
     version: candidate.version,
-    identifier: previewIdentifier,
+    identifier: desktopIdentifier,
     candidateSha256: candidate.record.artifact.sha256,
     testDirectory: relative(root, testRoot).replaceAll('\\', '/'),
     assertions,
     limits: [
-      'Unsigned isolated Preview installation only; no public release or updater.',
+      'Unsigned Rivloom installation on a fresh GitHub-hosted runner; no updater or signature validation.',
+      'Default product discovery runs on the runner network; no local-machine execution or isolated discovery override.',
       'No real model request, old-version upgrade, interactive GUI or physical-device acceptance.',
     ],
   };
@@ -555,13 +595,13 @@ async function runInstalled(
     await until(
       async () => processes(),
       (values) => !values.some((item) => known.some((owned) => sameProcess(owned, item))),
-      'owned Preview process cleanup',
+      'owned Rivloom process cleanup',
       20_000,
     );
     desktop = null;
     known = [];
     if (errors.length)
-      throw new AggregateError(errors, 'Owned Preview processes failed to stop cleanly');
+      throw new AggregateError(errors, 'Owned Rivloom processes failed to stop cleanly');
   };
   try {
     assert.deepEqual(
@@ -576,7 +616,7 @@ async function runInstalled(
     const runtimeGate = await verifyRuntime({
       root,
       runtimeRoot: runtime,
-      profile: 'conversation-preview',
+      profile: 'desktop',
     });
     proof.runtime = runtimeGate;
     assertions.push(
@@ -585,29 +625,25 @@ async function runInstalled(
     const ui = assetPaths(root, runtime);
     proof.ui = { brandImages: ui.brands, accent: ui.accent, assets: ui.assets.length };
     mkdirSync(data);
-    writeFileSync(join(data, 'KEEP.txt'), 'Preview install smoke: retain this isolated data.\n', {
+    writeFileSync(join(data, 'KEEP.txt'), 'Rivloom install smoke: retain this isolated data.\n', {
       flag: 'wx',
     });
     fixture = await modelFixture();
     fixture.configure(data);
-    const socket = createSocket('udp4');
-    await new Promise<void>((ok, fail) => {
-      socket.once('error', fail);
-      socket.bind(0, '127.0.0.1', ok);
-    });
-    const port = socket.address().port;
-    await new Promise<void>((ok) => socket.close(ok));
     const environment = systemEnvironment();
     for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP']) {
       environment[name] = join(testRoot, 'environment', name.toLowerCase());
       mkdirSync(environment[name]!, { recursive: true });
     }
-    Object.assign(environment, {
-      RIVLOOM_DATA_DIR: data,
-      RIVLOOM_DISCOVERY_PORT: String(port),
-      RIVLOOM_MDNS_NETWORK: 'disabled',
-      RIVLOOM_DISCOVERY_FALLBACK: 'enabled',
-    });
+    environment.RIVLOOM_DATA_DIR = data;
+    const networkSource = readFileSync(join(root, 'server', 'node-network.ts'), 'utf8');
+    assert.equal(
+      Number(
+        networkSource.match(/^const defaultDiscoveryPort = ([\d_]+);$/m)?.[1].replaceAll('_', ''),
+      ),
+      desktopDiscoveryPort,
+      'Source default discovery port differs from the installed smoke expectation',
+    );
     const expectedProtocol = Number(
       readFileSync(join(root, 'server', 'node-identity.ts'), 'utf8').match(
         /export const nodeProtocolVersion = (\d+);/,
@@ -619,6 +655,7 @@ async function runInstalled(
     );
     const start = async () => {
       noRivloom();
+      assertDefaultDiscoveryBindings(discoveryBindings());
       desktop = spawn(executable, [], {
         cwd: installation,
         env: environment,
@@ -635,12 +672,12 @@ async function runInstalled(
           if (spawnError) throw spawnError;
           assert(
             desktop!.exitCode === null && desktop!.signalCode === null,
-            'Installed Preview exited during startup',
+            'Installed Rivloom exited during startup',
           );
           return readJson(data, join(data, 'desktop-runtime.json'));
         },
         (item) => item.desktopPID === desktop!.pid,
-        'installed Preview runtime',
+        'installed Rivloom runtime',
         75_000,
       );
       assert.equal(info.version, candidate.version);
@@ -655,7 +692,7 @@ async function runInstalled(
           !url.password &&
           !url.search &&
           !url.hash,
-        'Installed Preview returned an unexpected service URL',
+        'Installed Rivloom returned an unexpected service URL',
       );
       const all = rememberOwned();
       assert(
@@ -687,6 +724,13 @@ async function runInstalled(
         'Installed protocol API is not available',
       );
       assert.equal(network.pairings.length, 0, 'Isolated test unexpectedly has pairings');
+      assertDefaultDiscoveryBindings(discoveryBindings(), info.backendPID);
+      assert.equal(network.serviceType, `_rivloom._tcp.local · LAN UDP ${desktopDiscoveryPort}`);
+      proof.network = {
+        mode: 'desktop-default',
+        discoveryPort: desktopDiscoveryPort,
+        ownedByInstalledBackend: true,
+      };
       const owned = rememberOwned();
       assert(
         owned.some(
@@ -722,17 +766,18 @@ async function runInstalled(
       );
     assertions.push(
       'Installed EXE starts the bundled Node/OpenCode, authenticated protocol API and original blue UI assets',
+      'The installed backend owns the default discovery port on the fresh hosted runner without runtime environment overrides',
     );
     await stopOwned();
     const second = await start();
     assert.equal(
       second.nodeID,
       first.nodeID,
-      'Installed Preview lost its isolated identity across restart',
+      'Installed Rivloom lost its isolated identity across restart',
     );
     await stopOwned();
     assertions.push(
-      'Installed Preview restarts with the same isolated identity; only owned process trees were stopped',
+      'Installed Rivloom restarts with the same isolated identity; only owned process trees were stopped',
     );
     assert.equal(fixture.requests, 0, 'Installer smoke must not issue model requests');
     proof.modelRequests = 0;
@@ -775,7 +820,7 @@ export function verifyUninstalled(root: string, testRoot: string, expectedCommit
   const proof = readJson(testRoot, join(testRoot, 'verification.json'));
   assert.equal(proof.status, 'awaiting-uninstall', 'Installed smoke did not pass');
   assert.equal(proof.commit, expectedCommit);
-  assert.equal(proof.identifier, previewIdentifier);
+  assert.equal(proof.identifier, desktopIdentifier);
   assert(
     !existsSync(join(testRoot, 'app', 'Rivloom.exe')) &&
       !existsSync(join(testRoot, 'app', 'runtime', 'node.exe')),
@@ -784,7 +829,7 @@ export function verifyUninstalled(root: string, testRoot: string, expectedCommit
   assert.deepEqual(
     preservationCheckpoint(join(testRoot, 'data')),
     proof.preservedData,
-    'Uninstall changed the separate Preview data',
+    'Uninstall changed the separate Rivloom data',
   );
   proof.assertions.push(
     'Exact isolated uninstaller removed binaries and preserved the checked database, identity/topology and marker files byte for byte',
@@ -796,6 +841,7 @@ export function verifyUninstalled(root: string, testRoot: string, expectedCommit
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
+    requireHostedRunner(process.env);
     const [operation, ...arguments_] = process.argv.slice(2);
     const options = new Map<string, string>();
     for (let index = 0; index < arguments_.length; index += 2) {
@@ -806,7 +852,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           value &&
           !value.startsWith('--') &&
           !options.has(key),
-        'Unexpected Preview smoke arguments',
+        'Unexpected Rivloom smoke arguments',
       );
       options.set(key, value);
     }
@@ -841,7 +887,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       );
     } else
       throw new Error(
-        'Use preview-install-smoke.ps1; internal operations: verify | installed | uninstalled',
+        'Use ci-desktop-install-smoke.ps1; internal operations: verify | installed | uninstalled',
       );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

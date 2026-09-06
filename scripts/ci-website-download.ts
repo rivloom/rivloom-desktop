@@ -1,4 +1,4 @@
-// Mirror a published Preview; never publish a GitHub release or execute an installer.
+// Mirror a published Rivloom; never publish a GitHub release or execute an installer.
 import { execFileSync } from 'node:child_process';
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -6,17 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
   githubTransport,
-  preparePreview,
+  prepareRelease,
   releaseContext,
   type ReleaseContext,
-} from './ci-preview-release.ts';
+} from './ci-release.ts';
 import {
-  parsePreviewDownloadRecord,
-  parsePreviewDownloadState,
-  PREVIEW_DOWNLOAD_ORIGIN,
-  PREVIEW_DOWNLOAD_URL,
-  type PreviewDownloadRecord,
-} from './preview-download-record.ts';
+  parseDownloadRecord,
+  DOWNLOAD_ORIGIN,
+  DOWNLOAD_URL,
+  type DownloadRecord,
+} from './download-record.ts';
 import {
   boundedBytes,
   digest,
@@ -33,7 +32,7 @@ import {
 } from './ci-r2-storage.ts';
 
 type Json = Record<string, any>;
-type Plan = Awaited<ReturnType<typeof preparePreview>>;
+type Plan = Awaited<ReturnType<typeof prepareRelease>>;
 export type WebsiteServices = {
   storage: ObjectTransport;
   github: (path: string) => Promise<unknown>;
@@ -41,7 +40,7 @@ export type WebsiteServices = {
   deploy: () => Promise<void>;
   now?: () => Date;
 };
-const latestKey = 'previews/latest.json';
+const latestKey = 'releases/latest.json';
 const manifestLimit = 64 * 1024;
 const same = (left: unknown, right: unknown, code: string) =>
   requireDownload(isDeepStrictEqual(left, right), code);
@@ -81,7 +80,7 @@ export function websiteServices(
     storage: r2Transport(config, fetcher),
     github: async (path) => {
       requireDownload(
-        /^\/(?:releases\/\d+(?:\/assets\?per_page=100)?|releases\/assets\/\d+|git\/ref\/tags\/preview-v[0-9A-Za-z.%+_-]+|git\/tags\/[0-9a-f]{40}|compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}\?per_page=1)$/.exec(
+        /^\/(?:releases\/\d+(?:\/assets\?per_page=100)?|releases\/assets\/\d+|git\/ref\/tags\/v[0-9A-Za-z.%+_-]+|git\/tags\/[0-9a-f]{40}|compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}\?per_page=1)$/.exec(
           path,
         )?.[0] === path,
         'invalid-github-read-path',
@@ -95,7 +94,7 @@ export function websiteServices(
     },
     publicRead: async (key) => {
       try {
-        return await fetcher(`${PREVIEW_DOWNLOAD_ORIGIN}/${encodedObjectKey(key)}`, {
+        return await fetcher(`${DOWNLOAD_ORIGIN}/${encodedObjectKey(key)}`, {
           headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache' },
           redirect: 'error',
           signal: AbortSignal.timeout(240_000),
@@ -137,7 +136,7 @@ function json(bytes: Buffer): unknown {
   }
 }
 async function publishedReport(root: string, plan: Plan) {
-  const directory = join(root, 'test-results', 'preview-release');
+  const directory = join(root, 'test-results', 'release');
   await regular(directory, true);
   same(await readdir(directory), ['release.json'], 'unexpected-published-report-files');
   const path = join(directory, 'release.json');
@@ -176,7 +175,7 @@ async function verifyPublishedRelease(plan: Plan, report: Json, github: WebsiteS
   requireDownload(
     release?.id === report.releaseID &&
       release.draft === false &&
-      release.prerelease === true &&
+      release.prerelease === false &&
       release.tag_name === plan.tag &&
       release.target_commitish === plan.commit &&
       release.name === plan.title &&
@@ -276,15 +275,15 @@ function publicRecord(plan: Plan, releaseID: number, publishedAt: string, checke
       fileName: asset.name,
       bytes: asset.size,
       sha256: asset.sha256,
-      url: `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${plan.tag}/${asset.name}`,
+      url: `${DOWNLOAD_ORIGIN}/releases/${plan.tag}/${asset.name}`,
     };
   };
-  return parsePreviewDownloadRecord({
+  return parseDownloadRecord({
     schemaVersion: 1,
-    kind: 'rivloom-preview-download',
+    kind: 'rivloom-download',
     status: 'published',
     version: plan.version,
-    product: { kind: 'conversation-preview', identifier: 'com.rivloom.conversationpreview' },
+    product: { kind: 'desktop', identifier: 'com.rivloom.desktop' },
     source: { commit: plan.commit },
     build: { runID: plan.runID, artifactID: plan.artifactID },
     release: { id: releaseID, tag: plan.tag, publishedAt },
@@ -294,7 +293,7 @@ function publicRecord(plan: Plan, releaseID: number, publishedAt: string, checke
     verification: { ci: 'passed', installation: 'passed', publicDownload: 'passed', checkedAt },
   });
 }
-function binding(record: PreviewDownloadRecord) {
+function binding(record: DownloadRecord) {
   return { ...record, verification: { ...record.verification, checkedAt: '' } };
 }
 async function latestState(services: WebsiteServices) {
@@ -308,12 +307,12 @@ async function latestState(services: WebsiteServices) {
     throw new DownloadSyncFailure('latest-read-failed');
   }
   const etag = strongEtag(response.headers.get('etag'));
-  const record = parsePreviewDownloadState(json(await boundedBytes(response, manifestLimit)));
+  const record = parseDownloadRecord(json(await boundedBytes(response, manifestLimit)));
   return { record, etag };
 }
 export async function promotionDecision(
-  previous: PreviewDownloadRecord | null,
-  next: PreviewDownloadRecord,
+  previous: DownloadRecord | null,
+  next: DownloadRecord,
   github: WebsiteServices['github'],
 ) {
   if (!previous) return 'promote' as const;
@@ -374,7 +373,7 @@ export async function synchronizeWebsiteDownload(
       runID: safe.runID,
       artifactID: safe.artifactID,
     });
-    const plan = await preparePreview(root, safe);
+    const plan = await prepareRelease(root, safe);
     const published = await publishedReport(root, plan);
     Object.assign(report, {
       releaseID: published.releaseID,
@@ -383,7 +382,7 @@ export async function synchronizeWebsiteDownload(
         fileName: name,
         bytes: size,
         sha256,
-        url: `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${plan.tag}/${name}`,
+        url: `${DOWNLOAD_ORIGIN}/releases/${plan.tag}/${name}`,
       })),
     });
     report.completedStages.push(report.stage);
@@ -394,7 +393,7 @@ export async function synchronizeWebsiteDownload(
     for (const asset of plan.assets)
       await ensureObject(
         services.storage,
-        `previews/${plan.tag}/${asset.name}`,
+        `releases/${plan.tag}/${asset.name}`,
         {
           bytes: asset.size,
           sha256: asset.sha256,
@@ -405,7 +404,7 @@ export async function synchronizeWebsiteDownload(
     report.completedStages.push(report.stage);
     report.stage = 'public-downloads';
     for (const asset of plan.assets) {
-      const response = await services.publicRead(`previews/${plan.tag}/${asset.name}`);
+      const response = await services.publicRead(`releases/${plan.tag}/${asset.name}`);
       if (response.status !== 200) {
         await discard(response);
         throw new DownloadSyncFailure('public-download-unavailable');
@@ -423,7 +422,7 @@ export async function synchronizeWebsiteDownload(
     );
     report.completedStages.push(report.stage);
     report.stage = 'latest';
-    let selected: PreviewDownloadRecord | undefined;
+    let selected: DownloadRecord | undefined;
     for (let attempt = 0; attempt < 4; attempt++) {
       const previous = await latestState(services);
       const decision = await promotionDecision(previous.record, record, services.github);
@@ -468,7 +467,7 @@ export async function synchronizeWebsiteDownload(
       throw new DownloadSyncFailure('public-latest-unavailable');
     }
     same(
-      parsePreviewDownloadRecord(json(await boundedBytes(response, manifestLimit))),
+      parseDownloadRecord(json(await boundedBytes(response, manifestLimit))),
       selected,
       'public-latest-conflicts',
     );
@@ -477,7 +476,7 @@ export async function synchronizeWebsiteDownload(
     await services.deploy();
     report.hookTriggered = true;
     report.completedStages.push(report.stage);
-    return { ...report, status: 'synced', stage: 'complete', url: PREVIEW_DOWNLOAD_URL };
+    return { ...report, status: 'synced', stage: 'complete', url: DOWNLOAD_URL };
   } catch (error) {
     return {
       ...report,

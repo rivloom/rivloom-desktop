@@ -1,13 +1,13 @@
-/** Independent unsigned Preview download metadata. No I/O, dependencies or updater behavior. */
-export const PREVIEW_DOWNLOAD_ORIGIN = 'https://downloads.rivloom.com';
-export const PREVIEW_DOWNLOAD_URL = `${PREVIEW_DOWNLOAD_ORIGIN}/previews/latest.json`;
+/** Unsigned Rivloom download metadata. No I/O, dependencies or updater behavior. */
+export const DOWNLOAD_ORIGIN = 'https://downloads.rivloom.com';
+export const DOWNLOAD_URL = `${DOWNLOAD_ORIGIN}/releases/latest.json`;
 
-export interface PreviewDownloadRecord {
+export interface DownloadRecord {
   schemaVersion: 1;
-  kind: 'rivloom-preview-download';
+  kind: 'rivloom-download';
   status: 'published';
   version: string;
-  product: { kind: 'conversation-preview'; identifier: 'com.rivloom.conversationpreview' };
+  product: { kind: 'desktop'; identifier: 'com.rivloom.desktop' };
   source: { commit: string };
   build: { runID: string; artifactID: string };
   release: { id: number; tag: string; publishedAt: string };
@@ -23,7 +23,7 @@ export interface PreviewDownloadRecord {
 }
 
 const semver =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const commitPattern = /^(?!0{40}$)[0-9a-f]{40}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
 const idPattern = /^[1-9]\d*$/;
@@ -31,7 +31,7 @@ const maximumBytes = 2 * 1024 ** 3;
 
 function invalid(field: string): never {
   // Values and unknown field names may contain private data; never include them in errors.
-  throw new TypeError(`Invalid Preview download record: ${field}`);
+  throw new TypeError(`Invalid Rivloom download record: ${field}`);
 }
 
 function object(value: unknown, fields: readonly string[], label: string) {
@@ -91,12 +91,12 @@ function publicUrl(value: unknown, expected: string, label: string): string {
   if (value !== expected) invalid(label);
   // Exact equality binds the host, release tag and filename and excludes alternate URL spellings.
   const url = new URL(expected);
-  if (url.href !== expected || url.origin !== PREVIEW_DOWNLOAD_ORIGIN || url.search || url.hash)
+  if (url.href !== expected || url.origin !== DOWNLOAD_ORIGIN || url.search || url.hash)
     invalid(label);
   return expected;
 }
 
-export function parsePreviewDownloadRecord(value: unknown): PreviewDownloadRecord {
+export function parseDownloadRecord(value: unknown): DownloadRecord {
   const record = object(
     value,
     [
@@ -132,9 +132,9 @@ export function parsePreviewDownloadRecord(value: unknown): PreviewDownloadRecor
   const commit = text(source.commit, commitPattern, 'source.commit');
   const runID = identifier(build.runID, 'build.runID');
   const artifactID = identifier(build.artifactID, 'build.artifactID');
-  const tag = `preview-v${version}-${commit.slice(0, 12)}-${artifactID}`;
-  const fileName = `Rivloom-UI-Preview_${version}_x64-setup.exe`;
-  const base = `${PREVIEW_DOWNLOAD_ORIGIN}/previews/${tag}`;
+  const tag = `v${version}-${commit.slice(0, 12)}-${artifactID}`;
+  const fileName = `Rivloom_${version}_x64-setup.exe`;
+  const base = `${DOWNLOAD_ORIGIN}/releases/${tag}`;
   const sha256 = text(artifact.sha256, digestPattern, 'artifact.sha256');
   const publishedAt = timestamp(release.publishedAt, 'release.publishedAt');
   const checkedAt = timestamp(verification.checkedAt, 'verification.checkedAt');
@@ -145,16 +145,12 @@ export function parsePreviewDownloadRecord(value: unknown): PreviewDownloadRecor
 
   return {
     schemaVersion: literal(record.schemaVersion, 1, 'schemaVersion'),
-    kind: literal(record.kind, 'rivloom-preview-download', 'kind'),
+    kind: literal(record.kind, 'rivloom-download', 'kind'),
     status: literal(record.status, 'published', 'status'),
     version,
     product: {
-      kind: literal(product.kind, 'conversation-preview', 'product.kind'),
-      identifier: literal(
-        product.identifier,
-        'com.rivloom.conversationpreview',
-        'product.identifier',
-      ),
+      kind: literal(product.kind, 'desktop', 'product.kind'),
+      identifier: literal(product.identifier, 'com.rivloom.desktop', 'product.identifier'),
     },
     source: { commit },
     build: { runID, artifactID },
@@ -188,6 +184,6 @@ export function parsePreviewDownloadRecord(value: unknown): PreviewDownloadRecor
   };
 }
 
-export function parsePreviewDownloadState(value: unknown): PreviewDownloadRecord | null {
-  return value === null ? null : parsePreviewDownloadRecord(value);
+export function parseDownloadState(value: unknown): DownloadRecord | null {
+  return value === null ? null : parseDownloadRecord(value);
 }

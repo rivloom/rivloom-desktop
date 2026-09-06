@@ -8,11 +8,11 @@
 
 ## 在 Windows 启动
 
-官网和发行基础正在实施：独立私有 `rivloom/rivloom-website` 位于 `C:/project/rivloom-website`，首版 `f58049f` 已推送；Astro 9 页、234 项引用检查及发行目录测试 13/13 已在本地通过。用户已授权 Cloudflare 仅访问官网仓库并执行推送、部署和域名绑定，目标服务全球（含中国大陆）的 `rivloom.com`。首轮官网云 CI 的锁文件问题修复与重试、Cloudflare 连接和域名绑定正在推进，尚无站点上线成功或公开下载声明，详见[官网交接](docs/WEBSITE-HANDOFF.md)。桌面四份工作流、发行记录契约和真实 runtime prepare/gate 已本地验证通过，Rust/Cargo 1.98.1 已安装并核对版本；本轮原生构建尚未执行，updater、R2 分发和签名尚未实施。证据与边界见 [CI](docs/CI.md)和[发布方案](docs/RELEASING.md)。
+官网 [rivloom.com](https://rivloom.com) 已通过独立私有仓库 `rivloom/rivloom-website` 和 Cloudflare Pages 上线。桌面 main 的 CI、候选构建、安装验收和 GitHub Release 自动发布已建立；从 0.1.4 起使用 Rivloom 正式名称与 `com.rivloom.desktop` 身份，发布普通 Release。官网公开文件同步代码与专属 R2 桶已准备，持续访问凭据及首次公开下载仍待接通；签名和应用内自动更新尚未实现。新版本的实际云端构建与发布结果见 [CI](docs/CI.md)和[发布方案](docs/RELEASING.md)，不沿用旧版验证结论。
 
 客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 
-原正式版内测安装器为 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.3_x64-setup.exe`（71,083,411 字节），包含 M3.4 自动 Brain、共享 Worker、时差和高位端口修复；记录在案的安装/升级及 5.20/5.33 物理核心验收属于该旧基线。M3.5 使用独立产品标识的预览包，最终产物和验证状态见 [UI-HANDOFF](docs/UI-HANDOFF.md)，不覆盖旧正式客户端。代码签名和干净机发行矩阵仍未完成。
+历史正式版内测安装器为 `Rivloom_0.1.3_x64-setup.exe`（71,083,411 字节）；原 M3.5 交付使用独立的 Rivloom UI Preview，证据见 [UI-HANDOFF](docs/UI-HANDOFF.md)。新版普通安装包为 `Rivloom_0.1.4_x64-setup.exe`，旧 Preview 安装与数据继续保留，尚不自动迁移到正式身份；历史双物理机和升级记录不能作为新版验收。代码签名和完整安装升级矩阵仍待完成。
 
 开发环境需要 Node.js **24+**、Rust 和 Visual Studio C++ Build Tools：
 

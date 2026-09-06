@@ -13,7 +13,7 @@ const base = join(ciRoot, 'test-results');
 mkdirSync(base, { recursive: true });
 const root = mkdtempSync(join(base, 'ci-selftest-'));
 
-test('version gate rejects Cargo drift and preview identity reuse', () => {
+test('version gate rejects Cargo drift, desktop branding drift and preview identity reuse', () => {
   const directory = join(root, 'versions');
   mkdirSync(join(directory, 'src-tauri'), { recursive: true });
   for (const file of [
@@ -26,6 +26,13 @@ test('version gate rejects Cargo drift and preview identity reuse', () => {
   ])
     cpSync(join(ciRoot, file), join(directory, file));
   const baseline = checkVersions(directory);
+  const tauri = readFileSync(join(directory, 'src-tauri/tauri.conf.json'), 'utf8');
+  writeFileSync(
+    join(directory, 'src-tauri/tauri.conf.json'),
+    JSON.stringify({ ...JSON.parse(tauri), productName: 'Rivloom UI Preview' }),
+  );
+  assert.throws(() => checkVersions(directory), /desktop product name/);
+  writeFileSync(join(directory, 'src-tauri/tauri.conf.json'), tauri);
   const cargo = readFileSync(join(directory, 'src-tauri/Cargo.toml'), 'utf8');
   writeFileSync(
     join(directory, 'src-tauri/Cargo.toml'),

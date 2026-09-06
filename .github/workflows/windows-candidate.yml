@@ -1,9 +1,9 @@
-name: Windows Preview build and release
+name: Windows build and release
 
 on:
   workflow_dispatch:
   push:
-    tags: [ci-preview-v*]
+    tags: [ci-v*]
   workflow_run:
     workflows: [Windows CI]
     types: [completed]
@@ -14,7 +14,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: windows-preview-candidate-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: windows-rivloom-candidate-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 defaults:
@@ -30,7 +30,7 @@ env:
 
 jobs:
   candidate:
-    name: Build isolated UI Preview candidate
+    name: Build and verify Rivloom candidate
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -58,41 +58,40 @@ jobs:
       - name: Install fixed Rust toolchain and target
         run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
       - run: npm.cmd ci
-      - name: Verify candidate source, version and explicit Preview identity
+      - name: Verify candidate source, version and Rivloom identity
         run: node scripts/ci-candidate.ts configure
       - name: Run CI helper guards
         run: npm.cmd run ci:selftest
       - name: Cache the locked Windows Cargo sources for read-only license verification
         run: cargo fetch --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-      - name: Prepare the explicit Preview runtime once
-        run: npm.cmd run desktop:prepare -- --profile conversation-preview
+      - name: Prepare the desktop runtime once
+        run: npm.cmd run desktop:prepare -- --profile desktop
       - name: Verify prepared runtime and notices before bundling
         run: |
-          node scripts/ci-verify-runtime.ts --profile conversation-preview > test-results/candidate/runtime-before.json
+          node scripts/ci-verify-runtime.ts --profile desktop > test-results/candidate/runtime-before.json
           if ($LASTEXITCODE -ne 0) { throw 'Pre-build runtime verification failed.' }
           node scripts/ci-candidate.ts capture-runtime
           if ($LASTEXITCODE -ne 0) { throw 'Could not bind the verified runtime.' }
       - name: Build NSIS without re-running preparation or signing
         run: >-
           node node_modules/@tauri-apps/cli/tauri.js build
-          --config src-tauri/tauri.preview.conf.json
           --config test-results/candidate/build-config.json
           --target x86_64-pc-windows-msvc --bundles nsis --ci --no-sign -- --locked
       - name: Verify runtime again after native build
         run: |
-          node scripts/ci-verify-runtime.ts --profile conversation-preview > test-results/candidate/runtime-after.json
+          node scripts/ci-verify-runtime.ts --profile desktop > test-results/candidate/runtime-after.json
           if ($LASTEXITCODE -ne 0) { throw 'Post-build runtime verification failed.' }
       - name: Record final candidate bytes and unchanged runtime
         run: node scripts/ci-candidate.ts record
       - name: Prepare WebView2 only on this disposable GitHub runner
         run: ./scripts/ci-webview2.ps1
-      - name: Verify isolated Preview install, startup and uninstall
-        run: ./scripts/preview-install-smoke.ps1 -ExpectedCommit $env:RIVLOOM_CANDIDATE_SHA
+      - name: Verify isolated Rivloom install, startup and uninstall
+        run: ./scripts/ci-desktop-install-smoke.ps1 -ExpectedCommit $env:RIVLOOM_CANDIDATE_SHA
       - name: Upload only the candidate installer and bounded manifests
         id: upload_candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conversation-preview-candidate-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: rivloom-candidate-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             test-results/candidate/*.exe
             test-results/candidate/candidate-build.json
@@ -100,7 +99,7 @@ jobs:
             test-results/candidate/runtime-before.json
             test-results/candidate/runtime-after.json
             test-results/candidate/ci-gate.json
-            test-results/candidate/preview-install.json
+            test-results/candidate/desktop-install.json
             test-results/candidate/webview2.json
           if-no-files-found: error
           retention-days: 14
@@ -108,17 +107,17 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conversation-preview-candidate-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: rivloom-candidate-failure-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             test-results/candidate/runtime-*.json
             test-results/candidate/ci-gate.json
-            test-results/candidate/preview-install.json
+            test-results/candidate/desktop-install.json
             test-results/candidate/webview2.json
           if-no-files-found: warn
           retention-days: 14
 
   publish:
-    name: Publish verified Preview to Releases
+    name: Publish verified Rivloom to Releases
     needs: candidate
     runs-on: windows-2022
     timeout-minutes: 15
@@ -143,23 +142,24 @@ jobs:
           artifact-ids: ${{ needs.candidate.outputs.artifact-id }}
           path: test-results/candidate
           digest-mismatch: error
-      - name: Validate evidence and publish the Preview release
+      - name: Validate evidence and publish the Rivloom release
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RIVLOOM_CANDIDATE_ARTIFACT_ID: ${{ needs.candidate.outputs.artifact-id }}
-        run: node scripts/ci-preview-release.ts
+        run: node scripts/ci-release.ts
       - name: Preserve the bounded release result
         id: upload_release
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conversation-preview-release-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: test-results/preview-release/release.json
+          name: rivloom-release-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/release/release.json
           if-no-files-found: warn
           retention-days: 14
 
   website-download:
-    name: Publish the same Preview to the website
+    name: Publish the same Rivloom installer to the website
+    if: vars.RIVLOOM_PUBLIC_DOWNLOADS_ENABLED == 'true'
     needs: [candidate, publish]
     runs-on: windows-2022
     timeout-minutes: 20
@@ -167,7 +167,7 @@ jobs:
       contents: read
       actions: read
     concurrency:
-      group: public-preview-download
+      group: public-rivloom-download
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,7 +189,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact-id }}
-          path: test-results/preview-release
+          path: test-results/release
           digest-mismatch: error
       - name: Verify public download and update the website
         env:
@@ -205,7 +205,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: conversation-preview-website-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: rivloom-website-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: test-results/website-download/result.json
           if-no-files-found: warn
           retention-days: 14

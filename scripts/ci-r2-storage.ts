@@ -1,4 +1,4 @@
-// Deliberately limited to the public Preview mirror's three object shapes.
+// Deliberately limited to the public Rivloom mirror's three object shapes.
 // AWS SigV4: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
 import { createHash, createHmac } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -53,13 +53,13 @@ export function r2Configuration(environment: NodeJS.ProcessEnv): R2Configuration
   requireDownload(exact(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, result.bucket), 'invalid-r2-bucket');
   return result;
 }
-export function previewObjectKey(key: string) {
+export function downloadObjectKey(key: string) {
   requireDownload(
     exact(
-      /^previews\/(?:latest\.json|preview-v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom-UI-Preview_[0-9A-Za-z.+_-]{1,100}_x64-setup\.exe|SHA256SUMS\.txt))$/,
+      /^releases\/(?:latest\.json|v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom_[0-9A-Za-z.+_-]{1,100}_x64-setup\.exe|SHA256SUMS\.txt))$/,
       key,
     ),
-    'invalid-preview-object-key',
+    'invalid-download-object-key',
   );
   return key;
 }
@@ -69,7 +69,7 @@ const uriEncode = (value: string) =>
     (character) => '%' + character.charCodeAt(0).toString(16).toUpperCase(),
   );
 export const encodedObjectKey = (key: string) =>
-  previewObjectKey(key).split('/').map(uriEncode).join('/');
+  downloadObjectKey(key).split('/').map(uriEncode).join('/');
 export function strongEtag(value: string | null): string {
   requireDownload(value !== null && exact(/^"[\x21\x23-\x7e]{1,128}"$/, value), 'invalid-r2-etag');
   return value;

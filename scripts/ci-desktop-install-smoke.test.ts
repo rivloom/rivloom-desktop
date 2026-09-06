@@ -14,22 +14,26 @@ import { join, resolve } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { measureRuntimeTree } from './ci-candidate.ts';
 import {
+  assertDefaultDiscoveryBindings,
+  desktopDiscoveryPort,
+  desktopProduct,
   measureInstalledTree,
   preservationCheckpoint,
-  previewIdentifier,
+  desktopIdentifier,
   regularPath,
   requireDescendant,
+  requireHostedRunner,
   validateCandidateRecord,
   verifyIsolatedRoot,
   verifyUninstalled,
-} from './preview-install-smoke.ts';
+} from './ci-desktop-install-smoke.ts';
 
 const commit = '1'.repeat(40);
 const digest = 'a'.repeat(64);
 const repository = resolve(import.meta.dirname, '..');
 
 test(
-  'PowerShell metadata guards reject path-bearing old binary names and unrecognized partial changes',
+  'PowerShell runner and metadata guards reject existing installations and unrecognized partial changes',
   { skip: process.platform !== 'win32' },
   () => {
     // Extract only these pure function definitions from the AST. The wrapper's
@@ -39,9 +43,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $taskTokens = $null
 $taskErrors = $null
-$taskAst = [Management.Automation.Language.Parser]::ParseFile($env:RIVLOOM_PREVIEW_TEST_SCRIPT, [ref]$taskTokens, [ref]$taskErrors)
+$taskAst = [Management.Automation.Language.Parser]::ParseFile($env:RIVLOOM_CI_DESKTOP_TEST_SCRIPT, [ref]$taskTokens, [ref]$taskErrors)
 if ($taskErrors.Count -ne 0) { throw 'PowerShell wrapper has a syntax error.' }
-foreach ($taskName in @('Read-Value', 'Same-Metadata', 'Assert-SafePreviousBinary', 'Safe-PartialMetadata')) {
+foreach ($taskName in @('Read-Value', 'Same-Metadata', 'Assert-SafePreviousBinary', 'Safe-PartialMetadata', 'Assert-GitHubHostedRunner', 'Assert-AbsentInstallationMetadata', 'Assert-FreshInstallation', 'Assert-PreviewUnchanged', 'Assert-DefaultDiscoveryAvailable', 'Assert-NoRivloom')) {
   $taskFunctions = @($taskAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $taskName }, $true))
   if ($taskFunctions.Count -ne 1) { throw 'Expected one pure guard function.' }
   . ([scriptblock]::Create($taskFunctions[0].Extent.Text))
@@ -54,31 +58,80 @@ function Expect-Failure([scriptblock]$Action) {
 function Metadata($Values) { return @{ Exists = $true; Values = @($Values) } }
 function Value([string]$Name, [string]$Kind, $Data) { return @{ Name = $Name; Kind = $Kind; Value = $Data } }
 $taskMissing = @{ Exists = $false; Values = @() }
+Assert-GitHubHostedRunner 'true' 'github-hosted'
+foreach ($taskEnvironment in @('self-hosted', 'local', '')) { Expect-Failure { Assert-GitHubHostedRunner 'true' $taskEnvironment } }
+Expect-Failure { Assert-GitHubHostedRunner 'false' 'github-hosted' }
+Assert-AbsentInstallationMetadata @($taskMissing, $taskMissing)
+Expect-Failure { Assert-AbsentInstallationMetadata @($taskMissing, (Metadata @())) }
 Assert-SafePreviousBinary $taskMissing
 Assert-SafePreviousBinary (Metadata @((Value 'MainBinaryName' 'String' 'Rivloom.exe')))
 foreach ($taskUnsafeName in @('..\outside.exe', 'C:\outside.exe', 'another.exe', '')) {
   Expect-Failure { Assert-SafePreviousBinary (Metadata @((Value 'MainBinaryName' 'String' $taskUnsafeName))) }
 }
 Expect-Failure { Assert-SafePreviousBinary (Metadata @((Value 'MainBinaryName' 'DWord' 1))) }
-$taskInstall = 'C:\synthetic-preview\app'
+$taskInstall = 'C:\synthetic-desktop\app'
 $taskPlan = @{ version = '0.1.3' }
-$taskPreviewProductKey = 'Software\rivloom\Rivloom UI Preview'
-$taskPreviewUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom UI Preview'
+$taskRivloomProductKey = 'Software\rivloom\Rivloom'
+$taskRivloomUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom'
 $taskUninstallAttempted = $false
 $taskPartial = Metadata @((Value 'InstallLocation' 'String' ('"' + $taskInstall + '"')), (Value 'DisplayVersion' 'String' '0.1.3'), (Value 'NoModify' 'DWord' 1))
-if (-not (Safe-PartialMetadata $taskPreviewUninstallKey $taskPartial $taskMissing)) { throw 'Known partial state rejected.' }
+if (-not (Safe-PartialMetadata $taskRivloomUninstallKey $taskPartial $taskMissing)) { throw 'Known partial state rejected.' }
 foreach ($taskUnexpected in @((Value 'DisplayVersion' 'String' '0.1.4'), (Value 'NoModify' 'String' '1'), (Value 'EstimatedSize' 'DWord' 123), (Value 'UninstallString' 'String' 'C:\outside.exe'), (Value 'ConcurrentValue' 'String' 'new'))) {
   $taskAltered = Metadata @((Value 'InstallLocation' 'String' ('"' + $taskInstall + '"')), $taskUnexpected)
-  if (Safe-PartialMetadata $taskPreviewUninstallKey $taskAltered $taskMissing) { throw 'Unrecognized partial metadata accepted.' }
+  if (Safe-PartialMetadata $taskRivloomUninstallKey $taskAltered $taskMissing) { throw 'Unrecognized partial metadata accepted.' }
 }
 $taskOriginal = Metadata @((Value 'UnrelatedOriginal' 'String' 'preserve me'))
-if (Safe-PartialMetadata $taskPreviewUninstallKey $taskPartial $taskOriginal) { throw 'Deleted original metadata accepted.' }
+if (Safe-PartialMetadata $taskRivloomUninstallKey $taskPartial $taskOriginal) { throw 'Deleted original metadata accepted.' }
 $taskWithOriginal = Metadata @($taskPartial.Values + $taskOriginal.Values)
-if (-not (Safe-PartialMetadata $taskPreviewUninstallKey $taskWithOriginal $taskOriginal)) { throw 'Unchanged original metadata rejected.' }
-if (Safe-PartialMetadata $taskPreviewUninstallKey $taskMissing $taskOriginal) { throw 'Unexplained deleted key accepted.' }
+if (-not (Safe-PartialMetadata $taskRivloomUninstallKey $taskWithOriginal $taskOriginal)) { throw 'Unchanged original metadata rejected.' }
+if (Safe-PartialMetadata $taskRivloomUninstallKey $taskMissing $taskOriginal) { throw 'Unexplained deleted key accepted.' }
 $taskUninstallAttempted = $true
-if (-not (Safe-PartialMetadata $taskPreviewUninstallKey $taskMissing $taskOriginal)) { throw 'Known uninstall deletion rejected.' }
-if (Safe-PartialMetadata $taskPreviewProductKey $taskMissing $taskOriginal) { throw 'Uninstaller cannot delete the product key in update mode.' }
+if (-not (Safe-PartialMetadata $taskRivloomUninstallKey $taskMissing $taskOriginal)) { throw 'Known uninstall deletion rejected.' }
+if (Safe-PartialMetadata $taskRivloomProductKey $taskMissing $taskOriginal) { throw 'Uninstaller cannot delete the product key in update mode.' }
+
+# Controlled stubs exercise the wrapper's checks without registry/process/network access.
+$taskHives = @([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryHive]::LocalMachine)
+$taskViews = @([Microsoft.Win32.RegistryView]::Registry32, [Microsoft.Win32.RegistryView]::Registry64)
+$taskRegistryFixture = @{}
+function Read-Metadata([string]$Key, [Microsoft.Win32.RegistryView]$View, [Microsoft.Win32.RegistryHive]$Hive) {
+  $taskLookup = "$Hive|$View|$Key"
+  if ($taskRegistryFixture.ContainsKey($taskLookup)) { return $taskRegistryFixture[$taskLookup] }
+  return $taskMissing
+}
+Assert-FreshInstallation
+foreach ($taskHive in $taskHives) {
+  foreach ($taskView in $taskViews) {
+    foreach ($taskKey in @($taskRivloomProductKey, $taskRivloomUninstallKey)) {
+      $taskLookup = "$taskHive|$taskView|$taskKey"
+      $taskRegistryFixture[$taskLookup] = Metadata @()
+      Expect-Failure { Assert-FreshInstallation }
+      $taskRegistryFixture.Remove($taskLookup)
+    }
+  }
+}
+$taskPreviewKeys = @('Software\rivloom\Rivloom UI Preview', 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Rivloom UI Preview')
+$taskPreviewBefore = @{}
+foreach ($taskHive in $taskHives) {
+  foreach ($taskView in $taskViews) {
+    foreach ($taskKey in $taskPreviewKeys) { $taskPreviewBefore["$taskHive|$taskView|$taskKey"] = $taskMissing }
+  }
+}
+Assert-PreviewUnchanged
+foreach ($taskLookup in @($taskPreviewBefore.Keys)) {
+  $taskRegistryFixture[$taskLookup] = Metadata @()
+  Expect-Failure { Assert-PreviewUnchanged }
+  $taskRegistryFixture.Remove($taskLookup)
+}
+$taskEndpointFixture = @()
+function Get-NetUDPEndpoint([string]$ErrorAction) { return $taskEndpointFixture }
+Assert-DefaultDiscoveryAvailable
+$taskEndpointFixture = @(@{ LocalPort = 43531; OwningProcess = 100 })
+Expect-Failure { Assert-DefaultDiscoveryAvailable }
+$taskProcessFixture = @()
+function Get-Process([string]$Name, [string]$ErrorAction) { return $taskProcessFixture }
+Assert-NoRivloom
+$taskProcessFixture = @(@{ ProcessName = 'Rivloom' })
+Expect-Failure { Assert-NoRivloom }
 Write-Output 'Pure metadata guard tests passed.'
 `;
     const output = execFileSync(
@@ -87,7 +140,11 @@ Write-Output 'Pure metadata guard tests passed.'
       {
         env: {
           ...process.env,
-          RIVLOOM_PREVIEW_TEST_SCRIPT: join(repository, 'scripts', 'preview-install-smoke.ps1'),
+          RIVLOOM_CI_DESKTOP_TEST_SCRIPT: join(
+            repository,
+            'scripts',
+            'ci-desktop-install-smoke.ps1',
+          ),
         },
         encoding: 'utf8',
         windowsHide: true,
@@ -98,32 +155,51 @@ Write-Output 'Pure metadata guard tests passed.'
   },
 );
 
+test('hosted runner and default discovery checks reject local runs, port conflicts and foreign ownership', () => {
+  assert.equal(desktopProduct, 'Rivloom');
+  assert.equal(desktopIdentifier, 'com.rivloom.desktop');
+  requireHostedRunner({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' });
+  for (const environment of [{}, { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'self-hosted' }])
+    assert.throws(() => requireHostedRunner(environment), /GitHub-hosted/);
+  const endpoint = { LocalPort: desktopDiscoveryPort, OwningProcess: 100 };
+  assertDefaultDiscoveryBindings([]);
+  assert.throws(() => assertDefaultDiscoveryBindings([endpoint]), /already in use/);
+  assertDefaultDiscoveryBindings([endpoint], 100);
+  assert.throws(() => assertDefaultDiscoveryBindings([], 100), /exclusively owned/);
+  assert.throws(() => assertDefaultDiscoveryBindings([endpoint], 200), /exclusively owned/);
+  assert.throws(() =>
+    assertDefaultDiscoveryBindings([endpoint, { ...endpoint, OwningProcess: 200 }], 100),
+  );
+  assert.throws(() => assertDefaultDiscoveryBindings([{ ...endpoint, LocalPort: 12345 }], 100));
+  assert.throws(() => assertDefaultDiscoveryBindings([endpoint], 0));
+});
+
 // Synthetic files only. These tests do not inspect/write registry keys, execute
 // installers, launch Rivloom/OpenCode or connect to a model service.
 function fixture() {
   const parent = join(repository, 'test-results');
   mkdirSync(parent, { recursive: true });
-  return mkdtempSync(join(parent, 'preview-smoke-selftest-'));
+  return mkdtempSync(join(parent, 'desktop-smoke-selftest-'));
 }
 
 function candidate() {
   return {
     schemaVersion: 1,
     status: 'candidate',
-    profile: 'conversation-preview',
-    product: { kind: 'conversation-preview', identifier: previewIdentifier, version: '0.1.3' },
+    profile: 'desktop',
+    product: { kind: 'desktop', identifier: desktopIdentifier, version: '0.1.3' },
     target: 'x86_64-pc-windows-msvc',
     source: {
       commit,
       expectedCommit: commit,
       workingTree: 'clean',
       refType: 'tag',
-      refName: 'ci-preview-v0.1.3',
+      refName: 'ci-v0.1.3',
       node: '24.19.0',
       rust: '1.98.1',
       cargo: '1.98.1',
     },
-    artifact: { fileName: 'Rivloom UI Preview_0.1.3_x64-setup.exe', bytes: 512, sha256: digest },
+    artifact: { fileName: 'Rivloom_0.1.3_x64-setup.exe', bytes: 512, sha256: digest },
     runtimeManifestSha256: digest,
     runtimeTree: {
       algorithm: 'sha256-path-kind-size-content-v1',
@@ -139,7 +215,7 @@ function candidate() {
 }
 
 test('installer verifier rejects source, product, artifact, runtime and publication drift', () => {
-  assert.equal(validateCandidateRecord(candidate(), commit).product.identifier, previewIdentifier);
+  assert.equal(validateCandidateRecord(candidate(), commit).product.identifier, desktopIdentifier);
   const branch = candidate();
   branch.source.refType = 'branch';
   branch.source.refName = 'main';
@@ -167,10 +243,21 @@ test('installer verifier rejects source, product, artifact, runtime and publicat
       record.source.cargo = '1.97.0';
     },
     (record: ReturnType<typeof candidate>) => {
-      record.product.identifier = 'com.rivloom.desktop';
+      record.product.identifier = 'com.rivloom.conversationpreview';
     },
     (record: ReturnType<typeof candidate>) => {
       record.product.version = '0.1.4';
+    },
+    (record: ReturnType<typeof candidate>) => {
+      record.product.version = '0.1.3-beta.1';
+      record.source.refName = 'ci-v0.1.3-beta.1';
+      record.artifact.fileName = 'Rivloom_0.1.3-beta.1_x64-setup.exe';
+    },
+    (record: ReturnType<typeof candidate>) => {
+      record.profile = 'conversation-preview';
+    },
+    (record: ReturnType<typeof candidate>) => {
+      record.source.refName = 'ci-preview-v0.1.3';
     },
     (record: ReturnType<typeof candidate>) => {
       record.artifact.fileName = '../Rivloom.exe';
@@ -254,7 +341,7 @@ function isolated(t: TestContext) {
   const testRoot = join(
     root,
     'test-results',
-    `preview-install-${randomUUID().replaceAll('-', '')}`,
+    `desktop-install-${randomUUID().replaceAll('-', '')}`,
   );
   const data = join(testRoot, 'data');
   mkdirSync(data, { recursive: true });
@@ -271,13 +358,18 @@ function isolated(t: TestContext) {
   const report = {
     status: 'awaiting-uninstall',
     commit,
-    identifier: previewIdentifier,
+    identifier: desktopIdentifier,
     assertions: [],
     preservedData: preservationCheckpoint(data),
   };
   const save = () => writeFileSync(reportPath, JSON.stringify(report));
   save();
-  const names = ['RIVLOOM_PREVIEW_INSTALL_GUARDED', 'RIVLOOM_PREVIEW_INSTALL_ROOT'] as const;
+  const names = [
+    'RIVLOOM_CI_DESKTOP_INSTALL_GUARDED',
+    'RIVLOOM_CI_DESKTOP_INSTALL_ROOT',
+    'GITHUB_ACTIONS',
+    'RUNNER_ENVIRONMENT',
+  ] as const;
   const original = names.map((name) => process.env[name]);
   t.after(() =>
     names.forEach((name, index) => {
@@ -285,8 +377,10 @@ function isolated(t: TestContext) {
       else process.env[name] = original[index];
     }),
   );
-  process.env.RIVLOOM_PREVIEW_INSTALL_GUARDED = '1';
-  process.env.RIVLOOM_PREVIEW_INSTALL_ROOT = testRoot;
+  process.env.RIVLOOM_CI_DESKTOP_INSTALL_GUARDED = '1';
+  process.env.RIVLOOM_CI_DESKTOP_INSTALL_ROOT = testRoot;
+  process.env.GITHUB_ACTIONS = 'true';
+  process.env.RUNNER_ENVIRONMENT = 'github-hosted';
   return { root, testRoot, data, report, reportPath, save };
 }
 
@@ -299,15 +393,15 @@ test(
     assert.equal(verifyIsolatedRoot(root, testRoot), testRoot);
     assert.throws(() => verifyIsolatedRoot(root, join(root, 'test-results')), /inside/);
     assert.throws(
-      () => verifyIsolatedRoot(root, join(root, 'test-results', 'preview-install-manual')),
-      /Unexpected Preview/,
+      () => verifyIsolatedRoot(root, join(root, 'test-results', 'desktop-install-manual')),
+      /Unexpected Rivloom/,
     );
-    delete process.env.RIVLOOM_PREVIEW_INSTALL_GUARDED;
+    delete process.env.RIVLOOM_CI_DESKTOP_INSTALL_GUARDED;
     assert.throws(() => verifyUninstalled(root, testRoot, commit), /HKCU protection/);
-    process.env.RIVLOOM_PREVIEW_INSTALL_GUARDED = '1';
-    process.env.RIVLOOM_PREVIEW_INSTALL_ROOT = root;
+    process.env.RIVLOOM_CI_DESKTOP_INSTALL_GUARDED = '1';
+    process.env.RIVLOOM_CI_DESKTOP_INSTALL_ROOT = root;
     assert.throws(() => verifyUninstalled(root, testRoot, commit), /another test/);
-    process.env.RIVLOOM_PREVIEW_INSTALL_ROOT = testRoot;
+    process.env.RIVLOOM_CI_DESKTOP_INSTALL_ROOT = testRoot;
     report.status = 'failed';
     save();
     assert.throws(() => verifyUninstalled(root, testRoot, commit), /Installed smoke did not pass/);
@@ -334,7 +428,7 @@ test(
     writeFileSync(database, 'changed database');
     assert.throws(
       () => verifyUninstalled(root, testRoot, commit),
-      /changed the separate Preview data/,
+      /changed the separate Rivloom data/,
     );
     writeFileSync(database, before);
     const wal = join(data, 'rivloom.sqlite-wal');
@@ -342,7 +436,7 @@ test(
     unlinkSync(wal);
     assert.throws(
       () => verifyUninstalled(root, testRoot, commit),
-      /changed the separate Preview data/,
+      /changed the separate Rivloom data/,
     );
     writeFileSync(wal, walBefore);
     assert.deepEqual(verifyUninstalled(root, testRoot, commit), {

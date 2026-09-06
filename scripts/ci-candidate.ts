@@ -20,8 +20,8 @@ import { releaseVersionSchema } from './release-record.ts';
 import { checkVersions } from './ci-version-check.ts';
 import { ciRoot } from './ci-workspace.ts';
 
-export const candidateProfile = 'conversation-preview';
-export const candidateIdentifier = 'com.rivloom.conversationpreview';
+export const candidateProfile = 'desktop';
+export const candidateIdentifier = 'com.rivloom.desktop';
 export const candidateNode = '24.19.0';
 export const candidateRust = '1.98.1';
 export const candidateCargo = '1.98.1';
@@ -141,6 +141,7 @@ export interface CandidateContext {
 
 export function validateCandidateContext(version: string, context: CandidateContext) {
   releaseVersionSchema.parse(version);
+  assert(!version.split('+')[0].includes('-'), 'Rivloom candidate requires a release version');
   assert.match(
     context.commit,
     /^(?!0{40}$)[0-9a-f]{40}$/,
@@ -163,15 +164,15 @@ export function validateCandidateContext(version: string, context: CandidateCont
   if (context.refType === 'tag')
     assert.equal(
       context.refName,
-      `ci-preview-v${version}`,
-      'Preview candidate tag must match the application version',
+      `ci-v${version}`,
+      'Rivloom candidate tag must match the application version',
     );
 }
 
 export function candidateConfig(version: string, context: CandidateContext) {
   validateCandidateContext(version, context);
   return {
-    productName: 'Rivloom UI Preview',
+    productName: 'Rivloom',
     identifier: candidateIdentifier,
     version,
     build: { beforeBuildCommand: null, beforeBundleCommand: null },
@@ -266,14 +267,14 @@ export async function recordCandidate(root: string, context: CandidateContext) {
   assert.deepEqual(
     manifest.product,
     { kind: candidateProfile, identifier: candidateIdentifier, version },
-    'Prepared runtime is not this Preview candidate',
+    'Prepared runtime is not this Rivloom candidate',
   );
   assert.deepEqual(
     manifest.target,
     { platform: 'win32', arch: 'x64' },
     'Unexpected runtime target',
   );
-  const fileName = `Rivloom UI Preview_${version}_x64-setup.exe`;
+  const fileName = `Rivloom_${version}_x64-setup.exe`;
   const installer = join(
     root,
     'src-tauri',
