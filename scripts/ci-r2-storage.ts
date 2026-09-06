@@ -160,7 +160,9 @@ export function r2Transport(
     const url = new URL(
       `https://${config.accountID}.r2.cloudflarestorage.com/${config.bucket}/${encodedObjectKey(request.key)}`,
     );
-    const headers: Record<string, string> = {};
+    // Preserve the object's strong ETag for conditional writes. Cloudflare can
+    // return a weak ETag when it compresses a JSON response for Node's fetch.
+    const headers: Record<string, string> = { 'accept-encoding': 'identity' };
     let source: ReturnType<typeof createReadStream> | undefined;
     let body: BodyInit | undefined;
     const payload = request.payload;

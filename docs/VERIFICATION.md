@@ -4,6 +4,8 @@
 
 ## 2026-09-06：Rivloom 0.1.4 普通 Release 与真实公开下载
 
+后续同步复验：用户于 `2026-09-06T05:08:51Z` 保存替代 Pages Hook，旧 Hook 随后撤销。运行 `34006275579` 第 3 次执行完成原始证据、Release、已有镜像和公开文件核验，但读取 latest 时以 `invalid-r2-etag` 停止，尚未调用替代 Hook，失败报告 artifact 为 `9983165889`；原公开记录与网页不变。对同一公开 JSON 的真实 Node fetch 对照复现了默认 Brotli 响应的弱 ETag 与 `Accept-Encoding: identity` 响应的强 ETag。修复将 R2 请求也明确设为 identity，不转换弱 ETag、不放宽校验、不取消条件写入；回归测试覆盖保留强 ETag 并原样用于 If-Match。完整脚本自测 55/55 通过，TypeScript 与修改脚本的格式检查通过，修复后的真实 S3 同步与 Hook 结果另行核对。[Cloudflare ETag 与压缩说明](https://developers.cloudflare.com/cache/reference/etag-headers/)
+
 源码 `31579065d318853a83c8a6ee344454c0f7d2e887` 的三组基础 CI **10/10 jobs 通过**（`34006177247`、`34006177249`、`34006177250`）。[Windows build and release 34006275579](https://github.com/rivloom/rivloom-desktop/actions/runs/34006275579) 完成原生构建与真实 NSIS 安装、启动、重启、卸载及受检数据保留验证；默认 UDP 43531 仅由受检 backend 占用，安装元数据已恢复、旧 Preview 元数据不变、模型请求数为 0。没有把全新安装扩大为旧版本升级、实体多机或交互式 GUI 验收。
 
 普通 [Release v0.1.4-31579065d318-9981226725](https://github.com/rivloom/rivloom-desktop/releases/tag/v0.1.4-31579065d318-9981226725) 于 `2026-09-06T02:36:37Z` 发布，`draft=false / prerelease=false`。候选 artifact `9981226725`、发布报告 artifact `9981236275` 与 Release `383438831` 绑定同一源码。实际重新下载的 Release EXE 与原候选哈希一致，证据在 `.data/verification/rivloom-release-3157906/`。

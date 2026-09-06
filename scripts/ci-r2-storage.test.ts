@@ -136,6 +136,39 @@ test('response hashing detects wrong length and bounded metadata rejects excess 
   await assert.rejects(() => boundedBytes(new Response(body), 4), /too-large/);
 });
 
+test('R2 reads preserve a strong ETag and use it unchanged for conditional replacement', async () => {
+  const body = Buffer.from('{"synthetic":true}\n');
+  const etag = '"existing-object"';
+  const methods: string[] = [];
+  const transport = r2Transport(configuration, async (_url, init) => {
+    const headers = new Headers(init?.headers);
+    methods.push(init!.method!);
+    // Reproduce compressed JSON delivery: a negotiated representation carries a
+    // weak validator, which must never be stripped or accepted for If-Match.
+    if (init?.method === 'GET')
+      return new Response(body, {
+        headers: {
+          etag: headers.get('accept-encoding') === 'identity' ? etag : `W/${etag}`,
+        },
+      });
+    assert.equal(headers.get('if-match'), etag);
+    assert.equal(headers.get('accept-encoding'), 'identity');
+    assert.match(headers.get('authorization')!, /SignedHeaders=accept-encoding;/);
+    return new Response(null);
+  });
+  const existing = await transport({ method: 'GET', key: 'releases/latest.json' });
+  const receivedEtag = strongEtag(existing.headers.get('etag'));
+  assert.deepEqual(await boundedBytes(existing, 1024), body);
+  await transport({
+    method: 'PUT',
+    key: 'releases/latest.json',
+    payload: { body, bytes: body.length, sha256: digest(body) },
+    condition: { etag: receivedEtag },
+    contentType: 'application/json',
+  });
+  assert.deepEqual(methods, ['GET', 'PUT']);
+});
+
 test('transport failures discard raw credential-bearing errors', async () => {
   const transport = r2Transport(configuration, async () => {
     throw new Error(`secret ${configuration.secretAccessKey}`);
