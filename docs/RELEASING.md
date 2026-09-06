@@ -1,6 +1,6 @@
 # 官网分发与安全更新方案
 
-更新日期：2026-09-06。状态：**从 0.1.4 起统一以 Rivloom 正式身份发布普通 GitHub Release；官网去掉对外 Preview 标记。R2 公开文件同步尚未启用，签名与 updater 尚未实施。** 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合实际实现维护；本轮去 Preview 的用户决定取代此前仅发布独立预览的命名安排，不改写历史验证结果。
+更新日期：2026-09-06。状态：**从 0.1.4 起统一以 Rivloom 正式身份发布普通 GitHub Release；官网去掉对外 Preview 标记。R2 公开文件同步与官网自动刷新已通过真实验证，签名与 updater 尚未实施。** 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合实际实现维护；本轮去 Preview 的用户决定取代此前仅发布独立预览的命名安排，不改写历史验证结果。
 
 M2 负责 Windows 安装与客户端更新，M5 负责官网与分发。main 上已验收候选通过 `ci-release.ts` 自动发布普通 Release；公开文件同步采用新的严格 desktop 下载记录，配置和重试规则见 [CI](CI.md#同步-rivloom-到官网公开下载)。R2 桶与下载域已活动，新增持续访问密钥和 Pages Hook 仍待此前授权，本次不创建凭据。新版云端、安装和发布结果须按实际源码另行核对；M3.5 用户与双物理机验收、签名和升级矩阵仍分别推进。历史事实见 [VERIFICATION](VERIFICATION.md)。
 
@@ -75,6 +75,8 @@ https://releases.example.com/beta/latest.json
 公开安装包和 SHA256SUMS.txt 位于 `https://downloads.rivloom.com/releases/<完整标签>/`，同名对象只可复用相同字节。固定记录为 `https://downloads.rivloom.com/releases/latest.json`，kind 为 rivloom-download，绑定 desktop/com.rivloom.desktop、普通 Release 和两份文件的 URL/大小/摘要/验收状态。普通版本不能带预发布后缀；旧 Preview 记录、安装身份与 previews 路径被拒绝。该 JSON 供官网选择下载，不是客户端更新清单。
 
 latest 的推进同时受全局同步并发组、源码祖先关系和条件写入（CAS）约束：跨源码只提升到当前源码的后代；同源码只允许更大的 artifact ID，相同 artifact 必须绑定一致才可复用。更新使用刚读取的 ETag，初次创建要求对象不存在；竞争冲突后重新读取与判断，不能盲目覆盖。旧构建或分叉构建不推进指针、不触发官网。版本文件使用 immutable 长缓存，latest 使用 `no-store`，公开读取成功后才触发构建。
+
+R2 请求显式发送并签名 `Accept-Encoding: identity`，以保留用于条件写入的强 ETag；弱 ETag 仍拒绝，不剥离 `W/`。该修复已在 `84dfc09` 的实际新发行中完成条件更新和官网 Hook 验证，见 [VERIFICATION](VERIFICATION.md)。
 
 R2 凭据仅限专属桶对象读写，Pages Hook 绑定官网 main；秘密只存桌面 Actions，见 [配置表](CI.md#同步-rivloom-到官网公开下载)。`RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网源码 `publicDownloadsEnabled` 已在获得授权及真实文件校验后启用。生产 404、超时、重定向或校验失败均保留原成功部署。新快照独立于旧 Preview，不能按干净 checkout 猜线上没有发行。
 

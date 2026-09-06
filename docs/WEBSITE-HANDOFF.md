@@ -6,13 +6,13 @@
 
 当前已发布版本为 **0.1.4**，安装包、GitHub Release 和官网下载文案统一使用 **Rivloom**。构建采用 `desktop` profile 和 `com.rivloom.desktop`，安装包名为 `Rivloom_0.1.4_x64-setup.exe`。旧 Preview 安装、数据、Release 和下载对象保持原状，本次没有自动迁移或合并旧 Preview 数据。
 
-当前实现的发行顺序为：同一源码的三组 CI 通过 → Rivloom 候选构建 → 全新 GitHub 托管 Windows runner 的安装、启动、重启、卸载与受检数据保留检查 → 普通 GitHub Release。发布器要求 `prerelease:false`，标签绑定版本、源码和原始 artifact ID；`make_latest:false` 保留，官网通过独立清单选择新版。两个源码仓库保持私有，GitHub Release 下载仍需仓库访问权限。源码 `3157906` 的完整云端验证通过，已发布 `v0.1.4-31579065d318-9981226725`；对应运行 `34006275579`，原候选 artifact `9981226725`。
+当前实现的发行顺序为：同一源码的三组 CI 通过 → Rivloom 候选构建 → 全新 GitHub 托管 Windows runner 的安装、启动、重启、卸载与受检数据保留检查 → 普通 GitHub Release。发布器要求 `prerelease:false`，标签绑定版本、源码和原始 artifact ID；`make_latest:false` 保留，官网通过独立清单选择新版。两个源码仓库保持私有，GitHub Release 下载仍需仓库访问权限。当前公开构建为 `v0.1.4-84dfc09fc756-9983464069`，对应运行 `34013763737` 第 2 次执行，原候选 artifact `9983464069`，完整云端验证通过。
 
-专用 R2 桶 `rivloom-downloads` 与 `downloads.rivloom.com` 已接通，自定义域最低 TLS 版本为 1.2。用户已授权并配置限桶对象读写的 R2 凭据和官网 Pages `main` Hook；桌面 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网 `publicDownloadsEnabled` 均为 true。运行 `34006275579` 的第 2 次执行仅重跑官网同步，按原始候选和发布 artifact ID 核验、上传、匿名完整校验与条件更新 latest，最后成功触发 Hook。入口为 `releases/latest.json` 和 `releases/v<版本>-<源码前12位>-<artifactID>/Rivloom_<版本>_x64-setup.exe`，不沿用旧 `previews/` 记录。
+专用 R2 桶 `rivloom-downloads` 与 `downloads.rivloom.com` 已接通，自定义域最低 TLS 版本为 1.2。用户已授权并配置限桶对象读写的 R2 凭据和官网 Pages `main` Hook；桌面 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 与官网 `publicDownloadsEnabled` 均为 true。替代 Hook 已实际调用通过，旧 Hook 已撤销；R2 请求显式禁用压缩以保留强 ETag，实际条件更新成功。同步报告 `9983479753` 确认原候选与 Release、公开下载字节一致。入口为 `releases/latest.json` 和 `releases/v<版本>-<源码前12位>-<artifactID>/Rivloom_<版本>_x64-setup.exe`，不沿用旧 `previews/` 记录。
 
 当前安装包仍未签名，客户端没有 updater 插件、公钥或更新端点，需要手动安装更新。统一名称和普通 GitHub Release 标记不代表已完成签名、stable/beta 更新频道或旧版本升级验收。详细当前流程见 [CI](CI.md)、[RELEASING](RELEASING.md)、[名称变更计划](plans/2026-09-06-rivloom-release-name.md) 与 [ADR-0008](adr/0008-rivloom-release-name.md)。
 
-官网开关提交 `7264cee` 已通过 [CI 34009205761](https://github.com/rivloom/rivloom-website/actions/runs/34009205761)，Cloudflare Pages 生产部署 `903cf8b8-a853-4ddb-ab30-9fbd75a8e8f8` 成功，35 项测试、26 个 Astro 文件、9 页及 238 个引用检查通过。正式域名下载页已显示 0.1.4 EXE 与校验文件链接；桌面、390×844 手机、长哈希换行和 FAQ 均已核对。另行匿名完整下载的安装包为 72,720,230 字节，SHA-256 与原 Release 一致。桌面首轮 `db23b54` 的历史超时及后续修复证据继续保留，见 [VERIFICATION](VERIFICATION.md)。
+官网 `eef01e1` 已通过 [CI 34013777856](https://github.com/rivloom/rivloom-website/actions/runs/34013777856)，新 Hook 触发的 Pages 生产部署 `c59fc2ed-abd5-4451-8dc7-6658e0562562` 成功，35 项测试、9 页及 238 个引用检查通过。正式域名和真实桌面浏览器已显示新 0.1.4 构建及正确链接。另行匿名完整下载的安装包为 72,693,201 字节，SHA-256 `db56e20eb5f3d6090ffc06eeacaa322e00baf9372bec2584daaaa49ef382e41c`，与原 Release 一致；本次布局未改，此前手机和 FAQ 结果保留。首次测试失败与重跑，以及此前构建历史见 [VERIFICATION](VERIFICATION.md)。
 
 ## 历史快照（2026-09-05，以下原文保留）
 

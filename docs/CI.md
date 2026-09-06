@@ -1,6 +1,6 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
-更新日期：2026-09-06。用户要求去掉对外 Preview；新流水线使用 Rivloom 0.1.4 正式身份并发布普通 GitHub Release，实施范围见 [本轮计划](plans/2026-09-06-rivloom-release-name.md)。此前 Preview 构建与发布结果保留为历史，不替代新版验收。签名、updater 和尚未启用的官网文件同步分别记录，不能用本地构建或官网 CI 代替桌面云端结果。
+更新日期：2026-09-06。用户要求去掉对外 Preview；新流水线使用 Rivloom 0.1.4 正式身份并发布普通 GitHub Release，实施范围见 [本轮计划](plans/2026-09-06-rivloom-release-name.md)。官网文件同步已启用并完成真实发布验证，签名与 updater 尚未实施。此前 Preview 构建与发布结果保留为历史，不能用本地构建或官网 CI 代替桌面云端结果。
 
 ## 本轮 Windows CI 修复结果
 
@@ -28,7 +28,7 @@
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、session 崩溃窗口  | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前未启用；见[下文](#同步-rivloom-到官网公开下载)。
+另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
@@ -164,7 +164,7 @@ latest 使用 no-store；公开 latest 复核成功后才 POST Pages main Hook�
 
 同步结果保存为 `test-results/website-download/result.json`，`if: always()` 上传有限报告并保留 14 天。上传或公开文件校验失败时不推进 latest；旧构建记录为 `superseded`，不改指针、不触发 Hook。latest 已推进后若公开 latest 核对或 Hook 失败，报告保留失败阶段，不自动回退对象；重跑同一同步可复用相同文件和记录并重新核验、触发部署，无需重发 GitHub Release。公开 URL 中只有发行标识和文件信息，不携带仓库凭据或私有报告。
 
-**当前接通状态（2026-09-06）：** 用户已授权并配置专属桶 R2 密钥与 Pages main Hook，桌面同步和官网展示开关均为 true。运行 `34006275579` 的第 2 次执行成功复用原候选 `9981226725` 与发布报告 `9981236275`，完成 R2 上传、匿名完整文件校验、latest 条件更新和 Hook 触发；同步报告 artifact 为 `9981816384`。官网提交 `7264cee` 的 CI 与 Pages 部署成功，正式域名已展示同一 0.1.4 下载。完整哈希、实际安装验证和浏览器验收见 [VERIFICATION](VERIFICATION.md)。
+**当前接通状态（2026-09-06）：** 用户已授权并配置专属桶 R2 密钥与 Pages main Hook，桌面同步和官网展示开关均为 true。旧 Hook 已撤销，替代 Hook 在运行 `34013763737` 第 2 次执行中通过真实调用。源码 `84dfc09` 修复压缩响应的弱 ETag 问题后，原候选 `9983464069`、Release `383477988` 和同步报告 `9983479753` 完成完整字节校验、latest 条件推进与官网刷新。官网 `eef01e1` 的自动部署 `c59fc2ed` 成功，正式域已显示同一 0.1.4 构建。完整哈希、首次失败与重跑、安装和浏览器证据见 [VERIFICATION](VERIFICATION.md)。
 
 ## Actions 与工作流验证来源
 

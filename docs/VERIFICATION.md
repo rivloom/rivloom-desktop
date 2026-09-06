@@ -2,9 +2,17 @@
 
 日期：2026-09-01 至 2026-09-06；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
-## 2026-09-06：Rivloom 0.1.4 普通 Release 与真实公开下载
+## 2026-09-06：替代 Hook、R2 ETag 修复与新构建同步通过
 
-后续同步复验：用户于 `2026-09-06T05:08:51Z` 保存替代 Pages Hook，旧 Hook 随后撤销。运行 `34006275579` 第 3 次执行完成原始证据、Release、已有镜像和公开文件核验，但读取 latest 时以 `invalid-r2-etag` 停止，尚未调用替代 Hook，失败报告 artifact 为 `9983165889`；原公开记录与网页不变。对同一公开 JSON 的真实 Node fetch 对照复现了默认 Brotli 响应的弱 ETag 与 `Accept-Encoding: identity` 响应的强 ETag。修复将 R2 请求也明确设为 identity，不转换弱 ETag、不放宽校验、不取消条件写入；回归测试覆盖保留强 ETag 并原样用于 If-Match。完整脚本自测 55/55 通过，TypeScript 与修改脚本的格式检查通过，修复后的真实 S3 同步与 Hook 结果另行核对。[Cloudflare ETag 与压缩说明](https://developers.cloudflare.com/cache/reference/etag-headers/)
+用户于 `2026-09-06T05:08:51Z` 保存替代 Pages Hook，旧 Hook 随后撤销。运行 `34006275579` 第 3 次执行在读取 latest 时以 `invalid-r2-etag` 停止，报告 artifact 为 `9983165889`；当时尚未调用替代 Hook，原公开记录与网页不变。真实 Node fetch 对照复现了默认 Brotli JSON 响应的弱 ETag 与 `Accept-Encoding: identity` 响应的强 ETag。修复 `84dfc09fc756140fe7675b72b1fd2440a786280a` 将 R2 请求明确设为 identity，不转换弱 ETag、不放宽校验、不取消条件写入。完整脚本自测 55/55、TypeScript 与格式检查通过。[Cloudflare ETag 与压缩说明](https://developers.cloudflare.com/cache/reference/etag-headers/)
+
+同一源码的三组基础 CI 最终 **10/10 jobs 通过**（`34013673676`、`34013673672`、`34013673689`）。官方引擎的会话恢复单项首次失败，精简报告未包含具体原因；单独重跑后 2 条场景通过，40.47 秒结束，未修改该测试或放宽门槛。[Windows build and release 34013763737](https://github.com/rivloom/rivloom-desktop/actions/runs/34013763737) 首次被该基础检查阻止，第 2 次执行在全部基础检查通过后完成原生构建、安装/启动/重启/卸载验收、普通 Release 和官网同步，3 个 job 全通过。
+
+新 [Release v0.1.4-84dfc09fc756-9983464069](https://github.com/rivloom/rivloom-desktop/releases/tag/v0.1.4-84dfc09fc756-9983464069) 于 `2026-09-06T05:38:32Z` 发布，`draft=false / prerelease=false`，Release ID `383477988`。原候选 artifact `9983464069`、发布报告 `9983471159`、同步报告 `9983479753` 绑定同一源码和安装包。同步报告为 `synced / complete`、`latestAction=promoted`、`hookTriggered=true`，真实 R2 条件更新与替代 Hook 均通过。另行匿名完整下载的 EXE 为 **72,693,201 字节**，SHA-256 `db56e20eb5f3d6090ffc06eeacaa322e00baf9372bec2584daaaa49ef382e41c`；校验文件 SHA-256 `34b3689339a82723f04b0c36db05dde5d56f2855469a3bf0d41e8509d6a2276f`，均与发布报告及 GitHub Release 摘要一致，未在本机运行下载的安装器。
+
+替代 Hook 自动构建官网 `eef01e1aab9d6217fe79a728b59a0050035ca0cd`（Website checks `34013777856` 通过）。Pages 部署 `c59fc2ed-abd5-4451-8dc7-6658e0562562` 读取新下载记录，35 项测试与 9 页、238 个引用检查通过，于 `2026-09-06T05:40:01Z` 发布。正式域 HTTP 和真实桌面浏览器均显示新构建、正确安装包/校验链接、文件大小与哈希。证据在 `.data/verification/public-download-84dfc09/`，包含首次失败及重跑报告；下节保留首次接通的历史证据。
+
+## 2026-09-06：Rivloom 0.1.4 首次普通 Release 与真实公开下载
 
 源码 `31579065d318853a83c8a6ee344454c0f7d2e887` 的三组基础 CI **10/10 jobs 通过**（`34006177247`、`34006177249`、`34006177250`）。[Windows build and release 34006275579](https://github.com/rivloom/rivloom-desktop/actions/runs/34006275579) 完成原生构建与真实 NSIS 安装、启动、重启、卸载及受检数据保留验证；默认 UDP 43531 仅由受检 backend 占用，安装元数据已恢复、旧 Preview 元数据不变、模型请求数为 0。没有把全新安装扩大为旧版本升级、实体多机或交互式 GUI 验收。
 
