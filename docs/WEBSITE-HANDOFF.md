@@ -12,6 +12,8 @@
 
 当前安装包仍未签名，客户端没有 updater 插件、公钥或更新端点，需要手动安装更新。统一名称和普通 GitHub Release 标记不代表已完成签名、stable/beta 更新频道或旧版本升级验收。详细当前流程见 [CI](CI.md)、[RELEASING](RELEASING.md)、[名称变更计划](plans/2026-09-06-rivloom-release-name.md) 与 [ADR-0008](adr/0008-rivloom-release-name.md)。
 
+名称变更的官网源码 `62fa469` 已通过 [CI 34004790825](https://github.com/rivloom/rivloom-website/actions/runs/34004790825)，Cloudflare Pages 生产部署 `d5698ea1-5550-46bb-bc15-ff63c3ea8610` 已成功；正式域名下载页和更新日志返回 200，桌面与手机布局已核对，公开下载仍关闭。桌面首轮 `db23b54` 的基础 CI 全部通过，但安装验收发生 PowerShell 查询超时，发布被阻止；失败与修复验证见 [VERIFICATION](VERIFICATION.md)。
+
 ## 历史快照（2026-09-05，以下原文保留）
 
 从下方“目标与仓库边界”至文末是 2026-09-05 的交接原文。其中“当前”“本轮”“R2 仍待配置”等措辞只描述当时检查点；旧版本、安装包和云端链接用于追溯历史，不覆盖上方当前摘要，也不证明 0.1.4 已完成云端发行或公开下载。

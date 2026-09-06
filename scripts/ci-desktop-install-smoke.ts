@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { isIP } from 'node:net';
 import {
   closeSync,
   existsSync,
@@ -178,20 +179,38 @@ function systemEnvironment(): NodeJS.ProcessEnv {
   );
 }
 
-function powershellJson(script: string, environment: NodeJS.ProcessEnv = {}) {
-  return JSON.parse(
-    execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; ${script}`],
-      {
-        env: { ...systemEnvironment(), ...environment },
-        windowsHide: true,
-        encoding: 'utf8',
-        timeout: 30_000,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    ).trim(),
-  );
+type PowerShellOperation = 'installer-resource' | 'process-inventory';
+function probeFailure(operation: PowerShellOperation | 'discovery-bindings', error: unknown) {
+  const timedOut =
+    error !== null && typeof error === 'object' && 'code' in error && error.code === 'ETIMEDOUT';
+  return new Error(`${operation}: system query ${timedOut ? 'timed out' : 'failed'}`);
+}
+
+export function powershellJson(
+  operation: PowerShellOperation,
+  script: string,
+  environment: NodeJS.ProcessEnv = {},
+) {
+  try {
+    return JSON.parse(
+      execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; ${script}`],
+        {
+          env: { ...systemEnvironment(), ...environment },
+          windowsHide: true,
+          encoding: 'utf8',
+          timeout: 30_000,
+          maxBuffer: 4 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      ).trim(),
+    );
+  } catch (error) {
+    // execFileSync's default error handling can echo stderr. Explicit pipes and
+    // fixed operation names keep arbitrary command output out of CI reports.
+    throw probeFailure(operation, error);
+  }
 }
 
 export async function verifyCandidate(root: string, directory: string, expectedCommit: string) {
@@ -241,6 +260,7 @@ export async function verifyCandidate(root: string, directory: string, expectedC
   );
   assert.equal(process.platform, 'win32', 'Installer resource inspection requires Windows');
   const resource = powershellJson(
+    'installer-resource',
     '$taskInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($env:RIVLOOM_CI_DESKTOP_INSPECT_FILE); @{ ProductName = $taskInfo.ProductName; ProductVersion = $taskInfo.ProductVersion; FileDescription = $taskInfo.FileDescription } | ConvertTo-Json -Compress',
     { RIVLOOM_CI_DESKTOP_INSPECT_FILE: installer },
   );
@@ -370,6 +390,7 @@ type ProcessInfo = {
 };
 function processes(): ProcessInfo[] {
   return powershellJson(
+    'process-inventory',
     'ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,@{Name="Created";Expression={if ($null -ne $_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString("o")} else {""}}})',
   );
 }
@@ -416,10 +437,80 @@ export function assertDefaultDiscoveryBindings(value: unknown, backendPID?: numb
   );
 }
 
-function discoveryBindings() {
-  return powershellJson(
-    `ConvertTo-Json -Compress -InputObject @(Get-NetUDPEndpoint -ErrorAction Stop | Where-Object { $_.LocalPort -eq ${desktopDiscoveryPort} } | Select-Object LocalPort,OwningProcess)`,
+function netstatUDPPort(value: string) {
+  const ipv6 = /^\[([^\]]+)\]:([^:]+)$/.exec(value);
+  const ipv4 = /^([^:]+):([^:]+)$/.exec(value);
+  const endpoint = ipv6 || ipv4;
+  assert(endpoint, 'discovery-bindings: invalid UDP endpoint');
+  let address = endpoint[1];
+  if (ipv6 && address.includes('%')) {
+    const scope = /^(.+)%(0|[1-9]\d{0,9})$/.exec(address);
+    assert(scope && Number(scope[2]) <= 0xffff_ffff, 'discovery-bindings: invalid IPv6 scope');
+    address = scope[1];
+  }
+  assert(isIP(address) === (ipv6 ? 6 : 4), 'discovery-bindings: invalid UDP address');
+  assert(
+    /^(0|[1-9]\d{0,4})$/.test(endpoint[2]) && Number(endpoint[2]) <= 65_535,
+    'discovery-bindings: invalid UDP port',
   );
+  return Number(endpoint[2]);
+}
+
+export function parseNetstatUDPBindings(output: string) {
+  assert(
+    typeof output === 'string' && output.length > 0 && output.length <= 4 * 1024 * 1024,
+    'discovery-bindings: invalid netstat output',
+  );
+  const bindings: Array<{ LocalPort: number; OwningProcess: number }> = [];
+  let headerFound = false;
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const columns = line.split(/\s+/);
+    if (!/^UDP/i.test(columns[0])) {
+      // Column headings are localized; the native -o PID heading is stable.
+      if (!/^TCP/i.test(columns[0]) && columns.length >= 4 && columns.at(-1) === 'PID')
+        headerFound = true;
+      continue;
+    }
+    assert(
+      columns[0] === 'UDP' && columns.length === 4,
+      'discovery-bindings: malformed netstat UDP row',
+    );
+    const port = netstatUDPPort(columns[1]);
+    // Connected UDP sockets can show a numeric peer instead of the wildcard.
+    if (columns[2] !== '*:*') netstatUDPPort(columns[2]);
+    assert(
+      /^(0|[1-9]\d{0,9})$/.test(columns[3]) && Number(columns[3]) <= 0xffff_ffff,
+      'discovery-bindings: invalid UDP owning process',
+    );
+    if (port === desktopDiscoveryPort)
+      bindings.push({ LocalPort: port, OwningProcess: Number(columns[3]) });
+  }
+  assert(headerFound, 'discovery-bindings: missing netstat PID header');
+  return bindings;
+}
+
+export function discoveryBindings() {
+  const environment = systemEnvironment();
+  const systemRoot = Object.entries(environment).find(
+    ([name]) => name.toLowerCase() === 'systemroot',
+  )?.[1];
+  assert(systemRoot && isAbsolute(systemRoot), 'discovery-bindings: missing system directory');
+  let output: string;
+  try {
+    output = execFileSync(join(systemRoot, 'System32', 'netstat.exe'), ['-ano'], {
+      env: environment,
+      windowsHide: true,
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    throw probeFailure('discovery-bindings', error);
+  }
+  return parseNetstatUDPBindings(output);
 }
 
 function guardedRoot(root: string, testRoot: string) {

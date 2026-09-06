@@ -2,6 +2,18 @@
 
 日期：2026-09-01 至 2026-09-06；Windows x64，Node.js 24.19.0，OpenCode CLI / SDK 1.18.25。执行数据保存在被版本库忽略的 `.data`，真实 AI 只修改其中的专用测试文件夹。旧项目 `C:\project\opencohive` 仅只读参考产品文档，没有复制或修改源码。
 
+## 2026-09-06：0.1.4 首轮云端与官网部署
+
+桌面源码 `db23b542e84bbb0455fe65bb0687604fc2ea42cb` 已推送，三组基础 CI **10/10 jobs 通过**：[Windows CI 34004776457](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776457)、[官方引擎 34004776473](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776473)、[发现回归 34004776496](https://github.com/rivloom/rivloom-desktop/actions/runs/34004776496)。自动触发的[构建与发行 34004864442](https://github.com/rivloom/rivloom-desktop/actions/runs/34004864442) 完成原生编译、NSIS、前后 runtime 门禁和安装后资源校验，但安装验收子命令随后因 `spawnSync powershell.exe ETIMEDOUT` 失败；没有发布新的普通 Release，网站同步也没有执行。
+
+失败 artifact `9980776021` 的 `desktop-install.json` 记录安装后 runtime、原始许可、desktop 身份和蓝色 UI 资源一致；尚无启动或网络成功断言，`modelRequests` 为 0、`installationMetadataRestored` 和 `previewMetadataUnchanged` 均为 true，无 cleanupError。旧日志没有标识具体是哪次 PowerShell 查询超时，不能仅凭日志断言是 CIM 或 UDP 查询。证据位于 `.data/verification/rivloom-release-db23b54/summary.json` 与该目录的有限报告，失败记录保留。
+
+后续修复将新增的 UDP 归属查询改为 Windows 原生 `netstat -ano`，继续要求默认端口在启动前空闲、启动后仅归属于受检 backend PID；同时给剩余 PowerShell 查询增加固定操作名称以便归因。不改变产品运行时、发现端口、安装隔离与旧安装保护。新源码仍需完整云端安装验收，不能把脚本修复或本机只读探针当作通过。
+
+修复本地验证：CI helper **54/54 通过，0 skipped**，TypeScript 和格式检查通过。真实 Windows 只读采样验证覆盖数值远端地址的 UDP 行；纯测试覆盖双栈、多 owner、未知 PID 0、无关端口 0、IPv6 scope 0 和畸形输出。独立代码复核确认查询失败仍阻止发布，目标端口的未知 owner 不会被丢弃。
+
+官网源码 `62fa469e98a0ab12155e80d73a1328f3874f0838` 已推送，[官网 CI 34004790825](https://github.com/rivloom/rivloom-website/actions/runs/34004790825) 通过；Cloudflare Pages 生产部署 `d5698ea1-5550-46bb-bc15-ff63c3ea8610` 于 `2026-09-06T01:48:12Z` 成功。云端 35/35 测试、26 个 Astro 文件检查与 9 页构建通过。正式域名下载页和更新日志均返回 200，新文案去除 Preview，更新日志显示 Windows 0.1.4；默认公开下载仍关闭。实际浏览器验证覆盖桌面和 390×844 手机布局，无水平溢出，手动更新 FAQ 正常。证据位于 `.data/verification/rivloom-name-website-62fa469/verification.json`，不代表 R2 安装包已公开。
+
 ## 2026-09-06：Rivloom 0.1.4 名称与普通发行流程本地验证
 
 版本与应用身份统一为 `0.1.4`、`Rivloom`、`desktop / com.rivloom.desktop`；候选安装证明、普通 GitHub Release 和独立官网严格下载记录同步切换，旧 Preview 工具与历史证据保留。此检查点尚未取得新源码的云端发行结果，不能据此宣称新安装器已通过真实安装或已公开下载。

@@ -17,6 +17,9 @@ import {
   assertDefaultDiscoveryBindings,
   desktopDiscoveryPort,
   desktopProduct,
+  discoveryBindings,
+  parseNetstatUDPBindings,
+  powershellJson,
   measureInstalledTree,
   preservationCheckpoint,
   desktopIdentifier,
@@ -31,6 +34,121 @@ import {
 const commit = '1'.repeat(40);
 const digest = 'a'.repeat(64);
 const repository = resolve(import.meta.dirname, '..');
+const netstatHeader = 'Active Connections\r\n  Proto Local Address Foreign Address State PID\r\n';
+
+test('netstat parser preserves every IPv4 and IPv6 discovery owner and ignores TCP and other ports', () => {
+  const parsed = parseNetstatUDPBindings(
+    netstatHeader +
+      [
+        '  UDP 0.0.0.0:43531 *:* 100',
+        '  UDP [::]:43531 *:* 100',
+        '  UDP [fe80::1234%12]:43531 *:* 100',
+        '  UDP 127.0.0.1:43531 192.0.2.2:65535 100',
+        '  UDP 127.0.0.1:4353 *:* 200',
+        '  UDP 127.0.0.1:5353 198.51.100.1:43531 43531',
+        '  UDP [::ffff:192.0.2.1]:54353 [fe80::1%12]:0 200',
+        '  TCP 0.0.0.0:43531 0.0.0.0:0 LISTENING 300',
+      ].join('\r\n'),
+  );
+  assert.deepEqual(
+    parsed,
+    Array.from({ length: 4 }, () => ({ LocalPort: 43531, OwningProcess: 100 })),
+  );
+  assertDefaultDiscoveryBindings(parsed, 100);
+  const conflict = parseNetstatUDPBindings(
+    netstatHeader + 'UDP 0.0.0.0:43531 *:* 100\nUDP [::]:43531 *:* 200',
+  );
+  assert.throws(() => assertDefaultDiscoveryBindings(conflict, 100), /exclusively owned/);
+  assert.deepEqual(parseNetstatUDPBindings(netstatHeader), []);
+  assert.deepEqual(
+    parseNetstatUDPBindings(
+      'localized heading\n 协议 本地地址 外部地址 状态 PID\nUDP [::]:4353 *:* 100',
+    ),
+    [],
+  );
+});
+
+test('zero port, scope and unavailable owner records do not hide discovery conflicts', () => {
+  assert.deepEqual(
+    parseNetstatUDPBindings(netstatHeader + 'UDP 0.0.0.0:0 *:* 0\nUDP [::%0]:5353 *:* 0'),
+    [],
+  );
+  const unknownOwner = parseNetstatUDPBindings(netstatHeader + 'UDP [::%0]:43531 *:* 0');
+  assert.deepEqual(unknownOwner, [{ LocalPort: 43531, OwningProcess: 0 }]);
+  assert.throws(() => assertDefaultDiscoveryBindings(unknownOwner));
+  assert.throws(() => assertDefaultDiscoveryBindings(unknownOwner, 100));
+  const scoped = parseNetstatUDPBindings(netstatHeader + 'UDP [::%0]:43531 *:* 100');
+  assertDefaultDiscoveryBindings(scoped, 100);
+});
+
+test('netstat malformed UDP records fail even when their port is unrelated', () => {
+  for (const row of [
+    'UDP',
+    'UDP 0.0.0.0:43531 *:*',
+    'UDP 0.0.0.0:43531 *:* 100 extra',
+    'UDP 0.0.0.0:43531 *:* missing',
+    'UDP 0.0.0.0:43531 *:* 100x',
+    'UDP 0.0.0.0:43531 *:* -1',
+    'UDP 0.0.0.0:43531 *:* 4294967296',
+    'UDP 0.0.0.0:43531 *:* 0100',
+    'UDP 0.0.0.0:43531x *:* 100',
+    'UDP 0.0.0.0:543531 *:* 100',
+    'UDP 0.0.0.0:-1 *:* 100',
+    'UDP 0.0.0.0:043531 *:* 100',
+    'UDP 999.0.0.0:43531 *:* 100',
+    'UDP *:43531 *:* 100',
+    'UDP ::1:43531 *:* 100',
+    'UDP [invalid]:43531 *:* 100',
+    'UDP [::1%scope]:43531 *:* 100',
+    'UDP [::1%00]:43531 *:* 100',
+    'UDP [::1%-1]:43531 *:* 100',
+    'UDP [::1%4294967296]:43531 *:* 100',
+    'UDP 127.0.0.1:43531 remote 100',
+    'UDP 0.0.0.0:5353 *:* missing',
+  ])
+    assert.throws(() => parseNetstatUDPBindings(netstatHeader + row), /discovery-bindings/);
+  for (const output of ['', ' \r\n', 'not a table', 'UDP 0.0.0.0:43531 *:* 100'])
+    assert.throws(() => parseNetstatUDPBindings(output), /discovery-bindings/);
+});
+
+test(
+  'native Windows netstat output is parseable without changing any ports or services',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const result = discoveryBindings();
+    assert(Array.isArray(result));
+    for (const endpoint of result) {
+      assert.equal(endpoint.LocalPort, desktopDiscoveryPort);
+      assert(
+        Number.isSafeInteger(endpoint.OwningProcess) &&
+          endpoint.OwningProcess >= 0 &&
+          endpoint.OwningProcess <= 0xffff_ffff,
+      );
+    }
+  },
+);
+
+test(
+  'PowerShell query errors expose only their fixed operation label',
+  { skip: process.platform !== 'win32' },
+  () => {
+    assert.deepEqual(powershellJson('installer-resource', 'Write-Output "{}"'), {});
+    for (const script of [
+      'throw "SYNTHETIC_PRIVATE_ERROR"',
+      'Write-Output "SYNTHETIC_PRIVATE_OUTPUT"',
+    ]) {
+      assert.throws(
+        () => powershellJson('process-inventory', script),
+        (error) => {
+          assert(error instanceof Error);
+          assert.equal(error.message, 'process-inventory: system query failed');
+          assert.doesNotMatch(String(error), /SYNTHETIC_PRIVATE/);
+          return true;
+        },
+      );
+    }
+  },
+);
 
 test(
   'PowerShell runner and metadata guards reject existing installations and unrecognized partial changes',
