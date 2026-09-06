@@ -1,6 +1,8 @@
 # 会话式桌面界面交接
 
-更新：2026-09-05。项目：`C:\project\rivloom-opencode`。
+更新：2026-09-06。项目：`C:\project\rivloom-opencode`。
+
+**当前状态：** Rivloom 0.1.4 已完成普通 Release 与官网公开下载，最新受检源码 `84dfc09`，详见 [验证记录](VERIFICATION.md) 顶部；M3.5 用户与本轮双物理机验收仍待进行。下方 0.1.3 docs1、独立 Preview 和“自动候选正在建立”等是历史记录，不作为当前官网下载基线；视觉与 A–D 功能不从头重做。
 
 ## 用户最新决定
 

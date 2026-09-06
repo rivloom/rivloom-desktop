@@ -4,13 +4,13 @@
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。**M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，完整隔离服务 12/12、真实 session 两崩溃窗口、Debug/Release 原生与最终二进制闭环通过；该功能交付全量为 154/155，唯一已有纯 mDNS 失败保留。当前检查预览使用文档修订后的 `docs1` 包，未签名、未安装；产物与证据见 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)。用户另已启动 M2/M5 官网、CI 与发行接口第一轮实施；M4、P1、任务拆解、人员和 HA 仍未扩大实施。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。**M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，原生界面、隔离服务与恢复检查已有工程证据。2026-09-06，Rivloom 0.1.4 普通发行、官网匿名下载及发行后自动刷新官网已通过验证；下一步建议用实际公开包完成真实使用验收。历史 docs1 预览、各轮测试数、本机纯 mDNS 失败与云端发现成功分别保留在 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)，不混成全量或双物理机通过。M4、P1、任务拆解、人员和 HA 仍未扩大实施。
 
 ## 在 Windows 启动
 
-官网 [rivloom.com](https://rivloom.com) 已通过独立私有仓库 `rivloom/rivloom-website` 和 Cloudflare Pages 上线。桌面 main 的 CI、候选构建、安装验收和 GitHub Release 自动发布已建立；从 0.1.4 起使用 Rivloom 正式名称与 `com.rivloom.desktop` 身份，发布普通 Release。官网公开文件同步代码与专属 R2 桶已准备，持续访问凭据及首次公开下载仍待接通；签名和应用内自动更新尚未实现。新版本的实际云端构建与发布结果见 [CI](docs/CI.md)和[发布方案](docs/RELEASING.md)，不沿用旧版验证结论。
+官网 [rivloom.com](https://rivloom.com) 已通过独立私有仓库 `rivloom/rivloom-website` 和 Cloudflare Pages 上线。桌面 main 的 CI、候选构建、安装验收、GitHub Release、R2 文件同步及官网刷新已完成真实验证；从 0.1.4 起使用 Rivloom 正式名称与 `com.rivloom.desktop` 身份，发布普通 Release。用户可以从[官网下载页](https://rivloom.com/download/)匿名下载安装包及校验文件；源码仓库仍私有。签名和应用内自动更新尚未实现。当前流程与云端证据见 [CI](docs/CI.md)、[发布方案](docs/RELEASING.md) 和 [验证报告](docs/VERIFICATION.md)。
 
-客户使用后续重建的内测包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
+客户使用当前 Windows 包只需准备项目自身需要的工具链，以及可访问模型提供方的网络。Rivloom 项目可以是任何本机可访问的普通文件夹，不要求 Git。Node.js 24.19.0 和 OpenCode 1.18.25 由桌面程序随包提供。
 
 历史正式版内测安装器为 `Rivloom_0.1.3_x64-setup.exe`（71,083,411 字节）；原 M3.5 交付使用独立的 Rivloom UI Preview，证据见 [UI-HANDOFF](docs/UI-HANDOFF.md)。新版普通安装包为 `Rivloom_0.1.4_x64-setup.exe`，旧 Preview 安装与数据继续保留，尚不自动迁移到正式身份；历史双物理机和升级记录不能作为新版验收。代码签名和完整安装升级矩阵仍待完成。
 
@@ -27,6 +27,8 @@ npm.cmd start
 `npm run dev` 与 `npm start` 都启动桌面开发版本。内部 Web 调试必须显式使用 `npm run server:dev`；不要和桌面端共用数据目录。同一数据目录有进程锁。关闭桌面窗口时会提示并停止执行，异常退出也由父子进程监控清理。
 
 M3.5 验证使用 `npm.cmd run test:node-p0` 创建本轮独立数据/多服务夹具；原生预览使用 `npm.cmd run preview:conversation:desktop`。普通 `npm start` 不代替数据隔离，不复用旧物理验收根。
+
+新增的会话操作交接、云端配置盘点和本机临时验收材料保存在被 Git 忽略的 `.data/`，不纳入提交；仓库文档维护使用/开发说明、设计决策和简明项目状态。已有历史记录不因这项约定自动删除或改写。
 
 ### 第一个真实任务
 
