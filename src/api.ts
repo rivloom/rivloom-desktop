@@ -1,3 +1,4 @@
+import { t } from '../shared/i18n.ts';
 import type { NodeNetwork } from '../shared/types';
 
 export type CreatedNodeTaskResponse = NodeNetwork & { createdTaskID: string };
@@ -30,11 +31,11 @@ export async function api<T>(
       ...(controller ? { signal: controller.signal } : {}),
     });
     const data = await response.json();
-    if (!response.ok) throw new ApiError(data.error || '请求失败', response.status);
+    if (!response.ok) throw new ApiError(data.error || t('请求失败'), response.status);
     return data;
   } catch (error) {
     if (controller?.signal.aborted)
-      throw new Error('请求超时，结果尚未确认。请重试确认同一次请求。');
+      throw new Error(t('请求超时，结果尚未确认。请重试确认同一次请求。'));
     throw error;
   } finally {
     if (timer !== null) clearTimeout(timer);

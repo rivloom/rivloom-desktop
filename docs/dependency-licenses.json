@@ -1,5 +1,110 @@
 [
   {
+    "name": "@babel/helper-string-parser",
+    "version": "8.0.0",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-6mJgmFFFIIO82vvoLt9XtRC7/TkzXfts1t/SpRX4IHSzMgqoPYCWesVu1udUPUWioAE/2fcG6WuI8zrkE1gwrg==",
+    "packagePaths": [
+      "node_modules/@babel/helper-string-parser"
+    ],
+    "licenseFile": "licenses/npm/%40babel%2Fhelper-string-parser/8.0.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40babel%2Fhelper-string-parser/8.0.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ]
+  },
+  {
+    "name": "@babel/helper-validator-identifier",
+    "version": "8.0.4",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-4wFaiLd0bVo4cIoTXI3zKI038NIWE/cr3jvBjejOVYVxV/m8Ltav1USiGzG1fmS5J2RhgEOgXNNK46cRPnRsrg==",
+    "packagePaths": [
+      "node_modules/@babel/helper-validator-identifier"
+    ],
+    "licenseFile": "licenses/npm/%40babel%2Fhelper-validator-identifier/8.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40babel%2Fhelper-validator-identifier/8.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ]
+  },
+  {
+    "name": "@babel/parser",
+    "version": "8.0.4",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-srpptsAkEbbNIC/q8nT7o+m6CQe8CJUTV/t7MYc9NnWlgYVtHOb7JH6SorxMhN0kuRJjVqXbKClG6xSbPtzz+g==",
+    "packagePaths": [
+      "node_modules/@babel/parser"
+    ],
+    "licenseFile": "licenses/npm/%40babel%2Fparser/8.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40babel%2Fparser/8.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "2e97627cb278aa7556fb9e8817368302301a595b6c7582512b8d74c57b773652"
+      }
+    ]
+  },
+  {
+    "name": "@babel/runtime",
+    "version": "7.29.7",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==",
+    "packagePaths": [
+      "node_modules/@babel/runtime"
+    ],
+    "licenseFile": "licenses/npm/%40babel%2Fruntime/7.29.7/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40babel%2Fruntime/7.29.7/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ]
+  },
+  {
+    "name": "@babel/types",
+    "version": "8.0.4",
+    "license": "MIT",
+    "developmentOnly": true,
+    "integrity": "sha512-eY+Yn3dCqTGmyiq2QRU66lA5FL8lqqqvecHt0fF3uHONIa7ToYsaCiWV8lOKqAs0Rb2SjixiKFROngnulPtt2g==",
+    "packagePaths": [
+      "node_modules/@babel/types"
+    ],
+    "licenseFile": "licenses/npm/%40babel%2Ftypes/8.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40babel%2Ftypes/8.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+      }
+    ]
+  },
+  {
     "name": "@leichtgewicht/ip-codec",
     "version": "2.0.5",
     "license": "MIT",
@@ -453,7 +558,7 @@
     "name": "@typescript/typescript-win32-x64",
     "version": "7.0.2",
     "license": "Apache-2.0",
-    "developmentOnly": true,
+    "developmentOnly": false,
     "integrity": "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g==",
     "packagePaths": [
       "node_modules/@typescript/typescript-win32-x64"
@@ -1277,6 +1382,27 @@
     ]
   },
   {
+    "name": "html-parse-stringify",
+    "version": "4.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0zHsZJrK7S3K2aucXWL6ycoYJ/iNtIcFHC/nYQgFklPtrv5LpJctIiSCroWZWeuoXvuyFdzp6KzjJQ+OT5MfFw==",
+    "packagePaths": [
+      "node_modules/html-parse-stringify"
+    ],
+    "licenseFile": "licenses/npm/html-parse-stringify/4.0.1/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/html-parse-stringify/4.0.1/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "3eb2802a4d0ea79f80977817451b056571dccd8373c9bf4e9be4b05f86afbf90"
+      }
+    ]
+  },
+  {
     "name": "http-errors",
     "version": "2.0.1",
     "license": "MIT",
@@ -1294,6 +1420,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "dcb94ff9b1e037a847bc20589dc81a1066d041fd4c16deb18b0fa968c66cf395"
+      }
+    ]
+  },
+  {
+    "name": "i18next",
+    "version": "26.4.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-RX+R0VLg13IbvRuJSxnqykUFS9vQZTl8wYpWPCIUDWVrSGjsQywB5Y+pjzrkboxGAuYfJZVH1InFTdgBdxq6ug==",
+    "packagePaths": [
+      "node_modules/i18next"
+    ],
+    "licenseFile": "licenses/npm/i18next/26.4.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/i18next/26.4.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "1cd0a2b02a6cc40ef8ee16310d13eeffdd7b5de4a562fd3ee7c921d8eb54f60a"
       }
     ]
   },
@@ -1994,6 +2141,27 @@
     ]
   },
   {
+    "name": "react-i18next",
+    "version": "17.0.13",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Cc1PscmblIHA1kljTqDwrcVMI21ydgmUzw0UAeQBe7pAOgfuRLfzXze4EUBQoeDiICzFIXXhHFoZxuetNg5D0Q==",
+    "packagePaths": [
+      "node_modules/react-i18next"
+    ],
+    "licenseFile": "licenses/npm/react-i18next/17.0.13/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/react-i18next/17.0.13/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "29b8ae456ef442e53a98df183ad088cf98c2ece73aa84c462330c43e665b8ab2"
+      }
+    ]
+  },
+  {
     "name": "react",
     "version": "19.2.8",
     "license": "MIT",
@@ -2417,7 +2585,7 @@
     "name": "typescript",
     "version": "7.0.2",
     "license": "Apache-2.0",
-    "developmentOnly": true,
+    "developmentOnly": false,
     "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
     "packagePaths": [
       "node_modules/typescript"
@@ -2479,6 +2647,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "1a526fbe8d8577f5a4b1c2821842b55b7c0e18862531c62ae4ce69c9b19b74b6"
+      }
+    ]
+  },
+  {
+    "name": "use-sync-external-store",
+    "version": "1.6.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==",
+    "packagePaths": [
+      "node_modules/use-sync-external-store"
+    ],
+    "licenseFile": "licenses/npm/use-sync-external-store/1.6.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/use-sync-external-store/1.6.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
       }
     ]
   },

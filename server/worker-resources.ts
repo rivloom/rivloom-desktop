@@ -1,5 +1,5 @@
-import { execFile, spawnSync } from 'node:child_process';
-import { statfsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { statfs } from 'node:fs/promises';
 import { arch, cpus, freemem, platform, release, totalmem } from 'node:os';
 import type {
   BrainTopology,
@@ -244,30 +244,53 @@ type WindowsInventory = {
   gpu?: { name?: unknown; memoryBytes?: unknown }[];
 };
 
-function windowsInventory(): WindowsInventory {
-  if (process.platform !== 'win32') return {};
+function commandOutput(
+  command: string,
+  args: string[],
+  timeout: number,
+  maxBuffer: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      { encoding: 'utf8', windowsHide: true, timeout, maxBuffer, signal },
+      (error, stdout) => resolve(error ? null : stdout),
+    );
+  });
+}
+
+async function windowsInventory(signal?: AbortSignal): Promise<WindowsInventory | null> {
+  if (process.platform !== 'win32') return { cpu: [], gpu: [] };
   const script = `
 $ErrorActionPreference = 'Stop'
 $cpu = @(Get-CimInstance Win32_Processor | ForEach-Object { [pscustomobject]@{ name = [string]$_.Name; physicalCores = [int]$_.NumberOfCores; logicalCores = [int]$_.NumberOfLogicalProcessors } })
 $gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object { [pscustomobject]@{ name = [string]$_.Name; memoryBytes = $null } })
 [Console]::Out.Write((@{ cpu = $cpu; gpu = $gpu } | ConvertTo-Json -Depth 5 -Compress))
 `;
-  const result = spawnSync(
+  const output = await commandOutput(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024 },
+    10_000,
+    1024 * 1024,
+    signal,
   );
-  if (result.status !== 0 || !result.stdout.trim()) return {};
+  if (!output?.trim()) return null;
   try {
-    return JSON.parse(result.stdout) as WindowsInventory;
+    const inventory = JSON.parse(output) as WindowsInventory | null;
+    // A failed inventory must not turn an unknown GPU into a confirmed GPU-free worker.
+    return inventory && Array.isArray(inventory.cpu) && Array.isArray(inventory.gpu)
+      ? inventory
+      : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-function diskSpace(root: string) {
+async function diskSpace(root: string) {
   try {
-    const value = statfsSync(root);
+    const value = await statfs(root);
     return {
       total: Math.max(0, Math.trunc(value.bsize * value.blocks)),
       available: Math.max(0, Math.trunc(value.bsize * value.bavail)),
@@ -288,14 +311,16 @@ export function parseNvidiaMemory(output: string) {
   return result;
 }
 
-function nvidiaMemory() {
+async function nvidiaMemory(signal?: AbortSignal) {
   // Win32_VideoController.AdapterRAM is UInt32 and cannot represent modern VRAM sizes.
-  const result = spawnSync(
+  const output = await commandOutput(
     'nvidia-smi',
     ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
-    { encoding: 'utf8', windowsHide: true, timeout: 3000, maxBuffer: 64 * 1024 },
+    3000,
+    64 * 1024,
+    signal,
   );
-  return result.status === 0 ? parseNvidiaMemory(result.stdout) : new Map<string, number>();
+  return output === null ? new Map<string, number>() : parseNvidiaMemory(output);
 }
 
 function cpuTimes() {
@@ -309,7 +334,7 @@ function cpuTimes() {
   return { idle, total };
 }
 
-async function windowsGpuLoad(totalGpuMemory: number | null) {
+async function windowsGpuLoad(totalGpuMemory: number | null, signal?: AbortSignal) {
   if (process.platform !== 'win32')
     return { percent: null as number | null, memoryAvailable: null as number | null };
   const script = `
@@ -320,17 +345,16 @@ $utilization = ($engines | Measure-Object -Property UtilizationPercentage -Sum).
 $dedicated = ($memory | Measure-Object -Property DedicatedUsage -Sum).Sum
 [Console]::Out.Write((@{ utilization = if ($null -eq $utilization) { $null } else { [double]$utilization }; dedicated = if ($null -eq $dedicated) { $null } else { [int64]$dedicated } } | ConvertTo-Json -Compress))
 `;
-  const result = await new Promise<{ status: number; stdout: string }>((resolve) => {
-    execFile(
-      'powershell.exe',
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', windowsHide: true, timeout: 3_000, maxBuffer: 256 * 1024 },
-      (error, stdout) => resolve({ status: error ? 1 : 0, stdout }),
-    );
-  });
-  if (result.status !== 0 || !result.stdout.trim()) return { percent: null, memoryAvailable: null };
+  const output = await commandOutput(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    3000,
+    256 * 1024,
+    signal,
+  );
+  if (!output?.trim()) return { percent: null, memoryAvailable: null };
   try {
-    const value = JSON.parse(result.stdout) as { utilization?: unknown; dedicated?: unknown };
+    const value = JSON.parse(output) as { utilization?: unknown; dedicated?: unknown };
     const percent =
       typeof value.utilization === 'number' && Number.isFinite(value.utilization)
         ? Math.max(0, Math.min(100, value.utilization))
@@ -353,10 +377,18 @@ $dedicated = ($memory | Measure-Object -Property DedicatedUsage -Sum).Sum
   }
 }
 
-export function collectWorkerHardware(root: string): WorkerHardware {
+export async function collectWorkerHardware(
+  _root: string,
+  signal?: AbortSignal,
+): Promise<WorkerHardware | null> {
   const osCpus = cpus();
-  const inventory = windowsInventory();
-  const reliableGpuMemory = nvidiaMemory();
+  const inventory = await windowsInventory(signal);
+  if (!inventory) return null;
+  const reliableGpuMemory = inventory.gpu?.some(
+    (gpu) => typeof gpu.name === 'string' && /nvidia/i.test(gpu.name),
+  )
+    ? await nvidiaMemory(signal)
+    : new Map<string, number>();
   const processors = Array.isArray(inventory.cpu) ? inventory.cpu : [];
   const gpus = (Array.isArray(inventory.gpu) ? inventory.gpu : [])
     .map((gpu) => ({
@@ -387,25 +419,186 @@ export function collectWorkerHardware(root: string): WorkerHardware {
     logicalCores: logicalFromInventory || Math.max(1, osCpus.length),
     memoryBytes: Math.max(1, totalmem()),
     gpus,
-    diskBytes: diskSpace(root).total,
+    // Disk sampling is independent: an unavailable filesystem must not hold up inventory.
+    diskBytes: null,
     collectedAt: new Date().toISOString(),
   };
 }
 
-export class WorkerResourceSampler {
-  readonly hardware: WorkerHardware;
-  private previousCpu = cpuTimes();
-  private gpuSample = {
-    at: 0,
-    percent: null as number | null,
-    memoryAvailable: null as number | null,
-  };
-  private readonly root: string;
-  private gpuSampling = false;
+type CpuTimes = { idle: number; total: number };
+type DiskSpace = { total: number | null; available: number | null };
+type GpuLoad = { percent: number | null; memoryAvailable: number | null };
+type MemorySample = { total: number; available: number };
+export type WorkerResourceDependencies = {
+  clock: () => number;
+  cpuTimes: () => CpuTimes;
+  memory: () => MemorySample;
+  hardware: (root: string, signal: AbortSignal) => Promise<WorkerHardware | null>;
+  disk: (root: string) => Promise<DiskSpace>;
+  gpu: (totalGpuMemory: number | null, signal: AbortSignal) => Promise<GpuLoad>;
+};
+const osSampleMilliseconds = 1000;
+const externalSampleMilliseconds = 5000;
+const externalSampleFreshMilliseconds = 20_000;
+const failedSampleRetryMilliseconds = 30_000;
 
-  constructor(root: string) {
+function due(at: number | null, now: number, interval: number) {
+  return at === null || now < at || now - at >= interval;
+}
+
+/** Demand-driven sampling shares resource measurements, never task-admission decisions. */
+export class WorkerResourceSampler {
+  private hardwareValue: WorkerHardware | null = null;
+  private readonly dependencies: WorkerResourceDependencies;
+  private readonly root: string;
+  private readonly controller = new AbortController();
+  private disposed = false;
+  private hardwareSampling = false;
+  private hardwareAttemptAt: number | null = null;
+  private previousCpu: CpuTimes | null = null;
+  private osSample: {
+    at: number;
+    cpuPercent: number | null;
+    memory: MemorySample | null;
+  } | null = null;
+  private gpuSampling = false;
+  private gpuAttemptAt: number | null = null;
+  private gpuRetryMilliseconds = externalSampleMilliseconds;
+  private gpuSample: (GpuLoad & { at: number }) | null = null;
+  private diskSampling = false;
+  private diskAttemptAt: number | null = null;
+  private diskRetryMilliseconds = externalSampleMilliseconds;
+  private diskSample: (DiskSpace & { at: number }) | null = null;
+
+  constructor(root: string, dependencies: Partial<WorkerResourceDependencies> = {}) {
     this.root = root;
-    this.hardware = collectWorkerHardware(root);
+    this.dependencies = {
+      clock: Date.now,
+      cpuTimes,
+      memory: () => ({ total: Math.max(1, totalmem()), available: Math.max(0, freemem()) }),
+      hardware: collectWorkerHardware,
+      disk: diskSpace,
+      gpu: windowsGpuLoad,
+      ...dependencies,
+    };
+  }
+
+  get hardware(): WorkerHardware | null {
+    return this.hardwareValue;
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.controller.abort();
+  }
+
+  private refreshHardware(at: number) {
+    if (
+      this.hardwareValue ||
+      this.hardwareSampling ||
+      !due(this.hardwareAttemptAt, at, failedSampleRetryMilliseconds)
+    )
+      return;
+    this.hardwareSampling = true;
+    this.hardwareAttemptAt = at;
+    void Promise.resolve()
+      .then(() =>
+        this.disposed ? null : this.dependencies.hardware(this.root, this.controller.signal),
+      )
+      .then((hardware) => {
+        if (!this.disposed && validWorkerHardware(hardware)) this.hardwareValue = hardware;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.hardwareAttemptAt = this.dependencies.clock();
+        this.hardwareSampling = false;
+      });
+  }
+
+  private refreshDisk(at: number) {
+    if (this.diskSampling || !due(this.diskAttemptAt, at, this.diskRetryMilliseconds)) return;
+    this.diskSampling = true;
+    this.diskAttemptAt = at;
+    void Promise.resolve()
+      .then(() =>
+        this.disposed ? { total: null, available: null } : this.dependencies.disk(this.root),
+      )
+      .catch(() => ({ total: null, available: null }))
+      .then((disk) => {
+        if (this.disposed) return;
+        this.diskSample = { ...disk, at: this.dependencies.clock() };
+        this.diskRetryMilliseconds =
+          disk.available === null ? failedSampleRetryMilliseconds : externalSampleMilliseconds;
+      })
+      .finally(() => {
+        this.diskAttemptAt = this.dependencies.clock();
+        this.diskSampling = false;
+      });
+  }
+
+  private refreshGpu(at: number) {
+    const hardware = this.hardwareValue;
+    if (
+      !hardware?.gpus.length ||
+      this.gpuSampling ||
+      !due(this.gpuAttemptAt, at, this.gpuRetryMilliseconds)
+    )
+      return;
+    const knownGpuMemory = hardware.gpus.every((gpu) => gpu.memoryBytes !== null)
+      ? hardware.gpus.reduce((total, gpu) => total + (gpu.memoryBytes || 0), 0)
+      : null;
+    this.gpuSampling = true;
+    this.gpuAttemptAt = at;
+    void Promise.resolve()
+      .then(() =>
+        this.disposed
+          ? { percent: null, memoryAvailable: null }
+          : this.dependencies.gpu(knownGpuMemory, this.controller.signal),
+      )
+      .catch(() => ({ percent: null, memoryAvailable: null }))
+      .then((sample) => {
+        if (this.disposed) return;
+        this.gpuSample = { ...sample, at: this.dependencies.clock() };
+        this.gpuRetryMilliseconds =
+          sample.percent === null && sample.memoryAvailable === null
+            ? failedSampleRetryMilliseconds
+            : externalSampleMilliseconds;
+      })
+      .finally(() => {
+        this.gpuAttemptAt = this.dependencies.clock();
+        this.gpuSampling = false;
+      });
+  }
+
+  private sampleOs(at: number) {
+    if (this.osSample && !due(this.osSample.at, at, osSampleMilliseconds)) return this.osSample;
+    let cpuPercent: number | null = null;
+    try {
+      const currentCpu = this.dependencies.cpuTimes();
+      if (this.previousCpu) {
+        const totalDelta = currentCpu.total - this.previousCpu.total;
+        const idleDelta = currentCpu.idle - this.previousCpu.idle;
+        if (
+          Number.isFinite(totalDelta) &&
+          Number.isFinite(idleDelta) &&
+          totalDelta > 0 &&
+          idleDelta >= 0
+        )
+          cpuPercent = Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100));
+      }
+      this.previousCpu = currentCpu;
+    } catch {
+      this.previousCpu = null;
+    }
+    let memory: MemorySample | null = null;
+    try {
+      const value = this.dependencies.memory();
+      if (finiteInteger(value.total, 1) && finiteInteger(value.available)) memory = value;
+    } catch {
+      // Memory is mandatory in the wire format; suppress a report rather than fabricate it.
+    }
+    this.osSample = { at, cpuPercent, memory };
+    return this.osSample;
   }
 
   sample(input: {
@@ -414,54 +607,49 @@ export class WorkerResourceSampler {
     runningTasks: number;
     maxConcurrent: number;
     nodeID: string;
-  }): WorkerRegistration {
-    const currentCpu = cpuTimes();
-    const totalDelta = currentCpu.total - this.previousCpu.total;
-    const idleDelta = currentCpu.idle - this.previousCpu.idle;
-    this.previousCpu = currentCpu;
-    const memoryTotal = Math.max(1, totalmem());
-    const memoryAvailable = Math.max(0, freemem());
-    const disk = diskSpace(this.root);
-    if (!this.gpuSampling && Date.now() - this.gpuSample.at >= 5_000) {
-      const knownGpuMemory = this.hardware.gpus.every((gpu) => gpu.memoryBytes !== null)
-        ? this.hardware.gpus.reduce((total, gpu) => total + (gpu.memoryBytes || 0), 0)
+  }): WorkerRegistration | null {
+    if (this.disposed) return null;
+    const at = this.dependencies.clock();
+    this.refreshHardware(at);
+    this.refreshDisk(at);
+    const hardware = this.hardwareValue;
+    if (!hardware) return null;
+    this.refreshGpu(at);
+    const os = this.sampleOs(at);
+    if (!os.memory) return null;
+    const { total: memoryTotal, available: memoryAvailable } = os.memory;
+    const disk =
+      this.diskSample && !due(this.diskSample.at, at, externalSampleFreshMilliseconds)
+        ? this.diskSample
         : null;
-      // CIM queries can take seconds. Never block task admission or encrypted heartbeats.
-      this.gpuSampling = true;
-      void windowsGpuLoad(knownGpuMemory)
-        .then((sample) => {
-          this.gpuSample = { at: Date.now(), ...sample };
-        })
-        .finally(() => {
-          this.gpuSampling = false;
-        });
-    }
+    const gpu =
+      this.gpuSample && !due(this.gpuSample.at, at, externalSampleFreshMilliseconds)
+        ? this.gpuSample
+        : null;
     return {
       nodeID: input.nodeID,
       accepting: input.accepting,
       projects: input.projects.map((project) => ({ ...project })),
       hardware: {
-        ...this.hardware,
-        gpus: this.hardware.gpus.map((gpu) => ({ ...gpu })),
+        ...hardware,
+        diskBytes: disk?.total ?? hardware.diskBytes,
+        gpus: hardware.gpus.map((gpu) => ({ ...gpu })),
       },
       load: {
-        cpuPercent:
-          totalDelta > 0
-            ? Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100))
-            : null,
+        cpuPercent: os.cpuPercent,
         memoryAvailableBytes: memoryAvailable,
         memoryUsedPercent: Math.max(
           0,
           Math.min(100, ((memoryTotal - memoryAvailable) / memoryTotal) * 100),
         ),
-        gpuPercent: this.gpuSample.percent,
-        gpuMemoryAvailableBytes: this.gpuSample.memoryAvailable,
-        diskAvailableBytes: disk.available,
+        gpuPercent: gpu?.percent ?? null,
+        gpuMemoryAvailableBytes: gpu?.memoryAvailable ?? null,
+        diskAvailableBytes: disk?.available ?? null,
         runningTasks: Math.max(0, Math.trunc(input.runningTasks)),
         availableSlots: input.accepting
           ? Math.max(0, Math.trunc(input.maxConcurrent) - Math.max(0, input.runningTasks))
           : 0,
-        sampledAt: new Date().toISOString(),
+        sampledAt: new Date(os.at).toISOString(),
       },
     };
   }

@@ -2605,8 +2605,15 @@ main {
     0 0 0 65px #17345d08,
     0 0 0 130px #17345d05;
 }
-.auth-story .brand {
-  font-size: 31px;
+.auth-brand {
+  align-self: flex-start;
+  padding: 13px 18px;
+  border-radius: 12px;
+  background: #f6f9ff;
+}
+.auth-brand .rivloom-wordmark {
+  width: 166px;
+  height: 51px;
 }
 .auth-copy {
   margin: auto 0;
@@ -2717,6 +2724,10 @@ main {
 .loading p {
   font-size: 13px;
   color: var(--muted);
+}
+.loading-brand .rivloom-wordmark {
+  width: 202px;
+  height: 63px;
 }
 .spin {
   animation: rotate 1s linear infinite;

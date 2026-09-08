@@ -150,3 +150,33 @@ test('queue receipts update conversation status without overriding terminal or a
   waiting.status = 'cancelled';
   assert.equal(conversationState(conversations(data)[0]), '已取消');
 });
+
+test('terminal Brain labels override stale remote snapshots while direct local execution stays authoritative', () => {
+  const data = fixture();
+  data.network.brainTasks = [
+    {
+      id: 'brain-task',
+      title: 'finished work',
+      description: '',
+      submitterNodeID: localID,
+      executionID: 'execution',
+      status: 'completed',
+      createdAt: date,
+      updatedAt: date,
+    } as BrainTask,
+  ];
+  data.network.remoteTasks = [remoteTask('execution', { executionState: 'running' })];
+  assert.equal(conversationState(conversations(data)[0]), '已完成');
+
+  data.network.brainTasks[0].status = 'failed';
+  data.network.remoteTasks[0].executionState = 'accepted';
+  assert.equal(conversationState(conversations(data)[0]), '执行失败');
+
+  data.network.brainTasks[0].status = 'completed';
+  data.network.remoteTasks[0].status = 'cancelled';
+  assert.equal(conversationState(conversations(data)[0]), '已完成');
+
+  data.tasks = [localTask('current', 'waiting_input')];
+  data.network.remoteTasks[0].localTaskID = 'current';
+  assert.equal(conversationState(conversations(data)[0]), '待补充');
+});

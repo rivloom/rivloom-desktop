@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dataRoot } from './engine.ts';
 import type { User, Project, Task, Activity } from '../shared/types.ts';
+import { TaskQueries, decodeTask } from './task-queries.ts';
 
 mkdirSync(dataRoot, { recursive: true });
 export const db = new DatabaseSync(join(dataRoot, 'rivloom.sqlite'));
@@ -18,6 +19,8 @@ CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NU
 CREATE TABLE IF NOT EXISTS model_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT REFERENCES users(id), kind TEXT NOT NULL, provider TEXT NOT NULL, model TEXT, result TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS task_engine_intents (task_id TEXT PRIMARY KEY REFERENCES tasks(id), state TEXT NOT NULL CHECK(state IN ('creating','bound')), session_id TEXT, updated_at TEXT NOT NULL);
 PRAGMA user_version=3;`);
+
+export const taskQueries = new TaskQueries(db);
 
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
@@ -51,15 +54,12 @@ export function tasks(): Task[] {
   return db
     .prepare('SELECT body FROM tasks ORDER BY number DESC')
     .all()
-    .map((r) => normalizeTask(JSON.parse(r.body as string)));
+    .map((r) => decodeTask(r.body as string));
 }
 export function task(id: string): Task {
   const row = db.prepare('SELECT body FROM tasks WHERE id=?').get(id);
   if (!row) throw new HttpError(404, '任务不存在');
-  return normalizeTask(JSON.parse(row.body as string));
-}
-function normalizeTask(value: Task): Task {
-  return { ...value, approvalMode: value.approvalMode || 'ask' };
+  return decodeTask(row.body as string);
 }
 export function saveTask(value: Task) {
   db.prepare(

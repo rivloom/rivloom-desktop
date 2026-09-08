@@ -1,12 +1,18 @@
 # Rivloom MVP
 
+**中文 / English：** 客户端支持在侧栏底部切换简体中文和英文，桌面重启保留所选语言，切换时保留当前草稿和附件。任务内容、AI 回复、文件与设备名称保持原文。开发维护方法见 [多语言设计](docs/adr/0009-chinese-english-localization.md)。此功能属于新本地测试包，尚未进入官网下载发行。
+
+**新增协作增强已完成开发，等待统一真机验收：** 待办中心与 Windows 状态通知、连接诊断与重试、明确选择的输入附件和成果回传已接入原 Task / Brain 路由。包含断线续传、完整性校验及附件未齐时的执行等待；用法和限制见 [协作文件说明](docs/COLLABORATION-FILES.md)。这些变更尚未发布到官网下载包，正式客户端升级、真实模型与双物理机验收后续统一进行。
+
 人与 AI 协作的任务工作台。React + TypeScript 界面、单个 Node.js 本地服务、SQLite、官方 OpenCode。任务有发起人、接受人、审批人和验收人；AI 执行结束只会进入「待验收」。
 
 **已用真正的 Windows 桌面程序和真实模型跑通闭环，不包含模拟引擎。** 客户安装 Rivloom 后不需要另装 OpenCode 或 Node.js；两者由安装包携带并由客户端管理。没有把切换用户视角当作真人跨设备协作。详见 [桌面端说明](docs/DESKTOP.md)和[实际验证报告](docs/VERIFICATION.md)。
 
-后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。**M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，原生界面、隔离服务与恢复检查已有工程证据。2026-09-06，Rivloom 0.1.4 普通发行、官网匿名下载及发行后自动刷新官网已通过验证；下一步建议用实际公开包完成真实使用验收。历史 docs1 预览、各轮测试数、本机纯 mDNS 失败与云端发现成功分别保留在 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)，不混成全量或双物理机通过。M4、P1、任务拆解、人员和 HA 仍未扩大实施。
+后续开发顺序以 [里程碑基线](docs/MILESTONES.md) 为准，长期计划见 [实施计划](docs/plans/2026-08-31-mvp-delivery.md)，继续前读 [交接状态](docs/HANDOFF.md)。M0、M1、M3.1–M3.4 当前 MVP 范围已完成。**M3.5 会话式 Node 协作 A–D 工程交付完成，用户验收及本轮双物理机回归待进行**：固定目标、创建幂等、队列/回执和自动候选修复已落地，原生界面、隔离服务与恢复检查已有工程证据。2026-09-06，Rivloom 0.1.4 普通发行、官网匿名下载及发行后自动刷新官网已通过验证；下一步建议用实际公开包完成真实使用验收。历史 docs1 预览、各轮测试数、本机纯 mDNS 失败与云端发现成功分别保留在 [UI-HANDOFF](docs/UI-HANDOFF.md) 和 [验证报告](docs/VERIFICATION.md)，不混成全量或双物理机通过。M4、其余 P1、任务拆解、人员和 HA 仍未扩大实施。
 
 ## 在 Windows 启动
+
+当前源码已加入待办/通知、连接诊断、附件与成果回传、中英文界面及桌面性能改进。历史会话采用自己浅色、他人深蓝色的紧凑单行。拖动历史栏右边缘或配对机器栏左边缘可调整宽度，松手保存，双击恢复默认；也支持方向键、Home/End 和 Enter。宽度按本机用户保存，窗口变窄时自动收紧，手机保留抽屉布局。最新本地安装包与已通过/暂缓的测试见[交接状态](docs/HANDOFF.md)，不代表上述改动已经公开发行。
 
 官网 [rivloom.com](https://rivloom.com) 已通过独立私有仓库 `rivloom/rivloom-website` 和 Cloudflare Pages 上线。桌面 main 的 CI、候选构建、安装验收、GitHub Release、R2 文件同步及官网刷新已完成真实验证；从 0.1.4 起使用 Rivloom 正式名称与 `com.rivloom.desktop` 身份，发布普通 Release。用户可以从[官网下载页](https://rivloom.com/download/)匿名下载安装包及校验文件；源码仓库仍私有。签名和应用内自动更新尚未实现。当前流程与云端证据见 [CI](docs/CI.md)、[发布方案](docs/RELEASING.md) 和 [验证报告](docs/VERIFICATION.md)。
 

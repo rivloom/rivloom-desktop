@@ -69,13 +69,14 @@ test('node rate limits isolate discovery, hello and channel budgets without bypa
   // An unstarted store only reads this nonexistent root; no identity or files are created.
   const network = new NodeNetwork(join(tmpdir(), `rivloom-rate-${randomUUID()}`), false);
   const limiter = network as unknown as {
-    rateLimited(address: string, scope: 'discovery' | 'hello' | 'control' | 'channel'): boolean;
+    rateLimited(address: string, scope: 'discovery' | 'hello' | 'control' | 'channel' | 'file'): boolean;
   };
   for (const [scope, limit] of [
     ['discovery', 60],
     ['hello', 120],
     ['control', 60],
     ['channel', 600],
+    ['file', 2400],
   ] as const) {
     for (let index = 0; index < limit; index++)
       assert.equal(limiter.rateLimited('192.168.10.2', scope), false, `${scope} legitimate budget`);
@@ -631,7 +632,7 @@ test('brain task store migrates version 1 records into explicit Execution histor
     migrated.load();
     assert.equal(migrated.list()[0]?.executionAttempt, 1);
     assert.equal(migrated.list()[0]?.executions[0]?.executionID, executionID);
-    assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 2);
+    assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1990,7 +1991,7 @@ test('remote task invitations persist and apply idempotent offer and response me
     migrated.load();
     assert.equal(migrated.list()[0].executionStatus, 'unprepared');
     assert.equal(migrated.list()[0].automaticEligible, false);
-    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 7);
+    assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).version, 8);
 
     const cancelled = owner.create('A'.repeat(32), randomUUID(), 'B'.repeat(32), randomUUID(), {
       title: '取消邀请',

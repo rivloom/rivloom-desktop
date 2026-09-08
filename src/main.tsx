@@ -1,11 +1,17 @@
+import { t, systemText } from '../shared/i18n.ts';
 import React, { useEffect, useRef, useState, type FormEvent } from 'react';
+import { I18nextProvider, useTranslation } from 'react-i18next';
+import { i18n } from '../shared/i18n';
+import { initializeLanguage } from './i18n';
+import { LanguageSwitcher } from './language-switcher';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, Bot, CircleCheck, CircleDot, LoaderCircle, ShieldCheck } from 'lucide-react';
-import { api } from './api';
+import { api, ApiError } from './api';
+import { createRefreshQueue, reuseJson, type RefreshScope } from './desktop-refresh';
 import { authenticateDesktop, desktop } from './desktop';
-import { Mark, Button, Field } from './ui';
+import { Wordmark, Button, Field } from './ui';
 import { ConversationWorkspace } from './conversation-workspace';
-import type { Bootstrap } from '../shared/types';
+import type { Bootstrap, NodeNetwork } from '../shared/types';
 import './styles.css';
 import './conversation-workspace.css';
 function Auth({ onLogin }: { onLogin: () => void }) {
@@ -35,82 +41,85 @@ function Auth({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="auth-shell">
       <div className="auth-story">
-        <a className="brand">
-          <Mark variant="white" />
-          rivloom<span>PREVIEW</span>
-        </a>
+        <div className="auth-brand">
+          <Wordmark />
+        </div>
         <div className="auth-copy">
           <span className="eyebrow">HUMAN INTENT. AI EXECUTION.</span>
           <h1>
-            一起，把想法
+            {t('一起，把想法')}
             <br />
-            变成<span>交付。</span>
+            {t('变成')}
+            <span>{t('交付。')}</span>
           </h1>
           <p>
-            把任务交给 AI，把关键决定留给人。
+            {t('把任务交给 AI，把关键决定留给人。')}
             <br />
-            从发起、执行到验收，每一步都有负责人。
+            {t('从发起、执行到验收，每一步都有负责人。')}
           </p>
           <div className="journey">
             <span>
               <CircleDot />
-              发起任务
+              {t('发起任务')}
             </span>
             <i />
             <span>
               <Bot />
-              协作执行
+              {t('协作执行')}
             </span>
             <i />
             <span>
               <CircleCheck />
-              确认交付
+              {t('确认交付')}
             </span>
           </div>
         </div>
         <p className="auth-foot">
-          {desktop ? 'WINDOWS DESKTOP · ' : '内部 Web 调试 · '}OpenCode 驱动 · 可信团队内测
+          {t('{{value1}}OpenCode 驱动 · 可信团队内测', {
+            value1: desktop ? 'WINDOWS DESKTOP · ' : t('内部 Web 调试 · '),
+          })}
         </p>
       </div>
       <div className="auth-form">
+        <LanguageSwitcher />
         <div className="auth-form-inner">
           <span className="eyebrow">YOUR SHARED WORKSPACE</span>
-          <h2>{setup ? '创建你的工作区' : join ? '加入协作空间' : '欢迎回到工作区'}</h2>
+          <h2>{setup ? t('创建你的工作区') : join ? t('加入协作空间') : t('欢迎回到工作区')}</h2>
           <p>
             {setup
-              ? '只需初始化一次。之后可以邀请真正的协作伙伴。'
+              ? t('只需初始化一次。之后可以邀请真正的协作伙伴。')
               : join
-                ? '用一次性邀请码创建属于你的独立账号。'
-                : '登录后继续你的会话。'}
+                ? t('用一次性邀请码创建属于你的独立账号。')
+                : t('登录后继续你的会话。')}
           </p>
           <form onSubmit={submit}>
             {(setup || join) && (
               <Field
-                label={setup ? '本机初始化码' : '邀请人提供的一次性邀请码'}
+                label={setup ? t('本机初始化码') : t('邀请人提供的一次性邀请码')}
                 hint={
                   setup
-                    ? '在 .data/setup-code.txt 中查看；不会公开注册。'
-                    : '邀请码 24 小时内有效。'
+                    ? t('在 .data/setup-code.txt 中查看；不会公开注册。')
+                    : t('邀请码 24 小时内有效。')
                 }
               >
                 <input name="code" required autoComplete="off" />
               </Field>
             )}
             {(setup || join) && (
-              <Field label="显示名称">
-                <input name="name" required maxLength={40} placeholder="大家怎么称呼你" />
+              <Field label={t('显示名称')}>
+                <input name="name" required maxLength={40} placeholder={t('大家怎么称呼你')} />
               </Field>
             )}
-            <Field label="用户名">
+            <Field label={t('用户名')}>
               <input
                 name="username"
                 required
                 pattern="[a-z0-9_-]{3,30}"
                 autoComplete="username"
-                placeholder="3–30 位小写字母、数字或下划线"
+                placeholder={t('3–30 位小写字母、数字或下划线')}
               />
             </Field>
-            <Field label="密码" hint="至少 12 位，不要与其他账号共用。">
+            <Field label={t('密码')} hint={t('至少 12 位，不要与其他账号共用。')}>
               <input
                 name="password"
                 type="password"
@@ -122,12 +131,12 @@ function Auth({ onLogin }: { onLogin: () => void }) {
             </Field>
             {error && (
               <p className="error" role="alert">
-                {error}
+                {systemText(error)}
               </p>
             )}
             <Button type="submit" disabled={busy} variant="primary wide">
               {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}{' '}
-              {setup ? '创建工作区' : join ? '加入工作区' : '进入工作区'}
+              {setup ? t('创建工作区') : join ? t('加入工作区') : t('进入工作区')}
             </Button>
           </form>
           {!setup && (
@@ -138,12 +147,12 @@ function Auth({ onLogin }: { onLogin: () => void }) {
                 setError('');
               }}
             >
-              {join ? '已有账号？返回登录' : '收到邀请？创建独立账号'}
+              {join ? t('已有账号？返回登录') : t('收到邀请？创建独立账号')}
             </button>
           )}
           <div className="security-note">
             <ShieldCheck size={18} />
-            <span>仅限可信参与者和专用测试环境。工作目录限制并非安全沙箱。</span>
+            <span>{t('仅限可信参与者和专用测试环境。工作目录限制并非安全沙箱。')}</span>
           </div>
         </div>
       </div>
@@ -152,35 +161,42 @@ function Auth({ onLogin }: { onLogin: () => void }) {
 }
 
 function App() {
+  useTranslation();
   const [data, setData] = useState<Bootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
-  const refreshing = useRef(false);
-  const refresh = async () => {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    try {
-      setData(await api<Bootstrap>('/bootstrap'));
-      setError('');
-    } catch (e) {
-      if ((e as Error).message.includes('登录')) {
-        if (desktop) {
-          try {
-            await authenticateDesktop();
-            setData(await api<Bootstrap>('/bootstrap'));
-            setError('');
-          } catch (failure) {
-            setData(null);
-            setError((failure as Error).message);
-          }
-        } else setData(null);
-      } else setError((e as Error).message);
-    } finally {
-      refreshing.current = false;
-      setLoading(false);
-    }
-  };
+  const refreshQueue = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
+  const applyBootstrap = (next: Bootstrap) =>
+    setData((previous) => (previous?.user.id === next.user.id ? reuseJson(previous, next) : next));
+  if (!refreshQueue.current)
+    refreshQueue.current = createRefreshQueue(async (scope) => {
+      try {
+        if (scope === 'network') {
+          const network = await api<NodeNetwork>('/network');
+          setData((previous) =>
+            previous ? reuseJson(previous, { ...previous, network }) : previous,
+          );
+        } else applyBootstrap(await api<Bootstrap>('/bootstrap'));
+        setError('');
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          if (desktop) {
+            try {
+              await authenticateDesktop();
+              applyBootstrap(await api<Bootstrap>('/bootstrap'));
+              setError('');
+            } catch (failure) {
+              setData(null);
+              setError((failure as Error).message);
+            }
+          } else setData(null);
+        } else setError((e as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    });
+  const refresh = refreshQueue.current;
   useEffect(() => {
     void refresh();
   }, []);
@@ -188,19 +204,24 @@ function App() {
     if (!data?.user.id) return;
     const feed = new EventSource('/api/events');
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const update = () => {
+    let pending: RefreshScope | null = null;
+    const schedule = (scope: RefreshScope) => {
+      pending = pending === 'full' || scope === 'full' ? 'full' : 'network';
       if (!timer)
         timer = setTimeout(() => {
           timer = null;
-          void refresh();
+          const next = pending!;
+          pending = null;
+          void refresh(next);
         }, 250);
     };
+    const update = () => schedule('full');
     feed.addEventListener('connected', () => {
       setConnected(true);
       update();
     });
     feed.addEventListener('update', update);
-    feed.addEventListener('network', update);
+    feed.addEventListener('network', () => schedule('network'));
     feed.addEventListener('delta', update);
     feed.onerror = () => setConnected(false);
     const fallback = setInterval(() => void refresh(), 5000);
@@ -213,9 +234,12 @@ function App() {
   if (loading || (!data && desktop))
     return (
       <div className="loading">
-        <Mark />
-        <p>{error || '正在打开 Rivloom…'}</p>
-        {error && <Button onClick={() => void refresh()}>重试</Button>}
+        <LanguageSwitcher />
+        <div className="loading-brand">
+          <Wordmark />
+        </div>
+        <p>{systemText(error) || t('正在打开 Rivloom…')}</p>
+        {error && <Button onClick={() => void refresh()}>{t('重试')}</Button>}
       </div>
     );
   if (!data) return <Auth onLogin={() => void refresh()} />;
@@ -229,8 +253,11 @@ function App() {
   );
 }
 
+await initializeLanguage();
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <I18nextProvider i18n={i18n}>
+      <App />
+    </I18nextProvider>
   </React.StrictMode>,
 );

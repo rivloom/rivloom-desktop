@@ -1,28 +1,7 @@
+import { t } from '../shared/i18n.ts';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-import symbolGradient from './assets/brand/rivloom-symbol-gradient.png';
-import symbolWhite from './assets/brand/rivloom-symbol-white.png';
 import wordmark from './assets/brand/rivloom-wordmark.png';
-
-export function Mark({ variant = 'gradient' }: { variant?: 'gradient' | 'white' }) {
-  return (
-    <span className="brand-mark" aria-hidden="true">
-      <svg
-        className="rivloom-symbol"
-        viewBox={variant === 'white' ? '312 223 645 851' : '325 211 675 851'}
-        width="32"
-        height="40"
-        focusable="false"
-      >
-        <image
-          href={variant === 'white' ? symbolWhite : symbolGradient}
-          width="1254"
-          height="1254"
-        />
-      </svg>
-    </span>
-  );
-}
 
 export function Wordmark() {
   return (
@@ -80,7 +59,7 @@ export function Modal({
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        <button className="icon-button" onClick={close} aria-label="关闭">
+        <button className="icon-button" onClick={close} aria-label={t('关闭')}>
           <X size={20} />
         </button>
       </div>

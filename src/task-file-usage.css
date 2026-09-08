@@ -1,0 +1,33 @@
+.task-file-picker-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+
+.task-file-picker-controls > .file-action {
+  flex-shrink: 0;
+}
+
+.task-file-usage {
+  flex: 1 1 220px;
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-file-usage:empty {
+  display: none;
+}
+
+.task-file-limits {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}

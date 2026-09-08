@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-take-notification-target"
+description = "Enables the take_notification_target command without any pre-configured scope."
+commands.allow = ["take_notification_target"]
+
+[[permission]]
+identifier = "deny-take-notification-target"
+description = "Denies the take_notification_target command without any pre-configured scope."
+commands.deny = ["take_notification_target"]

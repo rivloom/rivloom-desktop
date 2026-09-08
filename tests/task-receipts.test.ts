@@ -2,9 +2,45 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
-import type { RemoteTaskInvite, BrainTask } from '../shared/types.ts';
+import type { RemoteTaskInvite, BrainTask, Task } from '../shared/types.ts';
 import type { Conversation } from '../src/conversations.ts';
 import { taskReceiptView } from '../src/task-receipts.ts';
+import { remoteExecutionSummary } from '../server/remote-execution-summary.ts';
+
+test('acceptance preserves the final assistant result instead of replacing it with a status label', () => {
+  const value: Pick<Task, 'state' | 'messages' | 'error'> = {
+    state: 'review',
+    error: null,
+    messages: [
+      { id: 'u1', role: 'user', text: 'Request', tools: [] },
+      { id: 'a1', role: 'assistant', text: 'Earlier response', tools: [] },
+      { id: 'a2', role: 'assistant', text: 'RIVLOOM-RESULT\n中文成果 ✅', tools: [] },
+    ],
+  };
+  const reviewed = remoteExecutionSummary(value);
+  assert.equal(reviewed, 'RIVLOOM-RESULT\n中文成果 ✅');
+  assert.equal(remoteExecutionSummary({ ...value, state: 'accepted' }), reviewed);
+});
+
+test('accepted remote results retain redaction, size limits and an accurate empty-result fallback', () => {
+  const value: Pick<Task, 'state' | 'messages' | 'error'> = {
+    state: 'accepted',
+    error: null,
+    messages: [
+      {
+        id: 'a',
+        role: 'assistant',
+        text: 'Bearer abcdefghijklmnopqrstuvwxyz123456\n' + '文'.repeat(13000),
+        tools: [],
+      },
+    ],
+  };
+  const summary = remoteExecutionSummary(value);
+  assert(!summary.includes('abcdefghijklmnopqrstuvwxyz123456'));
+  assert(summary.length <= 12000);
+  assert.equal(remoteExecutionSummary({ ...value, messages: [] }), '已验收');
+  assert.equal(remoteExecutionSummary({ ...value, state: 'running' }), 'OpenCode 正在执行任务。');
+});
 
 const date = '2026-09-05T08:00:00.000Z';
 const receipt = (extra: Partial<TaskQueueReceipt> = {}) =>
@@ -136,4 +172,54 @@ test('local authoritative queue renders paused reasons and drops positions when 
     taskReceiptView(item, { connected: true, queueEntry, queueConfirmed: false })?.label,
     '正在确认状态',
   );
+});
+
+test('terminal Brain and delivery receipts supersede stale remote completion snapshots', () => {
+  const failed = {
+    ...conversation({ status: 'accepted', executionState: 'accepted' }),
+    brainTask: { status: 'failed', executionSummary: '' } as BrainTask,
+  };
+  const failedView = taskReceiptView(failed, { connected: true });
+  assert.equal(failedView?.label, '执行失败');
+  assert.equal(failedView?.tone, 'ended');
+
+  const cases: [RemoteTaskInvite['status'], string][] = [
+    ['cancelled', '投递已取消'],
+    ['expired', '投递已过期'],
+    ['declined', 'Node 未接受执行'],
+  ];
+  for (const [status, label] of cases) {
+    const view = taskReceiptView(conversation({ status, executionState: 'accepted' }), {
+      connected: false,
+    });
+    assert.equal(view?.label, label, status);
+    assert.equal(view?.tone, 'ended');
+    assert.equal(view?.syncing, false);
+  }
+});
+
+test('direct local execution retains priority and an unstarted local queue rejection remains authoritative', () => {
+  const item = {
+    ...conversation({ status: 'cancelled', executionState: 'running' }),
+    brainTask: { status: 'failed', executionSummary: '' } as BrainTask,
+    localTask: { state: 'accepted', sessionID: 'local-session' } as Task,
+  };
+  const completed = taskReceiptView(item, { connected: true });
+  assert.equal(completed?.label, '已验收');
+  assert.equal(completed?.tone, 'ended');
+  item.localTask.state = 'waiting_input';
+  assert.equal(taskReceiptView(item, { connected: true })?.label, '待补充');
+  const reconnecting = taskReceiptView(item, { connected: false });
+  assert.equal(reconnecting?.label, '正在确认状态');
+  assert.match(reconnecting!.detail, /待补充/);
+
+  item.localTask.state = 'ready';
+  item.localTask.sessionID = null;
+  const queueEntry = {
+    state: 'ended',
+    endReason: { code: 'rejected', message: '维护中，请稍后提交' },
+  } as NodeQueueItem;
+  const rejected = taskReceiptView(item, { connected: true, queueEntry });
+  assert.equal(rejected?.label, '本机已拒绝执行');
+  assert.equal(rejected?.detail, '维护中，请稍后提交');
 });

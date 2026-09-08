@@ -3,11 +3,59 @@ import assert from 'node:assert/strict';
 import {
   createConversationDraft,
   conversationCreationNeedsModel,
+  conversationInputUsage,
   updateConversationDraft,
   prepareConversationRequest,
   clearSubmittedDraft,
   createdConversationKey,
 } from '../src/conversation-drafts.ts';
+
+test('input usage preserves an oversized draft when switching from local to remote routing', () => {
+  const local = updateConversationDraft(createConversationDraft('original'), {
+    text: '需求'.repeat(2500),
+  });
+  assert.equal(conversationInputUsage(local, false).limit, 12000);
+  for (const routing of [
+    { kind: 'automatic' } as const,
+    { kind: 'node', nodeID: 'other', name: 'Other device' } as const,
+  ]) {
+    const remote = updateConversationDraft(local, { routing });
+    assert.deepEqual(conversationInputUsage(remote, false), {
+      length: 5000,
+      limit: 4000,
+      remaining: -1000,
+      nearLimit: true,
+      overLimit: true,
+    });
+    assert.equal(remote.text, local.text);
+    assert.equal(conversationInputUsage(remote, true).limit, 12000);
+    assert.equal(conversationInputUsage(remote, true).overLimit, false);
+    const restored = updateConversationDraft(remote, { routing: { kind: 'local' } });
+    assert.equal(restored.text, local.text);
+    assert.equal(conversationInputUsage(restored, false).overLimit, false);
+  }
+});
+
+test('input capacity uses the existing textarea count for near, exact and exceeded limits', () => {
+  const remote = updateConversationDraft(createConversationDraft(), {
+    routing: { kind: 'automatic' },
+  });
+  for (const [length, nearLimit, overLimit] of [
+    [0, false, false],
+    [3599, false, false],
+    [3600, true, false],
+    [4000, true, false],
+    [4001, true, true],
+  ] as const) {
+    const usage = conversationInputUsage({ ...remote, text: '文'.repeat(length) }, false);
+    assert.equal(usage.nearLimit, nearLimit);
+    assert.equal(usage.overLimit, overLimit);
+    assert.equal(usage.remaining, 4000 - length);
+  }
+  const emoji = conversationInputUsage({ ...remote, text: '文\n🙂' }, false);
+  assert.equal(emoji.length, 4);
+  assert.equal(emoji.remaining, 3996);
+});
 
 test('switching conversations restores text, exact Node ID and creation request', () => {
   const draft = updateConversationDraft(

@@ -1,5 +1,5 @@
 {
-  "date": "2026-09-01T03:26:48.807Z",
+  "date": "2026-09-07T09:04:45.349Z",
   "scope": "Cargo resolved packages for Windows build, including build-time dependencies; not a complete binary SBOM",
   "packages": [
     {
@@ -2791,8 +2791,32 @@
       "bundledSource": null
     },
     {
+      "name": "windows",
+      "version": "0.62.2",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
       "name": "windows-collections",
       "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
+      "name": "windows-collections",
+      "version": "0.3.2",
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/microsoft/windows-rs",
       "licenseFiles": [
@@ -2815,8 +2839,32 @@
       "bundledSource": null
     },
     {
+      "name": "windows-core",
+      "version": "0.62.2",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
       "name": "windows-future",
       "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
+      "name": "windows-future",
+      "version": "0.3.2",
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/microsoft/windows-rs",
       "licenseFiles": [
@@ -2887,6 +2935,18 @@
       "bundledSource": null
     },
     {
+      "name": "windows-numerics",
+      "version": "0.3.1",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
       "name": "windows-result",
       "version": "0.3.4",
       "license": "MIT OR Apache-2.0",
@@ -2899,8 +2959,32 @@
       "bundledSource": null
     },
     {
+      "name": "windows-result",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
       "name": "windows-strings",
       "version": "0.4.2",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
+      "name": "windows-strings",
+      "version": "0.5.1",
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/microsoft/windows-rs",
       "licenseFiles": [
@@ -2973,6 +3057,18 @@
     {
       "name": "windows-threading",
       "version": "0.1.0",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ],
+      "upstreamNotices": [],
+      "bundledSource": null
+    },
+    {
+      "name": "windows-threading",
+      "version": "0.2.1",
       "license": "MIT OR Apache-2.0",
       "repository": "https://github.com/microsoft/windows-rs",
       "licenseFiles": [

@@ -13,6 +13,7 @@ export const serviceChecks = {
   'model-settings': 'scripts/model-settings-check.ts',
   permissions: 'scripts/permission-policy-check.ts',
   'node-p0': 'scripts/node-p0-check.ts',
+  'collaboration-files': 'scripts/collaboration-files-check.ts',
   'session-crash': 'scripts/node-queue-crash-check.ts',
 } as const;
 

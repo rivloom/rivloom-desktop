@@ -1,4 +1,10 @@
 import {
+  validTaskFileManifest,
+  sameTaskFileManifest,
+  inputFileFields,
+  type TaskFileDescriptor,
+} from '../shared/task-files.ts';
+import {
   chmodSync,
   existsSync,
   mkdirSync,
@@ -34,6 +40,7 @@ export type RemoteTaskOfferMessage = {
   criteria: string;
   requestedProjectID: string | null;
   requirements: TaskHardwareRequirements;
+  inputFiles?: TaskFileDescriptor[];
   executionProtocol: 1;
   brainTaskID?: string | null;
   createdAt: string;
@@ -129,7 +136,7 @@ type StoredRemoteTask = Omit<RemoteTaskInvite, 'controlPending'> & {
   incomingControls: RemoteTaskControlMessage[];
   appliedControlIDs: string[];
 };
-type StoredRemoteTasks = { version: 7; tasks: StoredRemoteTask[] };
+type StoredRemoteTasks = { version: 8; tasks: StoredRemoteTask[] };
 
 const nodePattern = /^[A-Za-z0-9_-]{32}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -348,6 +355,7 @@ export function validRemoteTaskOffer(value: unknown): value is RemoteTaskOfferMe
       (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))
     ) ||
     !validRequirements(item.requirements) ||
+    (item.inputFiles !== undefined && !validTaskFileManifest(item.inputFiles)) ||
     !(
       item.brainTaskID == null ||
       (typeof item.brainTaskID === 'string' && uuidPattern.test(item.brainTaskID))
@@ -508,6 +516,7 @@ function validStored(value: unknown): value is StoredRemoteTask {
     (item.requestedProjectID === null ||
       (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))) &&
     validRequirements(item.requirements) &&
+    (item.inputFiles === undefined || validTaskFileManifest(item.inputFiles)) &&
     (item.brainTaskID === null ||
       (typeof item.brainTaskID === 'string' && uuidPattern.test(item.brainTaskID))) &&
     ['pending', 'accepted', 'declined', 'cancelled', 'expired'].includes(String(item.status)) &&
@@ -659,6 +668,7 @@ function sameOffer(task: StoredRemoteTask, message: RemoteTaskOfferMessage) {
     task.ownerBrainID === message.ownerBrainID &&
     task.targetNodeID === message.targetNodeID &&
     task.targetBrainID === message.targetBrainID &&
+    sameTaskFileManifest(task.inputFiles, message.inputFiles) &&
     task.title === message.title &&
     task.description === message.description &&
     task.criteria === message.criteria &&
@@ -677,6 +687,7 @@ function creationContent(input: {
   criteria: string;
   requestedProjectID?: string | null;
   requirements?: TaskHardwareRequirements;
+  inputFiles?: TaskFileDescriptor[];
 }) {
   return creationFingerprint({
     title: input.title.trim(),
@@ -684,6 +695,7 @@ function creationContent(input: {
     criteria: input.criteria.trim(),
     requestedProjectID: input.requestedProjectID ?? null,
     requirements: input.requirements ?? {},
+    ...inputFileFields(input.inputFiles),
   });
 }
 
@@ -733,7 +745,8 @@ export class RemoteTaskStore {
         stored.version !== 4 &&
         stored.version !== 5 &&
         stored.version !== 6 &&
-        stored.version !== 7) ||
+        stored.version !== 7 &&
+        stored.version !== 8) ||
       !Array.isArray(stored.tasks) ||
       stored.tasks.length > 500
     )
@@ -744,7 +757,7 @@ export class RemoteTaskStore {
     if (new Set(normalizedTasks.map((task) => task.id)).size !== normalizedTasks.length)
       throw new Error('远端任务邀请记录存在冲突；节点网络保持关闭。');
     for (const task of normalizedTasks) this.values.set(task.id, { ...task });
-    if (stored.version !== 7 || JSON.stringify(normalizedTasks) !== JSON.stringify(stored.tasks))
+    if (stored.version !== 8 || JSON.stringify(normalizedTasks) !== JSON.stringify(stored.tasks))
       this.save();
   }
 
@@ -777,10 +790,13 @@ export class RemoteTaskStore {
       criteria: string;
       requestedProjectID?: string | null;
       requirements?: TaskHardwareRequirements;
+      inputFiles?: TaskFileDescriptor[];
       brainTaskID?: string | null;
     },
     taskID?: string,
   ) {
+    if (input.inputFiles !== undefined && !validTaskFileManifest(input.inputFiles))
+      throw new Error('附件清单无效。');
     const existing = taskID ? this.values.get(taskID) : null;
     if (existing) {
       if (
@@ -815,6 +831,7 @@ export class RemoteTaskStore {
       criteria: input.criteria.trim(),
       requestedProjectID: input.requestedProjectID ?? null,
       requirements: structuredClone(input.requirements ?? {}),
+      ...inputFileFields(input.inputFiles),
       status: 'pending',
       automaticEligible: true,
       executionStatus: 'unprepared',
@@ -888,6 +905,7 @@ export class RemoteTaskStore {
       criteria: message.criteria,
       requestedProjectID: message.requestedProjectID,
       requirements: structuredClone(message.requirements),
+      ...inputFileFields(message.inputFiles),
       status: 'pending',
       automaticEligible: true,
       executionStatus: 'unprepared',
@@ -1373,6 +1391,7 @@ export class RemoteTaskStore {
         criteria: task.criteria,
         requestedProjectID: task.requestedProjectID,
         requirements: structuredClone(task.requirements),
+        ...inputFileFields(task.inputFiles),
         executionProtocol: 1,
         brainTaskID: task.brainTaskID,
         createdAt: task.createdAt,
@@ -1548,7 +1567,7 @@ export class RemoteTaskStore {
   private save() {
     mkdirSync(dirname(this.path), { recursive: true });
     const value: StoredRemoteTasks = {
-      version: 7,
+      version: 8,
       tasks: [...this.values.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     };
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;

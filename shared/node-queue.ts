@@ -21,6 +21,7 @@ export type NodeQueueReasonCode =
   | 'engine_unavailable'
   | 'peer_unavailable'
   | 'acceptance_pending'
+  | 'attachments_pending'
   | 'held'
   | 'state_unknown'
   | 'rejected'

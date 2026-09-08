@@ -1,7 +1,9 @@
+import { t } from '../shared/i18n.ts';
 export type ConversationRouting =
   { kind: 'local' } | { kind: 'automatic' } | { kind: 'node'; nodeID: string; name: string };
 
 export type ConversationDraft = {
+  files?: import('./task-file-upload.ts').DraftTaskFile[];
   text: string;
   routing: ConversationRouting;
   requestID: string;
@@ -15,18 +17,34 @@ export function createConversationDraft(
   return { text: '', routing: { kind: 'local' }, requestID };
 }
 
+/** Match textarea maxLength, including its UTF-16 length convention. Never modify the draft. */
+export function conversationInputUsage(draft: ConversationDraft, existingConversation: boolean) {
+  const limit = !existingConversation && draft.routing.kind !== 'local' ? 4000 : 12000;
+  const length = draft.text.length;
+  const remaining = limit - length;
+  return {
+    length,
+    limit,
+    remaining,
+    nearLimit: length >= limit * 0.9,
+    overLimit: remaining < 0,
+  };
+}
+
 function routingIdentity(routing: ConversationRouting) {
   return routing.kind === 'node' ? `node:${routing.nodeID}` : routing.kind;
 }
 
 export function updateConversationDraft(
   draft: ConversationDraft,
-  change: Partial<Pick<ConversationDraft, 'text' | 'routing'>>,
+  change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'files'>>,
   newRequestID: () => string = () => crypto.randomUUID(),
 ): ConversationDraft {
   const next = { ...draft, ...change };
   if (
     next.text.trim() === draft.text.trim() &&
+    JSON.stringify((next.files || []).map((f) => f.id)) ===
+      JSON.stringify((draft.files || []).map((f) => f.id)) &&
     routingIdentity(next.routing) === routingIdentity(draft.routing)
   )
     return next;
@@ -76,7 +94,7 @@ export function clearSubmittedDraft(
 }
 
 export function createdConversationKey(routing: ConversationRouting, taskID: string): string {
-  if (!taskID?.trim()) throw new Error('服务端没有返回已创建会话的标识，请保留草稿并重试确认。');
+  if (!taskID?.trim()) throw new Error(t('服务端没有返回已创建会话的标识，请保留草稿并重试确认。'));
   const prefix =
     routing.kind === 'node' ? 'remote' : routing.kind === 'automatic' ? 'brain' : 'local';
   return `${prefix}:${taskID}`;

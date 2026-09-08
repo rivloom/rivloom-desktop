@@ -1,3 +1,6 @@
+import { installTaskFileAPI } from './task-file-api.ts';
+import { TaskFileError } from './task-files.ts';
+import { inputFileFields } from '../shared/task-files.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'node:http';
 import { listenHttp } from './http-ports.ts';
@@ -12,6 +15,7 @@ import {
   projects,
   project,
   tasks,
+  taskQueries,
   task,
   saveTask,
   saveProject,
@@ -53,18 +57,20 @@ import {
   requestChanges,
   shutdownEngine,
   setTaskStartGuard,
+  setTaskInputMaterializer,
 } from './task-service.ts';
 import { validateProject, redact } from './artifacts.ts';
 import { dataRoot } from './engine.ts';
+import { remoteExecutionSummary } from './remote-execution-summary.ts';
 import { acquireDataLock } from './process-lock.ts';
 import {
   activeStates,
-  stateLabels,
   type Approval,
   type Artifact,
   type Question,
   type Task,
   type RemoteTaskInvite,
+  type Bootstrap,
 } from '../shared/types.ts';
 import {
   modelSettings,
@@ -88,6 +94,8 @@ import {
   nodeQueueRecoveryDecision,
 } from './node-queue.ts';
 import { NodeHealthMonitor } from './node-health.ts';
+import { TaskAttentionStore } from './task-attention.ts';
+import { WorkspacePreferences } from './workspace-preferences.ts';
 import { isNodeQueueCandidate, type NodeQueueReason } from '../shared/node-queue.ts';
 
 try {
@@ -98,6 +106,8 @@ try {
 }
 const app = express();
 const creationRequests = new CreationRequestStore(db);
+const taskAttention = new TaskAttentionStore(db);
+const workspacePreferences = new WorkspacePreferences(db);
 const nodeQueue = new NodeQueueStore(db);
 const nodeHealth = new NodeHealthMonitor();
 let lastQueueProgressAt: string | null = null;
@@ -129,7 +139,7 @@ nodeNetwork.setWorkerRegistrationProvider((nodeID) => {
     runningTasks,
     maxConcurrent: policy.maxConcurrent,
   });
-  nodeHealth.observeResource(report.load);
+  if (report) nodeHealth.observeResource(report.load);
   return report;
 });
 function queueForRemote(remote: RemoteTaskInvite) {
@@ -142,7 +152,7 @@ function queueForRemote(remote: RemoteTaskInvite) {
   });
 }
 function occupiedSlots(excludeTaskID?: string, excludeQueueID?: string) {
-  const localTasks = tasks();
+  const localTasks = taskQueries.inStates([...activeStates, 'review', 'interrupted', 'ready']);
   const occupied = new Set(
     localTasks.filter((t) => t.id !== excludeTaskID && occupiesWorkerSlot(t)).map((t) => t.id),
   );
@@ -153,8 +163,10 @@ function occupiedSlots(excludeTaskID?: string, excludeQueueID?: string) {
       entry.localTaskID === excludeTaskID
     )
       continue;
-    const local = localTasks.find((candidate) => candidate.id === entry.localTaskID);
-    if (!local || local.state === 'ready') occupied.add(entry.localTaskID || entry.id);
+    // An ended Task can still have an admitted queue record briefly. Check its
+    // actual state, so filtering the initial occupancy query does not reserve it again.
+    const localState = entry.localTaskID ? taskQueries.stateForID(entry.localTaskID) : undefined;
+    if (!localState || localState === 'ready') occupied.add(entry.localTaskID || entry.id);
   }
   for (const remote of nodeNetwork.remoteTaskRecords()) {
     if (remote.direction !== 'incoming' || !remote.brainTaskID || remote.status !== 'accepted')
@@ -202,7 +214,24 @@ nodeNetwork.setRemoteQueueStartGuard((remoteTaskID) => {
   const remote = nodeNetwork.remoteTask(remoteTaskID);
   return !!remote && queueForRemote(remote)?.state !== 'ended';
 });
+setTaskInputMaterializer((value, directory) => {
+  if (!value.inputFiles?.length) return [];
+  return nodeNetwork.files.materialize(
+    { scope: 'local', taskID: value.id, purpose: 'input' },
+    value.inputFiles,
+    directory,
+  );
+});
 setTaskStartGuard((value) => {
+  if (value.inputFiles?.length)
+    requireThat(
+      nodeNetwork.files.complete(
+        { scope: 'local', taskID: value.id, purpose: 'input' },
+        value.inputFiles,
+      ),
+      409,
+      '任务附件尚未完整接收。',
+    );
   const entry = nodeQueue.list().find((candidate) => candidate.localTaskID === value.id);
   requireThat(
     !entry || entry.state === 'admitted',
@@ -361,8 +390,8 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('rivloom_session', { path: '/' });
   res.json({ ok: true });
 });
-app.get('/api/bootstrap', (req, res) =>
-  res.json({
+function bootstrap(req: Request): Bootstrap {
+  return {
     user: who(req),
     users: users(),
     projects: projects(),
@@ -371,13 +400,38 @@ app.get('/api/bootstrap', (req, res) =>
     defaultModel: defaultModel(),
     executionPolicy: executionPolicies.snapshot(),
     network: visibleNetwork(req),
-  }),
+  };
+}
+app.get('/api/bootstrap', (req, res) => res.json(bootstrap(req)));
+app.get('/api/ui/sidebar-widths', (req, res) =>
+  res.json(workspacePreferences.sidebarWidths(who(req).id)),
+);
+app.post('/api/ui/sidebar-widths', (req, res) =>
+  res.json(workspacePreferences.saveSidebarWidths(who(req).id, req.body)),
+);
+app.post('/api/attention/check', (req, res) => res.json(taskAttention.check(bootstrap(req))));
+app.post('/api/attention/preferences', (req, res) =>
+  res.json(taskAttention.savePreferences(who(req).id, req.body)),
 );
 app.get('/api/model-settings', (_req, res) => res.json(modelSettings()));
 app.get('/api/network', (req, res) => res.json(visibleNetwork(req)));
 app.get('/api/network/execution-policy', (_req, res) => res.json(executionPolicies.snapshot()));
 const requireNetworkOwner = (req: Request) =>
   requireThat(who(req).owner, 403, '只有本机所有者可以管理设备信任');
+app.post('/api/network/diagnostics/retry', async (req, res) => {
+  requireNetworkOwner(req);
+  const input = z
+    .object({
+      nodeID: z
+        .string()
+        .regex(/^[A-Za-z0-9_-]{32}$/)
+        .optional(),
+    })
+    .strict()
+    .parse(req.body);
+  await nodeNetwork.retryConnection(input.nodeID);
+  res.json(visibleNetwork(req));
+});
 app.post('/api/network/profile', (req, res) => {
   requireNetworkOwner(req);
   requireThat(validNodeProfile(req.body), 400, '请输入 1–80 字的名称，并选择图标或上传小图片。');
@@ -447,6 +501,8 @@ app.post('/api/network/execution-policy', (req, res) => {
   queueMicrotask(() => void processRemoteTasks());
   res.json(saved);
 });
+installTaskFileAPI(app, nodeNetwork, who, tasks, changed);
+const attachmentIDsSchema = z.array(z.string().uuid()).max(10).optional();
 const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
 app.post('/api/network/tasks', async (req, res) => {
   requireNetworkOwner(req);
@@ -468,12 +524,15 @@ app.post('/api/network/tasks', async (req, res) => {
         .default({}),
       confirmed: z.literal(true),
       requestID: z.string().uuid().optional(),
+      attachmentIDs: attachmentIDsSchema,
     })
     .parse(req.body);
-  const { requestID, ...normalized } = input;
+  const { requestID, attachmentIDs, ...normalized } = input;
+  const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'automatic' },
     ...normalized,
+    ...(attachmentIDs?.length ? { attachmentIDs } : {}),
   });
   res.status(201).json(
     await nodeNetwork.createScheduledTask(
@@ -483,6 +542,7 @@ app.post('/api/network/tasks', async (req, res) => {
         criteria: redact(input.criteria),
         requestedProjectID: input.requestedProjectID,
         requirements: input.requirements,
+        ...inputFileFields(inputFiles),
       },
       createdTaskID,
     ),
@@ -498,13 +558,16 @@ app.post('/api/network/nodes/:nodeID/tasks', async (req, res) => {
       requirements: z.object({}).default({}),
       confirmed: z.literal(true),
       requestID: z.string().uuid().optional(),
+      attachmentIDs: attachmentIDsSchema,
     })
     .parse(req.body);
   const nodeID = networkNodeID(req.params.nodeID);
-  const { requestID, ...normalized } = input;
+  const { requestID, attachmentIDs, ...normalized } = input;
+  const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'node', nodeID },
     ...normalized,
+    ...(attachmentIDs?.length ? { attachmentIDs } : {}),
   });
   res.status(201).json(
     await nodeNetwork.createTaskForNode(
@@ -514,6 +577,7 @@ app.post('/api/network/nodes/:nodeID/tasks', async (req, res) => {
         description: redact(input.description),
         criteria: redact(input.criteria),
         requirements: input.requirements,
+        ...inputFileFields(inputFiles),
       },
       createdTaskID,
     ),
@@ -613,6 +677,7 @@ const processingRemoteTasks = new Set<string>();
 const workerAdmission = new WorkerAdmissionGate();
 const processingRemoteControls = new Set<string>();
 const queueReasonLabels: Partial<Record<NodeQueueReason['code'], string>> = {
+  attachments_pending: '等待附件完整接收并通过校验',
   queue: '等待前面的任务',
   slot: '等待执行槽位（运行、待验收或状态待确认）',
   held: '本机所有者已暂缓此任务',
@@ -703,20 +768,6 @@ app.post('/api/node-queue/:id/control', async (req, res) => {
   void processRemoteTasks();
   res.json(result);
 });
-
-function remoteExecutionSummary(value: Task) {
-  if (value.state === 'review') {
-    const assistant = value.messages.filter((message) => message.role === 'assistant').at(-1)?.text;
-    return redact(assistant?.trim() || 'AI 已完成执行，等待发起方查看结果。').slice(0, 12_000);
-  }
-  if (value.state === 'failed' || value.state === 'interrupted')
-    return redact(value.error || stateLabels[value.state]);
-  if (value.state === 'waiting_approval') return '执行节点正在等待本机审批。';
-  if (value.state === 'waiting_input') return '执行节点正在等待本机补充信息。';
-  if (value.state === 'running') return 'OpenCode 正在执行任务。';
-  if (value.state === 'stopped') return '执行节点已停止任务，已完成的修改不会自动回滚。';
-  return stateLabels[value.state];
-}
 
 function remoteSafeText(value: string, directory: string, maximum: number) {
   let result = redact(value);
@@ -844,7 +895,7 @@ async function processRemoteTask(taskID: string) {
         (currentRemote.status !== 'pending' && currentRemote.status !== 'accepted') ||
         !nodeNetwork.isTrustedNode(currentRemote.ownerNodeID)
       ) {
-        const local = tasks().find((candidate) => candidate.remoteOrigin?.remoteTaskID === taskID);
+        const local = taskQueries.forRemote(taskID);
         const boundButUnstarted =
           queueEntry?.state === 'admitted' &&
           queueEntry.admissionPhase === 'bound' &&
@@ -891,7 +942,17 @@ async function processRemoteTask(taskID: string) {
         blocked('peer_unavailable');
         return;
       }
-      let localTask = tasks().find((candidate) => candidate.remoteOrigin?.remoteTaskID === taskID);
+      if (
+        currentRemote.inputFiles?.length &&
+        !nodeNetwork.files.complete(
+          { scope: 'remote', taskID, purpose: 'input' },
+          currentRemote.inputFiles,
+        )
+      ) {
+        blocked('attachments_pending');
+        return;
+      }
+      let localTask = taskQueries.forRemote(taskID);
       // Engine recovery writes the durable Task without a per-task live update event.
       // Reconcile its execution snapshot even when policy/model availability now blocks starts.
       if (localTask && currentRemote.localTaskID === localTask.id)
@@ -1063,8 +1124,9 @@ async function processRemoteTask(taskID: string) {
         const createdAt = now();
         localTask = {
           id: queueEntry.localTaskID!,
-          number: Math.max(0, ...tasks().map((candidate) => candidate.number)) + 1,
+          number: taskQueries.nextNumber(),
           projectID,
+          ...inputFileFields(currentRemote.inputFiles),
           title: currentRemote.title,
           description: currentRemote.description,
           criteria: currentRemote.criteria,
@@ -1093,6 +1155,11 @@ async function processRemoteTask(taskID: string) {
             ownerBrainID: currentRemote.ownerBrainID,
           },
         } satisfies Task;
+        if (currentRemote.inputFiles?.length)
+          nodeNetwork.files.bindExisting(
+            { scope: 'local', taskID: localTask.id, purpose: 'input' },
+            currentRemote.inputFiles,
+          );
         nodeQueue.bindTask(queueEntry.id, localTask.id, () => saveTask(localTask!));
         activity(
           localTask.id,
@@ -1296,6 +1363,10 @@ async function processRemoteTasks() {
   }
 }
 
+nodeNetwork.on('task-files-changed', () => {
+  changed();
+  void processRemoteTasks();
+});
 nodeNetwork.on('remote-task-offer', () => {
   void processRemoteTasks();
 });
@@ -1513,6 +1584,7 @@ app.post('/api/projects', async (req, res) => {
   res.status(201).json(p);
 });
 const taskInput = z.object({
+  attachmentIDs: attachmentIDsSchema,
   requestID: z.string().uuid().optional(),
   runRequested: z.boolean().default(false),
   projectID: z.string().uuid(),
@@ -1526,9 +1598,11 @@ const taskInput = z.object({
   approvalMode: z.enum(['ask', 'auto', 'full']),
 });
 app.post('/api/tasks', (req, res) => {
-  const { requestID, runRequested, ...input } = taskInput.parse(req.body);
+  const { requestID, runRequested, attachmentIDs, ...input } = taskInput.parse(req.body);
+  const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'local' },
+    ...(attachmentIDs?.length ? { attachmentIDs } : {}),
     runRequested,
     ...input,
   });
@@ -1551,10 +1625,11 @@ app.post('/api/tasks', (req, res) => {
   }
   const t: Task = {
     ...input,
+    ...inputFileFields(inputFiles),
     description: redact(input.description),
     criteria: redact(input.criteria),
     id: createdTaskID,
-    number: Math.max(0, ...tasks().map((t) => t.number)) + 1,
+    number: taskQueries.nextNumber(),
     creatorID: who(req).id,
     acceptedBy: null,
     state: runRequested ? 'ready' : 'open',
@@ -1570,6 +1645,12 @@ app.post('/api/tasks', (req, res) => {
     diffSource: '',
     error: null,
   };
+  if (inputFiles.length)
+    nodeNetwork.files.bindUploaded(
+      { scope: 'local', taskID: t.id, purpose: 'input' },
+      who(req).id,
+      attachmentIDs!,
+    );
   if (runRequested) nodeQueue.enqueue({ kind: 'local', taskID: t.id }, () => saveTask(t));
   else saveTask(t);
   activity(t.id, who(req).id, 'created', '创建任务并指定接受人、审批人和验收人。');
@@ -1723,6 +1804,8 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     });
   if (error instanceof HttpError)
     return void res.status(error.status).json({ error: error.message });
+  if (error instanceof TaskFileError)
+    return void res.status(error.status).json({ error: error.message });
   if (error instanceof NodeNetworkError)
     return void res.status(error.status).json({ error: error.message });
   if (error instanceof CreationConflict)
@@ -1760,6 +1843,7 @@ let closing = false;
 export async function shutdown() {
   if (closing) return;
   closing = true;
+  workerSampler?.dispose();
   clearInterval(remoteTaskProcessor);
   updates.off('update', onTaskUpdateForNetwork);
   nodeNetwork.off('trust-revoked', onTrustRevoked);

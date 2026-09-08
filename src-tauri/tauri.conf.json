@@ -12,26 +12,64 @@
   "app": {
     "windows": [],
     "security": {
-      "capabilities": [{
-        "identifier": "desktop-main",
-        "description": "Only the owned local application window can request native project selection and bootstrap info. Rust also checks its exact origin.",
-        "windows": ["main"],
-        "local": false,
-        "remote": { "urls": ["http://127.0.0.1:*"] },
-        "permissions": ["allow-desktop-info", "allow-choose-project-directory"]
-      }]
+      "capabilities": [
+        {
+          "identifier": "desktop-main",
+          "description": "Only the owned local application window can request native project selection and bootstrap info. Rust also checks its exact origin.",
+          "windows": [
+            "main"
+          ],
+          "local": false,
+          "remote": {
+            "urls": [
+              "http://127.0.0.1:*"
+            ]
+          },
+          "permissions": [
+            "allow-desktop-info",
+            "allow-set-desktop-language",
+            "allow-choose-project-directory",
+            "allow-choose-task-file-destination",
+            "allow-notify-attention",
+            "allow-take-notification-target"
+          ]
+        }
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "人与 AI 的任务协作桌面工作区",
-    "resources": { "resources/runtime/": "runtime/" },
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "resources": {
+      "resources/runtime/": "runtime/",
+      "icons/icon.ico": "brand/rivloom-206f0a8620fa.ico"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
-      "nsis": { "installMode": "currentUser", "languages": ["SimpChinese", "English"], "displayLanguageSelector": false }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installerHooks": "installer-hooks.nsh",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
     }
   }
 }

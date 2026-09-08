@@ -1,3 +1,4 @@
+import { t } from '../shared/i18n.ts';
 import {
   activeStates,
   stateLabels,
@@ -23,14 +24,30 @@ export type Conversation = {
 };
 
 const brainLabels: Record<BrainTask['status'], string> = {
-  submitting: '正在发送',
-  queued: '排队中',
-  assigned: '已分配',
-  running: '执行中',
-  waiting: '等待处理',
-  review: '待验收',
-  completed: '已完成',
-  failed: '执行失败',
+  get submitting() {
+    return t('正在发送');
+  },
+  get queued() {
+    return t('排队中');
+  },
+  get assigned() {
+    return t('已分配');
+  },
+  get running() {
+    return t('执行中');
+  },
+  get waiting() {
+    return t('等待处理');
+  },
+  get review() {
+    return t('待验收');
+  },
+  get completed() {
+    return t('已完成');
+  },
+  get failed() {
+    return t('执行失败');
+  },
 };
 
 /** One UI conversation per stable Task; Execution retries remain inside that conversation. */
@@ -99,33 +116,32 @@ export function conversations(data: Bootstrap): Conversation[] {
 export function conversationState(item: Conversation): string {
   if (item.localTask && !['open', 'ready'].includes(item.localTask.state))
     return stateLabels[item.localTask.state];
+  if (item.brainTask && ['completed', 'failed'].includes(item.brainTask.status))
+    return brainLabels[item.brainTask.status];
   if (item.remote && !['pending', 'accepted'].includes(item.remote.status))
-    return { declined: '未获准执行', cancelled: '已取消', expired: '已过期' }[
+    return { declined: t('未获准执行'), cancelled: t('已取消'), expired: t('已过期') }[
       item.remote.status as 'declined' | 'cancelled' | 'expired'
     ];
   if (item.remote && !['not_started', 'open', 'ready'].includes(item.remote.executionState))
     return stateLabels[item.remote.executionState as Exclude<Task['state'], 'open' | 'ready'>];
-  if (
-    item.brainTask &&
-    ['running', 'waiting', 'review', 'completed', 'failed'].includes(item.brainTask.status)
-  )
+  if (item.brainTask && ['running', 'waiting', 'review'].includes(item.brainTask.status))
     return brainLabels[item.brainTask.status];
   const receipt = item.brainTask?.queueReceipt || item.remote?.queueReceipt;
-  if (receipt?.state === 'rejected') return '已拒绝执行';
-  if (receipt?.state === 'held') return '已暂缓';
-  if (receipt?.state === 'queued') return '已入队';
-  if (receipt?.state === 'admitted') return '已获执行槽';
+  if (receipt?.state === 'rejected') return t('已拒绝执行');
+  if (receipt?.state === 'held') return t('已暂缓');
+  if (receipt?.state === 'queued') return t('已入队');
+  if (receipt?.state === 'admitted') return t('已获执行槽');
   if (item.localTask) return stateLabels[item.localTask.state];
   if (item.brainTask) return brainLabels[item.brainTask.status];
   const remote = item.remote;
-  if (!remote) return '等待执行';
+  if (!remote) return t('等待执行');
   if (remote.executionState !== 'not_started') return stateLabels[remote.executionState];
   return {
-    pending: '等待接收',
-    accepted: '等待执行',
-    declined: '未获准执行',
-    cancelled: '已取消',
-    expired: '已过期',
+    pending: t('等待接收'),
+    accepted: t('等待执行'),
+    declined: t('未获准执行'),
+    cancelled: t('已取消'),
+    expired: t('已过期'),
   }[remote.status];
 }
 

@@ -1,3 +1,4 @@
+import { t } from './i18n.ts';
 export type TaskState =
   | 'open'
   | 'ready'
@@ -56,6 +57,7 @@ export type RemoteTaskControlAction =
   | { kind: 'supplement'; text: string }
   | { kind: 'accept'; note: string };
 export type Task = {
+  inputFiles?: import('./task-files.ts').TaskFileDescriptor[];
   id: string;
   number: number;
   projectID: string;
@@ -166,6 +168,7 @@ export type BrainTaskExecution = {
   updatedAt: string;
 };
 export type BrainTask = {
+  inputFiles?: import('./task-files.ts').TaskFileDescriptor[];
   queueReceipt?: import('./task-queue-receipts.ts').TaskQueueReceipt | null;
   id: string;
   direction: 'submitted' | 'owned';
@@ -199,6 +202,7 @@ export type BrainTask = {
   updatedAt: string;
 };
 export type RemoteTaskInvite = {
+  inputFiles?: import('./task-files.ts').TaskFileDescriptor[];
   queueReceipt?: import('./task-queue-receipts.ts').TaskQueueReceipt | null;
   /** Local observation of authenticated offer delivery; never inferred from API creation. */
   deliveredAt?: string | null;
@@ -247,6 +251,8 @@ export type NodeExecutionPolicy = {
   updatedAt: string | null;
 };
 export type RivloomNode = {
+  /** Actual local observation of a verified message. Null after restart until observed again. */
+  lastContactAt?: string | null;
   nodeQueue?: import('./task-queue-receipts.ts').NodeQueuePublicStats | null;
   id: string;
   name: string;
@@ -275,6 +281,12 @@ export type BrainTopology = BrainSummary & {
   workers: WorkerRegistration[];
 };
 export type NodeNetwork = {
+  diagnostics?: {
+    mdnsActive: boolean;
+    udpActive: boolean;
+    lastRetryAt: string | null;
+    incompatibleAnnouncementAt: string | null;
+  };
   status: 'starting' | 'online' | 'degraded' | 'disabled';
   serviceType: string;
   local: RivloomNode | null;
@@ -327,22 +339,50 @@ export type ModelSettings = {
   operations: ModelOperation[];
 };
 export const stateLabels: Record<TaskState, string> = {
-  open: '待接受',
-  ready: '待执行',
-  running: '执行中',
-  waiting_approval: '待审批',
-  waiting_input: '待补充',
-  stopping: '正在停止',
-  stopped: '已停止',
-  interrupted: '执行中断',
-  failed: '执行失败',
-  review: '待验收',
-  accepted: '已验收',
+  get open() {
+    return t('待接受');
+  },
+  get ready() {
+    return t('待执行');
+  },
+  get running() {
+    return t('执行中');
+  },
+  get waiting_approval() {
+    return t('待审批');
+  },
+  get waiting_input() {
+    return t('待补充');
+  },
+  get stopping() {
+    return t('正在停止');
+  },
+  get stopped() {
+    return t('已停止');
+  },
+  get interrupted() {
+    return t('执行中断');
+  },
+  get failed() {
+    return t('执行失败');
+  },
+  get review() {
+    return t('待验收');
+  },
+  get accepted() {
+    return t('已验收');
+  },
 };
 export const approvalModeLabels: Record<ApprovalMode, string> = {
-  ask: '请求批准',
-  auto: '帮我批准',
-  full: '允许任何操作',
+  get ask() {
+    return t('请求批准');
+  },
+  get auto() {
+    return t('帮我批准');
+  },
+  get full() {
+    return t('允许任何操作');
+  },
 };
 export const activeStates: TaskState[] = [
   'running',

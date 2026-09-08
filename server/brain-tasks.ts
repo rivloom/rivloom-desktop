@@ -1,4 +1,10 @@
 import {
+  validTaskFileManifest,
+  sameTaskFileManifest,
+  inputFileFields,
+  type TaskFileDescriptor,
+} from '../shared/task-files.ts';
+import {
   chmodSync,
   existsSync,
   mkdirSync,
@@ -29,6 +35,7 @@ export type BrainTaskSubmissionMessage = {
   criteria: string;
   requestedProjectID: string | null;
   requirements: TaskHardwareRequirements;
+  inputFiles?: TaskFileDescriptor[];
   createdAt: string;
 };
 
@@ -54,7 +61,7 @@ export type BrainTaskUpdateMessage = {
 export type BrainTaskMessage = BrainTaskSubmissionMessage | BrainTaskUpdateMessage;
 
 type StoredBrainTask = BrainTask & { idempotencyKey: string };
-type StoredBrainTasks = { version: 2; tasks: StoredBrainTask[] };
+type StoredBrainTasks = { version: 3; tasks: StoredBrainTask[] };
 
 const nodePattern = /^[A-Za-z0-9_-]{32}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -189,6 +196,7 @@ export function validBrainTaskSubmission(value: unknown): value is BrainTaskSubm
     (item.requestedProjectID === null ||
       (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))) &&
     validRequirements(item.requirements) &&
+    (item.inputFiles === undefined || validTaskFileManifest(item.inputFiles)) &&
     validDate(item.createdAt) &&
     Date.parse(String(item.createdAt)) <= Date.now() + 60_000
   );
@@ -250,6 +258,7 @@ function validStored(value: unknown): value is StoredBrainTask {
     (item.requestedProjectID === null ||
       (typeof item.requestedProjectID === 'string' && uuidPattern.test(item.requestedProjectID))) &&
     validRequirements(item.requirements) &&
+    (item.inputFiles === undefined || validTaskFileManifest(item.inputFiles)) &&
     statuses.includes(item.status as (typeof statuses)[number]) &&
     (item.selectedWorkerID === null ||
       (typeof item.selectedWorkerID === 'string' && nodePattern.test(item.selectedWorkerID))) &&
@@ -341,7 +350,7 @@ export class BrainTaskStore {
     if (
       !value ||
       typeof value !== 'object' ||
-      (stored.version !== 1 && stored.version !== 2) ||
+      (stored.version !== 1 && stored.version !== 2 && stored.version !== 3) ||
       !Array.isArray(stored.tasks) ||
       stored.tasks.length > 500 ||
       new Set(stored.tasks.map((task) => (task as StoredBrainTask).id)).size !== stored.tasks.length
@@ -352,7 +361,7 @@ export class BrainTaskStore {
       throw new Error('Brain Task 记录无效；节点网络保持关闭。');
     for (const task of normalized as StoredBrainTask[])
       this.tasks.set(task.id, structuredClone(task));
-    if (stored.version !== 2) this.save();
+    if (stored.version !== 3) this.save();
   }
 
   list() {
@@ -376,16 +385,24 @@ export class BrainTaskStore {
       criteria: string;
       requestedProjectID: string | null;
       requirements: TaskHardwareRequirements;
+      inputFiles?: TaskFileDescriptor[];
     },
     taskID?: string,
   ) {
     const existing = taskID ? this.tasks.get(taskID) : null;
     if (existing) {
-      if (existing.direction !== direction || existing.submitterNodeID !== submitterNodeID ||
-          existing.brainID !== brainID || existing.masterNodeID !== masterNodeID ||
-          existing.title !== input.title.trim() || existing.description !== input.description.trim() ||
-          existing.criteria !== input.criteria.trim() || existing.requestedProjectID !== input.requestedProjectID ||
-          JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements))
+      if (
+        existing.direction !== direction ||
+        existing.submitterNodeID !== submitterNodeID ||
+        existing.brainID !== brainID ||
+        existing.masterNodeID !== masterNodeID ||
+        existing.title !== input.title.trim() ||
+        existing.description !== input.description.trim() ||
+        existing.criteria !== input.criteria.trim() ||
+        existing.requestedProjectID !== input.requestedProjectID ||
+        !sameTaskFileManifest(existing.inputFiles, input.inputFiles) ||
+        JSON.stringify(existing.requirements) !== JSON.stringify(input.requirements)
+      )
         throw new Error('Brain Task 创建 ID 或内容冲突。');
       return publicTask(existing);
     }
@@ -402,6 +419,7 @@ export class BrainTaskStore {
       criteria: input.criteria.trim(),
       requestedProjectID: input.requestedProjectID,
       requirements: structuredClone(input.requirements),
+      ...inputFileFields(input.inputFiles),
       status: direction === 'owned' ? 'queued' : 'submitting',
       selectedWorkerID: null,
       executionID: null,
@@ -418,7 +436,12 @@ export class BrainTaskStore {
     if (!validStored(task) || this.tasks.size >= 500)
       throw new Error('Brain Task 内容无效或数量已达上限。');
     this.tasks.set(task.id, task);
-    try { this.save(); } catch (error) { this.tasks.delete(task.id); throw error; }
+    try {
+      this.save();
+    } catch (error) {
+      this.tasks.delete(task.id);
+      throw error;
+    }
     return publicTask(task);
   }
 
@@ -435,6 +458,7 @@ export class BrainTaskStore {
         existing.description !== message.description ||
         existing.criteria !== message.criteria ||
         existing.requestedProjectID !== message.requestedProjectID ||
+        !sameTaskFileManifest(existing.inputFiles, message.inputFiles) ||
         JSON.stringify(existing.requirements) !== JSON.stringify(message.requirements)
       )
         throw new Error('Brain Task ID 或幂等内容冲突。');
@@ -452,6 +476,7 @@ export class BrainTaskStore {
       criteria: message.criteria,
       requestedProjectID: message.requestedProjectID,
       requirements: structuredClone(message.requirements),
+      ...inputFileFields(message.inputFiles),
       status: 'queued',
       selectedWorkerID: null,
       executionID: null,
@@ -474,8 +499,14 @@ export class BrainTaskStore {
   markWaitingForWorker(taskID: string, reason: string) {
     const task = this.tasks.get(taskID);
     const summary = reason.trim().slice(0, 12_000);
-    if (!task || task.direction !== 'owned' || task.status !== 'queued' ||
-        task.executionID !== null || !summary || task.executionSummary === summary)
+    if (
+      !task ||
+      task.direction !== 'owned' ||
+      task.status !== 'queued' ||
+      task.executionID !== null ||
+      !summary ||
+      task.executionSummary === summary
+    )
       return false;
     task.executionSummary = summary;
     task.deliveryPending = task.submitterNodeID !== task.masterNodeID;
@@ -696,6 +727,7 @@ export class BrainTaskStore {
         criteria: task.criteria,
         requestedProjectID: task.requestedProjectID,
         requirements: structuredClone(task.requirements),
+        ...inputFileFields(task.inputFiles),
         createdAt: task.createdAt,
       };
     if (task.direction === 'owned')
@@ -748,7 +780,7 @@ export class BrainTaskStore {
   private save() {
     mkdirSync(dirname(this.path), { recursive: true });
     const stored: StoredBrainTasks = {
-      version: 2,
+      version: 3,
       tasks: [...this.tasks.values()].sort((left, right) =>
         left.createdAt.localeCompare(right.createdAt),
       ),

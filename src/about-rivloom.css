@@ -1,0 +1,96 @@
+.about-rivloom-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+  max-width: 115px;
+  flex-shrink: 1;
+  min-height: 28px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.about-rivloom-entry:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.about-rivloom-entry span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sidebar-signature {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.about-rivloom-versions {
+  margin: 0;
+  padding: 4px 20px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.about-rivloom-versions > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+}
+
+.about-rivloom-versions > div + div {
+  border-top: 1px solid var(--line);
+}
+
+.about-rivloom-versions dt {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.about-rivloom-versions dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.about-rivloom-note,
+.about-rivloom-unavailable p {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.about-rivloom-unavailable .text-button {
+  margin-top: 9px;
+  font-size: 12px;
+}
+
+.about-rivloom-actions {
+  margin-top: 20px;
+  padding-top: 18px;
+}
+
+.about-rivloom-copy {
+  padding: 9px 13px;
+}

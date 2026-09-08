@@ -4,12 +4,20 @@ import { resolve } from 'node:path';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/i18n.test.ts',
   'tests/security.test.ts',
   'tests/remote-task-clock.test.ts',
   'tests/http-ports.test.ts',
   'tests/physical-resume.test.ts',
   'tests/physical-race.test.ts',
   'tests/conversations.test.ts',
+  'tests/conversation-filters.test.ts',
+  'tests/sidebar-layout.test.ts',
+  'tests/app-version.test.ts',
+  'tests/task-attention.test.ts',
+  'tests/node-diagnostics.test.ts',
+  'tests/task-files.test.ts',
+  'tests/task-file-flow.test.ts',
   'tests/node-profile.test.ts',
   'tests/node-mentions.test.ts',
   'tests/conversation-drafts.test.ts',
@@ -21,6 +29,9 @@ export const logicFiles = [
   'tests/task-queue-receipts.test.ts',
   'tests/task-receipts.test.ts',
   'tests/api.test.ts',
+  'tests/desktop-refresh.test.ts',
+  'tests/task-queries.test.ts',
+  'tests/worker-resources.test.ts',
   'tests/release-record.test.ts',
   'tests/ci-runtime.test.ts',
 ] as const;
