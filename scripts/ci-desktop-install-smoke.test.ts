@@ -27,6 +27,7 @@ import {
   requireDescendant,
   requireHostedRunner,
   validateCandidateRecord,
+  verifyUiAssets,
   verifyIsolatedRoot,
   verifyUninstalled,
 } from './ci-desktop-install-smoke.ts';
@@ -427,6 +428,47 @@ test('installed runtime evidence matches build evidence and binds file names and
   writeFileSync(join(runtime, 'dist', 'index.html'), 'changed UI bytes');
   assert.deepEqual(measureInstalledTree(runtime), measureRuntimeTree(root));
   assert.notEqual(measureInstalledTree(runtime).sha256, before.sha256);
+});
+
+test('UI assets verify the referenced wordmark and favicon and reject missing or altered bytes', () => {
+  const root = fixture();
+  const assets = join(root, 'dist', 'assets');
+  const sources = join(root, 'src', 'assets', 'brand');
+  mkdirSync(assets, { recursive: true });
+  mkdirSync(sources, { recursive: true });
+  const wordmark = 'rivloom-wordmark-fixture.png';
+  const favicon = 'rivloom-favicon-fixture.png';
+  for (const name of ['rivloom-wordmark', 'rivloom-favicon']) {
+    writeFileSync(join(sources, `${name}.png`), `original ${name}`);
+    writeFileSync(join(assets, `${name}-fixture.png`), `original ${name}`);
+  }
+  const script = `const wordmark = "/assets/${wordmark}";`;
+  writeFileSync(join(assets, 'index-fixture.js'), script);
+  writeFileSync(join(assets, 'index-fixture.css'), ':root{--accent:#245eea;}');
+  writeFileSync(join(root, 'src', 'styles.css'), ':root { --accent: #245eea; }');
+  writeFileSync(
+    join(root, 'dist', 'index.html'),
+    `<link rel="icon" href="/assets/${favicon}"><script src="/assets/index-fixture.js"></script><link href="/assets/index-fixture.css">`,
+  );
+  assert.equal(verifyUiAssets(root, root).brands, 2);
+  for (const name of [wordmark, favicon]) {
+    const path = join(assets, name);
+    const original = readFileSync(path);
+    unlinkSync(path);
+    assert.throws(() => verifyUiAssets(root, root), /Expected one installed/);
+    writeFileSync(path, 'corrupt image');
+    assert.throws(() => verifyUiAssets(root, root), /differs from the original brand asset/);
+    writeFileSync(path, original);
+  }
+  const duplicate = join(assets, 'rivloom-wordmark-duplicate.png');
+  writeFileSync(duplicate, readFileSync(join(assets, wordmark)));
+  assert.throws(() => verifyUiAssets(root, root), /Expected one installed/);
+  unlinkSync(duplicate);
+  writeFileSync(join(assets, 'index-fixture.js'), 'const removedWordmark = true;');
+  assert.throws(() => verifyUiAssets(root, root), /does not reference its brand image/);
+  writeFileSync(join(assets, 'index-fixture.js'), script);
+  writeFileSync(join(assets, 'index-fixture.css'), ':root{--accent:#ffffff;}');
+  assert.throws(() => verifyUiAssets(root, root), /does not contain the source brand accent/);
 });
 
 test('path boundaries reject parent paths, sibling prefixes, junctions and unexpected file types', () => {

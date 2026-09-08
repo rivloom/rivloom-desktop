@@ -41,6 +41,8 @@ jobs:
         run: npm.cmd run ci:selftest
       - name: TypeScript check and frontend build
         run: npm.cmd run build
+      - name: Verify the built UI assets before native compilation
+        run: node scripts/ci-ui-assets.ts
       - name: Ensure dependency locks did not change
         run: git diff --exit-code -- package-lock.json src-tauri/Cargo.lock
       - name: Upload restricted CI summaries

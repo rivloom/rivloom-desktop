@@ -530,26 +530,26 @@ function guardedRoot(root: string, testRoot: string) {
   return verifyIsolatedRoot(root, testRoot);
 }
 
-function assetPaths(root: string, runtime: string) {
+export function verifyUiAssets(root: string, runtime: string) {
   const dist = regularPath(runtime, join(runtime, 'dist'), 'directory');
   const directory = regularPath(dist, join(dist, 'assets'), 'directory');
   const files = readdirSync(directory);
   assert(files.length <= 2000, 'Too many UI assets');
-  const brands = ['rivloom-wordmark', 'rivloom-symbol-gradient', 'rivloom-symbol-white'].map(
-    (name) => {
-      const source = regularPath(root, join(root, 'src', 'assets', 'brand', `${name}.png`), 'file');
-      const matches = files.filter((file) => file.startsWith(`${name}-`) && file.endsWith('.png'));
-      assert.equal(matches.length, 1, `Expected one installed ${name} image`);
-      const path = regularPath(dist, join(directory, matches[0]), 'file');
-      const sha256 = digest(readFileSync(path));
-      assert.equal(
-        sha256,
-        digest(readFileSync(source)),
-        `Installed ${name} differs from the original brand asset`,
-      );
-      return { path: `/assets/${matches[0]}`, sha256 };
-    },
-  );
+  // The current UI crops the original wordmark and uses its derived favicon.
+  // The two unused symbol images are correctly omitted by Vite.
+  const brands = ['rivloom-wordmark', 'rivloom-favicon'].map((name) => {
+    const source = regularPath(root, join(root, 'src', 'assets', 'brand', `${name}.png`), 'file');
+    const matches = files.filter((file) => file.startsWith(`${name}-`) && file.endsWith('.png'));
+    assert.equal(matches.length, 1, `Expected one installed ${name} image`);
+    const path = regularPath(dist, join(directory, matches[0]), 'file');
+    const sha256 = digest(readFileSync(path));
+    assert.equal(
+      sha256,
+      digest(readFileSync(source)),
+      `Installed ${name} differs from the original brand asset`,
+    );
+    return { path: `/assets/${matches[0]}`, sha256 };
+  });
   const index = readFileSync(regularPath(dist, join(dist, 'index.html'), 'file'), 'utf8');
   const references = [...index.matchAll(/(?:src|href)="(\/assets\/[^"?#]+\.(?:js|css))"/g)].map(
     (match) => match[1],
@@ -563,6 +563,15 @@ function assetPaths(root: string, runtime: string) {
     const file = regularPath(dist, join(dist, path.slice(1)), 'file');
     return { path, sha256: digest(readFileSync(file)) };
   });
+  const linkedContent = [
+    index,
+    ...entryAssets.map((item) => readFileSync(join(dist, item.path.slice(1)), 'utf8')),
+  ].join('\n');
+  for (const asset of brands)
+    assert(
+      linkedContent.includes(asset.path),
+      `UI does not reference its brand image: ${asset.path}`,
+    );
   const expectedAccent = readFileSync(join(root, 'src', 'styles.css'), 'utf8')
     .match(/--accent\s*:\s*(#[\da-f]{6})\s*;/i)?.[1]
     .toLowerCase();
@@ -713,7 +722,7 @@ async function runInstalled(
     assertions.push(
       'Installed runtime tree, identity, original licenses and pinned binaries match the candidate',
     );
-    const ui = assetPaths(root, runtime);
+    const ui = verifyUiAssets(root, runtime);
     proof.ui = { brandImages: ui.brands, accent: ui.accent, assets: ui.assets.length };
     mkdirSync(data);
     writeFileSync(join(data, 'KEEP.txt'), 'Rivloom install smoke: retain this isolated data.\n', {
