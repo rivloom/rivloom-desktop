@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { auditCoverage, auditNetworkCases, exactPattern, networkCases } from './ci-test-suites.ts';
 import { checkVersions } from './ci-version-check.ts';
 import { ciRoot, testEnvironment } from './ci-workspace.ts';
-import { runServiceScript } from './ci-services.ts';
+import { auditServiceMatrix, runServiceScript, serviceChecks } from './ci-services.ts';
 
 const base = join(ciRoot, 'test-results');
 mkdirSync(base, { recursive: true });
@@ -77,6 +77,11 @@ test('full-suite coverage rejects an omitted or newly added test file', () => {
   mkdirSync(join(directory, 'tests'), { recursive: true });
   cpSync(join(ciRoot, 'tests'), join(directory, 'tests'), { recursive: true });
   cpSync(join(ciRoot, 'package.json'), join(directory, 'package.json'));
+  mkdirSync(join(directory, '.github/workflows'), { recursive: true });
+  cpSync(
+    join(ciRoot, '.github/workflows/windows-services.yml'),
+    join(directory, '.github/workflows/windows-services.yml'),
+  );
   auditCoverage(directory);
   const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
   manifest.scripts.test = manifest.scripts.test.replace(' tests/node-network.test.ts', '');
@@ -85,6 +90,27 @@ test('full-suite coverage rejects an omitted or newly added test file', () => {
   cpSync(join(ciRoot, 'package.json'), join(directory, 'package.json'));
   writeFileSync(join(directory, 'tests/unassigned.test.ts'), '');
   assert.throws(() => auditCoverage(directory), /must cover every/);
+});
+
+test('service workflow audit rejects omitted, duplicate and unrecognized checks', () => {
+  const workflow = readFileSync(join(ciRoot, '.github/workflows/windows-services.yml'), 'utf8');
+  assert.deepEqual(auditServiceMatrix(workflow).sort(), Object.keys(serviceChecks).sort());
+  assert.throws(
+    () => auditServiceMatrix(workflow.replace(', collaboration-files', '')),
+    /must cover every registered check/,
+  );
+  assert.throws(
+    () => auditServiceMatrix(workflow.replace('check: [', 'check: [node-p0, ')),
+    /Duplicate service workflow check/,
+  );
+  assert.throws(
+    () => auditServiceMatrix(workflow.replace('collaboration-files,', 'unknown-service,')),
+    /must cover every registered check/,
+  );
+  assert.throws(
+    () => auditServiceMatrix(workflow.replace('check: [', 'checks: [')),
+    /one explicit check matrix/,
+  );
 });
 
 test('CI runner preserves failure, skip, missing-selection and exact-name outcomes', () => {

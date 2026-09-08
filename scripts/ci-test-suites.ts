@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
@@ -137,5 +138,16 @@ export function auditCoverage(root = resolve('.')) {
     readFileSync(resolve(root, networkFile), 'utf8'),
     networkCases,
   );
-  return { fullFiles, logicFiles, engineFiles, networkFile, networkCases, networkCount };
+  const serviceChecks = auditServiceMatrix(
+    readFileSync(resolve(root, '.github/workflows/windows-services.yml'), 'utf8'),
+  );
+  return {
+    fullFiles,
+    logicFiles,
+    engineFiles,
+    networkFile,
+    networkCases,
+    networkCount,
+    serviceChecks,
+  };
 }

@@ -1,6 +1,16 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
-更新日期：2026-09-06。用户要求去掉对外 Preview；新流水线使用 Rivloom 0.1.4 正式身份并发布普通 GitHub Release，实施范围见 [本轮计划](plans/2026-09-06-rivloom-release-name.md)。官网文件同步已启用并完成真实发布验证，签名与 updater 尚未实施。此前 Preview 构建与发布结果保留为历史，不能用本地构建或官网 CI 代替桌面云端结果。
+更新日期：2026-09-08。流水线使用 Rivloom 0.1.4 正式身份并发布普通 GitHub Release，实施范围见 [发行计划](plans/2026-09-06-rivloom-release-name.md)。官网文件同步已启用并完成真实发布验证，签名与 updater 尚未实施。此前 Preview 构建与发布结果保留为历史，不能用本地构建或官网 CI 代替桌面云端结果。
+
+## 编译到官网的复核（2026-09-08）
+
+当前顺序为：main 同提交三份 Windows 检查 → 固定工具链与锁文件 → 准备并校验 runtime → Rust 单元测试 → NSIS 编译与再次校验 runtime → 云 runner 全新安装、启动、卸载验证 → GitHub 普通 Release → R2 不可变文件与完整公开下载校验 → 条件更新 `releases/latest.json` → Pages main Hook → 官网自行同步清单、测试和构建。
+
+本次补齐 `collaboration-files` 服务矩阵入口，并让 `ci:coverage` 对照注册清单拒绝漏项、重复和未知检查。候选工作流增加固定 Rust 工具链的 Release 单元测试，置于 NSIS 编译之前；失败会阻止后续发布。相关本地验证为 CI 自检 56/56、Rust 10/10、隔离服务中的协作文件检查 6/6，覆盖映射、版本一致性和 TypeScript 通过。这些修改尚未推送，不将本地结果记为新提交的云端通过。
+
+线上现有 [构建与发行 34013763737](https://github.com/rivloom/rivloom-desktop/actions/runs/34013763737) 的构建、发布和官网同步均成功。[官网下载页](https://rivloom.com/download/) 与公开清单均指向 `v0.1.4-84dfc09fc756-9983464069`；本次匿名完整下载为 72,693,201 字节，SHA-256 `db56e20eb5f3d6090ffc06eeacaa322e00baf9372bec2584daaaa49ef382e41c`，与 GitHub Release 资产摘要、校验文件及网页一致。它仍是既有线上版本，不能代表本地新增界面功能已经发布。
+
+Pages Hook 返回成功只证明构建请求被接受；桌面同步 job 当前没有等待 Pages 部署完成，最终须另查构建结果及正式下载页。该边界本次通过已部署页面复核。云安装检查使用新 runner，不覆盖旧用户数据迁移或跨版本节点组合；后续修改底层存储或协议时，按 [发行兼容性要求](RELEASING.md) 补充对应迁移与混合版本验证。
 
 ## 本轮 Windows CI 修复结果
 
@@ -25,7 +35,7 @@
 | 文件                                     | 检查                                                                        | 触发                |
 | ---------------------------------------- | --------------------------------------------------------------------------- | ------------------- |
 | `.github/workflows/ci.yml`               | 应用版本一致性、CI 自检、覆盖映射、TypeScript/Vite、逻辑和 Windows 协议测试 | PR、main push、手动 |
-| `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、session 崩溃窗口  | PR、main push、手动 |
+| `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、协作文件、session 崩溃窗口 | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
 另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
@@ -42,17 +52,17 @@ GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、com
 
 ## 测试覆盖映射
 
-`npm test` 保留原来全部 19 个文件和测试断言，并加入发行记录和 runtime 审计测试。`ci:coverage` 对照 `tests/**/*.test.ts`、全量入口和分层清单，发现新文件未归组、遗漏、重复归组或失效映射即失败。
+`npm test` 包含当前全部 32 个测试文件。`ci:coverage` 对照 `tests/**/*.test.ts`、全量入口和分层清单，发现新文件未归组、遗漏、重复归组或失效映射即失败；同时核对官方引擎服务矩阵与 `serviceChecks` 注册表完全一致。
 
 | 入口                       | 源文件/用例                                                                          | 范围                                                                                                 |
 | -------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `npm run test:ci:logic`    | 下列 19 个完整文件 + `node-network.test.ts` 中明确列名的 20 项                       | 业务状态、协议数据结构、逻辑和本机适配；部分用例使用临时文件、子进程或 loopback 监听，并非全部纯函数 |
+| `npm run test:ci:logic`    | `logicFiles` 中 30 个完整文件 + `node-network.test.ts` 中明确列名的 20 项             | 业务状态、协议数据结构、逻辑和本机适配；部分用例使用临时文件、子进程或 loopback 监听，并非全部纯函数 |
 | `npm run test:ci:protocol` | `node-network.test.ts` 明确列名的 11 项                                              | Windows DPAPI、真实节点通道、队列回执、Brain/Worker、配对与重连；同机隔离实例                        |
 | `npm run test:ci:engine`   | 完整 `engine-ports.test.ts`，2 项                                                    | 未修改的官方引擎、真实端口冲突与生命周期；不调用模型                                                 |
 | `npm run test:ci:mdns`     | 原 `two isolated Rivloom instances discover and cryptographically verify each other` | 保持原用例禁用 UDP fallback 的条件及 verified 断言                                                   |
 | `npm run test:ci:udp`      | 原 `UDP broadcast fallback discovers and verifies two nodes without mDNS`            | 保持原用例禁用 mDNS 的条件，独立验证 UDP 后备路径                                                    |
 
-逻辑层完整文件位于 `tests/`：`security`、`remote-task-clock`、`http-ports`、`physical-resume`、`physical-race`、`conversations`、`node-profile`、`node-mentions`、`conversation-drafts`、`directed-node-tasks`、`node-queue`、`node-queue-recovery`、`node-queue-controls`、`node-health`、`task-queue-receipts`、`task-receipts`、`api`、`release-record`、`ci-runtime`，文件名均以 `.test.ts` 结尾。`physical-*` 是控制器/状态逻辑回归，不是实际双物理机验收。
+逻辑层完整文件以 [ci-test-suites.ts](../scripts/ci-test-suites.ts) 的 `logicFiles` 为准，覆盖任务、会话、队列、文件、界面偏好、资源采样、安全与发行校验。`physical-*` 是控制器/状态逻辑回归，不是实际双物理机验收。
 
 共享网络文件的 33 个用例在 [ci-test-suites.ts](../scripts/ci-test-suites.ts) 逐名归组。运行器把名字转成已转义且前后锚定的精确匹配，并核对实际执行名称与预期完全一致。任何缺项、多项、零用例、skip、todo、失败或失败的总结果都会返回非零；更改测试声明形式时要求显式复核，不能动态猜测后漏测。源测试及其断言未移动或改写。
 
@@ -67,6 +77,7 @@ GitHub 托管 runner 镜像会更新；报告记录 Node、平台、架构、com
 | `model-settings` | `scripts/model-settings-check.ts`    | 真实应用与官方 auth/provider 接口，合成测试凭据，6 项断言；不发模型请求      |
 | `permissions`    | `scripts/permission-policy-check.ts` | 官方引擎创建并读回三种 session 权限；不发模型请求                            |
 | `node-p0`        | `scripts/node-p0-check.ts`           | M3.5 全服务、官方 OpenCode、确定性 loopback 模型，12 项业务检查              |
+| `collaboration-files` | `scripts/collaboration-files-check.ts` | 附件权限、断点续传、Worker 成果、Brain 转发与撤销；三个隔离服务及确定性 loopback 模型，6 项检查 |
 | `session-crash`  | `scripts/node-queue-crash-check.ts`  | 真实 session 创建前/后两个崩溃窗口；重启不重复创建 session，未知执行保留槽位 |
 
 包装器先在 `test-results/ci-workspaces/` 建立唯一工作副本，只复制当前源码与已构建的 `dist`，依赖从包含它的仓库解析。它不复制已有 `.data`、随包 runtime、身份或凭据，也不覆盖旧验证报告。现有测试需要的 `.data/verification` 父目录只在新副本中创建。
@@ -111,7 +122,7 @@ CI 自检包含真实故意失败/skip/空选择的子测试，以及非零退�
 
 自动触发取 `workflow_run.head_sha`，checkout、候选预期 commit、ref 与产物名称统一绑定该 SHA。不能把该事件中的默认分支最新 `github.sha` 当作触发源码。只接受同仓库 main 的 push 成功事件；手动/tag 构建同样必须通过精确源码 CI 门禁。`ci-candidate-gate.ts` 查询三份工作流的最新 run/attempt，不筛选旧成功结果，不接受其他分支、PR、其他仓库、取消、跳过或缺失检查。最多等待 22 分钟，将检查时间、运行链接与结果写入 `ci-gate.json`；失败时停止打包。构建前通过是该时间点的检查快照。仅重跑另外两份工作流不会再自动触发候选，可在修复检查后重跑 Windows CI 或手动运行候选。[GitHub workflow_run 语义](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
 
-流水线按以下顺序执行：精确源码的全 CI 门禁；锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile desktop`；运行 `ci-verify-runtime.ts --profile desktop`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行正式身份的 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
+流水线按以下顺序执行：精确源码的全 CI 门禁；锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile desktop`；运行 `ci-verify-runtime.ts --profile desktop`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行固定工具链的 `cargo test --release --locked`（Windows x64，异步工作线程限制为 1）；执行正式身份的 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
 
 文件树摘要包含每个相对路径、文件/目录类型、文件字节数和 SHA256，覆盖 server、shared、dist 与依赖文件，也包含空文件和空目录。测量拒绝链接、junction、非普通文件、超过 50,000 个条目或 8 GiB 的树，并检查读取期间的文件身份、大小与修改时间；只输出聚合摘要、文件/目录数和总字节数，不上传文件列表或 runtime 内容。这里比较的是构建前后状态，未声称观测了构建期间每个瞬间。
 

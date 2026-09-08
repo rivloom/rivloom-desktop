@@ -17,6 +17,21 @@ export const serviceChecks = {
   'session-crash': 'scripts/node-queue-crash-check.ts',
 } as const;
 
+export function auditServiceMatrix(workflow: string) {
+  // Keep this small literal matrix auditable without adding a YAML runtime dependency.
+  // A different declaration style must be reviewed explicitly, never silently skipped.
+  const declarations = [...workflow.matchAll(/^\s*check:\s*\[([^\]\r\n]*)\]\s*$/gm)];
+  assert.equal(declarations.length, 1, 'Service workflow needs one explicit check matrix');
+  const checks = declarations[0]![1]!.split(',').map((name) => name.trim());
+  assert.equal(new Set(checks).size, checks.length, 'Duplicate service workflow check');
+  assert.deepEqual(
+    [...checks].sort(),
+    Object.keys(serviceChecks).sort(),
+    'Service workflow matrix must cover every registered check',
+  );
+  return checks;
+}
+
 export async function runServiceScript(script: string, directory: string, timeoutMs = 12 * 60_000) {
   const startedAt = Date.now();
   const child = spawn(process.execPath, [script], {

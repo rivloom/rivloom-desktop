@@ -72,6 +72,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Pre-build runtime verification failed.' }
           node scripts/ci-candidate.ts capture-runtime
           if ($LASTEXITCODE -ne 0) { throw 'Could not bind the verified runtime.' }
+      - name: Run native unit tests before bundling
+        env:
+          TOKIO_WORKER_THREADS: '1'
+        run: >-
+          cargo test --release --locked --manifest-path src-tauri/Cargo.toml
+          --target x86_64-pc-windows-msvc
       - name: Build NSIS without re-running preparation or signing
         run: >-
           node node_modules/@tauri-apps/cli/tauri.js build
