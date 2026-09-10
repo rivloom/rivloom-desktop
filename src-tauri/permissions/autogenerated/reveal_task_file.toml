@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reveal-task-file"
+description = "Enables the reveal_task_file command without any pre-configured scope."
+commands.allow = ["reveal_task_file"]
+
+[[permission]]
+identifier = "deny-reveal-task-file"
+description = "Denies the reveal_task_file command without any pre-configured scope."
+commands.deny = ["reveal_task_file"]

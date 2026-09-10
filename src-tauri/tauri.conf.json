@@ -30,6 +30,7 @@
             "allow-set-desktop-language",
             "allow-choose-project-directory",
             "allow-choose-task-file-destination",
+            "allow-reveal-task-file",
             "allow-notify-attention",
             "allow-take-notification-target",
             "allow-desktop-update-snapshot",
@@ -37,7 +38,8 @@
             "allow-skip-desktop-update",
             "allow-download-desktop-update",
             "allow-cancel-desktop-update",
-            "allow-install-desktop-update"
+            "allow-install-desktop-update",
+            "allow-confirm-desktop-startup"
           ]
         }
       ]
