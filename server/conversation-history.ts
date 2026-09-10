@@ -4,7 +4,7 @@ import { conversations } from '../shared/conversations.ts';
 import { conversationDirectory, historyCanTrash, historyExpiry, historyMembers, type HistoryMembers, type TrashEntry } from '../shared/conversation-history.ts';
 import type { NodeQueueEntry } from '../shared/node-queue.ts';
 
-export type HistoryData = Pick<Bootstrap, 'tasks' | 'network' | 'workflows' | 'projects'>;
+export type HistoryData = Pick<Bootstrap, 'tasks' | 'network' | 'workflows' | 'projects' | 'conversationPreferences'>;
 type StoredHistory = TrashEntry & { members: HistoryMembers; fileIDs: string[] };
 export class HistoryError extends Error {
   status: number;

@@ -149,3 +149,43 @@ test('invalid aliases and failed writes preserve prior values; unrelated user fi
     assert.deepEqual(store.directoryAliases('one'), { [key]: 'Keep' });
   } finally { db.close(); }
 });
+
+test('conversation names and pins persist independently per user and survive reopening the database', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rivloom-conversation-preferences-'));
+  const file = join(directory, 'preferences.sqlite'), keys = ['local:one', 'remote:two', 'brain:three', 'workflow:four'];
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(file); let store = new WorkspacePreferences(db);
+    for (const key of keys) store.saveConversationPreference('one', { key, title: '  我的会话  ' }, keys);
+    store.saveConversationPreference('one', { key: keys[0], pinned: true }, keys);
+    store.saveConversationPreference('two', { key: keys[0], title: 'Another name' }, keys);
+    db.close(); db = new DatabaseSync(file); store = new WorkspacePreferences(db);
+    assert.deepEqual(store.conversationPreferences('one')[keys[0]], { title: '我的会话', pinned: true });
+    assert.deepEqual(store.conversationPreferences('two')[keys[0]], { title: 'Another name', pinned: false });
+    assert.deepEqual(store.conversationPreferences('unknown'), {});
+    store.saveConversationPreference('one', { key: keys[0], title: 'New name' }, keys);
+    assert.equal(store.conversationPreferences('one')[keys[0]].pinned, true);
+    store.saveConversationPreference('one', { key: keys[0], pinned: false }, keys);
+    assert.deepEqual(store.conversationPreferences('one')[keys[0]], { title: 'New name', pinned: false });
+    store.forgetConversations([keys[0]]);
+    assert.equal(store.conversationPreferences('one')[keys[0]], undefined);
+    assert.deepEqual(store.conversationPreferences('two'), {});
+    assert.equal(Object.keys(store.conversationPreferences('one')).length, 3);
+  } finally { db?.close(); rmSync(file, { force: true }); rmdirSync(directory); }
+});
+
+test('conversation preference validation, visibility and failed writes preserve existing names and pins', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const store = new WorkspacePreferences(db), key = 'local:one';
+    store.saveConversationPreference('one', { key, title: 'Keep', pinned: true }, [key]);
+    for (const input of [{ key }, { key, title: '' }, { key, title: ' ' }, { key, title: 'x'.repeat(161) }, { key, title: 'new\nline' },
+      { key, title: 'hidden\u0000text' }, { key, pinned: 1 }, { key, pinned: false, userID: 'two' }, { key: '__proto__', title: 'bad' }, null]) {
+      assert.throws(() => store.saveConversationPreference('one', input, [key]));
+    }
+    assert.throws(() => store.saveConversationPreference('one', { key, title: 'Gone' }, []), { status: 404 });
+    db.exec("CREATE TRIGGER reject_conversation_write BEFORE UPDATE ON conversation_preferences BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
+    assert.throws(() => store.saveConversationPreference('one', { key, pinned: false }, [key]));
+    assert.deepEqual(store.conversationPreferences('one'), { [key]: { title: 'Keep', pinned: true } });
+  } finally { db.close(); }
+});

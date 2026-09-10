@@ -207,6 +207,26 @@ async fn reveal_task_file(window: WebviewWindow, app: tauri::AppHandle,
         .map_err(|message| native_translation(locale, &message))
 }
 
+#[tauri::command]
+async fn open_task_file(window: WebviewWindow, app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>, path: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    let locale = read_locale(&state.data_dir);
+    native_async::blocking(move || task_file_location::open(&path, false)).await
+        .map_err(|_| native_text(&app.state::<DesktopState>().data_dir, "无法打开文件，请检查默认应用或另存后打开。"))?
+        .map_err(|message| native_translation(locale, &message))
+}
+
+#[tauri::command]
+async fn open_project_directory(window: WebviewWindow, app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>, path: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    let locale = read_locale(&state.data_dir);
+    native_async::blocking(move || task_file_location::open(&path, true)).await
+        .map_err(|_| native_text(&app.state::<DesktopState>().data_dir, "无法打开文件夹，请检查目录是否存在。"))?
+        .map_err(|message| native_translation(locale, &message))
+}
+
 fn valid_runtime_url(parsed: &tauri::Url) -> bool {
     parsed.scheme() == "http"
         && parsed.host_str() == Some("127.0.0.1")
@@ -369,7 +389,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, notify_attention, take_notification_target,
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, take_notification_target,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
             desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
             desktop_update::confirm_desktop_startup])

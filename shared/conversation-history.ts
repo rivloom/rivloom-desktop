@@ -64,5 +64,7 @@ export function groupConversationHistory(items: Conversation[], data: Pick<Boots
     const group = groups.get(directory.key) || { ...directory, name: directoryDisplayName(directory, aliases), items: [] };
     group.items.push(item); groups.set(directory.key, group);
   }
-  return [...groups.values()];
+  return [...groups.values()].map((group) => ({ ...group,
+    items: group.items.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)),
+  }));
 }

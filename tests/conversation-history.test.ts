@@ -20,7 +20,7 @@ import type { NodeQueueEntry } from '../shared/node-queue.ts';
 import type { TaskFileDescriptor } from '../shared/task-files.ts';
 
 const at = '2026-09-10T01:00:00.000Z';
-function local(id = randomUUID(), state: Task['state'] = 'accepted'): Task {
+function local(id: string = randomUUID(), state: Task['state'] = 'accepted'): Task {
   return { id, state, title: 'Private conversation', description: 'Private request', projectID: 'p', createdAt: at, updatedAt: at } as Task;
 }
 function data(): HistoryData {
@@ -107,6 +107,28 @@ test('directory aliases change only display names and never merge distinct folde
   assert.deepEqual(named.map((group) => group.label), plain.map((group) => group.label));
   assert.deepEqual(named.map((group) => group.items), plain.map((group) => group.items));
   assert.equal(JSON.stringify(input), before);
+});
+
+test('renaming preserves execution requests and identity while pins sort only inside each directory', () => {
+  const input = data(), older = local('older'), other = local('other');
+  older.updatedAt = '2026-09-09T01:00:00.000Z'; other.updatedAt = '2026-09-08T01:00:00.000Z'; other.projectID = 'other';
+  input.tasks.push(older, other);
+  input.projects.push({ id: 'other', directory: 'D:/different', name: 'different', createdAt: at });
+  const before = JSON.stringify(input);
+  const items = conversations({ ...input, conversationPreferences: { 'local:older': { title: '我的会话', pinned: true }, 'local:other': { pinned: true } } });
+  const groups = groupConversationHistory(items, input);
+  assert.equal(groups[0].items[0].key, 'local:older');
+  assert.equal(groups[0].items[0].title, '我的会话');
+  assert.equal(groups[0].items[0].localTask, older);
+  assert.equal(groups[1].items[0].key, 'local:other');
+  assert.equal(JSON.stringify(input), before);
+  const db = new DatabaseSync(':memory:');
+  const history = new ConversationHistory(db, { data: () => input, queue: () => [], busy: () => false, purge: () => {} });
+  history.trash('local:older', { ...input, conversationPreferences: { 'local:older': { title: '我的会话', pinned: true } } });
+  assert.equal(history.list()[0].title, '我的会话');
+  history.restore('local:older');
+  assert.equal(conversations(input).find((item) => item.key === 'local:older')?.title, older.title);
+  db.close();
 });
 test('attachment purge preserves shared blobs and project originals, removes only unused app copies', async () => {
   const folder = root(), store = new TaskFileStore(folder), body = 'original-project-data';

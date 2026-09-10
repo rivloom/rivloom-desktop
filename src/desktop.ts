@@ -30,6 +30,8 @@ export const chooseProjectDirectory = () => invoke<string | null>('choose_projec
 export const chooseTaskFileDestination = (name: string) =>
   invoke<string | null>('choose_task_file_destination', { name });
 export const revealTaskFile = (path: string) => invoke<void>('reveal_task_file', { path });
+export const openTaskFile = (path: string) => invoke<void>('open_task_file', { path });
+export const openProjectDirectory = (path: string) => invoke<void>('open_project_directory', { path });
 export const notifyAttention = (target: string, kind: string, count: number) =>
   invoke<boolean>('notify_attention', { target, kind, count });
 export const takeNotificationTarget = () => invoke<string | null>('take_notification_target');

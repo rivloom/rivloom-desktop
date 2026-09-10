@@ -96,7 +96,7 @@ import {
 } from './node-queue.ts';
 import { NodeHealthMonitor } from './node-health.ts';
 import { TaskAttentionStore } from './task-attention.ts';
-import { WorkspacePreferences } from './workspace-preferences.ts';
+import { WorkspacePreferences, WorkspacePreferenceError } from './workspace-preferences.ts';
 import { isNodeQueueCandidate, firstNodeQueueCandidate, type NodeQueueReason, type NodeQueueEntry } from '../shared/node-queue.ts';
 import { minimumRemoteConcurrency, maximumRemoteConcurrency } from '../shared/execution-concurrency.ts';
 import { ResourceCatalog } from './resource-catalog.ts';
@@ -108,6 +108,7 @@ import { WorkflowRuntime } from './workflow-runtime.ts';
 import { installWorkflowAPI } from './workflow-api.ts';
 import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-maintenance.ts';
 import { ConversationHistory, HistoryError, historyFileIDs } from './conversation-history.ts';
+import { conversations } from '../shared/conversations.ts';
 import { isLocked } from './store.ts';
 
 try {
@@ -163,6 +164,8 @@ const conversationHistory = new ConversationHistory(db, {
       }
       for (const id of [...m.local, ...m.remote]) db.prepare('DELETE FROM workflow_contexts WHERE execution_id=?').run(id);
       for (const id of m.workflow) db.prepare('DELETE FROM workflows WHERE id=?').run(id);
+      workspacePreferences.forgetConversations(['local', 'remote', 'brain', 'workflow'].flatMap((scope) =>
+        m[scope as 'local' | 'remote' | 'brain' | 'workflow'].map((id) => `${scope}:${id}`)));
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   },
@@ -572,6 +575,7 @@ app.post('/api/auth/logout', (req, res) => {
 function bootstrap(req: Request): Bootstrap {
   return conversationHistory.filter({
     directoryAliases: workspacePreferences.directoryAliases(who(req).id),
+    conversationPreferences: workspacePreferences.conversationPreferences(who(req).id),
     user: who(req),
     users: users(),
     projects: projects(),
@@ -614,6 +618,10 @@ app.post('/api/ui/sidebar-widths', (req, res) =>
 app.post('/api/ui/directory-alias', (req, res) => {
   const aliases = workspacePreferences.saveDirectoryAlias(who(req).id, req.body);
   changed(); res.json(aliases);
+});
+app.post('/api/ui/conversation', (req, res) => {
+  workspacePreferences.saveConversationPreference(who(req).id, req.body, conversations(bootstrap(req)).map((item) => item.key));
+  changed(); res.json({ ok: true });
 });
 app.post('/api/attention/check', (req, res) => res.json(taskAttention.check(bootstrap(req))));
 app.post('/api/attention/preferences', (req, res) =>
@@ -2056,7 +2064,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return void res.status(400).json({
       error: `输入不正确：${error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('；')}`,
     });
-  if (error instanceof HttpError || error instanceof HistoryError)
+  if (error instanceof HttpError || error instanceof HistoryError || error instanceof WorkspacePreferenceError)
     return void res.status(error.status).json({ error: error.message });
   if (error instanceof TaskFileError)
     return void res.status(error.status).json({ error: error.message });

@@ -8,8 +8,11 @@ import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivl
 import { ConversationFilterButton } from './conversation-filter-button';
 import { ConversationTrash } from './conversation-trash';
 import { conversationDirectory, groupConversationHistory, historyCanTrash } from '../shared/conversation-history';
-import { directoryDisplayName, validDirectoryKey } from '../shared/directory-aliases';
+import { directoryDisplayName } from '../shared/directory-aliases';
 import { DirectoryAliasEditor } from './directory-alias-editor';
+import { HistoryDirectoryHeading } from './history-directory-heading';
+import { ConversationRenameEditor } from './conversation-rename-editor';
+import { ContextMenu, useContextMenu } from './context-menu';
 import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
 import { ResourceDiscovery } from './resource-discovery';
@@ -59,6 +62,9 @@ import {
   Inbox,
   Trash2,
   Pencil,
+  Pin,
+  PinOff,
+  MoreHorizontal,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -326,6 +332,9 @@ const HistoryRow = memo(function HistoryRow({
   open,
   remove,
   canRemove,
+  rename,
+  pin,
+  busy,
 }: {
   item: Conversation;
   selected: boolean;
@@ -334,14 +343,18 @@ const HistoryRow = memo(function HistoryRow({
   open: (item: Conversation) => void;
   remove: (item: Conversation) => void;
   canRemove: boolean;
+  rename: (item: Conversation) => void;
+  pin: (item: Conversation) => void;
+  busy: boolean;
   locale: string;
 }) {
+  const menu = useContextMenu();
   const state = conversationState(item);
   const group = conversationStatusGroup(item);
   const origin = item.incoming ? source : t('自己发起');
-  const label = [item.title, origin, state].filter(Boolean).join(' · ');
+  const label = [item.title, origin, state, item.pinned ? t('已置顶') : ''].filter(Boolean).join(' · ');
   return (
-    <div className="history-row">
+    <div className="history-row" onContextMenu={menu.context} onKeyDown={menu.keyboard}>
     <button
       aria-current={selected ? 'page' : undefined}
       aria-label={label}
@@ -353,6 +366,7 @@ const HistoryRow = memo(function HistoryRow({
         {item.incoming ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
       </span>
       <strong>{item.title}</strong>
+      {item.pinned && <Pin className="conversation-pinned" size={11} aria-label={t('已置顶')} />}
       {group !== 'completed' && (
         <span
           className={`conversation-item-state ${group} ${conversationIsRunning(item) ? 'is-running' : ''}`}
@@ -362,10 +376,17 @@ const HistoryRow = memo(function HistoryRow({
         </span>
       )}
     </button>
+    <button type="button" className="context-more icon-button" aria-label={t('会话操作：{{title}}', { title: item.title })} title={t('更多操作')} {...menu.trigger}><MoreHorizontal size={15} /></button>
     <button type="button" className="history-delete icon-button" disabled={!canRemove}
       aria-label={t('删除会话：{{title}}', { title: item.title })}
       title={canRemove ? t('移入回收站') : t('请先停止会话并等待处理完成')}
       onClick={() => remove(item)}><Trash2 size={14} /></button>
+    <ContextMenu menu={menu} label={t('会话操作')} actions={[
+      { id: 'rename', label: t('重命名'), icon: <Pencil />, disabled: busy, select: () => rename(item) },
+      { id: 'pin', label: item.pinned ? t('取消置顶') : t('置顶'), icon: item.pinned ? <PinOff /> : <Pin />, disabled: busy, select: () => pin(item) },
+      { id: 'trash', label: t('移入回收站'), icon: <Trash2 />, disabled: !canRemove, danger: true,
+        hint: !canRemove ? t('请先停止会话并等待处理完成') : undefined, select: () => remove(item) },
+    ]} />
     </div>
   );
 });
@@ -471,6 +492,7 @@ export function ConversationWorkspace({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [historyAction, setHistoryAction] = useState<{ action: 'trash' | 'purge' | 'empty'; key?: string; title?: string } | null>(null);
   const [aliasDirectory, setAliasDirectory] = useState<{ key: string; label: string; name: string } | null>(null);
+  const [renameConversation, setRenameConversation] = useState<{ key: string; title: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
   const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(() => ({
@@ -554,7 +576,7 @@ export function ConversationWorkspace({
   const composing = useRef(false);
   const all = useMemo(
     () => conversations(data),
-    [data.tasks, data.workflows, data.network.local?.id, data.network.remoteTasks, data.network.brainTasks],
+    [data.tasks, data.workflows, data.network.local?.id, data.network.remoteTasks, data.network.brainTasks, data.conversationPreferences],
   );
   function openAttention(key: string) {
     if (key === 'attention') {
@@ -648,6 +670,8 @@ export function ConversationWorkspace({
   );
   const historyGroups = groupConversationHistory(visible, data, data.directoryAliases);
   const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
+  const renameHistory = useCallback((item: Conversation) => { setError(''); setRenameConversation({ key: item.key, title: item.title }); }, []);
+  const pinHistory = (item: Conversation) => void perform(() => api('/ui/conversation', { key: item.key, pinned: !item.pinned }));
   const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all';
   function clearFilters() {
     setSearch('');
@@ -808,7 +832,7 @@ export function ConversationWorkspace({
       await fn();
       return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : typeof e === 'string' && e ? e : t('请求失败'));
       return false;
     } finally {
       try {
@@ -1103,17 +1127,10 @@ export function ConversationWorkspace({
         )}
         <div className="conversation-history">
           {historyGroups.map((group) => <section className="history-directory" key={group.key} aria-label={group.name}>
-            <div className="history-directory-heading">
-            <button type="button" className="history-directory-toggle" title={`${group.name}\n${group.label}`}
-              aria-expanded={!collapsedGroups.has(group.key) || !!search.trim()}
-              onClick={() => setCollapsedGroups((previous) => { const next = new Set(previous); if (next.has(group.key)) next.delete(group.key); else next.add(group.key); return next; })}>
-              {collapsedGroups.has(group.key) && !search.trim() ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-              <FolderOpen size={14} /><span>{group.name}</span><small>{group.items.length}</small>
-            </button>
-            {validDirectoryKey(group.key) && <button type="button" className="history-directory-edit icon-button" disabled={busy}
-              aria-label={t('设置目录别名：{{name}}', { name: group.name })} title={t('设置目录别名')}
-              onClick={() => { setError(''); setAliasDirectory({ key: group.key, label: group.label, name: group.name }); }}><Pencil size={12} /></button>}
-            </div>
+            <HistoryDirectoryHeading group={group} expanded={!collapsedGroups.has(group.key) || !!search.trim()} busy={busy} perform={perform}
+              copied={() => setNotice(t('已复制到剪贴板'))}
+              toggle={() => setCollapsedGroups((previous) => { const next = new Set(previous); if (next.has(group.key)) next.delete(group.key); else next.add(group.key); return next; })}
+              alias={() => { setError(''); setAliasDirectory({ key: group.key, label: group.label, name: group.name }); }} />
           {(!collapsedGroups.has(group.key) || !!search.trim()) && <div className="history-directory-items" role="group" aria-label={group.name}>{group.items.map((item) => (
             <HistoryRow
               key={item.key}
@@ -1123,6 +1140,9 @@ export function ConversationWorkspace({
               icon={item.incoming ? nodes.find((n) => n.id === item.sourceNodeID)?.icon : undefined}
               open={open}
               remove={removeHistory}
+              rename={renameHistory}
+              pin={pinHistory}
+              busy={busy}
               canRemove={data.user.owner && !busy && historyCanTrash(item, data, queueSnapshot?.entries || [])}
               locale={locale}
             />
@@ -2067,6 +2087,8 @@ export function ConversationWorkspace({
           </div>
         </aside>
       )}
+      {renameConversation && <ConversationRenameEditor key={renameConversation.key} title={renameConversation.title} busy={busy} failureMessage={error}
+        close={() => setRenameConversation(null)} save={(title) => perform(() => api('/ui/conversation', { key: renameConversation.key, title }))} />}
       {aliasDirectory && <DirectoryAliasEditor key={aliasDirectory.key} directory={aliasDirectory}
         alias={data.directoryAliases?.[aliasDirectory.key] || ''} busy={busy} failureMessage={error}
         close={() => setAliasDirectory(null)} save={(alias) => perform(() => api('/ui/directory-alias', { key: aliasDirectory.key, alias }))} />}

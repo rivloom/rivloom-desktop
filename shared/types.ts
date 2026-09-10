@@ -99,6 +99,7 @@ export type Task = {
 };
 export type Bootstrap = {
   directoryAliases?: import('./directory-aliases.ts').DirectoryAliases;
+  conversationPreferences?: import('./conversation-preferences.ts').ConversationPreferences;
   conversationTrash?: import('./conversation-history.ts').TrashEntry[];
   resourceDirectory?: import('./resources.ts').ResourceDiscoveryNode[];
   workflows?: import('./workflows.ts').Workflow[];

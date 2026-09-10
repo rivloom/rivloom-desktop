@@ -4,6 +4,7 @@ import type { Workflow } from './workflows.ts';
 export type Conversation = {
   key: string;
   title: string;
+  pinned?: boolean;
   description: string;
   updatedAt: string;
   createdAt: string;
@@ -18,7 +19,7 @@ export type Conversation = {
 };
 
 /** One UI conversation per stable Task; Execution retries remain inside that conversation. */
-export function conversations(data: Pick<Bootstrap, 'tasks' | 'network' | 'workflows'>): Conversation[] {
+export function conversations(data: Pick<Bootstrap, 'tasks' | 'network' | 'workflows' | 'conversationPreferences'>): Conversation[] {
   const result = new Map<string, Conversation>();
   const localID = data.network.local?.id;
   const remotes = data.network.remoteTasks;
@@ -88,7 +89,10 @@ export function conversations(data: Pick<Bootstrap, 'tasks' | 'network' | 'workf
       attempts: [],
     });
   }
-  return [...result.values()].sort(
+  return [...result.values()].map((item) => {
+    const preference = data.conversationPreferences?.[item.key];
+    return preference ? { ...item, title: preference.title || item.title, pinned: preference.pinned === true } : item;
+  }).sort(
     (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.key.localeCompare(b.key),
   );
 }

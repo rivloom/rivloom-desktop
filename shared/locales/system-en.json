@@ -579,5 +579,8 @@
   "相关记录正在处理，请稍后重试。": "Related records are being processed. Please try again later.",
   "此会话已移入回收站或已永久删除。": "This conversation is in the recycle bin or has been permanently deleted.",
   "队列仍在处理，请稍后重试。": "The queue is still processing. Please try again later.",
-  "文件存储类型异常，已停止清理。": "Unexpected file storage type. Cleanup has stopped."
+  "文件存储类型异常，已停止清理。": "Unexpected file storage type. Cleanup has stopped.",
+  "会话已不可用，请刷新后重试。": "This conversation is no longer available. Refresh and try again.",
+  "无法打开文件，请检查默认应用或另存后打开。": "Could not open the file. Check the default app or save a copy first.",
+  "无法打开文件夹，请检查目录是否存在。": "Could not open the folder. Check that it still exists."
 }

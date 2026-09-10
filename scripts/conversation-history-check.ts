@@ -36,6 +36,15 @@ try {
   assert.equal((await client.bootstrap()).projects.find((p) => p.id === project.id)?.name, 'History fixture directory');
   assert.equal((await client.bootstrap()).projects.find((p) => p.id === project.id)?.directory, directory);
   pass('Directory aliases enforce origin and user scope without changing real folders, project names or another user display');
+  await client.call('/ui/conversation', { key, title: 'UNTRUSTED' }, 403, { Origin: 'https://untrusted.example' });
+  await member.call('/ui/conversation', { key, title: 'Invisible' }, 404);
+  await client.call('/ui/conversation', { key, title: 'Wrong user', userID: 'another-user' }, 400);
+  await client.call('/ui/conversation', { key, title: '右键菜单重命名' });
+  await client.call('/ui/conversation', { key, pinned: true });
+  assert.deepEqual((await client.bootstrap()).conversationPreferences?.[key], { title: '右键菜单重命名', pinned: true });
+  assert.deepEqual((await member.bootstrap()).conversationPreferences, {});
+  assert.deepEqual((await client.bootstrap()).tasks.find((value) => value.id === task.id), task);
+  pass('Conversation name and pin writes enforce origin, visible identity and user scope without changing execution requests');
   for (const [path, body] of [['trash', { key }], ['restore', { key }], ['purge', { key, confirmed: true }], ['empty', { confirmed: true }]] as const)
     await member.call(`/history/${path}`, body, 403);
   await client.call('/history/trash', { key }, 403, { Origin: 'https://untrusted.example' });
@@ -43,6 +52,8 @@ try {
   pass('Recycle-bin writes enforce workspace owner, origin, and visible conversation identity');
   const removed = await client.call('/history/trash', { key }); assert.equal(removed.directory, directory);
   const hidden = await client.bootstrap(); assert(!hidden.tasks.some((v) => v.id === task.id)); assert.equal(hidden.conversationTrash?.[0].key, key);
+  assert.equal(hidden.conversationTrash?.[0].title, '右键菜单重命名');
+  await client.call('/ui/conversation', { key, title: 'Hidden rename' }, 404);
   await client.call(`/tasks/${task.id}/run`, {}, 410); await client.call('/tasks', request, 410);
   await client.stop(); await client.start({ logPath: join(root, 'restart.log') });
   assert.equal((await client.bootstrap()).directoryAliases?.[directoryKey], '官网研发');
@@ -52,6 +63,10 @@ try {
   assert.equal((await client.bootstrap()).conversationTrash?.[0].key, key);
   await client.call('/history/restore', { key }); const restored = (await client.bootstrap()).tasks.find((v) => v.id === task.id)!;
   assert.deepEqual(restored, task);
+  assert.deepEqual((await client.bootstrap()).conversationPreferences?.[key], { title: '右键菜单重命名', pinned: true });
+  await client.call('/ui/conversation', { key, pinned: false });
+  assert.deepEqual((await client.bootstrap()).conversationPreferences?.[key], { title: '右键菜单重命名', pinned: false });
+  pass('Conversation names and pins survive restart and recycle-bin restore; unpin preserves the chosen name');
   pass('Trash hides history, blocks execution and request replay, and restores the exact conversation after restart');
   const running = await client.call<Task>('/tasks', { ...request, requestID: randomUUID(), runRequested: true, title: 'HISTORY_RUNNING' }, 201);
   await until(async () => fixture.pendingRequests, (value) => value > 0, 'loopback model request');
@@ -63,6 +78,7 @@ try {
   await client.call('/history/trash', { key });
   await client.call('/history/purge', { key }, 400); await client.call('/history/purge', { key, confirmed: true });
   await client.call('/history/restore', { key }, 404); await client.call('/tasks', request, 410);
+  assert.equal((await client.bootstrap()).conversationPreferences?.[key], undefined);
   const next = await client.call<Task>('/tasks', { ...request, requestID: randomUUID(), title: 'KEEP_VISIBLE' }, 201); assert(next.number > running.number);
   await client.call('/history/empty', { confirmed: true });
   assert.equal((await client.bootstrap()).conversationTrash?.length, 0); assert((await client.bootstrap()).tasks.some((v) => v.id === next.id));
@@ -80,9 +96,11 @@ try {
   await client.call(`/workflows/${workflow.id}/control`, { action: 'stop' });
   await until(() => client.bootstrap(), (b) => b.workflows?.find((v) => v.id === workflow.id)?.state === 'stopped', 'workflow stopped');
   const workflowKey = `workflow:${workflow.id}`;
+  await client.call('/ui/conversation', { key: workflowKey, title: 'Pinned workflow', pinned: true });
   await until(() => client.call('/history/trash', { key: workflowKey }), () => true, 'workflow settled');
   await client.call(`/workflows/${workflow.id}/control`, { action: 'resume' }, 410);
   await client.call('/history/purge', { key: workflowKey, confirmed: true });
+  assert.equal((await client.bootstrap()).conversationPreferences?.[workflowKey], undefined);
   await client.call('/workflows', workflowRequest, 409); // Workflow API preserves its conflict response contract.
   pass('Stopped workflows enter the same recycle bin and neither resume nor creation retries can recreate purged workflows');
   await client.call('/history/trash', { key: `local:${next.id}` }); await client.stop();

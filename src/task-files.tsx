@@ -1,9 +1,10 @@
 import { t, systemText } from '../shared/i18n.ts';
 import { reuseJson } from './desktop-refresh';
-import { useEffect, useId, useRef, useState } from 'react';
-import { Paperclip, Download, RotateCw, X, FileText, Upload } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Paperclip, Download, RotateCw, X, FileText, Upload, FolderOpen, Copy, MoreHorizontal, ExternalLink } from 'lucide-react';
 import { api } from './api';
-import { desktop, chooseTaskFileDestination, revealTaskFile } from './desktop';
+import { desktop, chooseTaskFileDestination, revealTaskFile, openTaskFile } from './desktop';
+import { ContextMenu, useContextMenu } from './context-menu';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
 import {
   taskFileBytesLabel,
@@ -190,6 +191,24 @@ export function TaskFilePicker({
   );
 }
 
+function TaskFileRow({ file, ready, busy, action, children }: {
+  file: TaskFileView; ready: boolean; busy: boolean; children: ReactNode;
+  action: (kind: 'open' | 'reveal' | 'copy' | 'save', file: TaskFileView) => void;
+}) {
+  const menu = useContextMenu();
+  const hint = !ready ? t('文件完整接收后可操作。') : !desktop ? t('请在桌面端操作本机文件。') : undefined;
+  return <li onContextMenu={menu.context} onKeyDown={menu.keyboard} tabIndex={ready ? undefined : 0}>
+    {children}
+    <button type="button" className="context-more icon-button" aria-label={t('文件操作：{{name}}', { name: file.name })} title={t('更多操作')} {...menu.trigger}><MoreHorizontal size={15} /></button>
+    <ContextMenu menu={menu} label={t('文件操作')} actions={[
+      { id: 'open', label: t('打开'), icon: <ExternalLink />, disabled: busy || !ready || !desktop, hint, select: () => action('open', file) },
+      { id: 'reveal', label: t('打开所在目录'), icon: <FolderOpen />, disabled: busy || !ready || !desktop, hint, select: () => action('reveal', file) },
+      { id: 'save', label: t('另存为…'), icon: <Download />, disabled: busy || !ready, select: () => action('save', file) },
+      { id: 'copy', label: t('复制路径'), icon: <Copy />, disabled: busy || !ready || !desktop, hint, select: () => action('copy', file) },
+    ]} />
+  </li>;
+}
+
 export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: TaskFileScope; taskID: string; resultsOnly?: boolean }) {
   const [value, setValue] = useState<TaskFileConversation | null>(null),
     [error, setError] = useState(''),
@@ -197,8 +216,11 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
     [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<DraftTaskFile[]>([]),
     [saved, setSaved] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState('');
+  const operating = useRef(false);
   const path = `/task-files/${scope}/${taskID}`;
   useEffect(() => {
+    setValue(null); setError(''); setNotice(''); setSaved({});
     let alive = true,
       polling = false;
     const refresh = async () => {
@@ -223,19 +245,28 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
       clearInterval(timer);
     };
   }, [path]);
-  async function reveal(file: TaskFileView) {
+  async function locate(file: TaskFileView, kind: 'open' | 'reveal' | 'copy') {
+    if (operating.current) return;
+    operating.current = true;
     setBusy(true);
-    setError('');
+    setError(''); setNotice('');
     try {
       const result = await api<{ path: string }>(`${path}/${file.id}/location`, {});
-      await revealTaskFile(result.path);
+      if (kind === 'open') await openTaskFile(result.path);
+      else if (kind === 'reveal') await revealTaskFile(result.path);
+      else {
+        try { await navigator.clipboard.writeText(result.path); setNotice(t('已复制到剪贴板')); }
+        catch { throw new Error(t('复制失败，请重试。')); }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('无法打开文件所在文件夹。'));
+      setError(e instanceof Error ? e.message : typeof e === 'string' && e ? e : t('文件操作失败，请重试。'));
     } finally {
-      setBusy(false);
+      operating.current = false; setBusy(false);
     }
   }
   async function save(file: TaskFileView) {
+    if (operating.current) return;
+    operating.current = true;
     setBusy(true);
     setError('');
     try {
@@ -247,14 +278,19 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
           ...old,
           [file.id]: t('已保存至 {{value1}}', { value1: result.path }),
         }));
+      } else {
+        const link = document.createElement('a'); link.href = `/api${path}/${file.id}/content`; link.download = file.name;
+        document.body.append(link); link.click(); link.remove();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('文件保存失败。'));
+      setError(e instanceof Error ? e.message : typeof e === 'string' && e ? e : t('文件保存失败。'));
     } finally {
-      setBusy(false);
+      operating.current = false; setBusy(false);
     }
   }
   async function publish() {
+    if (operating.current) return;
+    operating.current = true;
     setBusy(true);
     setError('');
     try {
@@ -264,10 +300,12 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
     } catch (e) {
       setError(e instanceof Error ? e.message : t('成果发布未确认，重试会保留原文件。'));
     } finally {
-      setBusy(false);
+      operating.current = false; setBusy(false);
     }
   }
   async function retry() {
+    if (operating.current) return;
+    operating.current = true;
     setBusy(true);
     setError('');
     try {
@@ -276,13 +314,14 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
     } catch (e) {
       setError(e instanceof Error ? e.message : t('传输未能重试。'));
     } finally {
-      setBusy(false);
+      operating.current = false; setBusy(false);
     }
   }
   const list = (items: TaskFileView[]) => (
     <ul className="task-file-links">
       {items.map((file) => (
-        <li key={file.id}>
+        <TaskFileRow key={file.id} file={file} ready={!!value?.canSave && file.state === 'complete'} busy={busy}
+          action={(kind, file) => void (kind === 'save' ? save(file) : locate(file, kind))}>
           <span className="file-details">
             {value?.canSave && file.state === 'complete' ? (
               desktop ? (
@@ -291,7 +330,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
                   className="task-file-link"
                   disabled={busy}
                   title={`${t('打开所在文件夹')} · ${taskFileBytesLabel(file.bytes)}`}
-                  onClick={() => void reveal(file)}
+                  onClick={() => void locate(file, 'reveal')}
                 >
                   {file.name}
                 </button>
@@ -350,12 +389,13 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
               <Download size={16} />
             </button>
           )}
-        </li>
+        </TaskFileRow>
       ))}
     </ul>
   );
   return (
     <section className="task-files-panel" aria-label={t('任务文件')}>
+      {notice && <p className="file-saved" role="status">{notice}</p>}
       {value && (
         <>
           {!!value.results.length && (

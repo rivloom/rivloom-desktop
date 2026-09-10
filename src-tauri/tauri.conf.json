@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rivloom",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "com.rivloom.desktop",
   "mainBinaryName": "Rivloom",
   "build": {
@@ -31,6 +31,8 @@
             "allow-choose-project-directory",
             "allow-choose-task-file-destination",
             "allow-reveal-task-file",
+            "allow-open-task-file",
+            "allow-open-project-directory",
             "allow-notify-attention",
             "allow-take-notification-target",
             "allow-desktop-update-snapshot",
