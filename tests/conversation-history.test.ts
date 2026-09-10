@@ -74,6 +74,21 @@ test('complete workflow membership includes child tasks, retry attempts, and cre
   const workflow = conversations(input).find((v) => v.workflow)!;
   assert.deepEqual(historyMembers(workflow, input), { local: ['local-try', child.id], remote: ['remote-try'], brain: [], workflow: ['w'], requests: ['u:request'] });
 });
+
+test('archived rounds remain one conversation and cleanup fences every queued request and old execution', () => {
+  const input = data(); input.tasks = [];
+  const round = { requestID: 'first', planner: { attempts: [{ executionID: 'old-local', kind: 'local', phase: 'completed' }] }, steps: [] };
+  input.tasks = [local('old-local')];
+  input.workflows = [{ id: 'w', creatorID: 'u', requestID: 'first', roundRequestID: 'second', state: 'completed', title: 'Continuity',
+    description: 'second', createdAt: at, updatedAt: at, planner: { attempts: [] }, steps: [], rounds: [round],
+    messages: [{ requestID: 'second', state: 'queued' }, { requestID: 'third', state: 'queued' }, { requestID: 'cancelled', state: 'cancelled' }] }] as unknown as Workflow[];
+  const items = conversations(input); assert.equal(items.length, 1);
+  assert.deepEqual(historyMembers(items[0], input), { local: ['old-local'], remote: [], brain: [], workflow: ['w'],
+    requests: ['u:first', 'u:second', 'u:third', 'u:cancelled'] });
+  assert.equal(historyCanTrash(items[0], input), false, 'even a paused pending queue must be cancelled before trash');
+  input.workflows[0].messages![1].state = 'cancelled'; assert.equal(historyCanTrash(items[0], input), true);
+  round.planner.attempts[0].phase = 'unknown'; assert.equal(historyCanTrash(items[0], input), false, 'uncertain archived data must remain protected');
+});
 test('failed purge is journaled, cannot restore, and safely retries without losing other conversations', () => {
   const input = data(), key = `local:${input.tasks[0].id}`, db = new DatabaseSync(':memory:'); let fail = true;
   const other = local(); input.tasks.push(other);

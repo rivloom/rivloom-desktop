@@ -15,6 +15,8 @@ import { ConversationRenameEditor } from './conversation-rename-editor';
 import { ContextMenu, useContextMenu } from './context-menu';
 import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
+import { MessageMarkdown } from './message-markdown';
+import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import type { Workflow } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
@@ -429,7 +431,7 @@ const Transcript = memo(function Transcript({
               <strong>Rivloom</strong>
               {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
-            {message.text && <div className="chat-message-text">{text}</div>}
+            {message.text && (message.role === 'user' ? <div className="chat-message-text">{text}</div> : <MessageMarkdown text={text} />)}
             {message.tools.map((tool, index) => (
               <details className="chat-tool" key={index}>
                 <summary>
@@ -455,7 +457,7 @@ const Transcript = memo(function Transcript({
             <strong>{t('执行结果')}</strong>
             <CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" />
           </div>
-          <div className="chat-message-text">{summary}</div>
+          <MessageMarkdown text={summary} />
         </article>
       )}
       {task && activeStates.includes(task.state) && (
@@ -495,9 +497,12 @@ export function ConversationWorkspace({
   const [renameConversation, setRenameConversation] = useState<{ key: string; title: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
-  const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(() => ({
-    new: createWorkflowDraft(),
-  }));
+  const storageKey = draftStorageKey(data.user.id, data.network.local?.id || 'local');
+  const [recovered] = useState(() => { try { return latestDrafts(localStorage.getItem(storageKey), data.conversationDrafts); }
+    catch { return latestDrafts(null, data.conversationDrafts); } });
+  const draftClock = useRef(recovered.savedAt || 0);
+  const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(recovered.drafts);
+  const [draftSaveError, setDraftSaveError] = useState(false);
   const emptyDraft = useRef(createWorkflowDraft());
   const [busy, setBusy] = useState(false);
   const operation = useRef(false);
@@ -514,12 +519,26 @@ export function ConversationWorkspace({
   const [folderPath, setFolderPath] = useState('');
   const [folderName, setFolderName] = useState('');
   const [projectID, setProjectID] = useState(
-    data.executionPolicy.projectID || data.projects[0]?.id || '',
+    recovered.settings?.projectID ?? data.executionPolicy.projectID ?? data.projects[0]?.id ?? '',
   );
-  const [model, setModel] = useState(data.defaultModel);
-  const [approvalChoice, setApprovalChoice] = useState<ApprovalMode | 'default'>('default');
+  const [model, setModel] = useState(recovered.settings?.model ?? data.defaultModel);
+  const [approvalChoice, setApprovalChoice] = useState<ApprovalMode | 'default'>(recovered.settings?.approvalChoice || 'default');
   const mode = approvalChoice === 'default' ? data.executionPolicy.approvalMode : approvalChoice;
-  const [criteria, setCriteria] = useState('');
+  const [criteria, setCriteria] = useState(recovered.settings?.criteria || '');
+  useEffect(() => {
+    draftClock.current = Math.max(Date.now(), draftClock.current + 1);
+    const value = encodeDrafts({ drafts, savedAt: draftClock.current, settings: { projectID, model, approvalChoice, criteria } });
+    try { localStorage.setItem(storageKey, value); } catch { /* The service below also persists drafts independently of the browser origin. */ }
+    let active = true;
+    const save = () => void api('/ui/drafts', { value }).then(() => { if (active) setDraftSaveError(false); }).catch(() => { if (active) setDraftSaveError(true); });
+    const timer = setTimeout(save, 350);
+    const flush = () => {
+      void fetch('/api/ui/drafts', { method: 'POST', credentials: 'same-origin', keepalive: true,
+        headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1' }, body: JSON.stringify({ value }) }).catch(() => undefined);
+    };
+    window.addEventListener('pagehide', flush); window.addEventListener('online', save);
+    return () => { active = false; clearTimeout(timer); window.removeEventListener('pagehide', flush); window.removeEventListener('online', save); };
+  }, [storageKey, drafts, projectID, model, approvalChoice, criteria, connected]);
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -596,6 +615,11 @@ export function ConversationWorkspace({
     openAttention,
   );
   const current = all.find((item) => item.key === selected);
+  useEffect(() => {
+    const available = new Set(['new', ...all.map((item) => item.key), ...(data.conversationTrash || []).map((item) => item.key)]);
+    setDrafts((previous) => Object.keys(previous).every((key) => available.has(key)) ? previous :
+      Object.fromEntries(Object.entries(previous).filter(([key]) => available.has(key))));
+  }, [all, data.conversationTrash]);
   const task = current?.localTask;
   const remote = current?.remote;
   const draftKey = selected || 'new';
@@ -695,6 +719,7 @@ export function ConversationWorkspace({
   const awaitingCreatedConversation = !!selected && !current;
   const canWrite =
     (!current && !awaitingCreatedConversation) ||
+    (!!current?.workflow && current.workflow.creatorID === data.user.id) ||
     (!finished && !queueRejected && (canWriteLocal || canRemoteControl));
   const approvals = task?.approvals || remote?.remoteApprovals || [];
   const questions = task?.questions || remote?.remoteQuestions || [];
@@ -771,7 +796,7 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
     if (transcript.current && scrollPinned.current)
-      transcript.current.scrollTop = current?.workflow ? 0 : transcript.current.scrollHeight;
+      transcript.current.scrollTop = current?.workflow && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
     selected,
@@ -780,6 +805,8 @@ export function ConversationWorkspace({
     current?.brainTask?.executionSummary,
     remote?.executionSummary,
     task?.state,
+    current?.workflow?.roundRequestID,
+    current?.workflow?.messages?.length,
   ]);
   useEffect(() => {
     const element = transcript.current;
@@ -991,12 +1018,20 @@ export function ConversationWorkspace({
       busy ||
       !canWrite ||
       inputUsage.overLimit ||
-      (!current && !draftFilesReady(draftState.files))
+      ((!current || current.workflow) && !draftFilesReady(draftState.files))
     )
       return;
     await perform(async () => {
       if (current) {
-        if (task) {
+        if (current.workflow) {
+          const body = { text, attachmentIDs: (draftState.files || []).map((f) => f.id) };
+          const prepared = prepareConversationRequest(draftState, body);
+          setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
+          await api(`/workflows/${current.workflow.id}/messages`, { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
+          scrollPinned.current = true;
+          setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID, createWorkflowDraft));
+          return;
+        } else if (task) {
           if (task.assigneeID !== data.user.id)
             await api(`/tasks/${task.id}/requirements`, { text });
           else {
@@ -1522,7 +1557,7 @@ export function ConversationWorkspace({
                   </div>
                 )}
               </div>
-              {current && !current.workflow && awayFromLatest && (
+              {current && awayFromLatest && (
                 <button
                   type="button"
                   className="return-to-latest"
@@ -1535,15 +1570,16 @@ export function ConversationWorkspace({
               )}
             </div>
             <div className="composer-area">
-              {!current?.workflow && <form
+              <form
                 className={`conversation-composer ${!canWrite ? 'read-only' : ''}`}
                 onSubmit={send}
               >
-                {!current && (
+                {(!current || current.workflow) && (
                   <TaskFilePicker
                     key={draftKey}
                     files={draftState.files || []}
-                    disabled={busy}
+                    disabled={busy || !canWrite}
+                    composer
                     onChange={(update) =>
                       setDrafts((previous) => {
                         const saved = previous[draftKey] || emptyDraft.current;
@@ -1578,6 +1614,8 @@ export function ConversationWorkspace({
                       ? t('此项工作已被拒绝，请新建会话提交新的工作')
                       : waitingForRemoteSession
                         ? t('等待目标 Node 准备执行会话，开始后可补充要求')
+                        : current?.workflow
+                          ? t('继续提出要求，当前轮结束后依次执行…')
                         : finished
                           ? t('会话已完成，点击「新会话」开始新的工作')
                           : !canWrite
@@ -1862,7 +1900,7 @@ export function ConversationWorkspace({
                       busy ||
                       !draft.trim() ||
                       inputUsage.overLimit ||
-                      (!current && !draftFilesReady(draftState.files)) ||
+                      ((!current || current.workflow) && !draftFilesReady(draftState.files)) ||
                       !canWrite ||
                       remote?.controlPending ||
                       (!current &&
@@ -1943,9 +1981,10 @@ export function ConversationWorkspace({
                     </Field>
                   </div>
                 )}
-              </form>}
+              </form>
+              {draftSaveError && <p className="file-error" role="alert">{t('草稿暂时无法保存，请保留此窗口。')}</p>}
               <div className="composer-hint">
-                {current?.workflow ? t('展开执行过程，可查看计划、步骤详情和执行记录。') : waitingForRemoteSession
+                {current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')

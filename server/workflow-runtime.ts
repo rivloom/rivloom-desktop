@@ -11,7 +11,7 @@ import { changed, engineStatus, stopTask } from './task-service.ts';
 import { workerCanQueueTask, workerHardwareMatches, workerReportFresh } from './worker-resources.ts';
 import { WorkflowStore } from './workflows.ts';
 import { WorkflowContexts, workflowContextDigest } from './workflow-contexts.ts';
-import { WorkflowOutputs, relayWorkflowInputs } from './workflow-files.ts';
+import { WorkflowOutputs, relayWorkflowInputs, importConversationContext } from './workflow-files.ts';
 import { WorkflowService, type WorkflowCandidate, type WorkflowDispatchResult, type WorkflowExecutionAdapter, type WorkflowExecutionSnapshot } from './workflow-service.ts';
 import { QueueConfirmationRequired } from './queue-confirmation.ts';
 import type { NodeNetwork } from './node-network.ts';
@@ -47,6 +47,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     if (this.interval) return;
     this.interval = setInterval(() => this.kick(), 1500); this.interval.unref(); this.kick();
   }
+  async conversationContext(value: Workflow) { return importConversationContext(this.options.network.files, value); }
   fileLocations(local: Task, fileID: string) {
     const directory = projects().find((value) => value.id === local.projectID)?.directory;
     if (!directory) return [];

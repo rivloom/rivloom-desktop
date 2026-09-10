@@ -147,3 +147,17 @@ test('a new permission request notifies once without waiting for a different tas
   assert.equal(store.check(data).notifications.length, 0);
   db.close();
 });
+
+test('each completed conversation round notifies once while archived execution records stay suppressed', () => {
+  const db = new DatabaseSync(':memory:'), store = new TaskAttentionStore(db);
+  const data = fixture([task('accepted', { id: 'archived' })]);
+  data.workflows = [{ id: 'w', requestID: 'first', creatorID: 'owner', state: 'completed', title: 'Continuity',
+    planner: { attempts: [], state: 'completed' }, steps: [], rounds: [{ requestID: 'first',
+      planner: { state: 'completed', attempts: [{ executionID: 'archived', kind: 'local', phase: 'completed' }] }, steps: [] }] }] as unknown as Bootstrap['workflows'];
+  assert.deepEqual(collectAttention(data).events.map((e) => e.conversationKey), ['workflow:w']);
+  store.check(data);
+  data.workflows![0].roundRequestID = 'second';
+  assert.equal(store.check(data).notifications.length, 1);
+  assert.equal(new TaskAttentionStore(db).check(data).notifications.length, 0);
+  db.close();
+});

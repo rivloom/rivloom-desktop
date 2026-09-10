@@ -31,6 +31,20 @@ export function installWorkflowAPI(app: Express, runtime: WorkflowRuntime, netwo
     } catch (value) { error(value); }
   });
   app.get('/api/workflows/:id', (req, res) => res.json(visible(req)));
+  app.post('/api/workflows/:id/messages', (req, res) => {
+    try {
+      const value = visible(req); const body = z.object({ requestID: z.string().uuid(), text: z.string().trim().min(1).max(12_000),
+        attachmentIDs: z.array(z.string().uuid()).max(taskFileUploadCount).default([]) }).strict().parse(req.body);
+      const result = runtime.service.enqueue(value.id, body.requestID, body.text, network.files.uploaded(who(req).id, body.attachmentIDs));
+      runtime.kick(); res.status(201).json(result);
+    } catch (value) { error(value); }
+  });
+  app.post('/api/workflows/:id/messages/control', (req, res) => {
+    try {
+      const value = visible(req); const body = z.object({ action: z.enum(['cancel', 'resume', 'pause']), requestID: z.string().uuid().optional() }).strict().parse(req.body);
+      const result = runtime.service.messageControl(value.id, body.action, body.requestID); runtime.kick(); res.json(result);
+    } catch (value) { error(value); }
+  });
   app.post('/api/workflows/:id/control', (req, res) => {
     try {
       const value = visible(req); const body = z.object({ action: z.enum(['pause', 'resume', 'stop', 'retry_planning']) }).strict().parse(req.body);

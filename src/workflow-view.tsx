@@ -3,11 +3,13 @@ import { Bot, Check, ChevronDown, ChevronRight, FileText, GitBranch, LoaderCircl
 import { t } from '../shared/i18n.ts';
 import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types';
 import type { Workflow, WorkflowAttempt, WorkflowStep, WorkflowStepPlan } from '../shared/workflows';
-import { canRetryWorkflowPlanning } from '../shared/workflows';
+import { canRetryWorkflowPlanning, workflowPendingMessages } from '../shared/workflows';
 import { api } from './api';
 import { workflowError } from '../shared/workflow-errors.ts';
 import { Button, Field, Modal } from './ui';
 import { CopyButton } from './copy-button';
+import { MessageMarkdown } from './message-markdown';
+import { FilePreviewButton } from './file-preview';
 import { TaskFilesPanel } from './task-files';
 import { WorkflowGraph, workflowStepLabel, type WorkflowGraphNode } from './workflow-graph';
 import { workflowResults } from './workflow-results';
@@ -41,9 +43,35 @@ function ExecutionActions({ local, remote, data, busy, perform }: {
     </form>)}
   </>;
 }
-export function WorkflowView({ value, data, busy, perform, nodeName }: {
+type WorkflowViewProps = {
   value: Workflow; data: Bootstrap; busy: boolean; perform: (fn: () => Promise<unknown>) => Promise<boolean>; nodeName: (id: string | null) => string;
-}) {
+};
+export function WorkflowView(props: WorkflowViewProps) {
+  const { value, busy, perform } = props;
+  const queued = workflowPendingMessages(value);
+  const control = (action: 'pause' | 'resume' | 'cancel', requestID?: string) => perform(() => api(`/workflows/${value.id}/messages/control`, { action, requestID }));
+  return <>
+    {(value.rounds || []).map((round, i) => <section className="workflow-round" key={round.requestID}>
+      <small className="workflow-round-divider">{t('第 {{count}} 轮', { count: i + 1 })}</small>
+      <WorkflowRoundView {...props} historical value={{ ...value, ...round, rounds: [], roundRequestID: round.requestID }} />
+    </section>)}
+    {!!value.rounds?.length && <small className="workflow-round-divider">{t('第 {{count}} 轮', { count: value.rounds.length + 1 })}</small>}
+    <WorkflowRoundView {...props} key={value.roundRequestID || value.requestID} />
+    {!!queued.length && <section className="workflow-message-queue" aria-label={t('待执行消息')}>
+      <div className="workflow-queue-heading"><strong>{t('待执行消息')} · {queued.length}</strong>
+        <Button disabled={busy} onClick={() => void control(value.queuePaused ? 'resume' : 'pause')}>{value.queuePaused ? t('继续消息队列') : t('暂停消息队列')}</Button></div>
+      <p className="muted">{value.queuePaused ? t('消息队列已暂停，继续后会依次执行。') : t('当前轮结束后，按发送顺序继续执行。')}</p>
+      {value.queueError && <p className="workflow-error" role="alert">{workflowError(value.queueError)}</p>}
+      {queued.map((message, i) => <article className="chat-message user workflow-queue-message" key={message.requestID}>
+        <CopyButton text={message.text} label={t('复制这条消息')} iconOnly className="message-copy" />
+        <div className="chat-message-text">{message.text}</div>
+        {message.inputFiles.map((file) => <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
+        <footer><span>{t('排队第 {{count}} 条', { count: i + 1 })}</span><Button disabled={busy} onClick={() => void control('cancel', message.requestID)}>{t('取消排队')}</Button></footer>
+      </article>)}
+    </section>}
+  </>;
+}
+function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = false }: WorkflowViewProps & { historical?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const processID = useId();
   const [selection, setSelection] = useState<{ stepID: string; attempt: number } | null>(null);
@@ -73,7 +101,10 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements }); };
   return <div className="workflow-conversation">
     <article className="chat-message user" aria-label={t('你')}><CopyButton text={value.description} label={t('复制这条消息')} iconOnly className="message-copy" />
-      <div className="chat-message-text">{value.description}</div></article>
+      <div className="chat-message-text">{value.description}</div>
+      {(value.messages?.find((m) => m.requestID === value.roundRequestID)?.inputFiles || (!value.roundRequestID || value.roundRequestID === value.requestID ? value.inputFiles : [])).map((file) =>
+        <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
+    </article>
     <section className={`workflow-overview ${value.state}`} aria-label={complete ? t('最终结果') : t('任务进展')}>
       <div className="workflow-overview-title">{complete ? <Check size={18} /> : terminal ? <GitBranch size={18} /> : <LoaderCircle className={value.state === 'paused' ? '' : 'spin'} size={18} />}
         <h2>{complete ? t('最终结果') : t('任务进展')}</h2><span className="workflow-primary-status">{status}</span>
@@ -81,7 +112,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
       {complete ? <div className="workflow-results">
         {results.map(({ step, attempt, summary }) => <article className="workflow-result" key={step.id}>
           {results.length > 1 && <h3>{step.title}</h3>}
-          {summary && <div className="workflow-result-response"><div className="chat-message-text">{summary}</div><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
+          {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} /><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
           <TaskFilesPanel key={attempt.executionID} scope={attempt.kind} taskID={attempt.executionID} resultsOnly />
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可展开执行过程查看记录。')}</p>}
@@ -98,7 +129,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
       </div>}
       {value.target.mode !== 'automatic' && <p className="workflow-target-note">{value.target.mode === 'locked' ? '@@' : '@'} {nodeName(value.target.nodeID)} · {value.target.mode === 'locked' ? t('全部执行锁定在此 Node') : t('优先在此 Node 执行')}</p>}
       {value.error && <p className="workflow-error" role="alert">{workflowError(value.error)}</p>}
-      {canRetryWorkflowPlanning(value) && <div className="workflow-controls"><Button disabled={busy}
+      {!historical && canRetryWorkflowPlanning(value) && <div className="workflow-controls"><Button disabled={busy}
         onClick={() => void perform(() => api(`/workflows/${value.id}/control`, { action: 'retry_planning' }))}><Play size={13} />{t('重新规划')}</Button>
         <small>{t('保留原规划记录，重新分析这条需求。')}</small></div>}
       {!terminal && steps.some((s) => s.state === 'ready') && !steps.some((s) => s.state === 'running') && !value.pendingConfirmation &&
@@ -134,7 +165,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
       <p className="workflow-detail-meta">{workflowStepLabel(selectedStep, selectedAttempt)} · {selectedAttempt ? nodeName(selectedAttempt.nodeID) : t('待分配')}
         {selectedAttempt && ` · ${t('第 {{count}} 次执行', { count: selectedAttempt.number })}`}</p>
       {checkpoint && <article className="chat-message assistant"><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} iconOnly className="message-copy" /></div>
-        <div className="chat-message-text">{checkpoint}</div></article>}
+        <MessageMarkdown text={checkpoint} /></article>}
       {selectedAttempt?.error && selectedAttempt.phase !== 'stopped' && <p className="workflow-error">{workflowError(selectedAttempt.error)}</p>}
       <details className="workflow-execution-detail"><summary>{t('查看步骤要求与执行记录')}<ChevronDown size={14} /></summary>
         {selectedAttempt?.error && selectedAttempt.phase === 'stopped' && <p className="muted">{t('执行记录')}：{workflowError(selectedAttempt.error)}</p>}

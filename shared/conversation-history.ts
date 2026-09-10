@@ -1,5 +1,6 @@
 import type { Bootstrap } from './types.ts';
 import type { Conversation } from './conversations.ts';
+import { workflowAllSteps, workflowPendingMessages } from './workflows.ts';
 import type { NodeQueueEntry } from './node-queue.ts';
 import { t } from './i18n.ts';
 import { directoryDisplayName, type DirectoryAliases } from './directory-aliases.ts';
@@ -19,19 +20,20 @@ export function historyMembers(item: Conversation, data: Pick<Bootstrap, 'tasks'
   if (item.localTask) local.add(item.localTask.id);
   if (item.remote) remote.add(item.remote.id);
   for (const attempt of item.brainTask?.executions || []) remote.add(attempt.executionID);
-  for (const attempt of item.workflow ? [item.workflow.planner, ...item.workflow.steps].flatMap((s) => s.attempts) : [])
+  for (const attempt of item.workflow ? workflowAllSteps(item.workflow).flatMap((s) => s.attempts) : [])
     (attempt.kind === 'local' ? local : remote).add(attempt.executionID);
   for (const record of data.network.remoteTasks) if (remote.has(record.id) && record.localTaskID) local.add(record.localTaskID);
   for (const record of data.tasks) if (record.remoteOrigin && remote.has(record.remoteOrigin.remoteTaskID) ||
     item.workflow && record.collaboration?.workflowID === item.workflow.id) local.add(record.id);
   const brain = item.brainTask ? [item.brainTask.id] : item.key.startsWith('brain:') ? [item.key.slice(6)] : [];
   return { local: [...local], remote: [...remote], brain, workflow: item.workflow ? [item.workflow.id] : [],
-    requests: item.workflow ? [`${item.workflow.creatorID}:${item.workflow.requestID}`] : [] };
+    requests: item.workflow ? [...new Set([item.workflow.requestID, ...(item.workflow.messages || []).map((m) => m.requestID)])].map((id) => `${item.workflow!.creatorID}:${id}`) : [] };
 }
 export function historyCanTrash(item: Conversation, data: Pick<Bootstrap, 'tasks' | 'network'>, queue: NodeQueueEntry[] = []): boolean {
   const members = historyMembers(item, data);
+  if (item.workflow && workflowPendingMessages(item.workflow).length) return false;
   if (item.workflow && (!['completed', 'failed', 'stopped'].includes(item.workflow.state) ||
-    [item.workflow.planner, ...item.workflow.steps].some((s) => s.attempts.some((a) => !['completed', 'failed', 'stopped'].includes(a.phase))))) return false;
+    workflowAllSteps(item.workflow).some((s) => s.attempts.some((a) => !['completed', 'failed', 'stopped'].includes(a.phase))))) return false;
   if (item.brainTask && (item.brainTask.deliveryPending || !['completed', 'failed'].includes(item.brainTask.status))) return false;
   if (data.tasks.some((task) => members.local.includes(task.id) && !['open', 'ready', 'accepted', 'failed', 'stopped'].includes(task.state))) return false;
   if (data.network.remoteTasks.some((r) => members.remote.includes(r.id) && (r.controlPending || r.deliveryPending ||

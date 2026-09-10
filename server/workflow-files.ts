@@ -4,7 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { setImmediate as yieldLoop } from 'node:timers/promises';
 import { taskFileChunkBytes, taskFileMime, validTaskFileDescriptor, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
-import { validWorkflowOutputPath } from '../shared/workflows.ts';
+import { validWorkflowOutputPath, type Workflow } from '../shared/workflows.ts';
 import type { Task } from '../shared/types.ts';
 import { discoverablePath } from './resource-catalog.ts';
 import type { TaskFileStore } from './task-files.ts';
@@ -16,6 +16,22 @@ const stamp = (value: { size: number; mtimeMs: number; ctimeMs: number; ino: num
 function fileID(key: string) {
   const hash = createHash('sha256').update(key).digest('hex');
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-b${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+export function importConversationContext(files: TaskFileStore, value: Workflow): TaskFileDescriptor {
+  const rounds = [...(value.rounds || []), value];
+  const transcript = rounds.map((round, i) => ({ round: i + 1, request: round.description, criteria: round.criteria, state: round.state,
+    clarifications: [round.planner, ...round.steps].flatMap((s) => s.attempts.flatMap((a) => a.clarifications || [])),
+    plan: round.summary, results: round.steps.map((s) => ({ title: s.title, state: s.state, summary: s.checkpoint,
+      files: s.attempts.at(-1)?.outputFiles || [] })), inputs: round.inputFiles.filter((f) => !f.name.startsWith('rivloom-conversation-')) }));
+  const bytes = Buffer.from(JSON.stringify(transcript, null, 2));
+  const descriptor: TaskFileDescriptor = { id: fileID(`conversation:${value.id}:${value.roundRequestID || value.requestID}`),
+    name: `rivloom-conversation-${rounds.length}.json`, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), mime: 'application/octet-stream' };
+  const owner = `workflow-context:${value.id}`;
+  let view = files.beginUpload(owner, descriptor);
+  while (view.receivedBytes < bytes.length) view = files.uploadChunk(owner, descriptor.id, view.receivedBytes,
+    bytes.subarray(view.receivedBytes, view.receivedBytes + taskFileChunkBytes).toString('base64'));
+  if (view.state !== 'complete') throw new Error('workflow_context_failed');
+  return descriptor;
 }
 /** Each remote attempt has its own transfer identities, preserving the store's original-source binding. */
 export async function relayWorkflowInputs(files: TaskFileStore, key: string, input: TaskFileDescriptor[],

@@ -7,6 +7,7 @@ import { createSocket } from 'node:dgram';
 import { modelFixture, ServiceClient, pairServices, until, type FixtureModelReply } from './m34-fixtures.ts';
 import type { Workflow, WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceReference } from '../shared/resources.ts';
+import { conversations } from '../shared/conversations.ts';
 
 const root = resolve('.data', 'workflow-service', String(Date.now())); mkdirSync(root, { recursive: true });
 const assertions: string[] = []; const pass = (message: string) => { assertions.push(message); console.log('PASS', message); };
@@ -15,6 +16,8 @@ let systemBoundRequests = 0;
 let releaseParallel!: () => void;
 const parallelHeld = new Promise<void>((ok) => { releaseParallel = ok; });
 const parallelRequests = new Map<string, { enteredAt: number; releasedAt?: number }>();
+let releaseContinuation!: () => void; let continuationEntered = false;
+const continuationHeld = new Promise<void>((ok) => { releaseContinuation = ok; });
 const step = (id: string, instructions: string, dependsOn: string[] = [], nodeID: string | null = null): WorkflowStepPlan =>
   ({ id, title: id, instructions, dependsOn, nodeID, resources: [], software: [], requirements: {} });
 function workflowReply(input: any): FixtureModelReply {
@@ -25,6 +28,15 @@ function workflowReply(input: any): FixtureModelReply {
   assert(!systemText.includes('CASE_SIMPLE'), 'Task content must stay outside the system instructions');
   systemBoundRequests++;
   const planner = userText.includes('此会话只允许读取和规划');
+  if (userText.includes('CASE_FOLLOWUP')) {
+    const contextPath = /"(\.rivloom-inputs\/[^"\n]+\/rivloom-conversation-\d+\.json)"/.exec(userText)?.[1];
+    assert(contextPath, 'Follow-up needs a materialized full conversation transcript');
+    const directory = userText.includes(`本次实际执行 Node：${otherNode}`) ? remoteDirectory : outputDirectory;
+    const transcript = JSON.parse(readFileSync(join(directory, contextPath), 'utf8'));
+    assert(transcript.some((r: any) => r.request.includes('CASE_CONTINUITY') || r.request.includes('CASE_OUTPUT')));
+    const read = input.messages.some((m: any) => m.role === 'assistant' && m.tool_calls?.some((call: any) => call.function?.name === 'read'));
+    if (!read) return { toolName: 'read', arguments: { filePath: join(directory, contextPath) } };
+  }
   const outcome: Record<string, unknown> = { kind: 'completed', summary: 'Verified loopback fixture output', files: [] };
   if (planner) {
     if (userText.includes('CASE_FORMAT_CORRECTION') && !userText.includes('上次只读规划未通过 JSON 格式校验'))
@@ -33,7 +45,9 @@ function workflowReply(input: any): FixtureModelReply {
       summary: 'invalid cycle', steps: [step('a', 'a', ['b']), step('b', 'b', ['a'])] } } };
     if (userText.includes('CASE_QUERY') && !userText.includes('queriedAt')) return { toolName: 'StructuredOutput', arguments: {
       kind: 'query', query: { text: 'source.txt', kinds: ['document'], limit: 10 }, reason: 'Locate the task material' } };
-    const steps = userText.includes('CASE_AUTO_PARALLEL') ? [step('script', 'AUTO_SCRIPT'),
+    const steps = userText.includes('CASE_CONTINUITY') ? [step('continue', 'CONTINUITY_FIRST')] :
+      userText.includes('CASE_FOLLOWUP') ? [step('continue', 'CASE_FOLLOWUP')] :
+      userText.includes('CASE_AUTO_PARALLEL') ? [step('script', 'AUTO_SCRIPT'),
       { ...step('video', 'AUTO_PARALLEL_VIDEO', ['script']), resources: [resourceReference!] },
       { ...step('audio', 'AUTO_PARALLEL_AUDIO', ['script']), resources: [resourceReference!] }, step('edit', 'AUTO_JOIN', ['video', 'audio'])] :
       userText.includes('CASE_RETURNED_FILE') ? [step('create', 'REMOTE_WRITE_CHECKPOINT', [], otherNode), step('consume', 'REMOTE_READ_CHECKPOINT', ['create'], otherNode)] :
@@ -71,6 +85,7 @@ function workflowReply(input: any): FixtureModelReply {
 const fixture = await modelFixture(120_000, async (input) => {
   const text = (input.messages || []).filter((m: any) => m.role === 'user').map((m: any) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
   if (text.includes('最后只返回一个符合下列 JSON Schema') && !text.includes('此会话只允许读取和规划')) {
+    if (text.includes('CONTINUITY_FIRST')) { continuationEntered = true; await continuationHeld; }
     const branch = /当前步骤要求：\s*(AUTO_PARALLEL_(?:VIDEO|AUDIO))/.exec(text)?.[1];
     if (branch) {
       const entry = { enteredAt: Date.now(), releasedAt: undefined as number | undefined }; parallelRequests.set(branch, entry);
@@ -118,6 +133,25 @@ try {
     requestID: randomUUID(), title: description, description, projectID: folders[0].id, model: 'fixture/m34', approvalMode: 'ask', target,
   }, 201);
   const completed = (id: string) => until(() => origin.call<Workflow>(`/workflows/${id}`), (value) => ['completed', 'failed'].includes(value.state), `workflow ${id}`, 90_000);
+  const continuity = await create('CASE_CONTINUITY: keep all original constraints', { mode: 'locked', nodeID: ownNode });
+  await until(async () => continuationEntered, Boolean, 'first conversation round executing');
+  const queuedRequest = { requestID: randomUUID(), text: 'CASE_FOLLOWUP: continue in the same conversation', attachmentIDs: [] };
+  const cancelledRequest = { requestID: randomUUID(), text: 'Cancelled message', attachmentIDs: [] };
+  await origin.call(`/workflows/${continuity.id}/messages`, queuedRequest, 201);
+  await origin.call(`/workflows/${continuity.id}/messages`, queuedRequest, 201);
+  await origin.call(`/workflows/${continuity.id}/messages`, cancelledRequest, 201);
+  await origin.call(`/workflows/${continuity.id}/messages/control`, { action: 'cancel', requestID: cancelledRequest.requestID });
+  const beforeFollowup = await origin.call<Workflow>(`/workflows/${continuity.id}`);
+  assert.equal(beforeFollowup.messages!.length, 2); assert.equal(beforeFollowup.rounds, undefined); assert.equal(beforeFollowup.state, 'running');
+  releaseContinuation();
+  const followed = await until(() => origin.call<Workflow>(`/workflows/${continuity.id}`), (w) => w.roundRequestID === queuedRequest.requestID && ['completed', 'failed'].includes(w.state), 'queued conversation continuation', 90_000);
+  assert.equal(followed.state, 'completed', JSON.stringify(followed)); assert.equal(followed.rounds!.length, 1);
+  assert.equal(followed.rounds![0].description, continuity.description); assert.equal(followed.target.mode, 'locked');
+  assert(followed.planner.attempts[0].inputFiles.some((f) => f.name === 'rivloom-conversation-1.json'));
+  const continuityHistory = conversations(await origin.bootstrap());
+  assert.equal(continuityHistory.filter((c) => c.workflow?.id === continuity.id).length, 1);
+  assert(!continuityHistory.some((c) => c.localTask?.collaboration?.workflowID === continuity.id));
+  pass('Queued follow-ups do not interrupt the current round; replay, cancellation, full-context reads and stable history work through official sessions');
   const parallel = await completed((await create('CASE_PARALLEL')).id); assert.equal(parallel.state, 'completed', JSON.stringify(parallel));
   assert.equal(parallel.steps.length, 4); assert.equal(parallel.steps[3].dependsOn.length, 2);
   assert(parallel.steps.some((s) => s.attempts[0].nodeID === otherNode));
@@ -192,7 +226,21 @@ try {
   const file = outputDone.steps[0].attempts[0].outputFiles[0]; assert(file);
   assert.equal(file.name, 'result.txt'); assert.equal(file.bytes, Buffer.byteLength('A verified business result from the official execution.\n'));
   pass('Normal tool approval gates an actual write, and the workflow publishes its hash-verified result file');
+  const outputFollowup = { requestID: randomUUID(), text: 'CASE_FOLLOWUP: reuse the previous result file', attachmentIDs: [] };
+  await origin.call(`/workflows/${output.id}/messages`, outputFollowup, 201);
+  const outputContinued = await until(() => origin.call<Workflow>(`/workflows/${output.id}`), (w) => w.roundRequestID === outputFollowup.requestID && ['completed', 'failed'].includes(w.state), 'completed conversation follow-up', 90_000);
+  assert.equal(outputContinued.state, 'completed', JSON.stringify(outputContinued));
+  assert(outputContinued.inputFiles.some((f) => f.id === file.id));
+  assert.equal(outputContinued.rounds![0].steps[0].attempts[0].outputFiles[0].sha256, file.sha256);
+  const draft = JSON.stringify({ version: 1, savedAt: Date.now(), drafts: { new: {
+    requestID: randomUUID(), text: 'Restart-persistent draft', routing: { kind: 'workflow', target: { mode: 'automatic' } },
+  } } });
+  await origin.call('/ui/drafts', { value: draft });
+  pass('Completed conversations accept another round with the original verified result file');
   await origin.stop(); await origin.start({ discovery, logPath: join(root, 'origin-restarted.log') });
+  assert.equal((await origin.bootstrap()).conversationDrafts, draft);
+  const continuityRestored = await origin.call<Workflow>(`/workflows/${continuity.id}`);
+  assert.equal(continuityRestored.roundRequestID, queuedRequest.requestID); assert.equal(continuityRestored.rounds!.length, 1);
   const restored = await origin.call<Workflow>(`/workflows/${handoff.id}`);
   assert.equal(restored.state, 'completed'); assert.equal(restored.steps[0].attempts.length, 2);
   pass('Coordinator restart preserves completed graph and attempt identities without replay');
@@ -218,6 +266,7 @@ try {
 } catch (error) { failure = error instanceof Error ? error.stack || error.message : String(error); console.error(failure); process.exitCode = 1; }
 finally {
   releaseParallel();
+  releaseContinuation();
   await Promise.allSettled(clients.map((client) => client.stop())); await fixture.close();
   writeFileSync(join(root, 'result.json'), JSON.stringify({ status, assertions, failure, root, paidRequests: false }, null, 2));
   console.log(`Workflow service result: ${status}; ${root}`);

@@ -1,5 +1,6 @@
 import type { Bootstrap, BrainTask, RemoteTaskInvite, Task } from './types.ts';
 import type { Workflow } from './workflows.ts';
+import { workflowAllSteps } from './workflows.ts';
 
 export type Conversation = {
   key: string;
@@ -26,7 +27,7 @@ export function conversations(data: Pick<Bootstrap, 'tasks' | 'network' | 'workf
   const bound = new Set(remotes.map((r) => r.localTaskID).filter(Boolean));
   const workflowExecutions = new Set<string>();
   for (const workflow of data.workflows || []) {
-    const attempts = [workflow.planner, ...workflow.steps].flatMap((step) => step.attempts);
+    const attempts = workflowAllSteps(workflow).flatMap((step) => step.attempts);
     for (const attempt of attempts) workflowExecutions.add(attempt.executionID);
     const active = new Set([workflow.planner, ...workflow.steps].filter((step) => step.state === 'running').map((step) => step.attempts.at(-1)?.executionID));
     result.set(`workflow:${workflow.id}`, { key: `workflow:${workflow.id}`, title: workflow.title, description: workflow.description,

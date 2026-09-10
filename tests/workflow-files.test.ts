@@ -5,8 +5,27 @@ import { mkdir, writeFile, symlink } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { TaskFileStore } from '../server/task-files.ts';
-import { importWorkflowOutput, relayWorkflowInputs, WorkflowOutputs } from '../server/workflow-files.ts';
+import { importWorkflowOutput, importConversationContext, relayWorkflowInputs, WorkflowOutputs } from '../server/workflow-files.ts';
+import { WorkflowStore } from '../server/workflows.ts';
 import { DatabaseSync } from 'node:sqlite';
+
+test('conversation context preserves full requests with repeatable verified attachment bytes', () => {
+  const root = resolve('.data', 'unit-conversation-context', randomUUID());
+  let files = new TaskFileStore(root); const db = new DatabaseSync(':memory:');
+  try {
+    const value = new WorkflowStore(db).create({ requestID: randomUUID(), creatorID: 'owner', title: 'Conversation',
+      description: '要求'.repeat(5998) + 'END', projectID: null, model: null, target: { mode: 'automatic' }, approvalMode: 'ask', inputFiles: [] });
+    const first = importConversationContext(files, value);
+    assert.equal(files.view(first.id).state, 'complete');
+    const transcript = JSON.parse(files.content(first.id).toString());
+    assert.equal(transcript[0].request, value.description); assert(transcript[0].request.endsWith('END'));
+    files.close(); files = new TaskFileStore(root);
+    assert.deepEqual(importConversationContext(files, value), first);
+    assert.equal(files.content(first.id).length, first.bytes);
+    value.roundRequestID = randomUUID();
+    assert.notEqual(importConversationContext(files, value).id, first.id);
+  } finally { files.close(); db.close(); }
+});
 
 test('existing workflow output records recover the exact original filename across restarts', async () => {
   const root = resolve('.data', 'unit-workflow-location', randomUUID()); const project = join(root, 'project');

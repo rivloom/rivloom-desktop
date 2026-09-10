@@ -2,6 +2,9 @@ import { t, systemText } from './i18n.ts';
 export function workflowError(value: string | null | undefined) {
   if (!value) return '';
   const messages: Record<string, string> = {
+    workflow_message_queue_full: t('最多同时排队 50 条消息，请等待部分消息完成。'),
+    workflow_message_started: t('这条消息已经开始执行，无法从队列移除。'),
+    workflow_context_failed: t('此前会话记录暂时无法准备，请重试继续消息队列。'),
     workflow_version_conflict: t('任务流程已有更新，请关闭编辑窗口后重新打开，核对最新步骤再保存。'),
     workflow_step_started: t('此步骤已经开始，不能覆盖执行要求。请查看最新执行记录。'),
     workflow_confirmation_stale: t('队列确认目标已变化，请查看当前提示后重试。'),

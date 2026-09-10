@@ -26,6 +26,7 @@ export type WorkflowAttempt = {
   createdAt: string; updatedAt: string; summary: string; outcome: ExecutionOutcome | PlanningOutcome | null;
   inputFiles: TaskFileDescriptor[]; outputFiles: TaskFileDescriptor[]; error: string | null;
   context: WorkflowExecutionContext; handled: boolean;
+  clarifications?: { requestID: string; questions: string[]; answers: string[][] }[];
   localConfig?: { projectID: string; model: string };
 };
 export type WorkflowStep = WorkflowStepPlan & {
@@ -39,6 +40,14 @@ export type WorkflowHandoff = {
   id: string; stepID: string; fromAttempt: number; toAttempt: number; fromNodeID: string; toNodeID: string;
   reason: string; phase: 'preparing' | 'waiting_stop' | 'transferring' | 'queued' | 'completed' | 'blocked'; at: string;
 };
+export type WorkflowMessage = {
+  requestID: string; text: string; inputFiles: TaskFileDescriptor[]; createdAt: string;
+  state: 'queued' | 'cancelled';
+};
+export type WorkflowRound = Pick<Workflow, 'description' | 'criteria' | 'state' | 'planVersion' | 'summary' | 'planner' |
+  'steps' | 'events' | 'handoffs' | 'inputFiles' | 'confirmations' | 'pendingConfirmation' | 'updatedAt' | 'error'> & {
+  requestID: string; createdAt: string;
+};
 export type Workflow = {
   id: string; requestID: string; contentDigest: string; creatorID: string; title: string; description: string; criteria: string;
   projectID: string | null; model: string | null; approvalMode: ApprovalMode; target: WorkflowTarget;
@@ -48,7 +57,16 @@ export type Workflow = {
   confirmations: { nodeID: string; confirmedAt: string }[];
   pendingConfirmation: { nodeID: string; stepID: string; waitingCount: number } | null;
   createdAt: string; updatedAt: string; error: string | null;
+  rounds?: WorkflowRound[]; messages?: WorkflowMessage[]; roundRequestID?: string; roundCreatedAt?: string;
+  queuePaused?: boolean; queueError?: string; conversationContextFile?: TaskFileDescriptor;
 };
+export function workflowAllSteps(value: Workflow): WorkflowStep[] {
+  return [...(value.rounds || []).flatMap((round) => [round.planner, ...round.steps]), value.planner, ...value.steps];
+}
+export function workflowPendingMessages(value: Pick<Workflow, 'messages' | 'roundRequestID' | 'rounds'>): WorkflowMessage[] {
+  const started = new Set([value.roundRequestID, ...(value.rounds || []).map((r) => r.requestID)]);
+  return (value.messages || []).filter((m) => m.state === 'queued' && !started.has(m.requestID));
+}
 export function validWorkflowTarget(value: unknown): value is WorkflowTarget {
   return record(value) && (value.mode === 'automatic' ? keys(value, ['mode']) :
     ['preferred', 'locked'].includes(String(value.mode)) && keys(value, ['mode', 'nodeID']) && nodeID(value.nodeID));

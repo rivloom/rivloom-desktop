@@ -58,6 +58,97 @@ function setup() {
 }
 const complete = (summary = 'done'): ExecutionOutcome => ({ kind: 'completed', summary, files: [] });
 
+test('conversation messages queue through questions and restart, preserve rounds and never interrupt current work', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'First plan', steps: [step('work')] });
+    const second = randomUUID(), third = randomUUID();
+    f.service.enqueue(id, second, 'Change the color to green', []);
+    f.service.enqueue(id, third, 'Then export the result', []);
+    f.service.enqueue(id, second, 'Change the color to green', []);
+    assert.equal(f.store.get(id)!.messages!.length, 2);
+    assert.throws(() => f.service.enqueue(id, second, 'Changed duplicate', []), /conflict/);
+    f.executions.get(f.starts[1].executionID)!.phase = 'waiting';
+    await f.service.tick(); assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.rounds, undefined);
+    f.service.recordAnswers(f.starts[1].executionID, 'question-1', ['Which format?'], [['SVG']]);
+    f.restart(); await f.service.tick(); assert.equal(f.starts.length, 2);
+    f.finish(f.starts[1], complete('Original result')); await f.service.advance(id); await f.service.tick();
+    let value = f.store.get(id)!;
+    assert.equal(value.id, id); assert.equal(value.requestID, f.request.requestID);
+    assert.equal(value.roundRequestID, second); assert.equal(value.description, 'Change the color to green');
+    assert.equal(value.projectID, f.request.projectID); assert.equal(value.model, f.request.model);
+    assert.equal(value.rounds![0].description, f.request.description);
+    assert.equal(value.rounds![0].steps[0].checkpoint, 'Original result');
+    assert.deepEqual(value.rounds![0].steps[0].attempts[0].clarifications![0].answers, [['SVG']]);
+    assert.equal(f.starts.length, 2, 'next round is durable before any dispatch');
+    f.service.enqueue(id, second, 'Change the color to green', []); f.restart(); await f.service.tick();
+    assert.equal(f.starts.length, 3); assert.notEqual(f.starts[2].executionID, f.starts[0].executionID);
+    assert.throws(() => f.service.messageControl(id, 'cancel', second), /started/);
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'Update', steps: [step('edit')] } }); await f.service.advance(id);
+    f.finish(f.starts[3], complete('Green result')); await f.service.advance(id); await f.service.tick();
+    value = f.store.get(id)!; assert.equal(value.rounds!.length, 2); assert.equal(value.roundRequestID, third);
+    assert.equal(value.rounds![1].steps[0].checkpoint, 'Green result');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('message cancellation, stop and failures hold the queue until explicitly resumed', async () => {
+  for (const action of ['stop', 'failure', 'planner_failure'] as const) {
+    const f = setup();
+    try {
+      const id = action === 'planner_failure' ? f.create().id : await f.planned({ summary: 'Plan', steps: [step('work')] });
+      if (action === 'planner_failure') await f.service.advance(id);
+      const cancelled = randomUUID(), next = randomUUID();
+      f.service.enqueue(id, cancelled, 'Do not run this', []); f.service.enqueue(id, next, 'Continue from saved work', []);
+      f.service.messageControl(id, 'cancel', cancelled); f.service.enqueue(id, cancelled, 'Do not run this', []);
+      if (action === 'stop') f.service.control(id, 'stop');
+      else f.executions.set(f.starts.at(-1)!.executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: true, error: 'execution_failed' });
+      await f.service.advance(id); f.restart(); await f.service.tick();
+      assert.equal(f.store.get(id)!.queuePaused, true, action); assert.equal(f.store.get(id)!.rounds, undefined);
+      f.service.messageControl(id, 'resume'); await f.service.tick();
+      assert.equal(f.store.get(id)!.roundRequestID, next, action);
+      assert.equal(f.store.get(id)!.messages![0].state, 'cancelled');
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('round admission rechecks cancellation during context preparation and archives only quiescent executions', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    const next = randomUUID(); f.service.enqueue(id, next, 'Follow up', []);
+    f.executions.get(f.starts[1].executionID)!.phase = 'unknown'; await f.service.advance(id); await f.service.tick();
+    assert.equal(f.store.get(id)!.rounds, undefined);
+    f.finish(f.starts[1], complete(), true); await f.service.advance(id);
+    const descriptor = { id: randomUUID(), name: 'history.json', bytes: 2, sha256: 'a'.repeat(64), mime: 'application/octet-stream' };
+    f.adapter.conversationContext = async () => { f.service.messageControl(id, 'cancel', next); return descriptor; };
+    await f.service.tick(); assert.equal(f.store.get(id)!.rounds, undefined);
+    const later = randomUUID(); f.service.enqueue(id, later, 'New follow up', []);
+    f.adapter.conversationContext = async () => descriptor;
+    await f.service.tick(); assert.equal(f.store.get(id)!.roundRequestID, later);
+    await f.service.tick(); assert(f.starts.at(-1)!.context.priorContext.includes('history.json'));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('round input files preserve original material, newest results and explicitly report quota errors', async () => {
+  const f = setup();
+  try {
+    const file = (name: string) => ({ id: randomUUID(), name, bytes: 4, sha256: 'a'.repeat(64), mime: 'application/octet-stream' });
+    const old = file('result.txt'), original = file('original.txt'), updated = file('result.txt'), newInput = file('new.txt');
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] }, { inputFiles: [old, original] });
+    f.service.enqueue(id, randomUUID(), 'Use the latest files', [newInput]);
+    f.finish(f.starts[1], complete()); f.executions.get(f.starts[1].executionID)!.outputFiles = [updated];
+    await f.service.advance(id); await f.service.tick();
+    assert.deepEqual(f.store.get(id)!.inputFiles.map((v) => v.id), [updated.id, original.id, newInput.id]);
+    f.store.update(id, (w) => { w.state = 'completed'; w.planner.attempts = []; w.inputFiles = Array.from({ length: 10 }, (_, i) => file(`material-${i}.txt`)); });
+    const next = randomUUID(); f.service.enqueue(id, next, 'Keep every original file', []);
+    f.adapter.conversationContext = async () => file('history.json');
+    await f.service.tick();
+    assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.queueError, 'workflow_input_quota');
+    assert.notEqual(f.store.get(id)!.roundRequestID, next); assert.equal(f.store.get(id)!.inputFiles.length, 10);
+    f.restart(); await f.service.tick(); assert.equal(f.store.get(id)!.queuePaused, true);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
 const readyPlan = (f: ReturnType<typeof setup>, steps: WorkflowStepPlan[], target: WorkflowRequest['target'] = { mode: 'automatic' }) => {
   const value = f.create({ requestID: randomUUID(), target });
   f.store.update(value.id, (w) => { w.state = 'running'; w.planVersion = 1; w.summary = 'Automatic placement'; w.steps = steps.map(workflowStep); });

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { jsonBytes } from '../shared/collaboration.ts';
-import { taskFileBatchBytes, taskFileMaximumCount, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
-import { canRetryWorkflowPlanning, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError,
+import { jsonBytes, uuid } from '../shared/collaboration.ts';
+import { taskFileBatchBytes, taskFileMaximumCount, taskFileUploadCount, validTaskFileManifest, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
+import { canRetryWorkflowPlanning, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError, workflowPendingMessages, workflowAllSteps,
   type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
@@ -23,6 +23,7 @@ export interface WorkflowExecutionAdapter {
   query(workflow: Workflow, query: ResourceQuery): Promise<unknown>;
   materialize(workflow: Workflow, references: ResourceReference[]): Promise<TaskFileDescriptor[]>;
   stageInputs(workflow: Workflow, key: string, files: TaskFileDescriptor[], mayRead: () => boolean): Promise<TaskFileDescriptor[]>;
+  conversationContext?(workflow: Workflow): Promise<TaskFileDescriptor>;
 }
 const terminalAttempt = (attempt: WorkflowAttempt) => ['completed', 'failed', 'stopped'].includes(attempt.phase);
 const terminalStep = (step: WorkflowStep) => ['completed', 'failed', 'cancelled', 'blocked'].includes(step.state);
@@ -65,7 +66,10 @@ export class WorkflowService {
     for (const value of store.list()) this.trackAssignments(value);
   }
   private update(id: string, change: (workflow: Workflow) => void, version?: number) {
-    const result = this.store.update(id, change, version); this.trackAssignments(result); this.onChange(); return result;
+    const result = this.store.update(id, (value) => {
+      const before = value.state; change(value);
+      if (value.state !== before && ['failed', 'stopped'].includes(value.state)) value.queuePaused = true;
+    }, version); this.trackAssignments(result); this.onChange(); return result;
   }
   /** Durable intents remain load until their execution is known to have ended, including after restart. */
   private trackAssignments(value: Workflow) {
@@ -94,6 +98,39 @@ export class WorkflowService {
     })).sort((a, b) => a.waitingCount - b.waitingCount || Number(b.nodeID === preferred) - Number(a.nodeID === preferred))[0];
   }
   create(request: WorkflowRequest) { const value = this.store.create(request); this.onChange(); return value; }
+  recordAnswers(executionID: string, requestID: string, questions: string[], answers: string[][]) {
+    const value = this.store.list().find((w) => workflowAllSteps(w).some((s) => s.attempts.some((a) => a.executionID === executionID)));
+    if (!value || !questions.length || questions.length !== answers.length) return;
+    this.update(value.id, (latest) => {
+      const attempt = workflowAllSteps(latest).flatMap((s) => s.attempts).find((a) => a.executionID === executionID)!;
+      attempt.clarifications = [...(attempt.clarifications || []).filter((v) => v.requestID !== requestID), { requestID, questions, answers }];
+    });
+  }
+  enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[]) {
+    if (!uuid(requestID) || !text.trim() || text.length > 12_000 || !validTaskFileManifest(inputFiles) || inputFiles.length > taskFileUploadCount)
+      throw new Error('invalid_workflow_request');
+    return this.update(id, (value) => {
+      const previous = value.messages?.find((m) => m.requestID === requestID);
+      const round = value.rounds?.find((r) => r.requestID === requestID);
+      if (previous) {
+        if (previous.text !== text || JSON.stringify(previous.inputFiles) !== JSON.stringify(inputFiles)) throw new Error('workflow_request_conflict');
+        return;
+      }
+      if (round || value.requestID === requestID || value.roundRequestID === requestID) throw new Error('workflow_request_conflict');
+      if (workflowPendingMessages(value).length >= 50) throw new Error('workflow_message_queue_full');
+      (value.messages ||= []).push({ requestID, text, inputFiles: structuredClone(inputFiles), createdAt: new Date().toISOString(), state: 'queued' });
+      if (['failed', 'stopped', 'stopping'].includes(value.state)) value.queuePaused = true;
+    });
+  }
+  messageControl(id: string, action: 'cancel' | 'resume' | 'pause', requestID?: string) {
+    return this.update(id, (value) => {
+      if (action === 'cancel') {
+        const message = value.messages?.find((m) => m.requestID === requestID);
+        if (!message || message.requestID === value.roundRequestID || value.rounds?.some((r) => r.requestID === requestID)) throw new Error('workflow_message_started');
+        message.state = 'cancelled';
+      } else { value.queuePaused = action === 'pause'; value.queueError = undefined; }
+    });
+  }
   control(id: string, action: 'pause' | 'resume' | 'stop' | 'retry_planning') {
     return this.update(id, (value) => {
       if (action === 'retry_planning') {
@@ -106,7 +143,7 @@ export class WorkflowService {
       if (terminalWorkflow(value)) throw new Error('workflow_already_finished');
       if (action === 'pause' && ['planning', 'running'].includes(value.state)) value.state = 'paused';
       else if (action === 'resume' && value.state === 'paused') value.state = value.planVersion ? 'running' : 'planning';
-      else if (action === 'stop') { value.state = 'stopping'; value.pendingConfirmation = null; }
+      else if (action === 'stop') { value.state = 'stopping'; value.pendingConfirmation = null; value.queuePaused = true; }
       else throw new Error('workflow_invalid_control');
       workflowEvent(value, 'state', value.state);
     });
@@ -140,7 +177,7 @@ export class WorkflowService {
     this.advancing.set(id, pending); return pending;
   }
   async tick() {
-    const ids = this.store.list().filter((w) => !terminalWorkflow(w)).map((w) => w.id);
+    const ids = this.store.list().filter((w) => !terminalWorkflow(w) || this.nextMessage(w)).map((w) => w.id);
     for (let start = 0; start < ids.length && !this.closed; start += 4)
       await Promise.allSettled(ids.slice(start, start + 4).map((id) => this.advance(id)));
   }
@@ -153,7 +190,8 @@ export class WorkflowService {
   }
   private async advanceOne(id: string) {
     let value = this.store.get(id);
-    if (!value || terminalWorkflow(value) || this.closed) return;
+    if (!value || this.closed) return;
+    if (terminalWorkflow(value)) { await this.advanceRound(value); return; }
     this.trackAssignments(value);
     if (value.state === 'stopping') { await this.stopAll(value); return; }
     const steps = value.planVersion ? value.steps : [value.planner];
@@ -166,6 +204,36 @@ export class WorkflowService {
     if (!['planning', 'running'].includes(value.state)) return;
     await Promise.all((value.planVersion ? value.steps : [value.planner]).filter((step) => step.state === 'ready')
       .map((step) => this.prepare(value!, step)));
+  }
+  private nextMessage(value: Workflow) {
+    if (value.queuePaused || value.queueError) return undefined;
+    return workflowPendingMessages(value)[0];
+  }
+  private async advanceRound(value: Workflow) {
+    const message = this.nextMessage(value);
+    if (!message || [value.planner, ...value.steps].some((s) => s.attempts.some((a) => !terminalAttempt(a) || !a.handled))) return;
+    try {
+      // Preparation is repeatable; the atomic archive/reset below is the only admission point.
+      const context = await this.adapter.conversationContext?.(value);
+      const inherited = new Map<string, TaskFileDescriptor>();
+      for (const file of [...value.inputFiles.filter((f) => f.id !== value.conversationContextFile?.id),
+        ...value.steps.flatMap((s) => s.attempts.at(-1)?.outputFiles || []), ...message.inputFiles]) inherited.set(file.name, file);
+      const inputFiles = mergeFiles([...inherited.values()], context ? [context] : []);
+      this.update(value.id, (latest) => {
+        if (!terminalWorkflow(latest) || this.nextMessage(latest)?.requestID !== message.requestID || this.closed) return;
+        const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error } = latest;
+        (latest.rounds ||= []).push({ description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error,
+          inputFiles: latest.inputFiles, requestID: latest.roundRequestID || latest.requestID, createdAt: latest.roundCreatedAt || latest.createdAt });
+        latest.roundRequestID = message.requestID; latest.roundCreatedAt = message.createdAt;
+        latest.description = message.text; latest.inputFiles = inputFiles; latest.conversationContextFile = context;
+        latest.state = 'planning'; latest.planVersion = 0; latest.summary = ''; latest.steps = []; latest.events = []; latest.handoffs = [];
+        latest.confirmations = []; latest.pendingConfirmation = null; latest.error = null; latest.queueError = undefined;
+        latest.planner = workflowStep({ id: 'planner', title: latest.title, instructions: message.text + (latest.criteria ? `\n\n完成要求：\n${latest.criteria}` : ''),
+          dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} });
+      });
+    } catch (error) {
+      this.update(value.id, (latest) => { latest.queuePaused = true; latest.queueError = error instanceof Error ? error.message : 'workflow_context_failed'; });
+    }
   }
   private async stopAll(value: Workflow) {
     await Promise.all([value.planner, ...value.steps].map(async (step) => {
@@ -206,6 +274,7 @@ export class WorkflowService {
     }
     if (stateBefore !== JSON.stringify([value.state, value.steps.map((s) => s.state)])) this.update(id, (latest) => {
       latest.steps.forEach((step, i) => { step.state = value.steps[i].state; }); latest.state = value.state; latest.error = value.error;
+      if (latest.state === 'failed') latest.queuePaused = true;
       if (terminalWorkflow(latest)) workflowEvent(latest, 'state', latest.state);
     }, value.version);
   }
@@ -237,14 +306,15 @@ export class WorkflowService {
       const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
       const originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
       const inputFiles = candidate.kind === 'remote' && originalFiles.length
-        ? await this.adapter.stageInputs(value, `${step.id}:${step.attempts.length + 1}:${candidate.nodeID}`, originalFiles, () => this.mayStart(value.id, step.id))
+        ? await this.adapter.stageInputs(value, `${value.roundRequestID || value.requestID}:${step.id}:${step.attempts.length + 1}:${candidate.nodeID}`, originalFiles, () => this.mayStart(value.id, step.id))
         : originalFiles;
       if (!this.mayStart(value.id, step.id) || JSON.stringify(planFields(getStep(this.store.get(value.id)!, step.id)!)) !== JSON.stringify(planFields(step))) return;
       if (!this.candidates(this.store.get(value.id)!, step).some((c) => c.nodeID === candidate.nodeID)) return;
       const evidence = boundedText([this.adapter.evidence(value), step.evidence].filter(Boolean).join('\n\n'), 12_000, 18_000);
       const correction = role === 'planner' && step.validationRounds
         ? `上次只读规划未通过 JSON 格式校验。这是第 ${step.validationRounds}/2 次格式纠正；尚未执行业务步骤。重新按原需求返回一个且仅一个完整 JSON 对象。检查资源引用与文件/软件区别；无输入文件用 resources:[]；缺少事实只返回 query，已有事实只返回 plan。` : '';
-      const location = `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
+      const location = (value.conversationContextFile ? `这是同一会话的后续请求。先读取输入文件 ${value.conversationContextFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。\n` : '') +
+        `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
         (continuation?.handoff ? '本次接收上一个 Node 的转交；从下方已保存检查点继续，不重复源端已完成的操作，不再次转交给自己。' : '');
       const originalRequest = role === 'executor' ? `用户完整需求（本步骤及后续转交都必须遵守其中适用的约束；只执行当前步骤）：\n${value.planner.instructions}` : '';
       if (location.length + originalRequest.length + 4 > 16_000) throw new Error('workflow_context_limit');

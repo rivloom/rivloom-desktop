@@ -1,6 +1,7 @@
 // Isolated UI verification. Never opens installed Rivloom data or uses real model credentials.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { spawn, execFileSync } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -9,6 +10,10 @@ import { createInterface } from 'node:readline';
 import { modelFixture, ServiceClient, pairServices, until } from './m34-fixtures.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import { conversations, localQueue } from '../src/conversations.ts';
+import { WorkflowStore, workflowStep } from '../server/workflows.ts';
+import type { WorkflowRound } from '../shared/workflows.ts';
+import type { Task } from '../shared/types.ts';
+import { taskFileChunkBytes } from '../shared/task-files.ts';
 
 const root = resolve('.data', `ui-conversation-${randomUUID()}`);
 mkdirSync(root, { recursive: true });
@@ -99,6 +104,47 @@ const check = (name: string, evidence: unknown) => {
 };
 let projectID = '';
 let peerProjectID = '';
+async function continuityPreview() {
+  const boot = await local.bootstrap(), actor = boot.user.id;
+  const bytes = readFileSync(resolve('src/assets/brand/rivloom-wordmark.png'));
+  const image = { id: randomUUID(), name: 'preview-image.png', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), mime: 'image/png' };
+  await local.call('/task-files/uploads', image, 201);
+  for (let offset = 0; offset < bytes.length; offset += taskFileChunkBytes) await local.call(`/task-files/uploads/${image.id}/chunk`,
+    { offset, data: bytes.subarray(offset, offset + taskFileChunkBytes).toString('base64') });
+  const records: Task[] = [];
+  for (let i = 0; i < 2; i++) records.push(await local.call('/tasks', { requestID: randomUUID(), runRequested: false, projectID,
+    title: `UI fixture round ${i + 1}`, description: 'Synthetic presentation fixture; no execution.', criteria: 'Visual inspection only',
+    assigneeID: actor, approverID: actor, reviewerID: actor, model: 'fixture/m34', approvalMode: 'ask' }, 201));
+  await local.stop();
+  const db = new DatabaseSync(join(local.root, 'rivloom.sqlite'));
+  let workflowID = '';
+  try {
+    const store = new WorkflowStore(db), at = new Date().toISOString();
+    const value = store.create({ requestID: randomUUID(), creatorID: actor, title: '连续对话与 Markdown 验证', description: '请根据附件整理执行结果，并保留后续修改的上下文。',
+      projectID, model: 'fixture/m34', approvalMode: 'ask', target: { mode: 'automatic' }, inputFiles: [image] });
+    workflowID = value.id;
+    store.update(value.id, (w) => {
+      const result = (index: number, summary: string) => {
+        const step = workflowStep({ id: 'result', title: '整理结果', instructions: 'Present the fixture result', dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} });
+        step.state = 'completed'; step.checkpoint = summary;
+        step.attempts = [{ number: 1, executionID: records[index].id, nodeID: boot.network.local!.id, kind: 'local', phase: 'completed', createdAt: at, updatedAt: at,
+          summary, outcome: { kind: 'completed', summary, files: [] }, inputFiles: [], outputFiles: [], error: null,
+          context: { workflowID: w.id, stepID: 'result', attempt: 1, role: 'executor', target: w.target, instructions: step.instructions, evidence: '', priorContext: '' }, handled: true }];
+        return step;
+      };
+      w.state = 'completed'; w.planVersion = 1; w.summary = '整理完成'; w.planner.state = 'completed'; w.steps = [result(0, '附件已整理。**第一轮结果**会保留在这条会话中。')];
+      const round = { ...structuredClone(w), requestID: w.requestID } as WorkflowRound;
+      w.rounds = [round]; w.roundRequestID = randomUUID(); w.description = '继续补充对照表和示例代码。';
+      w.steps = [result(1, '## 更新完成\n\n保留原来的工作目录，追加了**对照表**与代码示例。\n\n| 功能 | 状态 |\n| --- | --- |\n| 消息排队 | 已完成 |\n| 草稿保存 | 已完成 |\n| 附件预览 | 已完成 |\n\n```typescript\nconst queue = ["继续修改", "导出结果"];\nfor (const request of queue) {\n  await run(request);\n}\n```\n\n- 支持 **粗体**、列表和链接\n- [项目文档](https://example.com/docs)\n\n> 后续要求可以直接发在下方。')];
+      w.messages = [{ requestID: w.roundRequestID, text: w.description, inputFiles: [], state: 'queued', createdAt: at },
+        { requestID: randomUUID(), text: '下一轮请改为深色背景，并保留这份附件作为参考。', inputFiles: [image], state: 'queued', createdAt: at }];
+      w.queuePaused = true;
+      for (const record of records) db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify({ ...record, state: 'accepted' }), record.id);
+    });
+  } finally { db.close(); }
+  await local.start({ discovery }); check('continuity UI fixture', { workflowID, synthetic: true, image });
+  console.log(JSON.stringify({ continuity: true, url: local.base, workflowID }));
+}
 async function status() {
   const data = await local.bootstrap();
   const evidence = {
@@ -155,7 +201,8 @@ try {
   const lines = createInterface({ input: process.stdin });
   for await (const line of lines) {
     try {
-      if (line.trim() === 'connect') {
+      if (line.trim() === 'continuity') { await continuityPreview(); }
+      else if (line.trim() === 'connect') {
         await peer.start({ discovery });
         const peerFolder = join(root, 'peer-work');
         mkdirSync(peerFolder, { recursive: true });

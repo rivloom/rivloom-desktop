@@ -2,11 +2,12 @@ import type { DesktopUpdateBlockers } from '../shared/desktop-update.ts';
 import type { Task, RemoteTaskInvite, BrainTask } from '../shared/types.ts';
 import type { NodeQueueEntry } from '../shared/node-queue.ts';
 import type { Workflow } from '../shared/workflows.ts';
+import { workflowPendingMessages } from '../shared/workflows.ts';
 
 export type UpdateReadiness = {
   tasks: readonly Pick<Task, 'state'>[];
   queues: readonly Pick<NodeQueueEntry, 'state'>[];
-  workflows: readonly Pick<Workflow, 'state'>[];
+  workflows: readonly Pick<Workflow, 'state' | 'messages' | 'rounds' | 'roundRequestID' | 'queuePaused'>[];
   remoteTasks: readonly Pick<RemoteTaskInvite, 'status' | 'executionState' | 'controlPending' | 'deliveryPending'>[];
   brainTasks: readonly Pick<BrainTask, 'status' | 'deliveryPending'>[];
   transfers: number;
@@ -19,7 +20,8 @@ export function updateBlockers(input: UpdateReadiness): DesktopUpdateBlockers {
   return {
     tasks: input.tasks.filter((t) => ['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted', 'review'].includes(t.state)).length,
     queues: input.queues.filter((q) => q.state !== 'ended').length,
-    workflows: input.workflows.filter((w) => !['completed', 'failed', 'stopped'].includes(w.state)).length,
+    workflows: input.workflows.filter((w) => !['completed', 'failed', 'stopped'].includes(w.state) ||
+      !w.queuePaused && workflowPendingMessages(w).length).length,
     remoteTasks: input.remoteTasks.filter((r) => r.controlPending || r.deliveryPending || r.status === 'pending' ||
       (r.status === 'accepted' && !['accepted', 'failed', 'stopped'].includes(r.executionState))).length,
     brainTasks: input.brainTasks.filter((b) => b.deliveryPending || !['completed', 'failed'].includes(b.status)).length,

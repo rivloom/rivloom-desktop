@@ -5,6 +5,7 @@ import { Paperclip, Download, RotateCw, X, FileText, Upload, FolderOpen, Copy, M
 import { api } from './api';
 import { desktop, chooseTaskFileDestination, revealTaskFile, openTaskFile } from './desktop';
 import { ContextMenu, useContextMenu } from './context-menu';
+import { FilePreviewButton } from './file-preview';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
 import {
   taskFileBytesLabel,
@@ -22,11 +23,13 @@ export function TaskFilePicker({
   onChange,
   disabled = false,
   label = t('添加附件'),
+  composer = false,
 }: {
   files: DraftTaskFile[];
   onChange: (update: (previous: DraftTaskFile[]) => DraftTaskFile[]) => void;
   disabled?: boolean;
   label?: string;
+  composer?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null),
     running = useRef(new Set<string>());
@@ -61,8 +64,8 @@ export function TaskFilePicker({
       running.current.delete(item.id);
     }
   }
-  function select(selected: FileList | null) {
-    if (!selected) return;
+  function select(selected: FileList | File[] | null) {
+    if (!selected || disabled || running.current.size) return;
     const chosen = [...selected];
     if (
       files.length + chosen.length > taskFileUploadCount ||
@@ -85,6 +88,26 @@ export function TaskFilePicker({
       for (const item of items) await upload(item);
     })();
   }
+  useEffect(() => {
+    const form = composer ? input.current?.closest('form') : null;
+    if (!form) return;
+    const paste = (event: ClipboardEvent) => {
+      const selected = event.clipboardData?.files;
+      if (!selected?.length || disabled) return;
+      event.preventDefault(); select(selected);
+    };
+    const over = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes('Files')) return;
+      event.preventDefault(); if (!disabled) form.classList.add('file-drag-over');
+    };
+    const leave = (event: DragEvent) => { if (!(event.relatedTarget instanceof Node) || !form.contains(event.relatedTarget)) form.classList.remove('file-drag-over'); };
+    const drop = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes('Files')) return;
+      event.preventDefault(); form.classList.remove('file-drag-over'); if (!disabled) select(event.dataTransfer.files);
+    };
+    form.addEventListener('paste', paste); form.addEventListener('dragover', over); form.addEventListener('dragleave', leave); form.addEventListener('drop', drop);
+    return () => { form.removeEventListener('paste', paste); form.removeEventListener('dragover', over); form.removeEventListener('dragleave', leave); form.removeEventListener('drop', drop); form.classList.remove('file-drag-over'); };
+  }, [composer, disabled, files, onChange]);
   async function remove(item: DraftTaskFile) {
     try {
       if (item.descriptor) await api(`/task-files/uploads/${item.id}/discard`, {});
@@ -160,7 +183,8 @@ export function TaskFilePicker({
                   </span>
                 )}
               </span>
-              {item.state === 'failed' && (
+              {item.state === 'complete' && item.descriptor && <FilePreviewButton iconOnly file={item.descriptor} path={`/task-files/uploads/${item.id}`} />}
+              {item.state === 'failed' && item.file.arrayBuffer && (
                 <button
                   type="button"
                   disabled={disabled}
@@ -323,6 +347,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
         <TaskFileRow key={file.id} file={file} ready={!!value?.canSave && file.state === 'complete'} busy={busy}
           action={(kind, file) => void (kind === 'save' ? save(file) : locate(file, kind))}>
           <span className="file-details">
+            {file.state === 'complete' && <FilePreviewButton iconOnly file={file} path={`${path}/${file.id}`} />}
             {value?.canSave && file.state === 'complete' ? (
               desktop ? (
                 <button

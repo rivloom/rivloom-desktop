@@ -42,18 +42,20 @@ export function Modal({
   subtitle,
   children,
   close,
+  className = '',
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   close: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
   }, []);
   return (
-    <dialog ref={ref} className="modal conversation-modal" onCancel={(event) => { event.preventDefault(); close(); }} aria-label={title}>
+    <dialog ref={ref} className={`modal conversation-modal ${className}`} onCancel={(event) => { event.preventDefault(); close(); }} aria-label={title}>
       <div className="modal-heading">
         <div>
           <h2>{title}</h2>

@@ -1,5 +1,6 @@
 import type { BrainTask, TaskState } from '../shared/types.ts';
 import type { Conversation } from './conversations.ts';
+import { workflowPendingMessages } from '../shared/workflows.ts';
 
 export const conversationStatusFilters = [
   'all',
@@ -48,6 +49,7 @@ const brainStatusGroups: Record<BrainTask['status'], ConversationStatusGroup> = 
 /** Classify raw state codes, independently of the displayed language. */
 export function conversationStatusGroup(item: Conversation): ConversationStatusGroup {
   if (item.workflow) {
+    if (workflowPendingMessages(item.workflow).length && ['completed', 'failed', 'stopped'].includes(item.workflow.state)) return item.workflow.queuePaused ? 'attention' : 'active';
     if (item.workflow.state === 'completed') return 'completed';
     if (['stopped', 'failed'].includes(item.workflow.state)) return 'ended';
     return item.workflowAttention ? 'attention' : 'active';

@@ -248,6 +248,7 @@ function App() {
   if (!data) return <Auth onLogin={() => void refresh()} />;
   return (
     <ConversationWorkspace
+      key={`${data.user.id}:${data.network.local?.id || 'local'}`}
       data={data}
       refresh={refresh}
       connected={connected}

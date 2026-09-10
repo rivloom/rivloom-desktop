@@ -1,4 +1,5 @@
 import { t } from './i18n.ts';
+import { workflowAllSteps } from './workflows.ts';
 import type { Bootstrap, RemoteTaskInvite, Task, TaskState, User } from './types.ts';
 
 export type AttentionKind =
@@ -114,7 +115,7 @@ export function collectAttention(data: Bootstrap): {
     }
   >();
   const remotes = data.network.remoteTasks;
-  const workflowExecutions = new Set((data.workflows || []).flatMap((workflow) => [workflow.planner, ...workflow.steps]
+  const workflowExecutions = new Set((data.workflows || []).flatMap((workflow) => workflowAllSteps(workflow)
     .flatMap((step) => step.attempts.map((attempt) => attempt.executionID))));
   const linked = new Set(remotes.map((r) => r.localTaskID).filter(Boolean));
   for (const brain of data.network.brainTasks) {
@@ -158,7 +159,7 @@ export function collectAttention(data: Bootstrap): {
     const kind: AttentionKind | null = workflow.state === 'completed' ? 'completed' : workflow.state === 'failed' ? 'failed' :
       workflow.pendingConfirmation ? 'approval' : requests.some((r) => r.kind === 'approval') ? 'approval' :
         requests.length ? 'input' : active.some((a) => a.phase === 'unknown') ? 'interrupted' : null;
-    const fingerprint = JSON.stringify([workflow.state, kind, workflow.pendingConfirmation?.nodeID,
+    const fingerprint = JSON.stringify([workflow.roundRequestID || workflow.requestID, workflow.state, kind, workflow.pendingConfirmation?.nodeID,
       workflow.pendingConfirmation?.stepID, ...requests.map((r) => r.id).sort(), ...active.map((a) => a.executionID)]);
     observations.push({ conversationKey, fingerprint });
     if (kind) events.push({ key: `${conversationKey}:${kind}`, conversationKey, kind, title: workflow.title,

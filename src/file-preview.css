@@ -1,0 +1,9 @@
+.file-preview-button { display: inline-flex; gap: 6px; align-items: center; max-width: 100%; padding: 4px 6px; border: 0; border-radius: 5px; color: #55708e; background: transparent; font: inherit; font-size: 12px; overflow-wrap: anywhere; cursor: pointer; }
+.file-preview-button:hover { background: #e9eef5; }
+.file-preview-button:focus-visible { outline: 2px solid #7297bf; outline-offset: 2px; }
+.modal.file-preview-modal { width: min(950px, calc(100vw - 32px)); max-width: min(950px, calc(100vw - 32px)); }
+.file-preview-content { width: 100%; min-width: 0; max-height: 72vh; overflow: auto; }
+.file-preview-content img, .file-preview-content video { display: block; max-width: 100%; max-height: 65vh; margin: auto; object-fit: contain; }
+.file-preview-content audio { width: 100%; min-width: 250px; }
+.file-preview-content pre { margin: 0; padding: 14px; background: #f5f6f8; border-radius: 7px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 12px/1.7 Consolas, monospace; }
+.conversation-composer.file-drag-over { outline: 2px solid #7e9fc4; background: #f0f5fa; }

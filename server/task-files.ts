@@ -521,6 +521,19 @@ export class TaskFileStore {
       closeSync(fd);
     }
   }
+  previewBytes(id: string, offset: number, length: number) {
+    const value = this.record(id);
+    check(value?.state === 'complete', 409, '文件尚未校验完成。');
+    check(Number.isSafeInteger(offset) && Number.isSafeInteger(length) && offset >= 0 && length >= 0 &&
+      length <= 20 * 1024 * 1024 && offset + length <= value.bytes, 400, '读取范围无效。');
+    const fd = openSync(this.ensureBlob(value), 'r');
+    try {
+      check(fstatSync(fd).size === value.bytes, 409, '本机文件长度与声明不一致。');
+      const bytes = Buffer.alloc(length);
+      check(readSync(fd, bytes, 0, length, offset) === length, 409, '源文件数据缺失。');
+      return bytes;
+    } finally { closeSync(fd); }
+  }
   content(id: string) {
     const value = this.record(id);
     check(value?.state === 'complete', 409, '文件尚未完整接收。');

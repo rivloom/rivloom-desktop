@@ -11,7 +11,7 @@ import {
 
 export type DraftTaskFile = {
   id: string;
-  file: File;
+  file: Pick<File, 'name' | 'size' | 'type'> & { arrayBuffer?: () => Promise<ArrayBuffer> };
   state: 'preparing' | 'uploading' | 'complete' | 'failed';
   receivedBytes: number;
   error: string | null;
@@ -24,6 +24,7 @@ export async function uploadTaskFile(
   progress: (value: Partial<DraftTaskFile>) => void,
   call: typeof api = api,
 ) {
+  if (!item.file.arrayBuffer) throw new Error(t('请移除此附件后重新选择原文件。'));
   const error = taskFileNameError(item.file.name);
   if (error) throw new Error(error);
   if (item.file.size > taskFileMaximumBytes) throw new Error(t('单个文件最多 200 MiB。'));

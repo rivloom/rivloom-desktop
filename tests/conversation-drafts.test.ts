@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { decodeDrafts, encodeDrafts, draftStorageKey, latestDrafts } from '../src/draft-storage.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { WorkspacePreferences } from '../server/workspace-preferences.ts';
 import {
   createConversationDraft,
   conversationCreationNeedsModel,
@@ -9,6 +13,69 @@ import {
   clearSubmittedDraft,
   createdConversationKey,
 } from '../src/conversation-drafts.ts';
+
+test('saved drafts restore content, routing, options, uploaded metadata and the exact retry identity', () => {
+  const id = randomUUID(), key = `workflow:${randomUUID()}`;
+  const draft = prepareConversationRequest(updateConversationDraft(createConversationDraft(), { text: 'Keep **this** draft',
+    routing: { kind: 'workflow', target: { mode: 'locked', nodeID: 'A'.repeat(32) } }, files: [{ id,
+      file: new File(['hello'], 'notes.txt'), state: 'complete', receivedBytes: 5, error: null,
+      descriptor: { id, name: 'notes.txt', bytes: 5, sha256: 'a'.repeat(64), mime: 'application/octet-stream' } }] }), { model: 'fixture/model' });
+  const settings = { projectID: 'project', model: 'fixture/model', approvalChoice: 'ask' as const, criteria: 'Keep original files' };
+  const recovered = decodeDrafts(encodeDrafts({ drafts: { [key]: draft }, settings }));
+  assert.equal(recovered.drafts[key].text, draft.text); assert.equal(recovered.drafts[key].requestID, draft.requestID);
+  assert.equal(recovered.drafts[key].requestSignature, draft.requestSignature); assert.deepEqual(recovered.drafts[key].routing, draft.routing);
+  assert.deepEqual(recovered.settings, settings); assert.equal(recovered.drafts[key].files![0].file.name, 'notes.txt');
+  assert.equal(recovered.drafts[key].files![0].state, 'complete'); assert.deepEqual(recovered.drafts[key].files![0].descriptor, draft.files![0].descriptor);
+  assert.notEqual(draftStorageKey('one', 'node'), draftStorageKey('two', 'node'));
+  assert.notEqual(draftStorageKey('one', 'node'), draftStorageKey('one', 'another'));
+});
+
+test('incomplete uploads recover as explicit missing-file errors and malformed storage does not break the composer', () => {
+  const draft = updateConversationDraft(createConversationDraft(), { text: 'Pending upload', files: [{ id: randomUUID(),
+    file: new File(['hello'], 'notes.txt'), state: 'uploading', receivedBytes: 3, error: null }] });
+  const recovered = decodeDrafts(encodeDrafts({ drafts: { new: draft } })).drafts.new;
+  assert.equal(recovered.requestID, draft.requestID); assert.equal(recovered.files![0].state, 'failed');
+  assert.match(recovered.files![0].error!, /上传尚未完成/); assert.equal(recovered.files![0].file.arrayBuffer, undefined);
+  for (const input of [null, '{', '{}', '{"version":9,"drafts":{}}']) assert.equal(decodeDrafts(input).drafts.new.text, '');
+});
+
+test('drafts survive service reconstruction and browser origin changes without older requests or other users overwriting them', () => {
+  const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE app_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
+  try {
+    let store = new WorkspacePreferences(db);
+    const older = encodeDrafts({ savedAt: 10, drafts: { new: updateConversationDraft(createConversationDraft(), { text: 'Old text' }) } });
+    const newer = encodeDrafts({ savedAt: 20, drafts: { new: updateConversationDraft(createConversationDraft(), { text: 'Unsaved new text' }) } });
+    store.saveConversationDrafts('owner', { value: newer }); store.saveConversationDrafts('owner', { value: older });
+    store = new WorkspacePreferences(db); assert.equal(store.conversationDrafts('owner'), newer);
+    assert.equal(store.conversationDrafts('another'), null);
+    assert.equal(latestDrafts(null, store.conversationDrafts('owner')).drafts.new.text, 'Unsaved new text');
+    assert.equal(latestDrafts(newer, older).drafts.new.text, 'Unsaved new text');
+    assert.equal(latestDrafts(older, newer).drafts.new.text, 'Unsaved new text');
+    assert.throws(() => store.saveConversationDrafts('owner', { value: '{' }));
+    assert.equal(store.conversationDrafts('owner'), newer);
+  } finally { db.close(); }
+});
+
+test('permanent history deletion clears its drafts for every user and stale clients cannot restore retired content', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const store = new WorkspacePreferences(db), key = `workflow:${randomUUID()}`, otherKey = `workflow:${randomUUID()}`;
+    const draft = updateConversationDraft(createConversationDraft(), { text: 'Remove this private draft' });
+    const value = encodeDrafts({ savedAt: 20, drafts: { [key]: draft, [otherKey]: { ...draft, text: 'Keep this draft' } } });
+    for (const user of ['one', 'two']) store.saveConversationDrafts(user, { value });
+    assert.equal(store.draftsForConversations([key]).length, 2);
+    db.prepare('INSERT INTO conversation_retired VALUES (?,?,?,1)').run('workflow', key.slice(9), key);
+    store.forgetConversations([key]);
+    for (const user of ['one', 'two']) {
+      assert.equal(decodeDrafts(store.conversationDrafts(user)).drafts[key], undefined);
+      assert.equal(decodeDrafts(store.conversationDrafts(user)).drafts[otherKey].text, 'Keep this draft');
+    }
+    const replay = JSON.parse(value); replay.savedAt = Date.now() + 1000;
+    store.saveConversationDrafts('one', { value: JSON.stringify(replay) });
+    assert.equal(decodeDrafts(store.conversationDrafts('one')).drafts[key], undefined);
+    assert.equal(store.draftsForConversations([key]).length, 0);
+  } finally { db.close(); }
+});
 
 test('input usage preserves an oversized draft when switching from local to remote routing', () => {
   const local = updateConversationDraft(createConversationDraft('original'), {

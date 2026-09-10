@@ -1,4 +1,5 @@
 import type { Conversation } from '../shared/conversations.ts';
+import { workflowPendingMessages } from '../shared/workflows.ts';
 export { conversations, type Conversation } from '../shared/conversations.ts';
 import { t } from '../shared/i18n.ts';
 import {
@@ -65,6 +66,8 @@ export function conversationIsRunning(item: Conversation): boolean {
 export function conversationState(item: Conversation): string {
   if (item.workflow) {
     if (item.workflowAttention) return t('等待处理');
+    if (workflowPendingMessages(item.workflow).length && ['completed', 'failed', 'stopped'].includes(item.workflow.state))
+      return item.workflow.queuePaused ? t('消息队列已暂停') : t('消息排队中');
     return { planning: t('分析与规划'), running: t('执行中'), paused: t('已暂停'), stopping: t('正在停止'),
       stopped: t('已停止'), completed: t('已完成'), failed: t('执行失败') }[item.workflow.state];
   }

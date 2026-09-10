@@ -1,0 +1,32 @@
+.message-markdown { line-height: 1.75; overflow-wrap: anywhere; min-width: 0; user-select: text; }
+.message-markdown > :first-child { margin-top: 0; }
+.message-markdown > :last-child { margin-bottom: 0; }
+.message-markdown p, .message-markdown ul, .message-markdown ol { margin: .6em 0; }
+.message-markdown ul, .message-markdown ol { padding-left: 1.5em; }
+.message-markdown h1, .message-markdown h2, .message-markdown h3 { line-height: 1.4; margin: 1.1em 0 .5em; font-size: 1.15em; }
+.message-markdown h1 { font-size: 1.4em; }
+.message-markdown a { color: #356394; text-decoration: underline; text-underline-offset: 3px; }
+.message-markdown blockquote { border-left: 3px solid #bdc6d1; margin: .8em 0; padding-left: 1em; color: #5b6370; }
+.message-markdown code { font-family: Consolas, monospace; font-size: .9em; background: #eef0f3; border-radius: 4px; padding: .1em .3em; }
+.markdown-code { margin: .9em 0; border: 1px solid #dfe3e9; border-radius: 9px; overflow: hidden; background: #f7f8fa; }
+.markdown-code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; border-bottom: 1px solid #e4e7eb; font-size: 12px; color: #687180; user-select: none; }
+.markdown-code pre { margin: 0; padding: 14px; white-space: pre; overflow-x: auto; }
+.markdown-code code { background: transparent; padding: 0; border-radius: 0; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #944275; }
+.hljs-string, .hljs-regexp, .hljs-template-tag { color: #397457; }
+.hljs-number, .hljs-attr, .hljs-symbol { color: #a36528; }
+.hljs-title, .hljs-built_in, .hljs-type { color: #286ea4; }
+.hljs-comment, .hljs-quote { color: #7b8490; font-style: italic; }
+.hljs-addition { color: #287044; background: #e6f4e9; }
+.hljs-deletion { color: #a94343; background: #f9e9e9; }
+.markdown-table { overflow-x: auto; margin: .9em 0; }
+.markdown-table table { border-collapse: collapse; width: 100%; font-size: .95em; }
+.markdown-table th, .markdown-table td { border: 1px solid #dfe3e9; padding: 7px 11px; text-align: left; min-width: 80px; }
+.markdown-table th { background: #f2f4f6; font-weight: 600; }
+.markdown-image-label { color: #717985; font-size: .9em; }
+.workflow-round { margin-bottom: 32px; }
+.workflow-round-divider { display: block; color: #7a8290; font-size: 12px; margin: 22px 0 12px; }
+.workflow-message-queue { margin-top: 24px; padding-top: 15px; border-top: 1px solid #e2e6eb; }
+.workflow-queue-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13px; }
+.workflow-queue-message { margin-bottom: 14px; }
+.workflow-queue-message footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: #747e8c; font-size: 12px; }

@@ -1,4 +1,5 @@
-import type { Express, Request } from 'express';
+import type { Express, Request, Response } from 'express';
+import { filePreviewType, filePreviewTextBytes, previewRange } from '../shared/file-preview.ts';
 import { z } from 'zod';
 import type { Task, User } from '../shared/types.ts';
 import {
@@ -18,12 +19,33 @@ export function installTaskFileAPI(
   localTasks: () => Task[],
   changed: () => void,
   locations: (local: Task, fileID: string) => { root: string; path: string }[] = () => [],
+  protectedFile: (fileID: string) => boolean = () => false,
 ) {
   const files = network.files;
   const check = (condition: unknown, status: number, message: string) => {
     if (!condition) throw new TaskFileError(status, message);
   };
   const ids = z.array(z.string().uuid()).max(taskFileUploadCount);
+  const preview = (req: Request, res: Response, fileID: string) => {
+    const descriptor = files.descriptorFor(fileID), type = filePreviewType(descriptor.name);
+    res.set({ 'Content-Type': type.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store',
+      'Content-Security-Policy': "sandbox; default-src 'none'", 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(descriptor.name)}` });
+    check(type.kind !== 'unsupported', 415, '此格式暂不支持预览，请下载后打开。');
+    if (type.kind === 'text') {
+      const bytes = files.previewBytes(fileID, 0, Math.min(descriptor.bytes, filePreviewTextBytes));
+      res.set('X-Preview-Truncated', descriptor.bytes > bytes.length ? 'true' : 'false'); res.send(bytes); return;
+    }
+    if (type.kind === 'image') {
+      check(descriptor.bytes <= 20 * 1024 * 1024, 413, '图片较大，请下载后打开。');
+      res.send(files.previewBytes(fileID, 0, descriptor.bytes)); return;
+    }
+    const range = previewRange(req.headers.range, descriptor.bytes);
+    res.set('Accept-Ranges', 'bytes');
+    if (!range) { res.status(416).set('Content-Range', `bytes */${descriptor.bytes}`).end(); return; }
+    const { start, end } = range;
+    if (req.headers.range || end + 1 < descriptor.bytes) res.status(206).set('Content-Range', `bytes ${start}-${end}/${descriptor.bytes}`);
+    res.send(files.previewBytes(fileID, start, end - start + 1));
+  };
   const accessible = (req: Request) => {
     const scope = z.enum(['local', 'remote', 'brain']).parse(req.params.scope),
       taskID = z.string().uuid().parse(req.params.taskID);
@@ -108,8 +130,16 @@ export function installTaskFileAPI(
     );
   });
   app.post('/api/task-files/uploads/:fileID/discard', (req, res) => {
-    files.discardUpload(who(req).id, z.string().uuid().parse(req.params.fileID));
+    const id = z.string().uuid().parse(req.params.fileID);
+    if (protectedFile(id)) { files.uploaded(who(req).id, [id]); res.json({ removed: false, retained: true }); return; }
+    files.discardUpload(who(req).id, id);
     res.json({ removed: true });
+  });
+  app.get('/api/task-files/uploads/:fileID/preview', (req, res) => {
+    const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]); preview(req, res, id);
+  });
+  app.get('/api/task-files/uploads/:fileID', (req, res) => {
+    const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]); res.json(files.view(id));
   });
   app.get('/api/task-files/:scope/:taskID', (req, res) => {
     const access = accessible(req),
@@ -167,6 +197,7 @@ export function installTaskFileAPI(
     });
     res.send(files.content(fileID));
   });
+  app.get('/api/task-files/:scope/:taskID/:fileID/preview', (req, res) => preview(req, res, selectedFile(req).fileID));
   app.post('/api/task-files/:scope/:taskID/:fileID/export', (req, res) => {
     const { fileID } = selectedFile(req),
       input = z

@@ -74,6 +74,13 @@ test('updates wait for remote controls, delivery acknowledgements and Brain resu
   assert.equal(canPrepareUpdate(updateBlockers({ ...idle(), brainTasks: [{ status: 'queued', deliveryPending: false }] })), false);
 });
 
+test('updates wait between queued conversation rounds and allow a deliberately paused message queue', () => {
+  const workflow = { state: 'completed' as const, messages: [{ requestID: 'next', text: 'Continue', state: 'queued' as const, inputFiles: [], createdAt: '' }] };
+  assert.equal(canPrepareUpdate(updateBlockers({ ...idle(), workflows: [workflow] })), false);
+  assert.equal(canPrepareUpdate(updateBlockers({ ...idle(), workflows: [{ ...workflow, queuePaused: true }] })), true);
+  assert.equal(canPrepareUpdate(updateBlockers({ ...idle(), workflows: [{ ...workflow, roundRequestID: 'next' }] })), true);
+});
+
 test('maintenance atomically fences intake, tracks in-flight writes and recovers from a lost caller', () => {
   let clock = 1000;
   const gate = new UpdateMaintenance(() => clock);

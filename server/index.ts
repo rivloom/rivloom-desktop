@@ -142,11 +142,14 @@ const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQ
 const conversationHistory = new ConversationHistory(db, {
   data: () => ({ tasks: tasks(), workflows: workflowRuntime.store.list(), projects: projects(), network: nodeNetwork.snapshot() }),
   queue: () => nodeQueue.list(),
-  files: (m) => nodeNetwork.files.historyFiles(m),
+  files: (m) => [...nodeNetwork.files.historyFiles(m), ...historyFileIDs(workspacePreferences.draftsForConversations(
+    ['local', 'remote', 'brain', 'workflow'].flatMap((scope) => m[scope as 'local' | 'remote' | 'brain' | 'workflow'].map((id) => `${scope}:${id}`))))],
   busy: (m) => m.local.some((id) => isLocked(id)) || m.workflow.some((id) => workflowRuntime.service.isAdvancing(id)) ||
     workflowRuntime.historyBusy(m.local) || nodeNetwork.historyBusy(m) || m.remote.some((id) => processingRemoteTasks.has(id)) ||
     m.remote.length > 0 && processingRemoteControls.size > 0,
   purge: (m, files, protectedIDs) => {
+    for (const id of historyFileIDs(workspacePreferences.draftsForConversations(
+      ['local', 'remote', 'brain', 'workflow'].flatMap((scope) => m[scope as 'local' | 'remote' | 'brain' | 'workflow'].map((id) => `${scope}:${id}`)), true))) protectedIDs.add(id);
     for (const row of db.prepare('SELECT execution_id,body FROM workflow_contexts').all())
       if (![...m.local, ...m.remote].includes(String(row.execution_id))) for (const id of historyFileIDs(JSON.parse(String(row.body)))) protectedIDs.add(id);
     for (const row of db.prepare('SELECT task_id,body FROM workflow_outputs').all())
@@ -397,6 +400,7 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.use('/api/ui/drafts', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '128kb' }));
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || ['GET', 'HEAD', 'OPTIONS'].includes(req.method) ||
@@ -576,6 +580,7 @@ function bootstrap(req: Request): Bootstrap {
   return conversationHistory.filter({
     directoryAliases: workspacePreferences.directoryAliases(who(req).id),
     conversationPreferences: workspacePreferences.conversationPreferences(who(req).id),
+    conversationDrafts: workspacePreferences.conversationDrafts(who(req).id),
     user: who(req),
     users: users(),
     projects: projects(),
@@ -622,6 +627,9 @@ app.post('/api/ui/directory-alias', (req, res) => {
 app.post('/api/ui/conversation', (req, res) => {
   workspacePreferences.saveConversationPreference(who(req).id, req.body, conversations(bootstrap(req)).map((item) => item.key));
   changed(); res.json({ ok: true });
+});
+app.post('/api/ui/drafts', (req, res) => {
+  workspacePreferences.saveConversationDrafts(who(req).id, req.body); res.json({ saved: true });
 });
 app.post('/api/attention/check', (req, res) => res.json(taskAttention.check(bootstrap(req))));
 app.post('/api/attention/preferences', (req, res) =>
@@ -744,7 +752,8 @@ app.post('/api/network/execution-concurrency', (req, res) => {
   queueMicrotask(() => void processRemoteTasks());
   res.json(saved);
 });
-installTaskFileAPI(app, nodeNetwork, who, tasks, changed, (local, fileID) => workflowRuntime.fileLocations(local, fileID));
+installTaskFileAPI(app, nodeNetwork, who, tasks, changed, (local, fileID) => workflowRuntime.fileLocations(local, fileID),
+  (fileID) => historyFileIDs(workflowRuntime.store.list()).includes(fileID));
 const attachmentIDsSchema = z.array(z.string().uuid()).max(taskFileUploadCount).optional();
 const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
 app.post('/api/network/tasks', async (req, res) => {
@@ -867,13 +876,13 @@ app.post('/api/network/tasks/:id/control', async (req, res) => {
       confirmed: z.literal(true),
     })
     .parse(req.body);
-  res.json(
-    await nodeNetwork.requestRemoteTaskControl(
-      remoteTaskID(req),
-      input.expectedExecutionSequence,
-      input.action,
-    ),
-  );
+  const id = remoteTaskID(req);
+  const questionID = input.action.kind === 'question' ? input.action.requestID : null;
+  const question = nodeNetwork.remoteTask(id)?.remoteQuestions?.find((q) => q.id === questionID);
+  const result = await nodeNetwork.requestRemoteTaskControl(id, input.expectedExecutionSequence, input.action);
+  if (question && input.action.kind === 'question') workflowRuntime.service.recordAnswers(id, input.action.requestID,
+    question.questions.map((q) => q.question), input.action.answers);
+  res.json(result);
 });
 app.post('/api/network/tasks/:id/prepare', async (req, res) => {
   requireNetworkOwner(req);
@@ -1981,7 +1990,10 @@ app.post('/api/tasks/:id/questions/:requestID', async (req, res) => {
         .max(10),
     })
     .parse(req.body);
-  res.json(await replyQuestion(t.id, who(req), String(req.params.requestID), answers));
+  const requestID = String(req.params.requestID), question = t.questions.find((q) => q.id === requestID);
+  const result = await replyQuestion(t.id, who(req), requestID, answers);
+  if (question) workflowRuntime.service.recordAnswers(t.id, requestID, question.questions.map((q) => q.question), answers);
+  res.json(result);
 });
 app.post('/api/tasks/:id/accept', async (req, res) => {
   const t = visibleTask(req);
