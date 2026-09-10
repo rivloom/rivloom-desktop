@@ -48,3 +48,30 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+.copy-icon-only {
+  position: relative;
+  user-select: none;
+}
+.copy-icon-only .copy-button {
+  width: 26px;
+  min-height: 26px;
+  padding: 5px;
+}
+.copy-icon-only .copy-feedback {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 3px);
+  right: 0;
+  width: max-content;
+  max-width: min(280px, 75vw);
+  padding: 6px 8px;
+  border: 1px solid var(--danger-line);
+  border-radius: 6px;
+  background: var(--danger-surface);
+  box-shadow: var(--shadow-sm);
+  white-space: normal;
+}
+.tool-copy .copy-icon-only .copy-feedback {
+  position: static;
+  width: auto;
+}

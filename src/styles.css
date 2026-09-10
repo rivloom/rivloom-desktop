@@ -55,7 +55,7 @@ body {
   margin: 0;
 }
 ::selection {
-  background: var(--accent-soft);
+  background: #bfd5ff;
   color: var(--ink);
 }
 button,

@@ -72,7 +72,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
   const edit = (step: WorkflowStep) => { setEditingVersion(value.version); setEditing({ id: step.id, title: step.title, instructions: step.instructions, dependsOn: [...step.dependsOn],
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements }); };
   return <div className="workflow-conversation">
-    <article className="chat-message user"><div className="chat-message-byline"><strong>{t('你')}</strong><CopyButton text={value.description} label={t('复制这条消息')} /></div>
+    <article className="chat-message user" aria-label={t('你')}><CopyButton text={value.description} label={t('复制这条消息')} iconOnly className="message-copy" />
       <div className="chat-message-text">{value.description}</div></article>
     <section className={`workflow-overview ${value.state}`} aria-label={complete ? t('最终结果') : t('任务进展')}>
       <div className="workflow-overview-title">{complete ? <Check size={18} /> : terminal ? <GitBranch size={18} /> : <LoaderCircle className={value.state === 'paused' ? '' : 'spin'} size={18} />}
@@ -81,7 +81,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
       {complete ? <div className="workflow-results">
         {results.map(({ step, attempt, summary }) => <article className="workflow-result" key={step.id}>
           {results.length > 1 && <h3>{step.title}</h3>}
-          {summary && <div className="workflow-result-response"><div className="chat-message-text">{summary}</div><CopyButton text={summary} label={t('复制执行结果')} /></div>}
+          {summary && <div className="workflow-result-response"><div className="chat-message-text">{summary}</div><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
           <TaskFilesPanel key={attempt.executionID} scope={attempt.kind} taskID={attempt.executionID} resultsOnly />
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可展开执行过程查看记录。')}</p>}
@@ -133,7 +133,7 @@ export function WorkflowView({ value, data, busy, perform, nodeName }: {
       </div>
       <p className="workflow-detail-meta">{workflowStepLabel(selectedStep, selectedAttempt)} · {selectedAttempt ? nodeName(selectedAttempt.nodeID) : t('待分配')}
         {selectedAttempt && ` · ${t('第 {{count}} 次执行', { count: selectedAttempt.number })}`}</p>
-      {checkpoint && <article className="chat-message assistant"><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} /></div>
+      {checkpoint && <article className="chat-message assistant"><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} iconOnly className="message-copy" /></div>
         <div className="chat-message-text">{checkpoint}</div></article>}
       {selectedAttempt?.error && selectedAttempt.phase !== 'stopped' && <p className="workflow-error">{workflowError(selectedAttempt.error)}</p>}
       <details className="workflow-execution-detail"><summary>{t('查看步骤要求与执行记录')}<ChevronDown size={14} /></summary>

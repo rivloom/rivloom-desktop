@@ -801,6 +801,7 @@ html[lang='en'] .composer-toolbar {
   max-width: 800px;
 }
 .chat-message {
+  position: relative;
   font-size: 14px;
   line-height: 1.85;
   margin-bottom: 30px;
@@ -855,6 +856,42 @@ html[lang='en'] .composer-toolbar {
 .chat-message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.chat-message.user > .message-copy {
+  position: absolute;
+  top: 100%;
+  right: 0;
+}
+.message-copy {
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-message:hover > .message-copy,
+.chat-message:hover > .chat-message-byline > .message-copy,
+.chat-tool:hover > .tool-copy > .message-copy,
+.workflow-result-response:hover > .message-copy,
+.message-copy:has(:focus-visible),
+.message-copy[data-state='copying'],
+.message-copy[data-state='copied'],
+.message-copy[data-state='failed'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none), (pointer: coarse) {
+  .message-copy {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .message-copy.copy-icon-only .copy-button {
+    width: 36px;
+    min-height: 36px;
+  }
+  .chat-message.user {
+    margin-bottom: 42px;
+  }
 }
 .chat-tool {
   margin: 13px 0;

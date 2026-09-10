@@ -423,12 +423,12 @@ const Transcript = memo(function Transcript({
         const text =
           message.id === firstUser?.id ? item.description.split('\n\n补充要求：')[0] : message.text;
         return (
-          <article className={`chat-message ${message.role}`} key={message.id}>
-            <div className="chat-message-byline">
-              {message.role === 'assistant' ? <Bot size={17} /> : <MessageSquare size={15} />}
-              <strong>{message.role === 'assistant' ? 'Rivloom' : source}</strong>
-              {text.trim() && <CopyButton text={text} label={t('复制这条消息')} />}
-            </div>
+          <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}>
+            {message.role === 'assistant' ? <div className="chat-message-byline">
+              <Bot size={17} />
+              <strong>Rivloom</strong>
+              {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
+            </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             {message.text && <div className="chat-message-text">{text}</div>}
             {message.tools.map((tool, index) => (
               <details className="chat-tool" key={index}>
@@ -440,7 +440,7 @@ const Transcript = memo(function Transcript({
                 <pre>{tool.output || t('等待执行结果…')}</pre>
                 {tool.output?.trim() && (
                   <div className="tool-copy">
-                    <CopyButton text={tool.output} label={t('复制工具输出')} />
+                    <CopyButton text={tool.output} label={t('复制工具输出')} iconOnly className="message-copy" />
                   </div>
                 )}
               </details>
@@ -453,7 +453,7 @@ const Transcript = memo(function Transcript({
           <div className="chat-message-byline">
             <Bot size={17} />
             <strong>{t('执行结果')}</strong>
-            <CopyButton text={summary} label={t('复制执行结果')} />
+            <CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" />
           </div>
           <div className="chat-message-text">{summary}</div>
         </article>

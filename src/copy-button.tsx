@@ -7,10 +7,12 @@ export function CopyButton({
   text,
   label,
   className = '',
+  iconOnly = false,
 }: {
   text: string;
   label: string;
   className?: string;
+  iconOnly?: boolean;
 }) {
   const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   const request = useRef(0);
@@ -39,14 +41,14 @@ export function CopyButton({
     }
   }
   return (
-    <span className={`copy-control ${className}`}>
+    <span className={`copy-control ${iconOnly ? 'copy-icon-only' : ''} ${className}`} data-state={state}>
       <button
         type="button"
         className="copy-button"
         onClick={() => void copy()}
         disabled={!text.trim() || state === 'copying'}
         aria-label={label}
-        title={label}
+        title={state === 'copied' ? t('已复制') : state === 'failed' ? t('重试复制') : label}
       >
         {state === 'copied' ? (
           <Check size={13} />
@@ -55,9 +57,9 @@ export function CopyButton({
         ) : (
           <Copy size={13} />
         )}
-        <span>
+        {!iconOnly && <span>
           {state === 'copied' ? t('已复制') : state === 'failed' ? t('重试复制') : t('复制')}
-        </span>
+        </span>}
       </button>
       <span
         className={state === 'failed' ? 'copy-feedback' : 'copy-announcement'}
