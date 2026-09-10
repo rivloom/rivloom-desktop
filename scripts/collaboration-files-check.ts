@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createSocket } from 'node:dgram';
 import { ServiceClient, modelFixture, pairServices, until } from './m34-fixtures.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
+import { defaultRemoteConcurrency } from '../shared/execution-concurrency.ts';
 import {
   taskFileChunkBytes,
   type TaskFileDescriptor,
@@ -303,7 +304,7 @@ try {
     (n) =>
       n.brains.some(
         (b) =>
-          !b.hosted && b.workers.some((w) => w.nodeID === workerID && w.load.availableSlots === 1),
+          !b.hosted && b.workers.some((w) => w.nodeID === workerID && w.load.availableSlots === defaultRemoteConcurrency),
       ),
     'remote Master advertises free Worker',
     90000,

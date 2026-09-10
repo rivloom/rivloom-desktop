@@ -106,6 +106,7 @@ async function crashOwnService(client: ServiceClient, directory: string) {
 }
 try {
   for (const point of ['before_create', 'after_create'] as const) {
+    const requestsBefore = model.requests;
     const directory = join(root, point);
     mkdirSync(directory, { recursive: true });
     model.configure(directory);
@@ -180,27 +181,29 @@ try {
       { confirmed: true, addition: 'Do not create a second session.' },
       409,
     );
+    assert.equal(model.requests, requestsBefore, 'Uncertain creation must not submit a model request');
     const second = await client.call<Task>(
       '/tasks',
-      { ...input, requestID: randomUUID(), title: 'Waiting behind unknown creation' },
+      { ...input, requestID: randomUUID(), title: 'Independent local work beside unknown creation' },
       201,
     );
-    await until(
-      () => client.call<NodeQueueSnapshot>('/node-queue'),
-      (q) =>
-        q.entries.find((entry) => entry.localTaskID === second.id)?.blockReason?.code === 'slot',
-      'unknown creation retains slot',
+    const after = await until(
+      () => client.bootstrap(),
+      (b) => b.tasks.find((t) => t.id === second.id)?.state === 'running',
+      'independent local task can run with unlimited local concurrency',
     );
-    const after = await client.bootstrap();
     assert.equal(after.tasks.length, 2);
-    assert.equal(after.tasks.find((t) => t.id === second.id)?.state, 'ready');
-    assert.equal(model.requests, 0);
+    const secondSession = after.tasks.find((t) => t.id === second.id)?.sessionID;
+    assert(secondSession);
+    assert.equal(after.tasks.find((t) => t.id === original.id)?.state, 'interrupted');
+    assert.equal(after.tasks.find((t) => t.id === original.id)?.sessionID, null);
     await client.stop();
     const officialAfter = databaseRows(
       join(directory, 'engine/data/opencode/opencode.db'),
       'SELECT id FROM session',
     );
-    assert.deepEqual(officialAfter, officialBefore);
+    assert.deepEqual(officialAfter.filter((s) => s.id !== secondSession), officialBefore);
+    assert.equal(officialAfter.length, expectedSessions + 1);
     const result = {
       point,
       status: 'passed',
@@ -220,17 +223,18 @@ try {
         'no second session',
         'same request/task replay',
         'manual retry rejected',
-        'unknown keeps slot',
+        'unknown original is never retried while independent local work can run',
       ],
     };
     outcomes.push(result);
     writeFileSync(join(directory, 'verification.json'), JSON.stringify(result, null, 2));
     console.log(
-      `PASS ${point}: ${expectedSessions} official session(s), no duplicate, unknown slot preserved`,
+      `PASS ${point}: original ${expectedSessions} official session(s) unchanged; independent local work runs without duplicating the uncertain original`,
     );
   }
   success = true;
 } catch (error) {
+  console.error(error instanceof Error ? error.stack : String(error));
   outcomes.push({ status: 'failed', error: error instanceof Error ? error.stack : String(error) });
   process.exitCode = 1;
 } finally {

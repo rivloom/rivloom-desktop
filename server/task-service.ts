@@ -217,10 +217,10 @@ function normalizeMessages(
   );
 }
 export async function sync(taskID: string) {
-  if (isLocked(taskID)) return;
+  if (shuttingDown || isLocked(taskID)) return;
   return exclusive(taskID, async () => {
     const t = task(taskID);
-    if (!t.sessionID || !engineStatus.ready || t.state === 'stopping') return;
+    if (shuttingDown || !t.sessionID || !engineStatus.ready || t.state === 'stopping') return;
     const directory = project(t.projectID).directory;
     const [rawMessages, rawPermissions, rawQuestions, statuses] = await Promise.all([
       client().session.messages({ directory, sessionID: t.sessionID }),
@@ -228,6 +228,9 @@ export async function sync(taskID: string) {
       client().question.list({ directory }),
       client().session.status({ directory }),
     ]);
+    // Shutdown aborts sessions; their abort replies are not completed executions.
+    // Keep interrupted work reserved even when a poll was already in flight.
+    if (shuttingDown) return;
     const messages = normalizeMessages(rawMessages.data);
     const approvals = sanitize(
       rawPermissions,
@@ -280,6 +283,7 @@ export async function sync(taskID: string) {
       patch.acceptedBy = null;
       Object.assign(patch, await readSessionArtifacts(directory, t.sessionID));
     }
+    if (shuttingDown) return;
     if (
       JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error]) !==
       JSON.stringify([messages, approvals, questions, patch.state, patch.error])
