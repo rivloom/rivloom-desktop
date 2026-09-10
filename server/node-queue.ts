@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { createHistorySchema } from './conversation-history.ts';
 import {
   isNodeQueueCandidate,
   type NodeQueueControl,
@@ -54,6 +55,7 @@ export class NodeQueueStore {
 
   constructor(db: DatabaseSync, options: { clock?: () => number } = {}) {
     this.db = db;
+    createHistorySchema(db);
     this.clock = options.clock || Date.now;
     db.exec(`
       CREATE TABLE IF NOT EXISTS node_queue (
@@ -91,6 +93,19 @@ export class NodeQueueStore {
 
   private now() {
     return new Date(this.clock()).toISOString();
+  }
+  purgeHistory(members: { local: string[]; remote: string[] }) {
+    const entries = this.list().filter((q) => q.localTaskID && members.local.includes(q.localTaskID) ||
+      q.source.kind === 'local' && members.local.includes(q.source.taskID) ||
+      q.source.kind === 'remote' && members.remote.includes(q.source.remoteTaskID));
+    if (entries.some((q) => q.state !== 'ended')) throw new NodeQueueError(409, '队列仍在处理，请稍后重试。');
+    for (const entry of entries) {
+      for (const operation of this.db.prepare("SELECT operation_id FROM node_queue_operations WHERE json_extract(request,'$.itemID')=? OR json_extract(result,'$.entry.id')=?").all(entry.id, entry.id))
+        this.db.prepare('INSERT OR IGNORE INTO conversation_retired VALUES (?,?,?,1)').run('queue-operation', String(operation.operation_id), `queue:${entry.id}`);
+      this.db.prepare("DELETE FROM node_queue_operations WHERE json_extract(request,'$.itemID')=? OR json_extract(result,'$.entry.id')=?").run(entry.id, entry.id);
+      this.db.prepare('DELETE FROM node_queue WHERE id=?').run(entry.id);
+    }
+    if (entries.length) this.touch();
   }
 
   private transaction<T>(operation: () => T): T {
@@ -178,6 +193,8 @@ export class NodeQueueStore {
 
   enqueue(input: NodeQueueSource, persistSource: () => void = () => {}): NodeQueueEntry {
     const source = normalizeSource(input);
+    if (this.db.prepare('SELECT 1 FROM conversation_retired WHERE id=? LIMIT 1').get(source.kind === 'local' ? source.taskID : source.remoteTaskID))
+      throw new NodeQueueError(410, '此会话已移入回收站或已永久删除。');
     return this.transaction(() => {
       const existing = this.findBySource(source);
       if (existing) {
@@ -254,6 +271,8 @@ export class NodeQueueStore {
       throw new NodeQueueError(400, '队列操作标识无效。');
     return this.transaction(() => {
       const canonical = JSON.stringify(request);
+      if (this.db.prepare("SELECT 1 FROM conversation_retired WHERE kind='queue-operation' AND id=?").get(operationID))
+        throw new NodeQueueError(410, '此会话已移入回收站或已永久删除。');
       const existing = this.db
         .prepare('SELECT request,result FROM node_queue_operations WHERE operation_id=?')
         .get(operationID);

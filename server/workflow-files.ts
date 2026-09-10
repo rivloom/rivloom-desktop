@@ -88,6 +88,7 @@ export async function importWorkflowOutput(files: TaskFileStore, key: string, di
 export class WorkflowOutputs {
   private db: DatabaseSync; private files: TaskFileStore;
   private jobs = new Map<string, Promise<void>>(); private closed = false; private changed: () => void;
+  historyBusy(taskIDs: string[]) { return [...this.jobs.keys()].some((key) => taskIDs.some((id) => key.startsWith(`${id}:`))); }
   constructor(db: DatabaseSync, files: TaskFileStore, changed: () => void = () => {}) {
     this.db = db; this.files = files; this.changed = changed;
     db.exec('CREATE TABLE IF NOT EXISTS workflow_outputs (key TEXT PRIMARY KEY, task_id TEXT NOT NULL, body TEXT NOT NULL)');

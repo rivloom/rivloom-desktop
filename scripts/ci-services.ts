@@ -10,6 +10,7 @@ import {
 } from './ci-workspace.ts';
 
 export const serviceChecks = {
+  'conversation-history': 'scripts/conversation-history-check.ts',
   'desktop-update': 'scripts/desktop-update-service-check.ts',
   'origin-concurrency': 'scripts/origin-concurrency-check.ts',
   workflow: 'scripts/workflow-service-check.ts',

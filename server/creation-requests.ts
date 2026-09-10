@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { createHistorySchema, HistoryError } from './conversation-history.ts';
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -27,6 +28,7 @@ export class CreationRequestStore {
   private readonly db: DatabaseSync;
   constructor(db: DatabaseSync) {
     this.db = db;
+    createHistorySchema(db);
     db.exec(`CREATE TABLE IF NOT EXISTS creation_requests (
       actor_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
       task_id TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
@@ -43,6 +45,8 @@ export class CreationRequestStore {
       )
       .get(actorID, requestID);
     if (existing) {
+      if (this.db.prepare('SELECT 1 FROM conversation_retired WHERE id=? LIMIT 1').get(String(existing.task_id)))
+        throw new HistoryError(410, '此会话已移入回收站或已永久删除。');
       if (existing.fingerprint !== fingerprint) throw new CreationConflict();
       return String(existing.task_id);
     }

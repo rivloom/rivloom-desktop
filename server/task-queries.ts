@@ -31,11 +31,16 @@ export class TaskQueries {
       CREATE INDEX IF NOT EXISTS tasks_runtime_state ON tasks(json_extract(body,'$.state'),number DESC);
       CREATE INDEX IF NOT EXISTS tasks_runtime_session ON tasks(json_extract(body,'$.sessionID'),number DESC,id,json_extract(body,'$.state'));
       CREATE INDEX IF NOT EXISTS tasks_runtime_remote ON tasks(json_extract(body,'$.remoteOrigin.remoteTaskID'),number DESC);
+      CREATE TABLE IF NOT EXISTS task_number_high_water (singleton INTEGER PRIMARY KEY CHECK(singleton=1), maximum INTEGER NOT NULL);
+      INSERT OR IGNORE INTO task_number_high_water SELECT 1,COALESCE(MAX(number),0) FROM tasks;
+      CREATE TRIGGER IF NOT EXISTS tasks_number_high_water AFTER INSERT ON tasks BEGIN
+        UPDATE task_number_high_water SET maximum=MAX(maximum,NEW.number) WHERE singleton=1;
+      END;
     `);
     this.session = db.prepare(taskQuerySQL.session);
     this.remote = db.prepare(taskQuerySQL.remote);
     this.state = db.prepare("SELECT json_extract(body,'$.state') AS state FROM tasks WHERE id=?");
-    this.maximum = db.prepare('SELECT COALESCE(MAX(number),0) AS maximum FROM tasks');
+    this.maximum = db.prepare('SELECT MAX(maximum, (SELECT COALESCE(MAX(number),0) FROM tasks)) AS maximum FROM task_number_high_water WHERE singleton=1');
   }
 
   inStates(states: readonly TaskState[]): Task[] {

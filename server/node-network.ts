@@ -613,6 +613,28 @@ export class NodeNetwork extends EventEmitter {
   private nextCollaborationSendAt = 0;
   private updateMaintenance: (() => boolean) = () => false;
   private updatePeerRequests = 0;
+  private historyRetired: (id: string) => boolean = () => false;
+  setHistoryRetired(provider: (id: string) => boolean) {
+    this.historyRetired = provider;
+    this.remoteTasks.retired = provider; this.brainTasks.retired = provider;
+  }
+  historyBusy(members: { remote: string[]; brain: string[] }) {
+    return members.remote.some((id) => this.deliveringRemoteTasks.has(id)) ||
+      members.brain.some((id) => this.deliveringBrainTasks.has(id) || this.schedulingBrainTasks.has(id)) ||
+      this.transferringFiles.size > 0 || this.deliveringQueueReceipts.size > 0 || this.updatePeerRequests > 0;
+  }
+  purgeHistory(members: { remote: string[]; brain: string[] }) {
+    this.remoteTasks.purge(members.remote); this.brainTasks.purge(members.brain);
+    this.queueReceipts.purge(members.remote, members.brain);
+  }
+  private assertHistoryMessage(value: unknown) {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, nested] of Object.entries(value)) {
+      if (['taskID', 'localTaskID', 'remoteTaskID', 'brainTaskID', 'executionID', 'workflowID'].includes(key) &&
+        typeof nested === 'string' && this.historyRetired(nested)) throw new NodeNetworkError(410, '此会话已移入回收站或已永久删除。');
+      if (nested && typeof nested === 'object') this.assertHistoryMessage(nested);
+    }
+  }
 
   setUpdateMaintenance(provider: () => boolean) { this.updateMaintenance = provider; }
   get updateOperations() {
@@ -1318,6 +1340,7 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(400, '加密消息类型与通道接口不匹配。');
     if (collaborationOnly !== validCollaborationRequest(message))
       throw new NodeNetworkError(400, '协作消息类型与通道接口不匹配。');
+    this.assertHistoryMessage(message);
     const eventAck = () =>
       node.capabilities.includes(queueReceiptCapability)
         ? encryptChannelEventAck(channel, value)
@@ -2063,6 +2086,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushRemoteTask(taskID: string) {
+    if (this.historyRetired(taskID)) return;
     if (this.deliveringRemoteTasks.has(taskID)) return;
     const task = this.remoteTasks.record(taskID);
     const message = this.remoteTasks.message(taskID);
@@ -2238,6 +2262,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushBrainTask(taskID: string) {
+    if (this.historyRetired(taskID)) return;
     if (this.deliveringBrainTasks.has(taskID)) return;
     const task = this.brainTasks.record(taskID);
     const message = this.brainTasks.message(taskID);
@@ -2916,6 +2941,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async scheduleBrainTask(taskID: string) {
+    if (this.historyRetired(taskID)) return;
     if (this.updateMaintenance() || !this.identity || this.schedulingBrainTasks.has(taskID)) return;
     const task = this.brainTasks.record(taskID);
     if (

@@ -6,6 +6,7 @@ import { dataRoot } from './engine.ts';
 import type { User, Project, Task, Activity } from '../shared/types.ts';
 import { TaskQueries, decodeTask } from './task-queries.ts';
 import { assertReadableWorkspaceDatabase } from './data-format.ts';
+import { createHistorySchema, HistoryError } from './conversation-history.ts';
 
 mkdirSync(dataRoot, { recursive: true });
 export const db = new DatabaseSync(join(dataRoot, 'rivloom.sqlite'));
@@ -20,7 +21,9 @@ CREATE TABLE IF NOT EXISTS activities (id INTEGER PRIMARY KEY AUTOINCREMENT, tas
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS model_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT REFERENCES users(id), kind TEXT NOT NULL, provider TEXT NOT NULL, model TEXT, result TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS task_engine_intents (task_id TEXT PRIMARY KEY REFERENCES tasks(id), state TEXT NOT NULL CHECK(state IN ('creating','bound')), session_id TEXT, updated_at TEXT NOT NULL);
-PRAGMA user_version=3;`);
+`);
+createHistorySchema(db);
+db.exec('PRAGMA user_version=4');
 
 export const taskQueries = new TaskQueries(db);
 
@@ -64,6 +67,8 @@ export function task(id: string): Task {
   return decodeTask(row.body as string);
 }
 export function saveTask(value: Task) {
+  if (db.prepare("SELECT 1 FROM conversation_retired WHERE kind='local' AND id=?").get(value.id))
+    throw new HistoryError(410, '此会话已移入回收站或已永久删除。');
   db.prepare(
     'INSERT INTO tasks VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
   ).run(value.id, value.number, value.projectID, JSON.stringify(value));

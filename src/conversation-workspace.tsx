@@ -6,6 +6,8 @@ import { draftFilesReady } from './task-file-upload';
 import { CopyButton } from './copy-button';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
 import { ConversationFilterButton } from './conversation-filter-button';
+import { ConversationTrash } from './conversation-trash';
+import { conversationDirectory, groupConversationHistory, historyCanTrash } from '../shared/conversation-history';
 import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
 import { ResourceDiscovery } from './resource-discovery';
@@ -53,6 +55,7 @@ import {
   AtSign,
   Pause,
   Inbox,
+  Trash2,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -318,12 +321,16 @@ const HistoryRow = memo(function HistoryRow({
   source,
   icon,
   open,
+  remove,
+  canRemove,
 }: {
   item: Conversation;
   selected: boolean;
   source?: string;
   icon?: string;
   open: (item: Conversation) => void;
+  remove: (item: Conversation) => void;
+  canRemove: boolean;
   locale: string;
 }) {
   const state = conversationState(item);
@@ -331,6 +338,7 @@ const HistoryRow = memo(function HistoryRow({
   const origin = item.incoming ? source : t('自己发起');
   const label = [item.title, origin, state].filter(Boolean).join(' · ');
   return (
+    <div className="history-row">
     <button
       aria-current={selected ? 'page' : undefined}
       aria-label={label}
@@ -351,6 +359,11 @@ const HistoryRow = memo(function HistoryRow({
         </span>
       )}
     </button>
+    <button type="button" className="history-delete icon-button" disabled={!canRemove}
+      aria-label={t('删除会话：{{title}}', { title: item.title })}
+      title={canRemove ? t('移入回收站') : t('请先停止会话并等待处理完成')}
+      onClick={() => remove(item)}><Trash2 size={14} /></button>
+    </div>
   );
 });
 
@@ -443,14 +456,17 @@ export function ConversationWorkspace({
   connectionError: string;
 }) {
   const rivloomVersion = useRivloomVersion();
-  const [view, setView] = useState<'chat' | 'network' | 'models' | 'attention' | 'diagnostics'>(
+  const [view, setView] = useState<'chat' | 'network' | 'models' | 'attention' | 'diagnostics' | 'trash'>(
     'chat',
   );
   const [diagnosticTarget, setDiagnosticTarget] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const selectedRef = useRef(selected);
+  const seenSelected = useRef<string | null>(null);
   selectedRef.current = selected;
   const [search, setSearch] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [historyAction, setHistoryAction] = useState<{ action: 'trash' | 'purge' | 'empty'; key?: string; title?: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
   const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(() => ({
@@ -617,11 +633,14 @@ export function ConversationWorkspace({
     () =>
       filterConversations(
         all,
-        { status: statusFilter, source: sourceFilter, query: search },
+        { status: statusFilter, source: sourceFilter, query: '' },
         nodeName,
-      ),
-    [all, statusFilter, sourceFilter, search, nodeName],
+      ).filter((item) => !search.trim() || conversationDirectory(item, data).label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()) ||
+        filterConversations([item], { status: 'all', source: 'all', query: search }, nodeName).length > 0),
+    [all, statusFilter, sourceFilter, search, nodeName, data.projects, data.network],
   );
+  const historyGroups = groupConversationHistory(visible, data);
+  const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
   const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all';
   function clearFilters() {
     setSearch('');
@@ -804,6 +823,10 @@ export function ConversationWorkspace({
     setNotice('');
     setMobileSidebar(false);
   }, []);
+  useEffect(() => {
+    if (current) seenSelected.current = current.key;
+    else if (selected && seenSelected.current === selected) { seenSelected.current = null; open(null); }
+  }, [current, selected, open]);
   function chooseMentionNode(nodeID: string) {
     if (operation.current) return;
     const node = peers.find((candidate) => candidate.id === nodeID);
@@ -1053,7 +1076,7 @@ export function ConversationWorkspace({
             <Search size={15} />
             <input
               aria-label={t('搜索会话')}
-              title={t('搜索标题、设备名或需求正文')}
+              title={t('搜索标题、工作目录、设备名或需求正文')}
               placeholder={t('搜索会话')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -1083,7 +1106,14 @@ export function ConversationWorkspace({
           <p className="history-selection-note">{t('当前打开的会话不在筛选结果中。')}</p>
         )}
         <div className="conversation-history">
-          {visible.map((item) => (
+          {historyGroups.map((group) => <section className="history-directory" key={group.key}>
+            <button type="button" className="history-directory-toggle" title={group.label}
+              aria-expanded={!collapsedGroups.has(group.key) || !!search.trim()}
+              onClick={() => setCollapsedGroups((previous) => { const next = new Set(previous); if (next.has(group.key)) next.delete(group.key); else next.add(group.key); return next; })}>
+              {collapsedGroups.has(group.key) && !search.trim() ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              <FolderOpen size={14} /><span>{group.label}</span><small>{group.items.length}</small>
+            </button>
+          {(!collapsedGroups.has(group.key) || !!search.trim()) && group.items.map((item) => (
             <HistoryRow
               key={item.key}
               item={item}
@@ -1091,9 +1121,11 @@ export function ConversationWorkspace({
               source={item.incoming ? nodeName(item.sourceNodeID) : undefined}
               icon={item.incoming ? nodes.find((n) => n.id === item.sourceNodeID)?.icon : undefined}
               open={open}
+              remove={removeHistory}
+              canRemove={data.user.owner && !busy && historyCanTrash(item, data, queueSnapshot?.entries || [])}
               locale={locale}
             />
-          ))}
+          ))}</section>)}
           {!visible.length && (
             <div className="history-empty">
               <p>{filtering ? t('没有符合筛选条件的会话') : t('你的会话会保存在这里')}</p>
@@ -1106,6 +1138,9 @@ export function ConversationWorkspace({
           )}
         </div>
         <nav className="conversation-settings" aria-label={t('设置')}>
+          {data.user.owner && <button className={view === 'trash' ? 'active' : ''} onClick={() => { setView('trash'); setMobileSidebar(false); setNotice(''); }}>
+            <Trash2 size={17} />{t('回收站')}<span className="attention-count">{data.conversationTrash?.length || 0}</span>
+          </button>}
           <button
             className={view === 'attention' ? 'active' : ''}
             onClick={() => openAttention('attention')}
@@ -1164,7 +1199,7 @@ export function ConversationWorkspace({
           )}
           <div>
             <span>
-              {view === 'network'
+              {view === 'trash' ? t('回收站') : view === 'network'
                 ? t('设备与模型')
                 : view === 'models'
                   ? t('设备与模型')
@@ -1925,7 +1960,10 @@ export function ConversationWorkspace({
                 </button>
               </nav>
             )}
-            {view === 'diagnostics' ? (
+            {view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
+              restore={(entry) => void perform(async () => { await api('/history/restore', { key: entry.key }); setNotice(t('会话已恢复到历史列表。')); })}
+              purge={(entry) => setHistoryAction({ action: 'purge', key: entry.key, title: entry.title })}
+              empty={() => setHistoryAction({ action: 'empty' })} /> : view === 'diagnostics' ? (
               <NodeDiagnosticsView
                 key={diagnosticTarget || 'local'}
                 data={data}
@@ -2214,6 +2252,19 @@ export function ConversationWorkspace({
           </div>
         </Modal>
       )}
+      {historyAction && <Modal title={historyAction.action === 'trash' ? t('移入回收站') : historyAction.action === 'empty' ? t('清空回收站') : t('永久删除')}
+        subtitle={historyAction.title} close={() => { if (!busy) setHistoryAction(null); }}>
+        <p>{historyAction.action === 'trash' ? t('会话会保留 3 个日历月，期间可以从回收站恢复。') : t('永久删除后无法恢复。会话记录和不再使用的附件副本将被清理，项目文件保持不变。')}</p>
+        {error && <p className="error" role="alert">{systemText(error)}</p>}
+        <div className="modal-actions"><Button disabled={busy} onClick={() => setHistoryAction(null)}>{t('取消')}</Button>
+          <Button variant="danger" disabled={busy} onClick={() => void perform(async () => {
+            const result = await api<{ failed?: string[] }>(`/history/${historyAction.action}`, { ...(historyAction.key ? { key: historyAction.key } : {}), ...(historyAction.action !== 'trash' ? { confirmed: true } : {}) });
+            if (historyAction.action === 'trash' && selectedRef.current === historyAction.key) open(null);
+            setHistoryAction(null);
+            setNotice(result.failed?.length ? t('部分会话暂时无法清理，请稍后重试。') : historyAction.action === 'trash' ? t('会话已移入回收站。') : t('会话已永久删除。'));
+          })}>{busy ? t('正在处理…') : historyAction.action === 'trash' ? t('移入回收站') : historyAction.action === 'empty' ? t('清空回收站') : t('永久删除')}</Button>
+        </div>
+      </Modal>}
       {deleteNodeID && (
         <Modal
           title={t('删除配对机器')}

@@ -10,9 +10,9 @@ const idle = (): UpdateReadiness => ({ tasks: [], queues: [], workflows: [], rem
 test('an incompatible future database is rejected before its format marker or content changes', () => {
   const database = new DatabaseSync(':memory:');
   try {
-    database.exec("CREATE TABLE future_state(value TEXT); INSERT INTO future_state VALUES ('keep'); PRAGMA user_version=4;");
+    database.exec("CREATE TABLE future_state(value TEXT); INSERT INTO future_state VALUES ('keep'); PRAGMA user_version=5;");
     assert.throws(() => assertReadableWorkspaceDatabase(database), /更高版本/);
-    assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 4);
+    assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 5);
     assert.equal(database.prepare('SELECT value FROM future_state').get()?.value, 'keep');
     database.exec('PRAGMA user_version=3');
     assert.equal(assertReadableWorkspaceDatabase(database), 3);

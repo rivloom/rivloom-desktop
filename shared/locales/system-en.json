@@ -570,5 +570,14 @@
   "正在准备软件更新，请稍后重试。": "Preparing a software update. Please try again later.",
   "已有更新安装正在准备。": "An update installation is already being prepared.",
   "更新准备状态已改变。": "Update preparation has changed.",
-  "还有工作尚未结束，请稍后安装更新。": "Work is still pending. Install the update later."
+  "还有工作尚未结束，请稍后安装更新。": "Work is still pending. Install the update later.",
+  "此会话已移入回收站或已永久删除，请先恢复或创建新会话。": "This conversation is in the recycle bin or has been permanently deleted. Restore it or start a new conversation.",
+  "会话不存在。": "Conversation not found.",
+  "会话仍在执行、排队或确认状态，请先停止并等待处理完成。": "The conversation is running, queued, or awaiting confirmation. Stop it and wait for processing to finish first.",
+  "回收站中没有此会话。": "This conversation is not in the recycle bin.",
+  "此会话正在永久删除，无法恢复。": "This conversation is being permanently deleted and cannot be restored.",
+  "相关记录正在处理，请稍后重试。": "Related records are being processed. Please try again later.",
+  "此会话已移入回收站或已永久删除。": "This conversation is in the recycle bin or has been permanently deleted.",
+  "队列仍在处理，请稍后重试。": "The queue is still processing. Please try again later.",
+  "文件存储类型异常，已停止清理。": "Unexpected file storage type. Cleanup has stopped."
 }

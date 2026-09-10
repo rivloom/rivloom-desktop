@@ -719,6 +719,8 @@ function sameRoute(
 }
 
 export class RemoteTaskStore {
+  retired: (id: string) => boolean = () => false;
+  purge(ids: string[]) { for (const id of ids) this.values.delete(id); this.save(); }
   private readonly path: string;
   private readonly values = new Map<string, StoredRemoteTask>();
 
@@ -797,6 +799,7 @@ export class RemoteTaskStore {
   ) {
     if (input.inputFiles !== undefined && !validTaskFileManifest(input.inputFiles))
       throw new Error('附件清单无效。');
+    if (taskID && this.retired(taskID)) throw new Error('conversation_retired');
     const existing = taskID ? this.values.get(taskID) : null;
     if (existing) {
       if (
@@ -884,6 +887,7 @@ export class RemoteTaskStore {
   }
 
   receiveOffer(message: RemoteTaskOfferMessage) {
+    if (this.retired(message.taskID)) throw new Error('conversation_retired');
     const existing = this.values.get(message.taskID);
     if (existing) {
       if (!sameOffer(existing, message)) throw new Error('远端任务 ID 或幂等内容冲突。');

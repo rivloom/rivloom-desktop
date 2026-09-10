@@ -330,6 +330,8 @@ function publicTask(task: StoredBrainTask): BrainTask {
 }
 
 export class BrainTaskStore {
+  retired: (id: string) => boolean = () => false;
+  purge(ids: string[]) { for (const id of ids) this.tasks.delete(id); this.save(); }
   private readonly path: string;
   private readonly tasks = new Map<string, StoredBrainTask>();
 
@@ -435,6 +437,7 @@ export class BrainTaskStore {
     };
     if (!validStored(task) || this.tasks.size >= 500)
       throw new Error('Brain Task 内容无效或数量已达上限。');
+    if (this.retired(task.id)) throw new Error('conversation_retired');
     this.tasks.set(task.id, task);
     try {
       this.save();
@@ -446,6 +449,7 @@ export class BrainTaskStore {
   }
 
   receiveSubmission(message: BrainTaskSubmissionMessage) {
+    if (this.retired(message.taskID)) throw new Error('conversation_retired');
     const existing = this.tasks.get(message.taskID);
     if (existing) {
       if (

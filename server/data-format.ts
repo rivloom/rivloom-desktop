@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const supportedWorkspaceDatabaseVersion = 3;
+export const supportedWorkspaceDatabaseVersion = 4;
 /** Run before any schema, WAL or application write; never rewrite a future format marker. */
 export function assertReadableWorkspaceDatabase(database: DatabaseSync): number {
   const version = Number(database.prepare('PRAGMA user_version').get()?.user_version);

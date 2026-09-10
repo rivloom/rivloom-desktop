@@ -37,6 +37,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   private options: RuntimeOptions;
   private interval: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  historyBusy(taskIDs: string[]) { return this.outputs.historyBusy(taskIDs); }
   constructor(options: RuntimeOptions) {
     this.options = options; this.store = new WorkflowStore(db); this.service = new WorkflowService(this.store, this, changed);
     this.contexts = new WorkflowContexts(db, () => options.network.snapshot().local?.id || null, (id) => options.network.remoteTask(id));

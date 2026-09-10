@@ -59,6 +59,7 @@ export class WorkflowService {
   private assignedByWorkflow = new Map<string, string[]>();
   private assigned = new Map<string, number>();
   private closed = false;
+  isAdvancing(id: string) { return this.advancing.has(id); }
   constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}) {
     this.store = store; this.adapter = adapter; this.onChange = onChange;
     for (const value of store.list()) this.trackAssignments(value);

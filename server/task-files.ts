@@ -124,6 +124,50 @@ export class TaskFileStore {
     this.db?.close();
     this.db = null;
   }
+  historyFiles(members: { local: string[]; remote: string[]; brain: string[]; workflow: string[] }): string[] {
+    if (!this.active) return [];
+    const db = this.database(), result = new Set<string>();
+    for (const scope of ['local', 'remote', 'brain'] as const) for (const id of members[scope])
+      for (const row of db.prepare('SELECT file_id FROM bindings WHERE scope=? AND task_id=?').all(scope, id)) result.add(String(row.file_id));
+    // Exports interrupted before binding are still owned by the same execution.
+    for (const row of db.prepare('SELECT body FROM files').all()) {
+      const file = JSON.parse(String(row.body)) as FileRecord;
+      if (members.local.some((id) => file.origin.startsWith(`user:workflow-output:${id}:`)) ||
+        members.workflow.some((id) => file.origin.startsWith(`user:workflow-relay:${id}:`))) result.add(file.id);
+    }
+    return [...result];
+  }
+  /** Remove app-owned copies only. User exports and project paths are never unlinked. */
+  purgeHistory(members: { local: string[]; remote: string[]; brain: string[] }, fileIDs: string[], protectedIDs: Set<string>) {
+    if (!this.active) return;
+    const db = this.database(), candidates = new Set(fileIDs);
+    for (const scope of ['local', 'remote', 'brain'] as const) for (const id of members[scope]) {
+      for (const row of db.prepare('SELECT file_id FROM bindings WHERE scope=? AND task_id=?').all(scope, id)) candidates.add(String(row.file_id));
+      db.prepare('DELETE FROM deliveries WHERE scope=? AND task_id=?').run(scope, id);
+      db.prepare('DELETE FROM bindings WHERE scope=? AND task_id=?').run(scope, id);
+    }
+    for (const id of candidates) {
+      if (protectedIDs.has(id) || db.prepare('SELECT 1 FROM bindings WHERE file_id=? LIMIT 1').get(id)) continue;
+      const record = this.record(id);
+      if (!record) continue;
+      const received = join(this.root, 'received', id, record.name);
+      within(this.root, received);
+      if (existsSync(received)) {
+        const stat = lstatSync(received);
+        check(stat.isFile() && stat.nlink === 1, 409, '文件存储类型异常，已停止清理。');
+        unlinkSync(received);
+      }
+      const blob = this.path(id);
+      if (existsSync(blob)) {
+        const stat = lstatSync(blob);
+        check(stat.isFile() && stat.nlink === 1, 409, '文件存储类型异常，已停止清理。');
+        unlinkSync(blob);
+      }
+      db.prepare('DELETE FROM file_locations WHERE file_id=?').run(id);
+      db.prepare('DELETE FROM deliveries WHERE file_id=?').run(id);
+      db.prepare('DELETE FROM files WHERE id=?').run(id);
+    }
+  }
   private path(id: string) {
     check(taskFileIDPattern.test(id), 400, '文件 ID 无效。');
     const path = join(this.root, 'blobs', `${id}.blob`);

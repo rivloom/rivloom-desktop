@@ -98,6 +98,7 @@ export type Task = {
   };
 };
 export type Bootstrap = {
+  conversationTrash?: import('./conversation-history.ts').TrashEntry[];
   resourceDirectory?: import('./resources.ts').ResourceDiscoveryNode[];
   workflows?: import('./workflows.ts').Workflow[];
   user: User;

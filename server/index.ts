@@ -107,6 +107,8 @@ import { validResourceQuery } from '../shared/resources.ts';
 import { WorkflowRuntime } from './workflow-runtime.ts';
 import { installWorkflowAPI } from './workflow-api.ts';
 import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-maintenance.ts';
+import { ConversationHistory, HistoryError, historyFileIDs } from './conversation-history.ts';
+import { isLocked } from './store.ts';
 
 try {
   acquireDataLock();
@@ -136,6 +138,43 @@ let workerSampler: WorkerResourceSampler | null = null;
 let resources: { catalog: ResourceCatalog; directory: ResourceNetwork; files: ResourceFiles } | null = null;
 const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQueue, policies: executionPolicies,
   resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()) });
+const conversationHistory = new ConversationHistory(db, {
+  data: () => ({ tasks: tasks(), workflows: workflowRuntime.store.list(), projects: projects(), network: nodeNetwork.snapshot() }),
+  queue: () => nodeQueue.list(),
+  files: (m) => nodeNetwork.files.historyFiles(m),
+  busy: (m) => m.local.some((id) => isLocked(id)) || m.workflow.some((id) => workflowRuntime.service.isAdvancing(id)) ||
+    workflowRuntime.historyBusy(m.local) || nodeNetwork.historyBusy(m) || m.remote.some((id) => processingRemoteTasks.has(id)) ||
+    m.remote.length > 0 && processingRemoteControls.size > 0,
+  purge: (m, files, protectedIDs) => {
+    for (const row of db.prepare('SELECT execution_id,body FROM workflow_contexts').all())
+      if (![...m.local, ...m.remote].includes(String(row.execution_id))) for (const id of historyFileIDs(JSON.parse(String(row.body)))) protectedIDs.add(id);
+    for (const row of db.prepare('SELECT task_id,body FROM workflow_outputs').all())
+      if (!m.local.includes(String(row.task_id))) for (const id of historyFileIDs(JSON.parse(String(row.body)))) protectedIDs.add(id);
+    nodeNetwork.files.purgeHistory(m, files, protectedIDs);
+    nodeNetwork.purgeHistory(m);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      nodeQueue.purgeHistory(m);
+      for (const id of m.local) {
+        db.prepare('DELETE FROM activities WHERE task_id=?').run(id);
+        db.prepare('DELETE FROM task_engine_intents WHERE task_id=?').run(id);
+        db.prepare('DELETE FROM workflow_outputs WHERE task_id=?').run(id);
+        db.prepare('DELETE FROM tasks WHERE id=?').run(id);
+      }
+      for (const id of [...m.local, ...m.remote]) db.prepare('DELETE FROM workflow_contexts WHERE execution_id=?').run(id);
+      for (const id of m.workflow) db.prepare('DELETE FROM workflows WHERE id=?').run(id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  },
+});
+nodeNetwork.setHistoryRetired((id) => !!db.prepare('SELECT 1 FROM conversation_retired WHERE id=? LIMIT 1').get(id));
+function sweepConversationHistory() {
+  const release = updateMaintenance.enterOperation();
+  if (!release) return;
+  try { const result = conversationHistory.sweep(); if (result.deleted) changed(); } finally { release(); }
+}
+const historyCleanup = setInterval(sweepConversationHistory, 60 * 60 * 1000);
+historyCleanup.unref();
 let resourceConfiguration = '';
 const resourceCapabilities = new ResourceCapabilityCache();
 function configureResources() {
@@ -292,6 +331,7 @@ setTaskInputMaterializer((value, directory) => {
   );
 });
 setTaskStartGuard((value) => {
+  conversationHistory.assertAvailable('local', value.id);
   requireThat(!updateMaintenance.active, 503, '正在准备软件更新，请稍后重试。');
   if (value.inputFiles?.length)
     requireThat(
@@ -482,6 +522,11 @@ app.post('/api/auth/join', rateLimit, (req, res) => {
 });
 app.use('/api', authenticated);
 const who = (req: Request) => (req as AuthRequest).user;
+app.use('/api', (req, _res, next) => {
+  const route = req.path.match(/^\/(workflows|tasks|network\/tasks)\/([^/]+)/);
+  if (route) conversationHistory.assertAvailable(route[1] === 'workflows' ? 'workflow' : route[1] === 'tasks' ? 'local' : 'remote', route[2]);
+  next();
+});
 installWorkflowAPI(app, workflowRuntime, nodeNetwork, who);
 function visibleTask(req: Request) {
   const t = task(String(req.params.id));
@@ -489,7 +534,9 @@ function visibleTask(req: Request) {
   return t;
 }
 function visibleNetwork(req: Request) {
-  const snapshot = nodeNetwork.snapshot();
+  const raw = nodeNetwork.snapshot();
+  const snapshot = { ...raw, remoteTasks: raw.remoteTasks.filter((v) => !conversationHistory.retired('remote', v.id)),
+    brainTasks: raw.brainTasks.filter((v) => !conversationHistory.retired('brain', v.id)) };
   if (who(req).owner) return snapshot;
   const visibleTasks = tasks().filter((value) => participant(value, who(req)));
   const remoteTasks = snapshot.remoteTasks.filter(
@@ -523,7 +570,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 function bootstrap(req: Request): Bootstrap {
-  return {
+  return conversationHistory.filter({
     user: who(req),
     users: users(),
     projects: projects(),
@@ -533,10 +580,30 @@ function bootstrap(req: Request): Bootstrap {
     defaultModel: defaultModel(),
     executionPolicy: executionPolicies.snapshot(),
     network: visibleNetwork(req),
+    ...(who(req).owner ? { conversationTrash: conversationHistory.list() } : {}),
     ...(who(req).owner ? { resourceDirectory: resources?.directory.nodes() || [] } : {}),
-  };
+  });
 }
 app.get('/api/bootstrap', (req, res) => res.json(bootstrap(req)));
+app.post('/api/history/trash', (req, res) => {
+  requireNetworkOwner(req);
+  const { key } = z.object({ key: z.string().min(1).max(100) }).strict().parse(req.body);
+  const entry = conversationHistory.trash(key, bootstrap(req)); changed(); res.json(entry);
+});
+app.post('/api/history/restore', (req, res) => {
+  requireNetworkOwner(req);
+  const { key } = z.object({ key: z.string().min(1).max(100) }).strict().parse(req.body);
+  conversationHistory.restore(key); changed(); res.json({ ok: true });
+});
+app.post('/api/history/purge', (req, res) => {
+  requireNetworkOwner(req);
+  const { key } = z.object({ key: z.string().min(1).max(100), confirmed: z.literal(true) }).strict().parse(req.body);
+  conversationHistory.purge(key); changed(); res.json({ ok: true });
+});
+app.post('/api/history/empty', (req, res) => {
+  requireNetworkOwner(req); z.object({ confirmed: z.literal(true) }).strict().parse(req.body);
+  const result = conversationHistory.sweep(false); changed(); res.json(result);
+});
 app.get('/api/ui/sidebar-widths', (req, res) =>
   res.json(workspacePreferences.sidebarWidths(who(req).id)),
 );
@@ -1984,7 +2051,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return void res.status(400).json({
       error: `输入不正确：${error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('；')}`,
     });
-  if (error instanceof HttpError)
+  if (error instanceof HttpError || error instanceof HistoryError)
     return void res.status(error.status).json({ error: error.message });
   if (error instanceof TaskFileError)
     return void res.status(error.status).json({ error: error.message });
@@ -2018,7 +2085,7 @@ try {
   console.log(desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
   if (!users().length && !desktop)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
-  void nodeNetwork.start();
+  void nodeNetwork.start().then(sweepConversationHistory);
   void initializeEngine();
   workflowRuntime.start();
 }
@@ -2026,6 +2093,7 @@ let closing = false;
 export async function shutdown(update?: { lease: string; version: string }) {
   if (closing) return;
   closing = true;
+  clearInterval(historyCleanup);
   workerSampler?.dispose();
   clearInterval(remoteTaskProcessor);
   updates.off('update', onTaskUpdateForNetwork);

@@ -68,6 +68,11 @@ type StoredReceipt = {
 };
 /** Queue facts are independent of engine progress and are replayed as latest snapshots. */
 export class TaskQueueReceiptStore {
+  purge(remoteIDs: string[], brainIDs: string[]) {
+    for (const [key, value] of this.values) if (remoteIDs.includes(value.receipt.remoteTaskID) ||
+      value.receipt.brainTaskID && brainIDs.includes(value.receipt.brainTaskID)) this.values.delete(key);
+    this.save();
+  }
   private readonly root: string;
   private values = new Map<string, StoredReceipt>();
   constructor(root: string) {
