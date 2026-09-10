@@ -2,7 +2,11 @@
 //! User project directories are references inside the database, never traversal roots.
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{fs, io::{Read, Write}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, io::{Read, Write}, path::{Path, PathBuf}, time::{Instant, SystemTime, UNIX_EPOCH}};
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupProgress { pub files: u64, pub total_files: u64, pub bytes: u64, pub total_bytes: u64 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +52,7 @@ fn files_below(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Resul
     Ok(())
 }
 
-pub fn backup(data_dir: &Path, from: &str, to: &str) -> Result<PathBuf, String> {
+pub fn backup(data_dir: &Path, from: &str, to: &str, mut progress: impl FnMut(BackupProgress)) -> Result<PathBuf, String> {
     let stable = |value: &str| semver::Version::parse(value).is_ok_and(|v| v.pre.is_empty() && v.build.is_empty());
     if !stable(from) || !stable(to) { return Err("update_backup_failed".into()); }
     let state = private_state_directory(data_dir)?;
@@ -61,6 +65,12 @@ pub fn backup(data_dir: &Path, from: &str, to: &str) -> Result<PathBuf, String> 
     let mut paths = Vec::new();
     files_below(data_dir, data_dir, &mut paths)?;
     paths.sort();
+    let mut status = BackupProgress { total_files: paths.len() as u64, ..Default::default() };
+    for relative in &paths {
+        status.total_bytes = status.total_bytes.checked_add(regular_metadata(&data_dir.join(relative))?.len()).ok_or("update_backup_failed")?;
+    }
+    progress(status.clone());
+    let mut reported = Instant::now();
     let mut inventory = Vec::new();
     for relative in paths {
         let source = data_dir.join(&relative);
@@ -77,6 +87,8 @@ pub fn backup(data_dir: &Path, from: &str, to: &str) -> Result<PathBuf, String> 
             if count == 0 { break; }
             output.write_all(&buffer[..count]).map_err(|_| "update_backup_failed")?;
             digest.update(&buffer[..count]); bytes += count as u64;
+            status.bytes += count as u64;
+            if reported.elapsed().as_millis() >= 200 { progress(status.clone()); reported = Instant::now(); }
         }
         output.sync_all().map_err(|_| "update_backup_failed")?;
         let after = regular_metadata(&source)?;
@@ -84,12 +96,15 @@ pub fn backup(data_dir: &Path, from: &str, to: &str) -> Result<PathBuf, String> 
             return Err("update_backup_failed".into());
         }
         inventory.push(BackupFile { path: relative.to_string_lossy().replace('\\', "/"), bytes, sha256: format!("{:x}", digest.finalize()) });
+        status.files += 1;
+        if status.files < status.total_files && reported.elapsed().as_millis() >= 200 { progress(status.clone()); reported = Instant::now(); }
     }
     // A completed manifest is the commit marker. A partial copy is never restored as a complete backup.
     let bytes = serde_json::to_vec_pretty(&serde_json::json!({ "schemaVersion": 1, "complete": true,
         "fromVersion": from, "toVersion": to, "files": inventory })).map_err(|_| "update_backup_failed")?;
     let mut manifest = fs::OpenOptions::new().write(true).create_new(true).open(destination.join("backup-manifest.json")).map_err(|_| "update_backup_failed")?;
     manifest.write_all(&bytes).and_then(|_| manifest.sync_all()).map_err(|_| "update_backup_failed")?;
+    progress(status);
     Ok(destination)
 }
 
@@ -117,7 +132,7 @@ mod tests {
         for file in ["rivloom.sqlite", "rivloom.sqlite-wal", "node-identity.json", "node-trust.json", "engine/data/opencode/auth.json", "engine/state/records.json", "task-files/blobs/file.blob", "resource-files/material.json", "webview/cache", "engine/cache/cache", ".updates/old-backup/secret", "app.lock"] {
             let path = root.join(file); fs::create_dir_all(path.parent().unwrap()).unwrap(); fs::write(path, file.as_bytes()).unwrap();
         }
-        let copied = backup(&root, "0.1.4", "0.1.5").unwrap();
+        let copied = backup(&root, "0.1.4", "0.1.5", |_| {}).unwrap();
         for file in ["rivloom.sqlite", "rivloom.sqlite-wal", "node-identity.json", "node-trust.json", "engine/data/opencode/auth.json", "engine/state/records.json", "task-files/blobs/file.blob", "resource-files/material.json"] {
             assert_eq!(fs::read(copied.join(file)).unwrap(), file.as_bytes());
         }
@@ -133,7 +148,29 @@ mod tests {
         atomic_json(&path, &serde_json::json!({"skippedVersion":"0.1.5"})).unwrap();
         atomic_json(&path, &serde_json::json!({"skippedVersion":"0.1.6"})).unwrap();
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap()["skippedVersion"], "0.1.6");
-        assert!(backup(&root, "../bad", "0.1.5").is_err());
+        assert!(backup(&root, "../bad", "0.1.5", |_| {}).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn progress_counts_only_application_data_and_finishes_after_manifest_commit() {
+        let root = root();
+        fs::write(root.join("rivloom.sqlite"), b"database").unwrap();
+        fs::write(root.join("node-identity.json"), b"identity").unwrap();
+        fs::create_dir(root.join("webview")).unwrap();
+        fs::write(root.join("webview/cache"), vec![0; 4096]).unwrap();
+        let mut events = Vec::new();
+        let copied = backup(&root, "0.1.6", "0.1.7", |event| {
+            assert!(event.files <= event.total_files && event.bytes <= event.total_bytes);
+            if event.files == event.total_files {
+                assert!(fs::read_dir(root.join(".updates/backups")).unwrap().filter_map(Result::ok)
+                    .any(|entry| entry.path().join("backup-manifest.json").is_file()));
+            }
+            events.push(event);
+        }).unwrap();
+        assert_eq!(events.first().unwrap(), &BackupProgress { files: 0, total_files: 2, bytes: 0, total_bytes: 16 });
+        assert_eq!(events.last().unwrap(), &BackupProgress { files: 2, total_files: 2, bytes: 16, total_bytes: 16 });
+        assert!(events.windows(2).all(|pair| pair[0].bytes <= pair[1].bytes && pair[0].files <= pair[1].files));
+        assert!(!copied.join("webview").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

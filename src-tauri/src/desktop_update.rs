@@ -29,6 +29,7 @@ pub struct Snapshot {
     phase: String, current_version: String, release: Option<Release>, skipped_version: Option<String>,
     last_checked_at: Option<u64>, downloaded_bytes: u64, total_bytes: Option<u64>,
     error: Option<String>, blockers: Option<Blockers>, revision: u64,
+    backup: Option<update_backup::BackupProgress>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -66,9 +67,9 @@ pub(crate) struct Metadata {
     pub url: String, pub signature: String, pub bytes: u64, pub sha256: String,
 }
 struct Inner { snapshot: Snapshot, preferences: Preferences, update: Option<Update>, metadata: Option<Metadata>, bytes: Option<Arc<Vec<u8>>> }
-pub struct UpdateState { inner: Mutex<Inner>, operation: AtomicBool, cancel: AtomicBool, preferences_path: PathBuf, enabled: bool }
-struct Operation<'a>(&'a AtomicBool);
-impl Drop for Operation<'_> { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
+pub struct UpdateState { inner: Mutex<Inner>, operation: Arc<AtomicBool>, cancel: AtomicBool, preferences_path: PathBuf, enabled: bool }
+struct Operation(Arc<AtomicBool>);
+impl Drop for Operation { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
 
 fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|v| v.as_millis() as u64).unwrap_or(0) }
 fn stable_version(value: &str) -> bool {
@@ -144,17 +145,17 @@ impl UpdateState {
         if error.is_none() { error = preferences.installation_error.clone(); }
         Self { inner: Mutex::new(Inner { snapshot: Snapshot { phase: if !enabled { "disabled" } else if error.is_some() { "error" } else { "idle" }.into(),
             current_version: env!("CARGO_PKG_VERSION").into(), release: None, skipped_version: preferences.skipped_version.clone(), last_checked_at: preferences.last_checked_at,
-            downloaded_bytes: 0, total_bytes: None, error, blockers: None, revision: 0 }, preferences, update: None, metadata: None, bytes: None }),
-            operation: AtomicBool::new(false), cancel: AtomicBool::new(false), preferences_path, enabled }
+            downloaded_bytes: 0, total_bytes: None, error, blockers: None, revision: 0, backup: None }, preferences, update: None, metadata: None, bytes: None }),
+            operation: Arc::new(AtomicBool::new(false)), cancel: AtomicBool::new(false), preferences_path, enabled }
     }
     fn snapshot(&self) -> Snapshot { self.inner.lock().unwrap().snapshot.clone() }
     fn change(&self, operation: impl FnOnce(&mut Inner)) -> Snapshot {
         let mut inner = self.inner.lock().unwrap(); operation(&mut inner); inner.snapshot.revision += 1; inner.snapshot.clone()
     }
-    fn acquire(&self) -> Result<Operation<'_>, String> {
+    fn acquire(&self) -> Result<Operation, String> {
         if !self.enabled { return Err("update_disabled".into()); }
         if self.operation.swap(true, Ordering::SeqCst) { return Err("update_busy".into()); }
-        Ok(Operation(&self.operation))
+        Ok(Operation(self.operation.clone()))
     }
     fn save(&self, preferences: &Preferences) -> Result<(), String> {
         let data_dir = self.preferences_path.parent().and_then(Path::parent).ok_or("update_save_failed")?;
@@ -282,14 +283,12 @@ async fn local_request(app: &tauri::AppHandle, action: &str, body: serde_json::V
         .map_err(|_| "update_service_unavailable".into())
 }
 
-async fn install(app: &tauri::AppHandle) -> Result<Snapshot, String> {
+async fn install(app: &tauri::AppHandle, _operation: Operation) -> Result<Snapshot, String> {
     let state = app.state::<UpdateState>();
-    let _operation = state.acquire()?;
     let (update, metadata, bytes) = {
         let inner = state.inner.lock().unwrap();
         (inner.update.clone().ok_or("update_manifest_invalid")?, inner.metadata.clone().ok_or("update_manifest_invalid")?, inner.bytes.clone().ok_or("update_download_failed")?)
     };
-    state.change(|inner| { inner.snapshot.phase = "preparing".into(); inner.snapshot.error = None; inner.snapshot.blockers = None; });
     let preparation = async {
         let response = local_request(app, "prepare", serde_json::json!({"version": metadata.version})).await?;
         if !response.status().is_success() { return Err("update_service_unavailable".to_string()); }
@@ -314,6 +313,7 @@ async fn install(app: &tauri::AppHandle) -> Result<Snapshot, String> {
     }
     // Even after an ambiguous HTTP result, require this exact lease's durable
     // clean-shutdown receipt and a successful exit. Never fall back to force-kill.
+    state.change(|inner| { inner.snapshot.phase = "stopping".into(); });
     let app_for_backup = app.clone(); let target = metadata.version.clone();
     let stopped = native_async::blocking(move || {
         let desktop = app_for_backup.state::<DesktopState>();
@@ -322,7 +322,11 @@ async fn install(app: &tauri::AppHandle) -> Result<Snapshot, String> {
         if fs::metadata(&receipt).map_err(|_| "update_shutdown_failed")?.len() > 1024 { return Err("update_shutdown_failed".to_string()); }
         let receipt: serde_json::Value = serde_json::from_slice(&fs::read(receipt).map_err(|_| "update_shutdown_failed")?).map_err(|_| "update_shutdown_failed")?;
         if receipt != serde_json::json!({"lease": lease, "version": target, "closed": true}) { return Err("update_shutdown_failed".to_string()); }
-        update_backup::backup(&desktop.data_dir, env!("CARGO_PKG_VERSION"), &target)
+        let updates = app_for_backup.state::<UpdateState>();
+        updates.change(|inner| { inner.snapshot.phase = "backing_up".into(); });
+        update_backup::backup(&desktop.data_dir, env!("CARGO_PKG_VERSION"), &target, |progress| {
+            updates.change(|inner| { inner.snapshot.backup = Some(progress); });
+        })
     }).await;
     let backup = match stopped {
         Ok(Ok(path)) => path,
@@ -390,7 +394,25 @@ pub fn cancel_desktop_update(window: WebviewWindow, desktop: tauri::State<Deskto
 }
 #[tauri::command]
 pub async fn install_desktop_update(window: WebviewWindow, app: tauri::AppHandle) -> Result<Snapshot, String> {
-    authorize(&window, &app.state::<DesktopState>())?; install(&app).await
+    authorize(&window, &app.state::<DesktopState>())?;
+    let state = app.state::<UpdateState>();
+    let operation = state.acquire()?;
+    {
+        let inner = state.inner.lock().unwrap();
+        if inner.update.is_none() || inner.metadata.is_none() { return Err("update_manifest_invalid".into()); }
+        if inner.bytes.is_none() { return Err("update_download_failed".into()); }
+    }
+    let accepted = state.change(|inner| {
+        inner.snapshot.phase = "preparing".into(); inner.snapshot.error = None;
+        inner.snapshot.blockers = None; inner.snapshot.backup = None;
+    });
+    // Return the IPC acknowledgment immediately. The native worker owns the
+    // operation until shutdown, backup and installation finish, independently
+    // of the renderer and any open or dismissed dialog.
+    tauri::async_runtime::spawn(async move {
+        if let Err(code) = install(&app, operation).await { app.state::<UpdateState>().fail(&code, "ready"); }
+    });
+    Ok(accepted)
 }
 
 #[cfg(test)]
@@ -437,6 +459,23 @@ mod tests {
         let operation = state.acquire().unwrap(); assert!(state.acquire().is_err()); drop(operation);
         assert!(state.acquire().is_ok());
         assert!(UpdateState::new(&std::env::temp_dir(), false).acquire().is_err());
+    }
+    #[test]
+    fn background_installation_keeps_its_lock_after_request_returns() {
+        let state = Arc::new(UpdateState::new(&std::env::temp_dir(), true));
+        let operation = state.acquire().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _operation = operation;
+            started_tx.send(()).unwrap();
+            finish_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(state.acquire().is_err(), "A returned request must not allow a second installer");
+        assert_eq!(state.snapshot().phase, "idle", "Status reads remain available while the worker owns the operation");
+        finish_tx.send(()).unwrap(); worker.join().unwrap();
+        assert!(state.acquire().is_ok());
     }
     #[test]
     fn official_signer_fixture_and_metadata_validate_before_installation() {

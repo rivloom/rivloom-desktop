@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { canPrepareUpdate, updateBlockers, UpdateMaintenance, type UpdateReadiness } from '../server/update-maintenance.ts';
-import { shouldPromptForUpdate, updateDownloadPercent, updateIsBusy, type DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
+import { shouldPromptForUpdate, updateDownloadPercent, updateIsBusy, updateIsInstalling, type DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { assertReadableWorkspaceDatabase } from '../server/data-format.ts';
 
@@ -82,4 +82,14 @@ test('only the selected skipped version is quiet and progress cannot exceed its 
   assert.equal(updateDownloadPercent(value), 100);
   assert.equal(updateIsBusy('ready'), false);
   assert.equal(updateIsBusy('preparing'), true);
+});
+
+test('every native installation phase stays busy without displaying an update offer', () => {
+  for (const phase of ['preparing', 'stopping', 'backing_up', 'installing'] as const) {
+    assert.equal(updateIsInstalling(phase), true, phase);
+    assert.equal(updateIsBusy(phase), true, phase);
+    assert.equal(shouldPromptForUpdate({ ...snapshot(), phase }), false, phase);
+  }
+  for (const phase of ['ready', 'available', 'error', 'downloading'] as const)
+    assert.equal(updateIsInstalling(phase), false, phase);
 });

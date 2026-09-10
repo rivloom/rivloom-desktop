@@ -1,7 +1,7 @@
 /** The native updater owns URLs, signatures, staged bytes and installation. */
 export type DesktopUpdatePhase =
   | 'disabled' | 'idle' | 'checking' | 'available' | 'downloading'
-  | 'ready' | 'preparing' | 'installing' | 'error';
+  | 'ready' | 'preparing' | 'stopping' | 'backing_up' | 'installing' | 'error';
 export type DesktopUpdateRelease = { version: string; notes: string; publishedAt: string | null };
 export type DesktopUpdateBlockers = {
   tasks: number; queues: number; workflows: number; remoteTasks: number;
@@ -18,12 +18,16 @@ export type DesktopUpdateSnapshot = {
   error: string | null;
   blockers: DesktopUpdateBlockers | null;
   revision: number;
+  backup?: { files: number; totalFiles: number; bytes: number; totalBytes: number } | null;
 };
 export const updateCheckIntervalMilliseconds = 6 * 60 * 60 * 1000;
 export const updateStartupDelayMilliseconds = 12_000;
 
 export function updateIsBusy(phase: DesktopUpdatePhase): boolean {
-  return ['checking', 'downloading', 'preparing', 'installing'].includes(phase);
+  return ['checking', 'downloading'].includes(phase) || updateIsInstalling(phase);
+}
+export function updateIsInstalling(phase: DesktopUpdatePhase): boolean {
+  return ['preparing', 'stopping', 'backing_up', 'installing'].includes(phase);
 }
 export function shouldPromptForUpdate(value: DesktopUpdateSnapshot): boolean {
   return value.phase === 'available' && !!value.release && value.skippedVersion !== value.release.version;

@@ -120,7 +120,7 @@ export function AboutRivloom({
             </button>
           </div>
         )}
-        <DesktopUpdateSettings />
+        <DesktopUpdateSettings beforeCheck={close} />
         <div className="modal-actions about-rivloom-actions">
           <CopyButton text={summary} label={t('复制版本信息')} className="about-rivloom-copy" />
         </div>
