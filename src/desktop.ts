@@ -39,3 +39,4 @@ export const skipDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('skip_deskt
 export const downloadDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('download_desktop_update');
 export const cancelDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('cancel_desktop_update');
 export const installDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('install_desktop_update');
+export const confirmDesktopStartup = () => invoke<boolean>('confirm_desktop_startup');

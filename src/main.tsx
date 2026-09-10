@@ -5,6 +5,7 @@ import { i18n } from '../shared/i18n';
 import { initializeLanguage } from './i18n';
 import { LanguageSwitcher } from './language-switcher';
 import { DesktopUpdateProvider } from './desktop-update';
+import { useDesktopStartup } from './desktop-startup';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, Bot, CircleCheck, CircleDot, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -167,6 +168,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
+  useDesktopStartup(!!data?.user.id && data.engine.ready && connected && !loading && !error);
   const refreshQueue = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
   const applyBootstrap = (next: Bootstrap) =>
     setData((previous) => (previous?.user.id === next.user.id ? reuseJson(previous, next) : next));

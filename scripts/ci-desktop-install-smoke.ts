@@ -730,6 +730,22 @@ async function runInstalled(
     });
     fixture = await modelFixture();
     fixture.configure(data);
+    const backupRoot = join(data, '.updates', 'backups');
+    const seedBackup = (from: string, to: string, stamp: string, complete: boolean) => {
+      const name = `${from}-to-${to}-${stamp}`;
+      const copy = join(backupRoot, name);
+      mkdirSync(copy, { recursive: true });
+      writeFileSync(join(copy, 'old-data.txt'), 'Synthetic obsolete backup only.');
+      if (complete) writeFileSync(join(copy, 'backup-manifest.json'), JSON.stringify({
+        schemaVersion: 1, fromVersion: from, toVersion: to, complete: true, files: [],
+      }));
+      return name;
+    };
+    const upgradeBackup = seedBackup('0.0.1', candidate.version, '100', true);
+    seedBackup('0.0.1', '0.0.2', '101', false);
+    writeFileSync(join(data, '.updates', 'pending-install.json'), JSON.stringify({
+      fromVersion: '0.0.1', toVersion: candidate.version, backup: upgradeBackup,
+    }));
     const environment = systemEnvironment();
     for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP']) {
       environment[name] = join(testRoot, 'environment', name.toLowerCase());
@@ -756,6 +772,7 @@ async function runInstalled(
     const start = async () => {
       noRivloom();
       assertDefaultDiscoveryBindings(discoveryBindings());
+      const startedAt = Date.now();
       desktop = spawn(executable, [], {
         cwd: installation,
         env: environment,
@@ -814,6 +831,15 @@ async function runInstalled(
       await client.authenticate();
       const state = await client.bootstrap();
       assert.equal(state.engine.version, '1.18.25');
+      await until(
+        async () => readJson(data, join(data, '.updates', 'startup-success.json')),
+        (value) => value.version === candidate.version && value.confirmedAt >= startedAt && value.backupCleanupComplete === true,
+        'installed workspace startup acknowledgement and backup cleanup',
+        90_000,
+      );
+      assert.deepEqual(readdirSync(backupRoot), [], 'Successful workspace startup retained obsolete backups');
+      assert(!existsSync(join(data, '.updates', 'pending-install.json')), 'Completed startup retained its pending upgrade');
+      assert.equal(readFileSync(join(data, 'KEEP.txt'), 'utf8'), 'Rivloom install smoke: retain this isolated data.\n');
       assert.deepEqual(
         state.engine.models.map((model) => model.id),
         ['fixture/m34'],
@@ -869,6 +895,7 @@ async function runInstalled(
       'The installed backend owns the default discovery port on the fresh hosted runner without runtime environment overrides',
     );
     await stopOwned();
+    seedBackup('0.0.1', '0.0.2', '102', false);
     const second = await start();
     assert.equal(
       second.nodeID,
@@ -878,7 +905,9 @@ async function runInstalled(
     await stopOwned();
     assertions.push(
       'Installed Rivloom restarts with the same isolated identity; only owned process trees were stopped',
+      'Rendered authenticated workspace acknowledges startup; obsolete complete and interrupted backups are removed on initial launch and restart while live data survives',
     );
+    proof.startupBackupCleanup = { initialLaunch: true, restart: true, completeCopies: true, interruptedCopies: true, preservedLiveData: true };
     assert.equal(fixture.requests, 0, 'Installer smoke must not issue model requests');
     proof.modelRequests = 0;
     proof.preservedData = preservationCheckpoint(data);

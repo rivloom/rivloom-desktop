@@ -404,8 +404,9 @@ html[lang='en'] .new-conversation {
 }
 .history-row { position: relative; display: flex; min-width: 0; gap: 2px; align-items: center; }
 .history-row .conversation-item { flex: 1; min-width: 0; }
-.history-row .history-delete { width: 26px; height: 30px; flex: 0 0 26px; color: var(--muted); margin-bottom: 4px; }
-.history-delete:disabled { opacity: .24; cursor: default; }
+.history-row .history-delete { width: 26px; height: 30px; flex: 0 0 26px; color: var(--muted); margin-bottom: 4px; opacity: 0; pointer-events: none; }
+.history-row:hover .history-delete, .history-row:focus-within .history-delete { opacity: 1; pointer-events: auto; }
+.history-row:hover .history-delete:disabled, .history-row:focus-within .history-delete:disabled { opacity: .24; cursor: default; }
 .history-delete:not(:disabled):hover { color: #b04545; background: #fbecec; }
 .history-directory { margin-bottom: 9px; }
 .history-directory-heading { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -1936,6 +1937,8 @@ html[lang='en'] .composer-toolbar {
   margin: 14px 0 0;
 }
 @media (hover: none) {
+  .history-row .history-delete { opacity: 1; pointer-events: auto; }
+  .history-row .history-delete:disabled { opacity: .24; }
   .machine-delete-button,
   .machine-remark-button {
     opacity: 1;

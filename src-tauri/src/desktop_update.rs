@@ -35,27 +35,36 @@ pub struct Snapshot {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Preferences { skipped_version: Option<String>, last_checked_at: Option<u64>, installation_error: Option<String> }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PendingInstall { from_version: String, to_version: String, backup: String }
 
-fn recover_install(data_dir: &Path, current: &str, preferences: &mut Preferences) -> Result<(), String> {
+fn pending_install(data_dir: &Path) -> Result<Option<PendingInstall>, String> {
     let pending_path = data_dir.join(".updates/pending-install.json");
-    if !pending_path.exists() { return Ok(()); }
+    match fs::symlink_metadata(&pending_path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("update_save_failed".into()),
+        Ok(_) => {},
+    }
     update_backup::private_state_directory(data_dir)?;
-    let pending: PendingInstall = fs::metadata(&pending_path).ok().filter(|m| m.len() <= 4096)
+    let pending: PendingInstall = update_backup::regular_metadata(&pending_path).ok().filter(|m| m.is_file() && m.len() <= 4096)
         .and_then(|_| fs::read(&pending_path).ok()).and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .filter(|p: &PendingInstall| newer(&p.to_version, &p.from_version) &&
-            !p.backup.is_empty() && p.backup.len() < 160 && p.backup.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+            update_backup::backup_versions(&p.backup) == Some((p.from_version.clone(), p.to_version.clone())))
         .ok_or("update_save_failed")?;
+    Ok(Some(pending))
+}
+
+fn recover_install(data_dir: &Path, current: &str, preferences: &mut Preferences) -> Result<(), String> {
+    let Some(pending) = pending_install(data_dir)? else { return Ok(()); };
     if current == pending.to_version || newer(current, &pending.to_version) {
         preferences.installation_error = None;
     } else if preferences.installation_error.is_none() {
         preferences.installation_error = Some("update_install_incomplete".into());
     }
-    // Save the outcome before consuming the marker so a failed write is recoverable.
-    update_backup::atomic_json(&data_dir.join(".updates/preferences.json"), preferences)?;
-    fs::remove_file(pending_path).map_err(|_| "update_save_failed".into())
+    // Starting the backend is not yet a healthy UI startup. Keep the marker until
+    // the authenticated workspace acknowledges readiness and cleanup completes.
+    update_backup::atomic_json(&data_dir.join(".updates/preferences.json"), preferences)
 }
 
 /// Signed separately from the installer, binding its bytes to version and URL.
@@ -67,7 +76,8 @@ pub(crate) struct Metadata {
     pub url: String, pub signature: String, pub bytes: u64, pub sha256: String,
 }
 struct Inner { snapshot: Snapshot, preferences: Preferences, update: Option<Update>, metadata: Option<Metadata>, bytes: Option<Arc<Vec<u8>>> }
-pub struct UpdateState { inner: Mutex<Inner>, operation: Arc<AtomicBool>, cancel: AtomicBool, preferences_path: PathBuf, enabled: bool }
+pub struct UpdateState { inner: Mutex<Inner>, operation: Arc<AtomicBool>, cancel: AtomicBool, preferences_path: PathBuf, enabled: bool,
+    startup_recovery_ok: bool, startup_cleanup_complete: AtomicBool }
 struct Operation(Arc<AtomicBool>);
 impl Drop for Operation { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
 
@@ -143,10 +153,12 @@ impl UpdateState {
             if let Err(code) = recover_install(data_dir, env!("CARGO_PKG_VERSION"), &mut preferences) { error = Some(code); }
         }
         if error.is_none() { error = preferences.installation_error.clone(); }
+        let startup_recovery_ok = error.is_none();
         Self { inner: Mutex::new(Inner { snapshot: Snapshot { phase: if !enabled { "disabled" } else if error.is_some() { "error" } else { "idle" }.into(),
             current_version: env!("CARGO_PKG_VERSION").into(), release: None, skipped_version: preferences.skipped_version.clone(), last_checked_at: preferences.last_checked_at,
             downloaded_bytes: 0, total_bytes: None, error, blockers: None, revision: 0, backup: None }, preferences, update: None, metadata: None, bytes: None }),
-            operation: Arc::new(AtomicBool::new(false)), cancel: AtomicBool::new(false), preferences_path, enabled }
+            operation: Arc::new(AtomicBool::new(false)), cancel: AtomicBool::new(false), preferences_path, enabled,
+            startup_recovery_ok, startup_cleanup_complete: AtomicBool::new(false) }
     }
     fn snapshot(&self) -> Snapshot { self.inner.lock().unwrap().snapshot.clone() }
     fn change(&self, operation: impl FnOnce(&mut Inner)) -> Snapshot {
@@ -169,6 +181,40 @@ impl UpdateState {
         self.change(|inner| { inner.preferences.installation_error = Some(code.into()); let _ = self.save(&inner.preferences);
             inner.snapshot.phase = "error".into(); inner.snapshot.error = Some(code.into()); });
     }
+}
+
+fn finish_startup_cleanup(data_dir: &Path, current: &str) -> Result<bool, String> {
+    let pending = pending_install(data_dir)?;
+    if pending.as_ref().is_some_and(|p| !(current == p.to_version || newer(current, &p.to_version))) { return Err("update_save_failed".into()); }
+    let result = update_backup::cleanup_after_startup(data_dir, current)?;
+    if result.failed > 0 { return Ok(false); }
+    update_backup::private_state_directory(data_dir)?;
+    let pending_path = data_dir.join(".updates/pending-install.json");
+    if pending.is_some() {
+        if pending_install(data_dir)? != pending { return Err("update_save_failed".into()); }
+        fs::remove_file(&pending_path).map_err(|_| "update_save_failed")?;
+    }
+    update_backup::atomic_json(&data_dir.join(".updates/startup-success.json"), &serde_json::json!({
+        "version": current, "confirmedAt": now(), "backupCleanupComplete": true,
+    }))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn confirm_desktop_startup(window: WebviewWindow, app: tauri::AppHandle) -> Result<bool, String> {
+    authorize(&window, &app.state::<DesktopState>())?;
+    let state = app.state::<UpdateState>();
+    if !state.enabled || !state.startup_recovery_ok || state.startup_cleanup_complete.load(Ordering::SeqCst) { return Ok(true); }
+    let operation = state.acquire()?;
+    native_async::blocking(move || {
+        let _operation = operation;
+        let desktop = app.state::<DesktopState>();
+        if desktop.closing.load(Ordering::SeqCst) || desktop.runtime.lock().map_err(|_| "update_service_unavailable")?
+            .child.try_wait().map_err(|_| "update_service_unavailable")?.is_some() { return Err("update_service_unavailable".into()); }
+        let complete = finish_startup_cleanup(&desktop.data_dir, env!("CARGO_PKG_VERSION"))?;
+        if complete { app.state::<UpdateState>().startup_cleanup_complete.store(true, Ordering::SeqCst); }
+        Ok(complete)
+    }).await.map_err(|_| "update_backup_cleanup_failed")?
 }
 
 pub fn start_background(app: tauri::AppHandle) {
@@ -419,7 +465,7 @@ pub async fn install_desktop_update(window: WebviewWindow, app: tauri::AppHandle
 mod tests {
     use super::*;
     #[test]
-    fn restart_preserves_skip_and_reports_interrupted_install_once() {
+    fn restart_preserves_skip_and_keeps_recovery_until_successful_workspace_startup() {
         let root = std::env::temp_dir().join(format!("rivloom-update-recovery-{}-{}", std::process::id(), now()));
         fs::create_dir(&root).unwrap();
         let directory = update_backup::private_state_directory(&root).unwrap();
@@ -429,14 +475,39 @@ mod tests {
             update_backup::atomic_json(&directory.join("pending-install.json"), &marker).unwrap();
             recover_install(&root, current, &mut prefs).unwrap();
             assert_eq!(prefs.installation_error.is_some(), failure);
-            assert!(!directory.join("pending-install.json").exists());
+            assert!(directory.join("pending-install.json").exists());
             let loaded: Preferences = serde_json::from_slice(&fs::read(directory.join("preferences.json")).unwrap()).unwrap();
             assert_eq!(loaded.skipped_version.as_deref(), Some("0.1.9"));
             assert_eq!(loaded.last_checked_at, Some(123));
             assert_eq!(loaded.installation_error, prefs.installation_error);
+            if failure {
+                assert!(finish_startup_cleanup(&root, current).is_err());
+                assert!(!directory.join("startup-success.json").exists());
+            } else {
+                assert!(finish_startup_cleanup(&root, current).unwrap());
+                assert!(!directory.join("pending-install.json").exists());
+                assert!(directory.join("startup-success.json").exists());
+            }
         }
         fs::write(directory.join("pending-install.json"), b"broken").unwrap();
         assert!(recover_install(&root, "0.1.5", &mut prefs).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn failed_or_invalid_install_markers_prevent_cleanup_before_any_backup_is_deleted() {
+        let root = std::env::temp_dir().join(format!("rivloom-cleanup-gate-{}-{}", std::process::id(), now()));
+        fs::create_dir(&root).unwrap(); fs::write(root.join("rivloom.sqlite"), b"live database").unwrap();
+        let backup = update_backup::backup(&root, "0.1.5", "0.1.6", |_| {}).unwrap();
+        let marker = root.join(".updates/pending-install.json");
+        update_backup::atomic_json(&marker, &PendingInstall { from_version: "0.1.7".into(), to_version: "0.1.8".into(), backup: "0.1.7-to-0.1.8-123".into() }).unwrap();
+        assert!(finish_startup_cleanup(&root, "0.1.7").is_err()); assert!(backup.exists());
+        fs::write(&marker, b"broken").unwrap();
+        assert!(finish_startup_cleanup(&root, "0.1.8").is_err()); assert!(backup.exists());
+        assert!(!UpdateState::new(&root, true).startup_recovery_ok);
+        fs::remove_file(marker).unwrap();
+        assert!(finish_startup_cleanup(&root, "0.1.8").unwrap()); assert!(!backup.exists());
+        assert_eq!(fs::read(root.join("rivloom.sqlite")).unwrap(), b"live database");
+        assert!(finish_startup_cleanup(&root, "0.1.8").unwrap());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

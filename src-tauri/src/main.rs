@@ -371,7 +371,8 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
         .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, notify_attention, take_notification_target,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
-            desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update])
+            desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
+            desktop_update::confirm_desktop_startup])
         .setup(|app| {
             let data_dir = match std::env::var_os("RIVLOOM_DATA_DIR") {
                 Some(path) => PathBuf::from(path),

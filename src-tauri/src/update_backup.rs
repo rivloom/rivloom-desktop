@@ -1,6 +1,6 @@
 //! Consistent application-state copies made only after the owned runtime exits.
 //! User project directories are references inside the database, never traversal roots.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, io::{Read, Write}, path::{Path, PathBuf}, time::{Instant, SystemTime, UNIX_EPOCH}};
 
@@ -20,7 +20,7 @@ fn excluded(relative: &Path) -> bool {
         path == "engine/temp" || path.starts_with("engine/temp/")
 }
 
-fn regular_metadata(path: &Path) -> Result<fs::Metadata, String> {
+pub(crate) fn regular_metadata(path: &Path) -> Result<fs::Metadata, String> {
     let meta = fs::symlink_metadata(path).map_err(|_| "update_backup_failed")?;
     #[cfg(windows)]
     {
@@ -108,6 +108,79 @@ pub fn backup(data_dir: &Path, from: &str, to: &str, mut progress: impl FnMut(Ba
     Ok(destination)
 }
 
+#[derive(Debug, Default, PartialEq)]
+pub struct Cleanup { pub removed: usize, pub failed: usize, pub retained: usize }
+
+pub(crate) fn backup_versions(name: &str) -> Option<(String, String)> {
+    if name.len() > 160 { return None; }
+    let (versions, stamp) = name.rsplit_once('-')?;
+    let timestamp = stamp.parse::<u128>().ok()?;
+    if timestamp == 0 || timestamp.to_string() != stamp { return None; }
+    let (from, to) = versions.split_once("-to-")?;
+    let stable = |text: &str| semver::Version::parse(text).ok().filter(|v| v.pre.is_empty() && v.build.is_empty() && v.to_string() == text);
+    if stable(to)? <= stable(from)? { return None; }
+    Some((from.to_owned(), to.to_owned()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupHeader { schema_version: u32, from_version: String, to_version: String }
+
+fn check_backup_tree(root: &Path, path: &Path, count: &mut usize) -> Result<(), String> {
+    *count += 1;
+    if *count > 400_001 { return Err("update_backup_cleanup_failed".into()); }
+    let metadata = regular_metadata(path)?;
+    if !fs::canonicalize(path).map_err(|_| "update_backup_cleanup_failed")?.starts_with(root) { return Err("update_backup_cleanup_failed".into()); }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path).map_err(|_| "update_backup_cleanup_failed")? {
+            check_backup_tree(root, &entry.map_err(|_| "update_backup_cleanup_failed")?.path(), count)?;
+        }
+    }
+    Ok(())
+}
+
+/// Called only after this installed version has a healthy runtime and rendered workspace.
+/// Never use database project paths or manifest file paths as deletion targets.
+pub fn cleanup_after_startup(data_dir: &Path, current: &str) -> Result<Cleanup, String> {
+    let current = semver::Version::parse(current).ok().filter(|v| v.pre.is_empty() && v.build.is_empty() && v.to_string() == current).ok_or("update_backup_cleanup_failed")?;
+    if !data_dir.is_absolute() { return Err("update_backup_cleanup_failed".into()); }
+    let updates = data_dir.join(".updates");
+    let backups = updates.join("backups");
+    if !backups.try_exists().map_err(|_| "update_backup_cleanup_failed")? { return Ok(Cleanup::default()); }
+    for path in [data_dir, updates.as_path(), backups.as_path()] {
+        if !regular_metadata(path)?.is_dir() { return Err("update_backup_cleanup_failed".into()); }
+    }
+    let expected = fs::canonicalize(data_dir).map_err(|_| "update_backup_cleanup_failed")?.join(".updates").join("backups");
+    let root = fs::canonicalize(&backups).map_err(|_| "update_backup_cleanup_failed")?;
+    if root != expected { return Err("update_backup_cleanup_failed".into()); }
+    let mut result = Cleanup::default();
+    for entry in fs::read_dir(&backups).map_err(|_| "update_backup_cleanup_failed")? {
+        let entry = entry.map_err(|_| "update_backup_cleanup_failed")?;
+        let path = entry.path();
+        let Some((from, to)) = entry.file_name().to_str().and_then(backup_versions) else { result.retained += 1; continue; };
+        if semver::Version::parse(&to).map_err(|_| "update_backup_cleanup_failed")? > current { result.retained += 1; continue; }
+        let remove = || -> Result<(), String> {
+            if !regular_metadata(&path)?.is_dir() { return Err("update_backup_cleanup_failed".into()); }
+            let resolved = fs::canonicalize(&path).map_err(|_| "update_backup_cleanup_failed")?;
+            if !resolved.is_absolute() || resolved.parent() != Some(root.as_path()) { return Err("update_backup_cleanup_failed".into()); }
+            let manifest = path.join("backup-manifest.json");
+            if manifest.try_exists().map_err(|_| "update_backup_cleanup_failed")? {
+                let metadata = regular_metadata(&manifest)?;
+                if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 { return Err("update_backup_cleanup_failed".into()); }
+                let header: BackupHeader = serde_json::from_slice(&fs::read(&manifest).map_err(|_| "update_backup_cleanup_failed")?).map_err(|_| "update_backup_cleanup_failed")?;
+                if header.schema_version != 1 || header.from_version != from || header.to_version != to { return Err("update_backup_cleanup_failed".into()); }
+            }
+            // Also handles copies interrupted before their final manifest and retries
+            // after a partial deletion. Every actual child is checked, never followed.
+            check_backup_tree(&resolved, &path, &mut 0)?;
+            if fs::canonicalize(&path).map_err(|_| "update_backup_cleanup_failed")? != resolved { return Err("update_backup_cleanup_failed".into()); }
+            fs::remove_dir_all(&path).map_err(|_| "update_backup_cleanup_failed".into())
+        };
+        if remove().is_ok() { result.removed += 1; } else { result.failed += 1; }
+    }
+    Ok(result)
+}
+
 pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     if path.exists() { regular_metadata(path)?; }
     let temporary = path.with_extension("tmp");
@@ -172,5 +245,84 @@ mod tests {
         assert!(events.windows(2).all(|pair| pair[0].bytes <= pair[1].bytes && pair[0].files <= pair[1].files));
         assert!(!copied.join("webview").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn successful_startup_deletes_all_past_backups_and_partial_copies_but_keeps_live_data_and_future_versions() {
+        let root = root();
+        fs::write(root.join("rivloom.sqlite"), b"current database").unwrap();
+        fs::create_dir(root.join("project")).unwrap();
+        fs::write(root.join("project/source.txt"), b"current project").unwrap();
+        let first = backup(&root, "0.1.5", "0.1.6", |_| {}).unwrap();
+        let second = backup(&root, "0.1.6", "0.1.7", |_| {}).unwrap();
+        let latest = backup(&root, "0.1.7", "0.1.8", |_| {}).unwrap();
+        let future = backup(&root, "0.1.8", "0.1.9", |_| {}).unwrap();
+        let backups = root.join(".updates/backups");
+        let partial = backups.join("0.1.6-to-0.1.7-123");
+        fs::create_dir(&partial).unwrap(); fs::write(partial.join("partial.db"), b"partial").unwrap();
+        let unknown = backups.join("my-files");
+        fs::create_dir(&unknown).unwrap(); fs::write(unknown.join("keep.txt"), b"keep").unwrap();
+        let result = cleanup_after_startup(&root, "0.1.8").unwrap();
+        assert_eq!(result, Cleanup { removed: 4, failed: 0, retained: 2 });
+        for path in [first, second, latest, partial] { assert!(!path.exists()); }
+        assert!(future.join("backup-manifest.json").exists()); assert!(unknown.join("keep.txt").exists());
+        assert_eq!(fs::read(root.join("rivloom.sqlite")).unwrap(), b"current database");
+        assert_eq!(fs::read(root.join("project/source.txt")).unwrap(), b"current project");
+        assert_eq!(cleanup_after_startup(&root, "0.1.8").unwrap().removed, 0);
+        assert_eq!(cleanup_after_startup(&root, "0.1.9").unwrap().removed, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_rejects_unknown_names_mismatched_manifests_and_invalid_current_versions() {
+        let root = root(); fs::write(root.join("rivloom.sqlite"), b"current").unwrap();
+        let malformed = backup(&root, "0.1.7", "0.1.8", |_| {}).unwrap();
+        fs::write(malformed.join("backup-manifest.json"), br#"{"schemaVersion":1,"fromVersion":"0.1.7","toVersion":"9.9.9"}"#).unwrap();
+        for bad in ["v0.1.8", "0.1.8-beta", "0.1.8+other", "../outside"] { assert!(cleanup_after_startup(&root, bad).is_err()); }
+        assert!(cleanup_after_startup(Path::new("relative"), "0.1.8").is_err());
+        for bad in ["0.1.7-to-0.1.8-001", "0.1.8-to-0.1.7-123", "0.1.7-to-0.1.8-0", "../0.1.7-to-0.1.8-123"] { assert!(backup_versions(bad).is_none()); }
+        assert_eq!(cleanup_after_startup(&root, "0.1.8").unwrap().failed, 1);
+        assert!(malformed.join("rivloom.sqlite").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_refuses_junctions_at_the_root_backup_and_inside_a_copy() {
+        use std::os::windows::process::CommandExt;
+        fn junction(link: &Path, target: &Path) {
+            let output = std::process::Command::new("cmd").args(["/d", "/c", "mklink", "/J"])
+                .arg(link.to_string_lossy().replace('/', "\\")).arg(target.to_string_lossy().replace('/', "\\"))
+                .creation_flags(0x08000000).output().unwrap();
+            assert!(output.status.success(), "Junction fixture failed: {} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        }
+        let root = root(); let outside = root.with_extension("outside");
+        fs::create_dir(&outside).unwrap(); fs::write(outside.join("keep.txt"), b"project data").unwrap();
+        fs::create_dir(root.join(".updates")).unwrap(); junction(&root.join(".updates/backups"), &outside);
+        assert!(cleanup_after_startup(&root, "0.1.8").is_err());
+        fs::remove_dir(root.join(".updates/backups")).unwrap();
+        let copy = backup(&root, "0.1.7", "0.1.8", |_| {}).unwrap();
+        junction(&copy.join("linked-project"), &outside);
+        junction(&root.join(".updates/backups/0.1.6-to-0.1.7-123"), &outside);
+        assert_eq!(cleanup_after_startup(&root, "0.1.8").unwrap().failed, 2);
+        assert_eq!(fs::read(outside.join("keep.txt")).unwrap(), b"project data");
+        assert!(copy.join("backup-manifest.json").exists());
+        fs::remove_dir(copy.join("linked-project")).unwrap();
+        fs::remove_dir(root.join(".updates/backups/0.1.6-to-0.1.7-123")).unwrap();
+        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_backup_is_retried_without_touching_live_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = root(); fs::write(root.join("rivloom.sqlite"), b"live data").unwrap();
+        let copy = backup(&root, "0.1.7", "0.1.8", |_| {}).unwrap();
+        let locked = fs::OpenOptions::new().read(true).share_mode(0).open(copy.join("rivloom.sqlite")).unwrap();
+        assert_eq!(cleanup_after_startup(&root, "0.1.8").unwrap().failed, 1);
+        assert_eq!(fs::read(root.join("rivloom.sqlite")).unwrap(), b"live data");
+        drop(locked);
+        assert_eq!(cleanup_after_startup(&root, "0.1.8").unwrap().removed, 1);
+        assert!(!copy.exists()); fs::remove_dir_all(root).unwrap();
     }
 }
