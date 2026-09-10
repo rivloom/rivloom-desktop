@@ -345,6 +345,69 @@
     ]
   },
   {
+    "name": "@types/debug",
+    "version": "4.1.13",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==",
+    "packagePaths": [
+      "node_modules/@types/debug"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fdebug/4.1.13/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fdebug/4.1.13/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/estree-jsx",
+    "version": "1.0.5",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-52CcUVNFyfb1A2ALocQw/Dd1BQFNmSdkuC3BkZ6iqhdMfQz7JWOFRuJFloOzjk+6WijU56m9oKXFAXc7o3Towg==",
+    "packagePaths": [
+      "node_modules/@types/estree-jsx"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Festree-jsx/1.0.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Festree-jsx/1.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/estree",
+    "version": "1.0.9",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
+    "packagePaths": [
+      "node_modules/@types/estree"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Festree/1.0.9/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Festree/1.0.9/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
     "name": "@types/express-serve-static-core",
     "version": "5.1.3",
     "license": "MIT",
@@ -387,6 +450,27 @@
     ]
   },
   {
+    "name": "@types/hast",
+    "version": "3.0.5",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==",
+    "packagePaths": [
+      "node_modules/@types/hast"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fhast/3.0.5/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fhast/3.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
     "name": "@types/http-errors",
     "version": "2.0.5",
     "license": "MIT",
@@ -398,6 +482,48 @@
     "licenseFile": "licenses/npm/%40types%2Fhttp-errors/2.0.5/LICENSE",
     "licenseFiles": [
       "licenses/npm/%40types%2Fhttp-errors/2.0.5/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/mdast",
+    "version": "4.0.4",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==",
+    "packagePaths": [
+      "node_modules/@types/mdast"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fmdast/4.0.4/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fmdast/4.0.4/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/ms",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==",
+    "packagePaths": [
+      "node_modules/@types/ms"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Fms/2.1.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Fms/2.1.0/LICENSE"
     ],
     "licenseSources": [
       {
@@ -495,7 +621,7 @@
     "name": "@types/react",
     "version": "19.2.18",
     "license": "MIT",
-    "developmentOnly": true,
+    "developmentOnly": false,
     "integrity": "sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==",
     "packagePaths": [
       "node_modules/@types/react"
@@ -555,6 +681,48 @@
     ]
   },
   {
+    "name": "@types/unist",
+    "version": "2.0.11",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==",
+    "packagePaths": [
+      "node_modules/parse-entities/node_modules/@types/unist"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Funist/2.0.11/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Funist/2.0.11/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
+    "name": "@types/unist",
+    "version": "3.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==",
+    "packagePaths": [
+      "node_modules/@types/unist"
+    ],
+    "licenseFile": "licenses/npm/%40types%2Funist/3.0.3/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40types%2Funist/3.0.3/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+      }
+    ]
+  },
+  {
     "name": "@typescript/typescript-win32-x64",
     "version": "7.0.2",
     "license": "Apache-2.0",
@@ -578,6 +746,27 @@
         "kind": "installed-package",
         "file": "NOTICE.txt",
         "sha256": "f5c708b59114507b8b27b48181b6883d106bbca0c1634bbee45b5e344237b66b"
+      }
+    ]
+  },
+  {
+    "name": "@ungap/structured-clone",
+    "version": "1.4.0",
+    "license": "ISC",
+    "developmentOnly": false,
+    "integrity": "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==",
+    "packagePaths": [
+      "node_modules/@ungap/structured-clone"
+    ],
+    "licenseFile": "licenses/npm/%40ungap%2Fstructured-clone/1.4.0/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/%40ungap%2Fstructured-clone/1.4.0/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf"
       }
     ]
   },
@@ -620,6 +809,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6"
+      }
+    ]
+  },
+  {
+    "name": "bail",
+    "version": "2.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==",
+    "packagePaths": [
+      "node_modules/bail"
+    ],
+    "licenseFile": "licenses/npm/bail/2.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/bail/2.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
       }
     ]
   },
@@ -725,6 +935,132 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292"
+      }
+    ]
+  },
+  {
+    "name": "ccount",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==",
+    "packagePaths": [
+      "node_modules/ccount"
+    ],
+    "licenseFile": "licenses/npm/ccount/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/ccount/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "character-entities-html4",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-1v7fgQRj6hnSwFpq1Eu0ynr/CDEw0rXo2B61qXrLNdHZmPKgb7fqS1a2JwF0rISo9q77jDI8VMEHoApn8qDoZA==",
+    "packagePaths": [
+      "node_modules/character-entities-html4"
+    ],
+    "licenseFile": "licenses/npm/character-entities-html4/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/character-entities-html4/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "character-entities-legacy",
+    "version": "3.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-RpPp0asT/6ufRm//AJVwpViZbGM/MkjQFxJccQRHmISF/22NBtsHqAWmL+/pmkPWoIUJdWyeVleTl1wydHATVQ==",
+    "packagePaths": [
+      "node_modules/character-entities-legacy"
+    ],
+    "licenseFile": "licenses/npm/character-entities-legacy/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/character-entities-legacy/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "character-entities",
+    "version": "2.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==",
+    "packagePaths": [
+      "node_modules/character-entities"
+    ],
+    "licenseFile": "licenses/npm/character-entities/2.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/character-entities/2.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "character-reference-invalid",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-iBZ4F4wRbyORVsu0jPV7gXkOsGYjGHPmAyv+HiHG8gi5PtC9KI2j1+v8/tlibRvjoWX027ypmG/n0HtO5t7unw==",
+    "packagePaths": [
+      "node_modules/character-reference-invalid"
+    ],
+    "licenseFile": "licenses/npm/character-reference-invalid/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/character-reference-invalid/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "comma-separated-tokens",
+    "version": "2.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==",
+    "packagePaths": [
+      "node_modules/comma-separated-tokens"
+    ],
+    "licenseFile": "licenses/npm/comma-separated-tokens/2.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/comma-separated-tokens/2.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
       }
     ]
   },
@@ -860,7 +1196,7 @@
     "name": "csstype",
     "version": "3.2.3",
     "license": "MIT",
-    "developmentOnly": true,
+    "developmentOnly": false,
     "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
     "packagePaths": [
       "node_modules/csstype"
@@ -899,6 +1235,27 @@
     ]
   },
   {
+    "name": "decode-named-character-reference",
+    "version": "1.3.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-GtpQYB283KrPp6nRw50q3U9/VfOutZOe103qlN7BPP6Ad27xYnOIWv4lPzo8HCAL+mMZofJ9KEy30fq6MfaK6Q==",
+    "packagePaths": [
+      "node_modules/decode-named-character-reference"
+    ],
+    "licenseFile": "licenses/npm/decode-named-character-reference/1.3.0/license",
+    "licenseFiles": [
+      "licenses/npm/decode-named-character-reference/1.3.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
     "name": "depd",
     "version": "2.0.0",
     "license": "MIT",
@@ -920,6 +1277,27 @@
     ]
   },
   {
+    "name": "dequal",
+    "version": "2.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==",
+    "packagePaths": [
+      "node_modules/dequal"
+    ],
+    "licenseFile": "licenses/npm/dequal/2.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/dequal/2.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "306fa513e39b23a6e8747520de761809d206b99800ef41907b530226574c59ae"
+      }
+    ]
+  },
+  {
     "name": "detect-libc",
     "version": "2.1.2",
     "license": "Apache-2.0",
@@ -937,6 +1315,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+      }
+    ]
+  },
+  {
+    "name": "devlop",
+    "version": "1.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==",
+    "packagePaths": [
+      "node_modules/devlop"
+    ],
+    "licenseFile": "licenses/npm/devlop/1.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/devlop/1.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62"
       }
     ]
   },
@@ -1109,6 +1508,48 @@
     ]
   },
   {
+    "name": "escape-string-regexp",
+    "version": "5.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
+    "packagePaths": [
+      "node_modules/escape-string-regexp"
+    ],
+    "licenseFile": "licenses/npm/escape-string-regexp/5.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/escape-string-regexp/5.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+      }
+    ]
+  },
+  {
+    "name": "estree-util-is-identifier-name",
+    "version": "3.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==",
+    "packagePaths": [
+      "node_modules/estree-util-is-identifier-name"
+    ],
+    "licenseFile": "licenses/npm/estree-util-is-identifier-name/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/estree-util-is-identifier-name/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
     "name": "etag",
     "version": "1.8.1",
     "license": "MIT",
@@ -1147,6 +1588,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "95a5762890e5c1c9808921cef095661fc482c5e1f0bba31446ac85595df6237c"
+      }
+    ]
+  },
+  {
+    "name": "extend",
+    "version": "3.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
+    "packagePaths": [
+      "node_modules/extend"
+    ],
+    "licenseFile": "licenses/npm/extend/3.0.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/extend/3.0.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "97af7428f93afbab9bf79cd09254da1357161794f4255eb1b4599f04dd2d2e7c"
       }
     ]
   },
@@ -1382,6 +1844,111 @@
     ]
   },
   {
+    "name": "hast-util-is-element",
+    "version": "3.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Val9mnv2IWpLbNPqc/pUem+a7Ipj2aHacCwgNfTiK0vJKl0LF+4Ba4+v1oPHFpf3bLYmreq0/l3Gud9S5OH42g==",
+    "packagePaths": [
+      "node_modules/hast-util-is-element"
+    ],
+    "licenseFile": "licenses/npm/hast-util-is-element/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/hast-util-is-element/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "hast-util-to-jsx-runtime",
+    "version": "2.3.6",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-zl6s8LwNyo1P9uw+XJGvZtdFF1GdAkOg8ujOw+4Pyb76874fLps4ueHXDhXWdk6YHQ6OgUtinliG7RsYvCbbBg==",
+    "packagePaths": [
+      "node_modules/hast-util-to-jsx-runtime"
+    ],
+    "licenseFile": "licenses/npm/hast-util-to-jsx-runtime/2.3.6/license",
+    "licenseFiles": [
+      "licenses/npm/hast-util-to-jsx-runtime/2.3.6/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "hast-util-to-text",
+    "version": "4.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-KK6y/BN8lbaq654j7JgBydev7wuNMcID54lkRav1P0CaE1e47P72AWWPiGKXTJU271ooYzcvTAn/Zt0REnvc7A==",
+    "packagePaths": [
+      "node_modules/hast-util-to-text"
+    ],
+    "licenseFile": "licenses/npm/hast-util-to-text/4.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/hast-util-to-text/4.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "691115fe0234b1f05cb52a9c4aded367e389784a6501af824e85a7e54ca47d38"
+      }
+    ]
+  },
+  {
+    "name": "hast-util-whitespace",
+    "version": "3.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-88JUN06ipLwsnv+dVn+OIYOvAuvBMy/Qoi6O7mQHxdPXpjy+Cd6xRkWwux7DKO+4sYILtLBRIKgsdpS2gQc7qw==",
+    "packagePaths": [
+      "node_modules/hast-util-whitespace"
+    ],
+    "licenseFile": "licenses/npm/hast-util-whitespace/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/hast-util-whitespace/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "highlight.js",
+    "version": "11.11.2",
+    "license": "BSD-3-Clause",
+    "developmentOnly": false,
+    "integrity": "sha512-oaXMACAU0kzOMXBjWpNcX+vlwSBCIAiZ9BHa7gA15NOTtT2L/l8OSZDuqS2XppOhZBPJ7hm4o8ep2kyuip2uEQ==",
+    "packagePaths": [
+      "node_modules/highlight.js"
+    ],
+    "licenseFile": "licenses/npm/highlight.js/11.11.2/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/highlight.js/11.11.2/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490"
+      }
+    ]
+  },
+  {
     "name": "html-parse-stringify",
     "version": "4.0.1",
     "license": "MIT",
@@ -1399,6 +1966,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "3eb2802a4d0ea79f80977817451b056571dccd8373c9bf4e9be4b05f86afbf90"
+      }
+    ]
+  },
+  {
+    "name": "html-url-attributes",
+    "version": "3.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==",
+    "packagePaths": [
+      "node_modules/html-url-attributes"
+    ],
+    "licenseFile": "licenses/npm/html-url-attributes/3.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/html-url-attributes/3.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "e18cf5173e928f808f0cd208097fee8fbec9d28fc0255213938e4c559e29ff58"
       }
     ]
   },
@@ -1487,6 +2075,27 @@
     ]
   },
   {
+    "name": "inline-style-parser",
+    "version": "0.2.7",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==",
+    "packagePaths": [
+      "node_modules/inline-style-parser"
+    ],
+    "licenseFile": "licenses/npm/inline-style-parser/0.2.7/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/inline-style-parser/0.2.7/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "395c95f20598da653ff1eb1cb9d74947c7fac689697147f1d192fd0242a0e635"
+      }
+    ]
+  },
+  {
     "name": "ipaddr.js",
     "version": "1.9.1",
     "license": "MIT",
@@ -1504,6 +2113,111 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "62568a2d1337b77171ecca9db10579163446de1ba6151678e81f06cdc199971b"
+      }
+    ]
+  },
+  {
+    "name": "is-alphabetical",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==",
+    "packagePaths": [
+      "node_modules/is-alphabetical"
+    ],
+    "licenseFile": "licenses/npm/is-alphabetical/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/is-alphabetical/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "is-alphanumerical",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-hmbYhX/9MUMF5uh7tOXyK/n0ZvWpad5caBA17GsC6vyuCqaWliRG5K1qS9inmUhEMaOBIW7/whAnSwveW/LtZw==",
+    "packagePaths": [
+      "node_modules/is-alphanumerical"
+    ],
+    "licenseFile": "licenses/npm/is-alphanumerical/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/is-alphanumerical/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "is-decimal",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk/3XHR5JyEZChOyTWe2oayKnsSsr/kcGqF+z6yuH6HHpN0A==",
+    "packagePaths": [
+      "node_modules/is-decimal"
+    ],
+    "licenseFile": "licenses/npm/is-decimal/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/is-decimal/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "is-hexadecimal",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg==",
+    "packagePaths": [
+      "node_modules/is-hexadecimal"
+    ],
+    "licenseFile": "licenses/npm/is-hexadecimal/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/is-hexadecimal/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "is-plain-obj",
+    "version": "4.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==",
+    "packagePaths": [
+      "node_modules/is-plain-obj"
+    ],
+    "licenseFile": "licenses/npm/is-plain-obj/4.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/is-plain-obj/4.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
       }
     ]
   },
@@ -1592,6 +2306,48 @@
     ]
   },
   {
+    "name": "longest-streak",
+    "version": "3.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==",
+    "packagePaths": [
+      "node_modules/longest-streak"
+    ],
+    "licenseFile": "licenses/npm/longest-streak/3.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/longest-streak/3.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+      }
+    ]
+  },
+  {
+    "name": "lowlight",
+    "version": "3.3.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==",
+    "packagePaths": [
+      "node_modules/lowlight"
+    ],
+    "licenseFile": "licenses/npm/lowlight/3.3.0/license",
+    "licenseFiles": [
+      "licenses/npm/lowlight/3.3.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
     "name": "lucide-react",
     "version": "1.38.0",
     "license": "ISC",
@@ -1613,6 +2369,27 @@
     ]
   },
   {
+    "name": "markdown-table",
+    "version": "3.0.4",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==",
+    "packagePaths": [
+      "node_modules/markdown-table"
+    ],
+    "licenseFile": "licenses/npm/markdown-table/3.0.4/license",
+    "licenseFiles": [
+      "licenses/npm/markdown-table/3.0.4/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
     "name": "math-intrinsics",
     "version": "1.1.0",
     "license": "MIT",
@@ -1630,6 +2407,321 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "2b770a704c15de238c3f622b01b0044ddd60b49ee30608ea6991ebf19db7a7a1"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-find-and-replace",
+    "version": "3.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==",
+    "packagePaths": [
+      "node_modules/mdast-util-find-and-replace"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-find-and-replace/3.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-find-and-replace/3.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-from-markdown",
+    "version": "2.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-W4mAWTvSlKvf8L6J+VN9yLSqQ9AOAAvHuoDAmPkz4dHf553m5gVj2ejadHJhoJmcmxEnOv6Pa8XJhpxE93kb8Q==",
+    "packagePaths": [
+      "node_modules/mdast-util-from-markdown"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-from-markdown/2.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-from-markdown/2.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm-autolink-literal",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-5HVP2MKaP6L+G6YaxPNjuL0BPrq9orG3TsrZ9YXbA3vDw/ACI4MEsnoDpn6ZNm7GnZgtAcONJyPhOP8tNJQavQ==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm-autolink-literal"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm-autolink-literal/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm-autolink-literal/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm-footnote",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-sqpDWlsHn7Ac9GNZQMeUzPQSMzR6Wv0WKRNvQRg0KqHh02fpTz69Qc1QSseNX29bhz1ROIyNyxExfawVKTm1GQ==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm-footnote"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm-footnote/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm-footnote/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm-strikethrough",
+    "version": "2.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm-strikethrough"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm-strikethrough/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm-strikethrough/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm-table",
+    "version": "2.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm-table"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm-table/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm-table/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm-task-list-item",
+    "version": "2.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-IrtvNvjxC1o06taBAVJznEnkiHxLFTzgonUdy8hzFVeDun0uTjxxrRGVaNFqkU1wJR3RBPEfsxmU6jDWPofrTQ==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm-task-list-item"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm-task-list-item/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm-task-list-item/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-gfm",
+    "version": "3.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0ulfdQOM3ysHhCJ1p06l0b0VKlhU0wuQs3thxZQagjcjPrlFRqY215uZGHHJan9GEAXd9MbfPjFJz+qMkVR6zQ==",
+    "packagePaths": [
+      "node_modules/mdast-util-gfm"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-gfm/3.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-gfm/3.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-mdx-expression",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-J6f+9hUp+ldTZqKRSg7Vw5V6MqjATc+3E4gf3CFNcuZNWD8XdyI6zQ8GqH7f8169MM6P7hMBRDVGnn7oHB9kXQ==",
+    "packagePaths": [
+      "node_modules/mdast-util-mdx-expression"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-mdx-expression/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-mdx-expression/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-mdx-jsx",
+    "version": "3.2.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-lj/z8v0r6ZtsN/cGNNtemmmfoLAFZnjMbNyLzBafjzikOM+glrjNHPlf6lQDOTccj9n5b0PPihEBbhneMyGs1Q==",
+    "packagePaths": [
+      "node_modules/mdast-util-mdx-jsx"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-mdx-jsx/3.2.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-mdx-jsx/3.2.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-mdxjs-esm",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==",
+    "packagePaths": [
+      "node_modules/mdast-util-mdxjs-esm"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-mdxjs-esm/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-mdxjs-esm/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-phrasing",
+    "version": "4.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==",
+    "packagePaths": [
+      "node_modules/mdast-util-phrasing"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-phrasing/4.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-phrasing/4.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "b6d1a4e1831b177acc96f22a817d4f0f4c18419355badc3125754445fc69e3a7"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-to-hast",
+    "version": "13.2.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==",
+    "packagePaths": [
+      "node_modules/mdast-util-to-hast"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-to-hast/13.2.1/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-to-hast/13.2.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-to-markdown",
+    "version": "2.1.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==",
+    "packagePaths": [
+      "node_modules/mdast-util-to-markdown"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-to-markdown/2.1.2/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-to-markdown/2.1.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "mdast-util-to-string",
+    "version": "4.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==",
+    "packagePaths": [
+      "node_modules/mdast-util-to-string"
+    ],
+    "licenseFile": "licenses/npm/mdast-util-to-string/4.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/mdast-util-to-string/4.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
       }
     ]
   },
@@ -1672,6 +2764,594 @@
         "kind": "installed-package",
         "file": "license",
         "sha256": "70b126abc64d7ea06e1243349073935caa16fa47a41a571773ccf0b350b1d574"
+      }
+    ]
+  },
+  {
+    "name": "micromark-core-commonmark",
+    "version": "2.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==",
+    "packagePaths": [
+      "node_modules/micromark-core-commonmark"
+    ],
+    "licenseFile": "licenses/npm/micromark-core-commonmark/2.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-core-commonmark/2.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-autolink-literal",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-oOg7knzhicgQ3t4QCjCWgTmfNhvQbDDnJeVu9v81r7NltNCVmhPy1fJRX27pISafdjL+SVc4d3l48Gb6pbRypw==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-autolink-literal"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-autolink-literal/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-autolink-literal/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-footnote",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-/yPhxI1ntnDNsiHtzLKYnE3vf9JZ6cAisqVDauhp4CEHxlb4uoOTxOCJ+9s51bIB8U1N1FJ1RXOKTIlD5B/gqw==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-footnote"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-footnote/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-footnote/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "807a88522a850092aece49486207c17c313c4d5708ac276524840fe1caa0b0fa"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-strikethrough",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-ADVjpOOkjz1hhkZLlBiYA9cR2Anf8F4HqZUO6e5eDcPQd0Txw5fxLzzxnEkSkfnD0wziSGiv7sYhk/ktvbf1uw==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-strikethrough"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-strikethrough/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-strikethrough/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-table",
+    "version": "2.1.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-t2OU/dXXioARrC6yWfJ4hqB7rct14e8f7m0cbI5hUmDyyIlwv5vEtooptH8INkbLzOatzKuVbQmAYcbWoyz6Dg==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-table"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-table/2.1.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-table/2.1.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-tagfilter",
+    "version": "2.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-xHlTOmuCSotIA8TW1mDIM6X2O1SiX5P9IuDtqGonFhEK0qgRI4yeC6vMxEV2dgyr2TiD+2PQ10o+cOhdVAcwfg==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-tagfilter"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-tagfilter/2.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-tagfilter/2.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm-task-list-item",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-qIBZhqxqI6fjLDYFTBIa4eivDMnP+OZqsNwmQ3xNLE4Cxwc+zfQEfbs6tzAo2Hjq+bh6q5F+Z8/cksrLFYWQQw==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm-task-list-item"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm-task-list-item/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm-task-list-item/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "micromark-extension-gfm",
+    "version": "3.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-vsKArQsicm7t0z2GugkCKtZehqUm31oeGBV/KVSorWSy8ZlNAv7ytjFhvaryUiCUJYqs+NoE6AFhpQvBTM6Q4w==",
+    "packagePaths": [
+      "node_modules/micromark-extension-gfm"
+    ],
+    "licenseFile": "licenses/npm/micromark-extension-gfm/3.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-extension-gfm/3.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+      }
+    ]
+  },
+  {
+    "name": "micromark-factory-destination",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Xe6rDdJlkmbFRExpTOmRj9N3MaWmbAgdpSrBQvCFqhezUn4AHqJHbaEnfbVYYiexVSs//tqOdY/DxhjdCiJnIA==",
+    "packagePaths": [
+      "node_modules/micromark-factory-destination"
+    ],
+    "licenseFile": "licenses/npm/micromark-factory-destination/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-factory-destination/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-factory-label",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-VFMekyQExqIW7xIChcXn4ok29YE3rnuyveW3wZQWWqF4Nv9Wk5rgJ99KzPvHjkmPXF93FXIbBp6YdW3t71/7Vg==",
+    "packagePaths": [
+      "node_modules/micromark-factory-label"
+    ],
+    "licenseFile": "licenses/npm/micromark-factory-label/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-factory-label/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-factory-space",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-zRkxjtBxxLd2Sc0d+fbnEunsTj46SWXgXciZmHq0kDYGnck/ZSGj9/wULTV95uoeYiK5hRXP2mJ98Uo4cq/LQg==",
+    "packagePaths": [
+      "node_modules/micromark-factory-space"
+    ],
+    "licenseFile": "licenses/npm/micromark-factory-space/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-factory-space/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-factory-title",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-5bZ+3CjhAd9eChYTHsjy6TGxpOFSKgKKJPJxr293jTbfry2KDoWkhBb6TcPVB4NmzaPhMs1Frm9AZH7OD4Cjzw==",
+    "packagePaths": [
+      "node_modules/micromark-factory-title"
+    ],
+    "licenseFile": "licenses/npm/micromark-factory-title/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-factory-title/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-factory-whitespace",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Ob0nuZ3PKt/n0hORHyvoD9uZhr+Za8sFoP+OnMcnWK5lngSzALgQYKMr9RJVOWLqQYuyn6ulqGWSXdwf6F80lQ==",
+    "packagePaths": [
+      "node_modules/micromark-factory-whitespace"
+    ],
+    "licenseFile": "licenses/npm/micromark-factory-whitespace/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-factory-whitespace/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-character",
+    "version": "2.1.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==",
+    "packagePaths": [
+      "node_modules/micromark-util-character"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-character/2.1.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-character/2.1.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-chunked",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-QUNFEOPELfmvv+4xiNg2sRYeS/P84pTW0TCgP5zc9FpXetHY0ab7SxKyAQCNCc1eK0459uoLI1y5oO5Vc1dbhA==",
+    "packagePaths": [
+      "node_modules/micromark-util-chunked"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-chunked/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-chunked/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-classify-character",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-K0kHzM6afW/MbeWYWLjoHQv1sgg2Q9EccHEDzSkxiP/EaagNzCm7T/WMKZ3rjMbvIpvBiZgwR3dKMygtA4mG1Q==",
+    "packagePaths": [
+      "node_modules/micromark-util-classify-character"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-classify-character/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-classify-character/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-combine-extensions",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-OnAnH8Ujmy59JcyZw8JSbK9cGpdVY44NKgSM7E9Eh7DiLS2E9RNQf0dONaGDzEG9yjEl5hcqeIsj4hfRkLH/Bg==",
+    "packagePaths": [
+      "node_modules/micromark-util-combine-extensions"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-combine-extensions/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-combine-extensions/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-decode-numeric-character-reference",
+    "version": "2.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-ccUbYk6CwVdkmCQMyr64dXz42EfHGkPQlBj5p7YVGzq8I7CtjXZJrubAYezf7Rp+bjPseiROqe7G6foFd+lEuw==",
+    "packagePaths": [
+      "node_modules/micromark-util-decode-numeric-character-reference"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-decode-numeric-character-reference/2.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-decode-numeric-character-reference/2.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-decode-string",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-nDV/77Fj6eH1ynwscYTOsbK7rR//Uj0bZXBwJZRfaLEJ1iGBR6kIfNmlNqaqJf649EP0F3NWNdeJi03elllNUQ==",
+    "packagePaths": [
+      "node_modules/micromark-util-decode-string"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-decode-string/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-decode-string/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-encode",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-c3cVx2y4KqUnwopcO9b/SCdo2O67LwJJ/UyqGfbigahfegL9myoEFoDYZgkT7f36T0bLrM9hZTAaAyH+PCAXjw==",
+    "packagePaths": [
+      "node_modules/micromark-util-encode"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-encode/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-encode/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-html-tag-name",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-2cNEiYDhCWKI+Gs9T0Tiysk136SnR13hhO8yW6BGNyhOC4qYFnwF1nKfD3HFAIXA5c45RrIG1ub11GiXeYd1xA==",
+    "packagePaths": [
+      "node_modules/micromark-util-html-tag-name"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-html-tag-name/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-html-tag-name/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-normalize-identifier",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-sxPqmo70LyARJs0w2UclACPUUEqltCkJ6PhKdMIDuJ3gSf/Q+/GIe3WKl0Ijb/GyH9lOpUkRAO2wp0GVkLvS9Q==",
+    "packagePaths": [
+      "node_modules/micromark-util-normalize-identifier"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-normalize-identifier/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-normalize-identifier/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-resolve-all",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-VdQyxFWFT2/FGJgwQnJYbe1jjQoNTS4RjglmSjTUlpUMa95Htx9NHeYW4rGDJzbjvCsl9eLjMQwGeElsqmzcHg==",
+    "packagePaths": [
+      "node_modules/micromark-util-resolve-all"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-resolve-all/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-resolve-all/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-sanitize-uri",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-9N9IomZ/YuGGZZmQec1MbgxtlgougxTodVwDzzEouPKo3qFWvymFHWcnDi2vzV1ff6kas9ucW+o3yzJK9YB1AQ==",
+    "packagePaths": [
+      "node_modules/micromark-util-sanitize-uri"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-sanitize-uri/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-sanitize-uri/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-subtokenize",
+    "version": "2.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-XQLu552iSctvnEcgXw6+Sx75GflAPNED1qx7eBJ+wydBb2KCbRZe+NwvIEEMM83uml1+2WSXpBAcp9IUCgCYWA==",
+    "packagePaths": [
+      "node_modules/micromark-util-subtokenize"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-subtokenize/2.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-subtokenize/2.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-symbol",
+    "version": "2.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==",
+    "packagePaths": [
+      "node_modules/micromark-util-symbol"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-symbol/2.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-symbol/2.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark-util-types",
+    "version": "2.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==",
+    "packagePaths": [
+      "node_modules/micromark-util-types"
+    ],
+    "licenseFile": "licenses/npm/micromark-util-types/2.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/micromark-util-types/2.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "micromark",
+    "version": "4.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-zpe98Q6kvavpCr1NPVSCMebCKfD7CA2NqZ+rykeNhONIJBpc1tFKt9hucLGwha3jNTNI8lHpctWJWoimVF4PfA==",
+    "packagePaths": [
+      "node_modules/micromark"
+    ],
+    "licenseFile": "licenses/npm/micromark/4.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/micromark/4.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
       }
     ]
   },
@@ -1889,6 +3569,27 @@
     ]
   },
   {
+    "name": "parse-entities",
+    "version": "4.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==",
+    "packagePaths": [
+      "node_modules/parse-entities"
+    ],
+    "licenseFile": "licenses/npm/parse-entities/4.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/parse-entities/4.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b"
+      }
+    ]
+  },
+  {
     "name": "parseurl",
     "version": "1.3.3",
     "license": "MIT",
@@ -2036,6 +3737,27 @@
     ]
   },
   {
+    "name": "property-information",
+    "version": "7.2.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==",
+    "packagePaths": [
+      "node_modules/property-information"
+    ],
+    "licenseFile": "licenses/npm/property-information/7.2.0/license",
+    "licenseFiles": [
+      "licenses/npm/property-information/7.2.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b"
+      }
+    ]
+  },
+  {
     "name": "proxy-addr",
     "version": "2.0.7",
     "license": "MIT",
@@ -2162,6 +3884,27 @@
     ]
   },
   {
+    "name": "react-markdown",
+    "version": "10.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==",
+    "packagePaths": [
+      "node_modules/react-markdown"
+    ],
+    "licenseFile": "licenses/npm/react-markdown/10.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/react-markdown/10.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+      }
+    ]
+  },
+  {
     "name": "react",
     "version": "19.2.8",
     "license": "MIT",
@@ -2179,6 +3922,111 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+      }
+    ]
+  },
+  {
+    "name": "rehype-highlight",
+    "version": "7.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-k158pK7wdC2qL3M5NcZROZ2tR/l7zOzjxXd5VGdcfIyoijjQqpHd3JKtYSBDpDZ38UI2WJWuFAtkMDxmx5kstA==",
+    "packagePaths": [
+      "node_modules/rehype-highlight"
+    ],
+    "licenseFile": "licenses/npm/rehype-highlight/7.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/rehype-highlight/7.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "remark-gfm",
+    "version": "4.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==",
+    "packagePaths": [
+      "node_modules/remark-gfm"
+    ],
+    "licenseFile": "licenses/npm/remark-gfm/4.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/remark-gfm/4.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "remark-parse",
+    "version": "11.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-FCxlKLNGknS5ba/1lmpYijMUzX2esxW5xQqjWxw2eHFfS2MSdaHVINFmhjo+qN1WhZhNimq0dZATN9pH0IDrpA==",
+    "packagePaths": [
+      "node_modules/remark-parse"
+    ],
+    "licenseFile": "licenses/npm/remark-parse/11.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/remark-parse/11.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4"
+      }
+    ]
+  },
+  {
+    "name": "remark-rehype",
+    "version": "11.1.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==",
+    "packagePaths": [
+      "node_modules/remark-rehype"
+    ],
+    "licenseFile": "licenses/npm/remark-rehype/11.1.2/license",
+    "licenseFiles": [
+      "licenses/npm/remark-rehype/11.1.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "remark-stringify",
+    "version": "11.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==",
+    "packagePaths": [
+      "node_modules/remark-stringify"
+    ],
+    "licenseFile": "licenses/npm/remark-stringify/11.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/remark-stringify/11.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4"
       }
     ]
   },
@@ -2477,6 +4325,27 @@
     ]
   },
   {
+    "name": "space-separated-tokens",
+    "version": "2.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==",
+    "packagePaths": [
+      "node_modules/space-separated-tokens"
+    ],
+    "licenseFile": "licenses/npm/space-separated-tokens/2.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/space-separated-tokens/2.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
     "name": "statuses",
     "version": "2.0.2",
     "license": "MIT",
@@ -2494,6 +4363,69 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "512cfa4d5e7a7569c7ae4dd95241cb6ae2aaf648ef9ebd080c01bd24868d26e9"
+      }
+    ]
+  },
+  {
+    "name": "stringify-entities",
+    "version": "4.0.4",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-IwfBptatlO+QCJUo19AqvrPNqlVMpW9YEL2LIVY+Rpv2qsjCGxaDLNRgeGsQWJhfItebuJhsGSLjaBbNSQ+ieg==",
+    "packagePaths": [
+      "node_modules/stringify-entities"
+    ],
+    "licenseFile": "licenses/npm/stringify-entities/4.0.4/license",
+    "licenseFiles": [
+      "licenses/npm/stringify-entities/4.0.4/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+      }
+    ]
+  },
+  {
+    "name": "style-to-js",
+    "version": "1.1.21",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==",
+    "packagePaths": [
+      "node_modules/style-to-js"
+    ],
+    "licenseFile": "licenses/npm/style-to-js/1.1.21/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/style-to-js/1.1.21/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "bbb380e5c1a717079378d6ea4d33c8a5a81655d4612b749f882e34e46712aab5"
+      }
+    ]
+  },
+  {
+    "name": "style-to-object",
+    "version": "1.0.14",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==",
+    "packagePaths": [
+      "node_modules/style-to-object"
+    ],
+    "licenseFile": "licenses/npm/style-to-object/1.0.14/LICENSE",
+    "licenseFiles": [
+      "licenses/npm/style-to-object/1.0.14/LICENSE"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "LICENSE",
+        "sha256": "896c9fd6b5fc48ac31800b9d29a6e3ffcb0c2d534ed077ebfa5c2fa388cc38b7"
       }
     ]
   },
@@ -2557,6 +4489,48 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "a832d679750e49ab433626ab196350b89964b60eb0d3edd3341887c7d5f4c128"
+      }
+    ]
+  },
+  {
+    "name": "trim-lines",
+    "version": "3.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==",
+    "packagePaths": [
+      "node_modules/trim-lines"
+    ],
+    "licenseFile": "licenses/npm/trim-lines/3.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/trim-lines/3.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+      }
+    ]
+  },
+  {
+    "name": "trough",
+    "version": "2.2.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==",
+    "packagePaths": [
+      "node_modules/trough"
+    ],
+    "licenseFile": "licenses/npm/trough/2.2.0/license",
+    "licenseFiles": [
+      "licenses/npm/trough/2.2.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254"
       }
     ]
   },
@@ -2630,6 +4604,153 @@
     ]
   },
   {
+    "name": "unified",
+    "version": "11.0.5",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==",
+    "packagePaths": [
+      "node_modules/unified"
+    ],
+    "licenseFile": "licenses/npm/unified/11.0.5/license",
+    "licenseFiles": [
+      "licenses/npm/unified/11.0.5/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-find-after",
+    "version": "5.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-amQa0Ep2m6hE2g72AugUItjbuM8X8cGQnFoHk0pGfrFeT9GZhzN5SW8nRsiGKK7Aif4CrACPENkA6P/Lw6fHGQ==",
+    "packagePaths": [
+      "node_modules/unist-util-find-after"
+    ],
+    "licenseFile": "licenses/npm/unist-util-find-after/5.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-find-after/5.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-is",
+    "version": "6.0.1",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-LsiILbtBETkDz8I9p1dQ0uyRUWuaQzd/cuEeS1hoRSyW5E5XGmTzlwY1OrNzzakGowI9Dr/I8HVaw4hTtnxy8g==",
+    "packagePaths": [
+      "node_modules/unist-util-is"
+    ],
+    "licenseFile": "licenses/npm/unist-util-is/6.0.1/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-is/6.0.1/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "82974dbf2639d13edab95c32ed9cb6c0867ede272cd2e07ce47ce8548fe55c05"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-position",
+    "version": "5.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-fucsC7HjXvkB5R3kTCO7kUjRdrS0BJt3M/FPxmHMBOm8JQi2BsHAHFsy27E0EolP8rp0NzXsJ+jNPyDWvOJZPA==",
+    "packagePaths": [
+      "node_modules/unist-util-position"
+    ],
+    "licenseFile": "licenses/npm/unist-util-position/5.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-position/5.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-stringify-position",
+    "version": "4.0.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-0ASV06AAoKCDkS2+xw5RXJywruurpbC4JZSm7nr7MOt1ojAzvyyaO+UxZf18j8FCF6kmzCZKcAgN/yu2gm2XgQ==",
+    "packagePaths": [
+      "node_modules/unist-util-stringify-position"
+    ],
+    "licenseFile": "licenses/npm/unist-util-stringify-position/4.0.0/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-stringify-position/4.0.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-visit-parents",
+    "version": "6.0.2",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-goh1s1TBrqSqukSc8wrjwWhL0hiJxgA8m4kFxGlQ+8FYQ3C/m11FcTs4YYem7V664AhHVvgoQLk890Ssdsr2IQ==",
+    "packagePaths": [
+      "node_modules/unist-util-visit-parents"
+    ],
+    "licenseFile": "licenses/npm/unist-util-visit-parents/6.0.2/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-visit-parents/6.0.2/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+      }
+    ]
+  },
+  {
+    "name": "unist-util-visit",
+    "version": "5.1.0",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==",
+    "packagePaths": [
+      "node_modules/unist-util-visit"
+    ],
+    "licenseFile": "licenses/npm/unist-util-visit/5.1.0/license",
+    "licenseFiles": [
+      "licenses/npm/unist-util-visit/5.1.0/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+      }
+    ]
+  },
+  {
     "name": "unpipe",
     "version": "1.0.0",
     "license": "MIT",
@@ -2689,6 +4810,48 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400"
+      }
+    ]
+  },
+  {
+    "name": "vfile-message",
+    "version": "4.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
+    "packagePaths": [
+      "node_modules/vfile-message"
+    ],
+    "licenseFile": "licenses/npm/vfile-message/4.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/vfile-message/4.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+      }
+    ]
+  },
+  {
+    "name": "vfile",
+    "version": "6.0.3",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q==",
+    "packagePaths": [
+      "node_modules/vfile"
+    ],
+    "licenseFile": "licenses/npm/vfile/6.0.3/license",
+    "licenseFiles": [
+      "licenses/npm/vfile/6.0.3/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d"
       }
     ]
   },
@@ -2773,6 +4936,27 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+      }
+    ]
+  },
+  {
+    "name": "zwitch",
+    "version": "2.0.4",
+    "license": "MIT",
+    "developmentOnly": false,
+    "integrity": "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==",
+    "packagePaths": [
+      "node_modules/zwitch"
+    ],
+    "licenseFile": "licenses/npm/zwitch/2.0.4/license",
+    "licenseFiles": [
+      "licenses/npm/zwitch/2.0.4/license"
+    ],
+    "licenseSources": [
+      {
+        "kind": "installed-package",
+        "file": "license",
+        "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
       }
     ]
   }
