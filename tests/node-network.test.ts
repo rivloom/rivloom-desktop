@@ -69,7 +69,10 @@ test('node rate limits isolate discovery, hello and channel budgets without bypa
   // An unstarted store only reads this nonexistent root; no identity or files are created.
   const network = new NodeNetwork(join(tmpdir(), `rivloom-rate-${randomUUID()}`), false);
   const limiter = network as unknown as {
-    rateLimited(address: string, scope: 'discovery' | 'hello' | 'control' | 'channel' | 'file'): boolean;
+    rateLimited(
+      address: string,
+      scope: 'discovery' | 'hello' | 'control' | 'channel' | 'file',
+    ): boolean;
   };
   for (const [scope, limit] of [
     ['discovery', 60],
@@ -1314,6 +1317,60 @@ test(
 );
 
 test(
+  'collaboration extensions serialize authenticated queries without creating task executions',
+  { skip: process.platform !== 'win32', timeout: 45_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'collaboration-channel-'));
+    const networks = ['sender', 'receiver'].map((name) => {
+      const root = join(evidence, name); mkdirSync(root); loadNodeIdentity(root); return new NodeNetwork(root, true);
+    });
+    const [sender, receiver] = networks;
+    try {
+      await Promise.all(networks.map((network) => network.start()));
+      await pairNetworks(sender, receiver);
+      const peerID = receiver.snapshot().local!.id;
+      assert.equal(receiver.snapshot().local!.capabilities.length, 12);
+      let received = 0;
+      receiver.setCollaborationHandler((peer, operation, payload) => {
+        assert.equal(peer, sender.snapshot().local!.id);
+        assert.equal(operation, 'resource-query');
+        received++;
+        if (payload === 'reject') throw new Error('rejected query');
+        return { found: payload, ownerNodeID: peerID };
+      });
+      const results = await Promise.all(Array.from({ length: 8 }, (_, i) => sender.collaborationRequest(peerID, 'resource-query', { query: i })));
+      assert.deepEqual(results.map((result) => (result as { found: unknown }).found), Array.from({ length: 8 }, (_, query) => ({ query })));
+      await assert.rejects(sender.collaborationRequest(peerID, 'resource-query', 'reject'));
+      assert.deepEqual(await sender.collaborationRequest(peerID, 'resource-query', { query: 9 }), { found: { query: 9 }, ownerNodeID: peerID });
+      assert.equal(received, 10);
+      sender.setCollaborationHandler((peer, operation, payload) => {
+        assert.equal(peer, peerID); assert.equal(operation, 'resource-query'); return payload;
+      });
+      await Promise.all([
+        ...Array.from({ length: 8 }, (_, index) => sender.collaborationRequest(peerID, 'resource-query', { index })),
+        ...Array.from({ length: 8 }, (_, index) => receiver.collaborationRequest(sender.snapshot().local!.id, 'resource-query', { index })),
+      ]);
+      for (const network of networks) {
+        assert.equal(network.snapshot().remoteTasks.length, 0);
+        assert.equal(network.snapshot().brainTasks.length, 0);
+      }
+      await receiver.revokeTrust(sender.snapshot().local!.id);
+      await assert.rejects(sender.collaborationRequest(peerID, 'resource-query', {}));
+    } finally {
+      await Promise.all(networks.map((network) => network.stop()));
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK; else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT; else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
   'queue receipt network preserves fresh authenticated statistics across signed hello refresh',
   { skip: process.platform !== 'win32', timeout: 45_000 },
   async () => {
@@ -1334,6 +1391,7 @@ test(
     try {
       receiver.setNodeQueueProvider(() => ({
         waitingCount: 5,
+        workload: { occupiedSlots: 1, totalSlots: 1, executingCount: 0 },
         paused: false,
         health: 'normal',
         updatedAt: new Date().toISOString(),
@@ -1350,6 +1408,7 @@ test(
         await wait(50);
       const before = sender.snapshot().nearby.find((node) => node.id === peer.id)!.nodeQueue;
       assert(before);
+      assert.deepEqual(before.workload, { occupiedSlots: 1, totalSlots: 1, executingCount: 0 });
       const discovery = sender as unknown as { probe(service: unknown): Promise<void> };
       await discovery.probe({
         fqdn: 'queue-stats-fixture',
@@ -1373,6 +1432,106 @@ test(
         JSON.stringify([sender.snapshot(), receiver.snapshot()], null, 2),
       );
       await Promise.all([sender.stop(), receiver.stop()]);
+      if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
+      else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
+      if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
+      else process.env.RIVLOOM_DISCOVERY_PORT = previousPort;
+    }
+  },
+);
+
+test(
+  'workload statistics negotiate with the real previous queue-v1 decoder',
+  { skip: process.platform !== 'win32', timeout: 45_000 },
+  async () => {
+    const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
+    const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
+    process.env.RIVLOOM_MDNS_NETWORK = 'disabled';
+    process.env.RIVLOOM_DISCOVERY_PORT = String(await availableUdpPort());
+    const parent = join(process.cwd(), '.data', 'verification');
+    mkdirSync(parent, { recursive: true });
+    const evidence = mkdtempSync(join(parent, 'workload-v1-compat-'));
+    // Freeze both the prior transport and its strict statistics validator.
+    const legacyValidator = join(evidence, 'legacy-statistics.ts');
+    writeFileSync(
+      legacyValidator,
+      execFileSync(
+        'git',
+        ['show', 'cad78d38a26cebc95909531870bf6b38cf58cac1:shared/task-queue-receipts.ts'],
+        { encoding: 'utf8', windowsHide: true },
+      ),
+    );
+    const legacyModule = join(evidence, 'legacy-node-network.ts');
+    const source = execFileSync(
+      'git',
+      ['show', 'cad78d38a26cebc95909531870bf6b38cf58cac1:server/node-network.ts'],
+      { encoding: 'utf8', windowsHide: true },
+    );
+    assert(!source.includes('nodeWorkloadCapability'));
+    writeFileSync(
+      legacyModule,
+      source.replace(
+        /from (['"])(\.{1,2}\/[^'"]+)\1/g,
+        (_match, _quote, relative) =>
+          `from '${pathToFileURL(relative === '../shared/task-queue-receipts.ts' ? legacyValidator : resolve('server', relative)).href}'`,
+      ),
+    );
+    const LegacyNetwork = (await import(pathToFileURL(legacyModule).href))
+      .NodeNetwork as typeof NodeNetwork;
+    const roots = ['modern', 'legacy'].map((name) => {
+      const root = join(evidence, name);
+      mkdirSync(root);
+      loadNodeIdentity(root);
+      return root;
+    });
+    const modern = new NodeNetwork(roots[0], true),
+      legacy = new LegacyNetwork(roots[1], true);
+    const stats = (waitingCount: number) => ({
+      waitingCount,
+      paused: false,
+      health: 'normal' as const,
+      updatedAt: new Date().toISOString(),
+      sampledAt: new Date().toISOString(),
+    });
+    try {
+      modern.setNodeQueueProvider(() => ({
+        ...stats(5),
+        workload: { occupiedSlots: 1, totalSlots: 1, executingCount: 0 },
+      }));
+      legacy.setNodeQueueProvider(() => stats(2));
+      await Promise.all([modern.start(), legacy.start()]);
+      await pairNetworks(modern, legacy);
+      const legacyID = legacy.snapshot().local!.id,
+        modernID = modern.snapshot().local!.id;
+      const deadline = Date.now() + 10_000;
+      while (
+        Date.now() < deadline &&
+        (modern.snapshot().nearby.find((n) => n.id === legacyID)?.nodeQueue?.waitingCount !== 2 ||
+          legacy.snapshot().nearby.find((n) => n.id === modernID)?.nodeQueue?.waitingCount !== 5)
+      )
+        await wait(50);
+      const oldReport = legacy.snapshot().nearby.find((n) => n.id === modernID)!.nodeQueue!;
+      assert.equal(
+        oldReport.waitingCount,
+        5,
+        'strict old decoder accepted authenticated directory',
+      );
+      assert(!Object.hasOwn(oldReport, 'workload'));
+      assert.equal(
+        modern.snapshot().nearby.find((n) => n.id === legacyID)!.nodeQueue!.waitingCount,
+        2,
+      );
+      assert.deepEqual(modern.snapshot().local!.nodeQueue!.workload, {
+        occupiedSlots: 1,
+        totalSlots: 1,
+        executingCount: 0,
+      });
+    } finally {
+      writeFileSync(
+        join(evidence, 'snapshots.json'),
+        JSON.stringify([modern.snapshot(), legacy.snapshot()], null, 2),
+      );
+      await Promise.all([modern.stop(), legacy.stop()]);
       if (previousMdns === undefined) delete process.env.RIVLOOM_MDNS_NETWORK;
       else process.env.RIVLOOM_MDNS_NETWORK = previousMdns;
       if (previousPort === undefined) delete process.env.RIVLOOM_DISCOVERY_PORT;
@@ -2213,7 +2372,8 @@ test('execution policy trusts paired senders and persists the local AI approval 
     assert.equal(migrated.snapshot().projectID, null);
     assert.equal(migrated.snapshot().model, null);
     const migratedFile = JSON.parse(readFileSync(join(root, 'execution-policy.json'), 'utf8'));
-    assert.equal(migratedFile.version, 2);
+    assert.equal(migratedFile.version, 3);
+    assert.equal(migratedFile.policy.maxConcurrent, 3);
     assert.equal('mode' in migratedFile.policy, false);
   } finally {
     rmSync(root, { recursive: true, force: true });

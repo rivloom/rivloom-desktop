@@ -3,13 +3,13 @@ import { reuseJson } from './desktop-refresh';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Paperclip, Download, RotateCw, X, FileText, Upload } from 'lucide-react';
 import { api } from './api';
-import { desktop, chooseTaskFileDestination } from './desktop';
+import { desktop, chooseTaskFileDestination, revealTaskFile } from './desktop';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
 import {
   taskFileBytesLabel,
   taskFileMaximumBytes,
   taskFileBatchBytes,
-  taskFileMaximumCount,
+  taskFileUploadCount,
   type TaskFileConversation,
   type TaskFileScope,
   type TaskFileView,
@@ -35,13 +35,13 @@ export function TaskFilePicker({
   const selectedBytes = files.reduce((sum, item) => sum + item.file.size, 0);
   const limits = t('单个文件最多 {{single}}；每批最多 {{count}} 个，合计 {{total}}。', {
     single: taskFileBytesLabel(taskFileMaximumBytes),
-    count: taskFileMaximumCount,
+    count: taskFileUploadCount,
     total: taskFileBytesLabel(taskFileBatchBytes),
   });
   const usage = files.length
     ? t('已选 {{count}} / {{limit}} 个文件 · 合计 {{size}} / {{total}}', {
         count: files.length,
-        limit: taskFileMaximumCount,
+        limit: taskFileUploadCount,
         size: taskFileBytesLabel(selectedBytes),
         total: taskFileBytesLabel(taskFileBatchBytes),
       })
@@ -64,10 +64,10 @@ export function TaskFilePicker({
     if (!selected) return;
     const chosen = [...selected];
     if (
-      files.length + chosen.length > taskFileMaximumCount ||
+      files.length + chosen.length > taskFileUploadCount ||
       [...files.map((f) => f.file), ...chosen].reduce((n, f) => n + f.size, 0) > taskFileBatchBytes
     ) {
-      setError(t('每批最多 10 个文件，合计 50 MiB。'));
+      setError(t('每批最多 5 个文件，合计 1000 MiB。'));
       return;
     }
     setError('');
@@ -190,9 +190,10 @@ export function TaskFilePicker({
   );
 }
 
-export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID: string }) {
+export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: TaskFileScope; taskID: string; resultsOnly?: boolean }) {
   const [value, setValue] = useState<TaskFileConversation | null>(null),
     [error, setError] = useState(''),
+    [refreshError, setRefreshError] = useState(''),
     [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<DraftTaskFile[]>([]),
     [saved, setSaved] = useState<Record<string, string>>({});
@@ -207,10 +208,10 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
         const next = await api<TaskFileConversation>(path);
         if (alive) {
           setValue((previous) => reuseJson(previous, next));
-          setError('');
+          setRefreshError('');
         }
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : t('文件状态未更新。'));
+        if (alive) setRefreshError(e instanceof Error ? e.message : t('文件状态未更新。'));
       } finally {
         polling = false;
       }
@@ -222,6 +223,18 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
       clearInterval(timer);
     };
   }, [path]);
+  async function reveal(file: TaskFileView) {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api<{ path: string }>(`${path}/${file.id}/location`, {});
+      await revealTaskFile(result.path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('无法打开文件所在文件夹。'));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function save(file: TaskFileView) {
     setBusy(true);
     setError('');
@@ -243,6 +256,7 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
   }
   async function publish() {
     setBusy(true);
+    setError('');
     try {
       await api(`${path}/results`, { attachmentIDs: files.map((f) => f.id) });
       setFiles([]);
@@ -255,6 +269,7 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
   }
   async function retry() {
     setBusy(true);
+    setError('');
     try {
       await api(`${path}/retry`, {});
       setValue(await api(path));
@@ -265,92 +280,101 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
     }
   }
   const list = (items: TaskFileView[]) => (
-    <ul className="task-file-list">
+    <ul className="task-file-links">
       {items.map((file) => (
         <li key={file.id}>
-          <FileText size={18} />
           <span className="file-details">
-            <strong>{file.name}</strong>
-            <small>
-              {taskFileBytesLabel(file.bytes)} ·{' '}
-              {file.state === 'complete'
-                ? t('本机已校验')
-                : file.state === 'failed'
+            {value?.canSave && file.state === 'complete' ? (
+              desktop ? (
+                <button
+                  type="button"
+                  className="task-file-link"
+                  disabled={busy}
+                  title={`${t('打开所在文件夹')} · ${taskFileBytesLabel(file.bytes)}`}
+                  onClick={() => void reveal(file)}
+                >
+                  {file.name}
+                </button>
+              ) : (
+                <a
+                  className="task-file-link"
+                  href={`/api${path}/${file.id}/content`}
+                  download={file.name}
+                  title={t('下载 {{value1}}', { value1: file.name })}
+                >
+                  {file.name}
+                </a>
+              )
+            ) : (
+              <span className="task-file-name">{file.name}</span>
+            )}
+            {file.state !== 'complete' && (
+              <small>
+                {file.state === 'failed'
                   ? t('接收失败')
                   : t('接收 {{value1}}%', {
                       value1: Math.round((file.receivedBytes / Math.max(file.bytes, 1)) * 100),
                     })}
-              {file.deliveries.map((d) => (
-                <span key={d.peerNodeID}>
-                  {' '}
-                  ·{' '}
-                  {d.state === 'complete'
-                    ? t('对方已收到')
-                    : d.state === 'failed'
-                      ? t('传输失败')
-                      : d.state === 'sending'
-                        ? t('发送 {{value1}}%', {
-                            value1: Math.round((d.bytes / Math.max(file.bytes, 1)) * 100),
-                          })
-                        : t('等待传输')}
+              </small>
+            )}
+            {file.deliveries
+              .filter((d) => d.state !== 'complete')
+              .map((d) => (
+                <small key={d.peerNodeID}>
+                  {d.state === 'failed'
+                    ? t('传输失败')
+                    : d.state === 'sending'
+                      ? t('发送 {{value1}}%', {
+                          value1: Math.round((d.bytes / Math.max(file.bytes, 1)) * 100),
+                        })
+                      : t('等待传输')}
                   {d.error && `(${systemText(d.error)})`}
-                </span>
+                </small>
               ))}
-            </small>
             {file.error && <span className="file-error">{systemText(file.error)}</span>}
-            {saved[file.id] && <small className="file-saved">{systemText(saved[file.id])}</small>}
+            {saved[file.id] && (
+              <small className="file-saved" role="status" title={saved[file.id]}>
+                {t('文件已保存')}
+              </small>
+            )}
           </span>
-          {value?.canSave &&
-            file.state === 'complete' &&
-            (desktop ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void save(file)}
-                aria-label={t('保存 {{value1}}', { value1: file.name })}
-              >
-                <Download size={16} />
-              </button>
-            ) : (
-              <a
-                className="file-download"
-                href={`/api${path}/${file.id}/content`}
-                download={file.name}
-                aria-label={t('下载 {{value1}}', { value1: file.name })}
-              >
-                <Download size={16} />
-              </a>
-            ))}
+          {value?.canSave && file.state === 'complete' && desktop && (
+            <button
+              type="button"
+              className="task-file-save"
+              disabled={busy}
+              onClick={() => void save(file)}
+              aria-label={t('保存 {{value1}}', { value1: file.name })}
+              title={t('另存文件')}
+            >
+              <Download size={16} />
+            </button>
+          )}
         </li>
       ))}
     </ul>
   );
   return (
-    <details
-      className="task-files-panel"
-      open={(!!value && (!!value.inputs.length || !!value.results.length)) || undefined}
-    >
-      <summary>
-        <Paperclip size={16} />
-        {t('任务文件')}
-        <span>{value ? value.inputs.length + value.results.length : '…'}</span>
-      </summary>
+    <section className="task-files-panel" aria-label={t('任务文件')}>
       {value && (
         <>
-          <p className="task-files-label">{t('输入附件')}</p>
-          {value.inputs.length ? (
-            list(value.inputs)
-          ) : (
-            <p className="muted">{t('此任务没有附带文件。')}</p>
+          {!!value.results.length && (
+            <>
+              <p className="task-files-label">{t('交付成果')}</p>
+              {list(value.results)}
+            </>
           )}
-          <p className="task-files-label">{t('交付成果')}</p>
-          {value.results.length ? (
-            list(value.results)
-          ) : (
-            <p className="muted">{t('执行人选择发布的成果会显示在这里。')}</p>
+          {!resultsOnly && !!value.inputs.length && (
+            <details className="task-files-secondary">
+              <summary>
+                {t('输入附件')} <span>{value.inputs.length}</span>
+              </summary>
+              {list(value.inputs)}
+            </details>
           )}
-          {value.canPublish && (
-            <div className="file-publish">
+          {!resultsOnly && value.canPublish && (
+            <details className="task-files-secondary file-publish">
+              <summary>{t('添加交付文件')}</summary>
               <TaskFilePicker
                 files={files}
                 onChange={setFiles}
@@ -368,10 +392,10 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
                   {t('发布所选成果')}
                 </button>
               )}
-            </div>
+            </details>
           )}
           {value.canRetry &&
-            [...value.inputs, ...value.results].some((f) =>
+            [...(resultsOnly ? [] : value.inputs), ...value.results].some((f) =>
               f.deliveries.some((d) => d.state === 'failed' || d.state === 'waiting'),
             ) && (
               <button
@@ -386,11 +410,11 @@ export function TaskFilesPanel({ scope, taskID }: { scope: TaskFileScope; taskID
             )}
         </>
       )}
-      {error && (
+      {(error || refreshError) && (
         <p className="file-error" role="alert">
-          {systemText(error)}
+          {systemText(error || refreshError)}
         </p>
       )}
-    </details>
+    </section>
   );
 }

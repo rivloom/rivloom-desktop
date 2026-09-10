@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rivloom",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.rivloom.desktop",
   "mainBinaryName": "Rivloom",
   "build": {
@@ -31,10 +31,27 @@
             "allow-choose-project-directory",
             "allow-choose-task-file-destination",
             "allow-notify-attention",
-            "allow-take-notification-target"
+            "allow-take-notification-target",
+            "allow-desktop-update-snapshot",
+            "allow-check-desktop-update",
+            "allow-skip-desktop-update",
+            "allow-download-desktop-update",
+            "allow-cancel-desktop-update",
+            "allow-install-desktop-update"
           ]
         }
       ]
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMUVDRjU1QTM5NEZGOUQKUldTZC81U2pWYzhlc2crVU9GZ2RiZkpycnZPZXJoZjhvNG9JSVZmWmZ6VzFCaWg1SFdGZ3dqK3YK",
+      "endpoints": [
+        "https://downloads.rivloom.com/updates/stable/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "bundle": {

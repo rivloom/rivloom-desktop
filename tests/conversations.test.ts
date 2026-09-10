@@ -3,15 +3,125 @@ import assert from 'node:assert/strict';
 import {
   conversations,
   conversationState,
+  conversationIsRunning,
   localQueue,
+  executionQueueEntries,
   pairedNodes,
   showNetworkRail,
+  type Conversation,
 } from '../src/conversations.ts';
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
+import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { Bootstrap, BrainTask, RemoteTaskInvite, Task, RivloomNode } from '../shared/types.ts';
 
 const localID = 'local-node';
 const date = '2026-09-03T00:00:00Z';
+
+test('confirmed stopped tasks leave the rail while history and explicit continuation remain visible', () => {
+  const entry = { id: 'queue', localTaskID: 'task', state: 'admitted', endReason: null } as NodeQueueItem;
+  for (const state of ['running', 'stopping', 'interrupted', 'waiting_approval', 'review'] as const)
+    assert.equal(executionQueueEntries([entry], [localTask('task', state)]).length, 1, state);
+  assert.equal(executionQueueEntries([entry], []).length, 1, 'Missing execution is still uncertain');
+  assert.equal(executionQueueEntries([entry], [localTask('task', 'stopped')]).length, 0);
+  const ended = { ...entry, state: 'ended' as const, endReason: { code: 'stopped' as const } };
+  for (const state of ['stopped', 'accepted', 'failed'] as const)
+    assert.equal(executionQueueEntries([ended], [localTask('task', state)]).length, 0, state);
+  for (const state of ['running', 'waiting_approval', 'waiting_input', 'stopping', 'review', 'interrupted'] as const)
+    assert.deepEqual(executionQueueEntries([ended], [localTask('task', state)]), [ended], state);
+  assert.equal(ended.state, 'ended', 'Showing an explicit continuation does not reopen admission');
+  const data = fixture(); data.tasks = [localTask('task', 'stopped')];
+  assert(conversations(data).some((item) => item.localTask?.id === 'task'), 'Stopping preserves the conversation');
+});
+
+test('only the current executing observation animates, including remote and Brain histories', () => {
+  const item = (extra: Partial<Conversation>) =>
+    ({ key: 'history', attempts: [], ...extra }) as Conversation;
+  const brain = (status: BrainTask['status']) => ({ status }) as BrainTask;
+  assert.equal(conversationIsRunning(item({ localTask: localTask('local', 'running') })), true);
+  assert.equal(
+    conversationIsRunning(item({ remote: remoteTask('remote', { executionState: 'running' }) })),
+    true,
+  );
+  assert.equal(conversationIsRunning(item({ brainTask: brain('running') })), true);
+  for (const state of [
+    'open',
+    'ready',
+    'waiting_approval',
+    'waiting_input',
+    'stopping',
+    'stopped',
+    'interrupted',
+    'failed',
+    'review',
+    'accepted',
+  ] as const)
+    assert.equal(
+      conversationIsRunning(item({ localTask: localTask('local', state) })),
+      false,
+      state,
+    );
+  for (const status of [
+    'submitting',
+    'queued',
+    'assigned',
+    'waiting',
+    'review',
+    'completed',
+    'failed',
+  ] as const)
+    assert.equal(conversationIsRunning(item({ brainTask: brain(status) })), false, status);
+  for (const status of ['cancelled', 'declined', 'expired'] as const)
+    assert.equal(
+      conversationIsRunning(
+        item({ remote: remoteTask('stale', { status, executionState: 'running' }) }),
+      ),
+      false,
+      status,
+    );
+  assert.equal(
+    conversationIsRunning(
+      item({ localTask: localTask('local', 'review'), brainTask: brain('running') }),
+    ),
+    false,
+    'local review wins over an older Brain observation',
+  );
+  assert.equal(
+    conversationIsRunning(
+      item({
+        brainTask: brain('completed'),
+        remote: remoteTask('stale', { executionState: 'running' }),
+      }),
+    ),
+    false,
+    'completed Brain wins over its previous execution',
+  );
+  assert.equal(
+    conversationIsRunning(
+      item({
+        brainTask: brain('running'),
+        remote: remoteTask('remote', { executionState: 'waiting_approval' }),
+      }),
+    ),
+    false,
+    'current remote approval is static',
+  );
+  assert.equal(
+    conversationIsRunning(
+      item({
+        localTask: localTask('local', 'ready'),
+        remote: remoteTask('remote', { executionState: 'running' }),
+      }),
+    ),
+    true,
+    'initial local placeholder does not hide remote execution',
+  );
+  assert.equal(
+    conversationIsRunning(item({ attempts: [remoteTask('old', { executionState: 'running' })] })),
+    false,
+    'old attempts do not animate the current conversation',
+  );
+});
+
 function fixture() {
   return {
     tasks: [],
@@ -145,7 +255,7 @@ test('queue receipts update conversation status without overriding terminal or a
   data.network.remoteTasks = [waiting];
   assert.equal(conversationState(conversations(data)[0]), '已暂缓');
   waiting.executionState = 'review';
-  assert.equal(conversationState(conversations(data)[0]), '待验收');
+  assert.equal(conversationState(conversations(data)[0]), '已完成');
   waiting.executionState = 'not_started';
   waiting.status = 'cancelled';
   assert.equal(conversationState(conversations(data)[0]), '已取消');

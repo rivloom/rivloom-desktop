@@ -80,3 +80,7 @@ export function isNodeQueueCandidate(entry: NodeQueueEntry) {
     (!entry.blockReason || ['queue', 'slot'].includes(entry.blockReason.code))
   );
 }
+
+export function firstNodeQueueCandidate(entries: readonly NodeQueueEntry[], source: NodeQueueSource['kind']) {
+  return entries.find((entry) => entry.source.kind === source && isNodeQueueCandidate(entry));
+}

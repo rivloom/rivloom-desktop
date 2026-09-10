@@ -125,12 +125,15 @@ export async function startEngine(cwd: string, port = 0) {
   }, port);
 }
 
-async function stopFailedEngine(child: ChildProcess | undefined) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+async function stopFailedEngine(child: ChildProcess | undefined, requireSuccessfulExit = false) {
+  const check = (code: number | null) => {
+    if (requireSuccessfulExit && code !== 0) throw new Error('Owned OpenCode process tree did not exit cleanly.');
+  };
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) { check(child?.exitCode ?? null); return; }
   await new Promise<void>((ok, fail) => {
-    const finished = () => {
+    const finished = (code: number | null) => {
       clearTimeout(timeout);
-      ok();
+      try { check(code); ok(); } catch (error) { fail(error); }
     };
     const timeout = setTimeout(() => {
       child.off('exit', finished);
@@ -222,6 +225,7 @@ async function startEngineOnPort(cwd: string, port: number, password: string) {
       close: () => {
         if (child!.connected) child!.disconnect();
       },
+      waitForExit: () => stopFailedEngine(child, true),
     };
   } catch (error) {
     await stopFailedEngine(child);

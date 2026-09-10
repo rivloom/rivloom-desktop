@@ -3,6 +3,7 @@ import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
+const previous = JSON.parse(await readFile(join(root, 'docs', 'desktop-dependency-licenses.json'), 'utf8').catch(() => '{"packages":[]}'));
 const metadata = JSON.parse(
   execFileSync(
     'cargo',
@@ -29,6 +30,16 @@ for (const pkg of metadata.packages) {
   await mkdir(target, { recursive: true });
   for (const file of files) await cp(join(source, file), join(target, file), { recursive: true });
   const upstreamNotices: string[] = [];
+  if (!files.length) {
+    // Reuse already collected notices only for this exact published dependency.
+    // This keeps offline rebuilds from refetching unchanged workspace licenses.
+    const cached = previous.packages.find((item: any) => item.name === pkg.name && item.version === pkg.version &&
+      item.license === pkg.license && item.repository === pkg.repository);
+    if (cached?.licenseFiles?.length && cached.licenseFiles.every((file: string) => /^[A-Za-z0-9._-]+$/.test(file))) {
+      const available = await Promise.all(cached.licenseFiles.map((file: string) => readFile(join(target, file)).then((bytes) => bytes.length > 0).catch(() => false)));
+      if (available.every(Boolean)) { files.push(...cached.licenseFiles); upstreamNotices.push(...cached.upstreamNotices); }
+    }
+  }
   if (!files.length) {
     // Cargo packages sometimes omit their workspace-level license. Resolve it at
     // the exact published VCS commit rather than silently omitting the notice.

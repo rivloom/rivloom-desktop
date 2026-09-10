@@ -1,6 +1,5 @@
-import { operationResultText } from './system-display';
 import { t, systemText, language } from '../shared/i18n.ts';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -14,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api } from './api';
-import type { ModelCheck, ModelOperation, ModelSettings } from '../shared/types';
+import type { ModelCheck, ModelSettings } from '../shared/types';
 
 const formatTime = (value: string | null) =>
   value
@@ -54,32 +53,16 @@ const checkText: Record<ModelCheck['status'], string> = {
     return t('测试中断');
   },
 };
-const operationText: Record<ModelOperation['kind'], string> = {
-  get credential_saved() {
-    return t('保存 DeepSeek 凭据');
-  },
-  get credential_removed() {
-    return t('移除 DeepSeek 凭据');
-  },
-  get default_changed() {
-    return t('修改默认模型');
-  },
-  get test_started() {
-    return t('启动真实连接测试');
-  },
-  get test_finished() {
-    return t('完成真实连接测试');
-  },
-};
-
 export function ModelSettingsView({
   owner,
   engineReady,
   onChanged,
+  executionSettings,
 }: {
   owner: boolean;
   engineReady: boolean;
   onChanged: () => void;
+  executionSettings?: ReactNode;
 }) {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [key, setKey] = useState('');
@@ -170,7 +153,7 @@ export function ModelSettingsView({
         <div>
           <span className="eyebrow">MODEL ACCESS, OWNED BY THE WORKSPACE</span>
           <h1>
-            {t('模型与额度')}
+            {executionSettings ? t('模型与执行') : t('模型与额度')}
             <span className="heading-dot">.</span>
           </h1>
           <p>{t('凭据交给本机 OpenCode 管理；任务只记录所选模型和操作结果。')}</p>
@@ -441,37 +424,7 @@ export function ModelSettingsView({
         </section>
       </div>
 
-      <section className="settings-card operations-card">
-        <header>
-          <div>
-            <span className="eyebrow">LOCAL AUDIT TRAIL</span>
-            <h2>{t('模型操作记录')}</h2>
-          </div>
-          <span className="preview-label">{t('不记录 Key 和模型回复')}</span>
-        </header>
-        {settings.operations.length ? (
-          <div className="operation-list">
-            {settings.operations.map((item) => (
-              <div className="operation-row" key={item.id}>
-                <span className={`operation-mark result-${operationResultText(item.result)}`} />
-                <div>
-                  <strong>{operationText[item.kind]}</strong>
-                  <small>
-                    {item.actorName} · {item.provider}
-                    {item.model ? ' · ' + item.model : ''}
-                  </small>
-                </div>
-                <span>{operationResultText(item.result)}</span>
-                <time>{formatTime(item.at)}</time>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="settings-empty">
-            {t('还没有模型设置操作。保存凭据、修改默认模型或启动测试后会出现在这里。')}
-          </p>
-        )}
-      </section>
+      {executionSettings}
     </>
   );
 }

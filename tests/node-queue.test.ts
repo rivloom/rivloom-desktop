@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { queueFixture, localSource, remoteSource } from './node-queue-fixture.ts';
+import { firstNodeQueueCandidate } from '../shared/node-queue.ts';
 
 test('mixed sources use receiver sequence, and repeated intake preserves order and terminal rows', () => {
   const f = queueFixture();
@@ -17,9 +18,11 @@ test('mixed sources use receiver sequence, and repeated intake preserves order a
     );
     assert.deepEqual(
       f.store.snapshot().entries.map((e) => e.position),
-      [1, 2, 3],
+      [1, 1, 2],
     );
     assert.deepEqual(f.store.enqueue(source), b);
+    assert.equal(firstNodeQueueCandidate(f.store.list(), 'local')?.id, a.id);
+    assert.equal(firstNodeQueueCandidate(f.store.list(), 'remote')?.id, b.id);
     f.store.end(b.id, { code: 'cancelled' });
     assert.equal(f.store.enqueue(source).state, 'ended');
     assert.equal(f.store.list().length, 3);

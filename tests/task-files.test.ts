@@ -8,12 +8,18 @@ import {
   symlinkSync,
   writeFileSync,
   readdirSync,
+  unlinkSync,
 } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { TaskFileStore, TaskFileError } from '../server/task-files.ts';
 import {
   taskFileNameError,
   taskFileMaximumBytes,
+  taskFileUploadCount,
+  taskFileBatchBytes,
+  taskFileCapability,
+  taskFileLargeCapability,
+  supportsTaskFiles,
   taskFileChunkBytes,
   validTaskFileManifest,
   validTaskFileMessage,
@@ -48,6 +54,73 @@ function staged(store: TaskFileStore, body = 'abcdef') {
   if (body) store.uploadChunk('u', f.id, 0, Buffer.from(body).toString('base64'));
   return f;
 }
+
+test('file links locate a verified original, persisted saved copy, or stable named received file', async () => {
+  const folder = root();
+  let store = new TaskFileStore(folder);
+  try {
+    const first = staged(store),
+      second = staged(store, 'second');
+    const original = join(folder, first.name);
+    writeFileSync(original, 'abcdef');
+    assert.equal(
+      (await store.location(first.id, [{ root: folder, path: original }])).path,
+      original,
+    );
+    writeFileSync(original, 'changed');
+    const fallback = (await store.location(first.id, [{ root: folder, path: original }])).path;
+    assert.equal(fallback, join(folder, 'task-files', 'received', first.id, first.name));
+    assert.equal(readFileSync(fallback, 'utf8'), 'abcdef');
+    assert.equal(readFileSync(original, 'utf8'), 'changed');
+    assert.equal((await store.location(first.id)).path, fallback);
+    assert.notEqual((await store.location(second.id)).path, fallback);
+    const saved = join(folder, 'saved.txt');
+    store.exportFile(first.id, saved);
+    store.close();
+    store = new TaskFileStore(folder);
+    assert.equal((await store.location(first.id)).path, saved);
+    unlinkSync(saved);
+    assert.equal((await store.location(first.id)).path, fallback);
+    assert(
+      !JSON.stringify(store.descriptorFor(first.id)).includes(folder),
+      'Local paths stay out of peer descriptors',
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test('file links reject incomplete files, redirected cache and changed copies without overwrite', async () => {
+  const folder = root(),
+    store = new TaskFileStore(folder);
+  try {
+    const incomplete = file();
+    store.beginUpload('u', incomplete);
+    await assert.rejects(store.location(incomplete.id), fail(409));
+    assert(!existsSync(join(folder, 'task-files', 'received')));
+    const complete = staged(store);
+    const location = (await store.location(complete.id)).path;
+    writeFileSync(location, 'modified');
+    await assert.rejects(store.location(complete.id), fail(409));
+    assert.equal(readFileSync(location, 'utf8'), 'modified');
+    const other = staged(store, 'third');
+    const outside = join(folder, 'outside');
+    mkdirSync(outside);
+    symlinkSync(outside, join(folder, 'task-files', 'received', other.id), 'junction');
+    await assert.rejects(store.location(other.id), fail(409));
+    assert.deepEqual(readdirSync(outside), []);
+    const original = join(outside, other.name);
+    writeFileSync(original, 'third');
+    const linked = join(folder, 'linked');
+    symlinkSync(outside, linked, 'junction');
+    await assert.rejects(
+      store.location(other.id, [{ root: folder, path: join(linked, other.name) }]),
+      fail(409),
+    );
+  } finally {
+    store.close();
+  }
+});
 
 test('task file names reject traversal, ADS, reserved names, controls and credentials', () => {
   for (const name of [
@@ -111,6 +184,41 @@ test('task file manifests and encrypted frames are bounded and bind response ide
       request,
     ),
   );
+});
+
+test('200 MiB files and five-file batches fit the new budget while legacy histories and small peers stay compatible', () => {
+  assert.equal(taskFileMaximumBytes, 200 * 1024 ** 2);
+  assert.equal(taskFileUploadCount, 5);
+  assert.equal(taskFileBatchBytes, 1000 * 1024 ** 2);
+  const batch = Array.from({ length: 5 }, () => ({ ...file(), bytes: taskFileMaximumBytes }));
+  assert(validTaskFileManifest(batch));
+  assert(!validTaskFileManifest([...batch, { ...file(), bytes: 1 }]));
+  assert(
+    validTaskFileManifest(Array.from({ length: 10 }, () => file())),
+    'Persisted legacy histories still decode',
+  );
+  assert(supportsTaskFiles([taskFileCapability], [file()]));
+  assert(!supportsTaskFiles([taskFileCapability], batch));
+  assert(supportsTaskFiles([taskFileCapability, taskFileLargeCapability], batch));
+  assert(!supportsTaskFiles([taskFileLargeCapability], batch));
+  const oldSized = Array.from({ length: 3 }, () => ({ ...file(), bytes: 20 * 1024 ** 2 }));
+  assert(
+    !supportsTaskFiles([taskFileCapability], oldSized),
+    'Legacy batch limit is also negotiated',
+  );
+  const store = new TaskFileStore(root());
+  try {
+    assert.throws(
+      () =>
+        store.uploaded(
+          'u',
+          Array.from({ length: 6 }, () => randomUUID()),
+        ),
+      fail(400),
+    );
+  } finally {
+    store.close();
+  }
 });
 test('staged uploads enforce operator ownership and complete byte verification before task binding', () => {
   const store = new TaskFileStore(root());

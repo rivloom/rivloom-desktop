@@ -1,15 +1,19 @@
 import { t } from '../shared/i18n.ts';
+import { workflowError } from '../shared/workflow-errors.ts';
 import type { NodeNetwork } from '../shared/types';
+import { validQueueConfirmation, type QueueConfirmation } from '../shared/queue-backlog.ts';
 
 export type CreatedNodeTaskResponse = NodeNetwork & { createdTaskID: string };
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly queueConfirmation?: QueueConfirmation;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, queueConfirmation?: QueueConfirmation) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.queueConfirmation = queueConfirmation;
   }
 }
 
@@ -31,7 +35,14 @@ export async function api<T>(
       ...(controller ? { signal: controller.signal } : {}),
     });
     const data = await response.json();
-    if (!response.ok) throw new ApiError(data.error || t('请求失败'), response.status);
+    if (!response.ok)
+      throw new ApiError(
+        workflowError(data.error) || t('请求失败'),
+        response.status,
+        response.status === 409 && validQueueConfirmation(data.queueConfirmation)
+          ? data.queueConfirmation
+          : undefined,
+      );
     return data;
   } catch (error) {
     if (controller?.signal.aborted)

@@ -1,6 +1,6 @@
 import { installTaskFileAPI } from './task-file-api.ts';
 import { TaskFileError } from './task-files.ts';
-import { inputFileFields } from '../shared/task-files.ts';
+import { inputFileFields, taskFileUploadCount } from '../shared/task-files.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'node:http';
 import { listenHttp } from './http-ports.ts';
@@ -84,9 +84,10 @@ import {
 import { NodeNetwork, NodeNetworkError } from './node-network.ts';
 import { ExecutionPolicyStore } from './execution-policy.ts';
 import { WorkerResourceSampler, workerMatchesTask } from './worker-resources.ts';
-import { WorkerAdmissionGate, occupiesWorkerSlot } from './worker-admission.ts';
+import { WorkerAdmissionGate, occupiesWorkerSlot, executionOccupancy, isRemoteExecution } from './worker-admission.ts';
 import { validNodeProfile, type NodeProfile } from '../shared/node-profile.ts';
 import { CreationRequestStore, CreationConflict } from './creation-requests.ts';
+import { QueueConfirmationRequired, requireQueueConfirmation } from './queue-confirmation.ts';
 import {
   NodeQueueStore,
   NodeQueueError,
@@ -96,7 +97,16 @@ import {
 import { NodeHealthMonitor } from './node-health.ts';
 import { TaskAttentionStore } from './task-attention.ts';
 import { WorkspacePreferences } from './workspace-preferences.ts';
-import { isNodeQueueCandidate, type NodeQueueReason } from '../shared/node-queue.ts';
+import { isNodeQueueCandidate, firstNodeQueueCandidate, type NodeQueueReason, type NodeQueueEntry } from '../shared/node-queue.ts';
+import { minimumRemoteConcurrency, maximumRemoteConcurrency } from '../shared/execution-concurrency.ts';
+import { ResourceCatalog } from './resource-catalog.ts';
+import { ResourceNetwork, type ResourceTransport } from './resource-network.ts';
+import { ResourceFiles } from './resource-files.ts';
+import { probeResourceCapabilities, ResourceCapabilityCache } from './resource-capabilities.ts';
+import { validResourceQuery } from '../shared/resources.ts';
+import { WorkflowRuntime } from './workflow-runtime.ts';
+import { installWorkflowAPI } from './workflow-api.ts';
+import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-maintenance.ts';
 
 try {
   acquireDataLock();
@@ -110,8 +120,12 @@ const taskAttention = new TaskAttentionStore(db);
 const workspacePreferences = new WorkspacePreferences(db);
 const nodeQueue = new NodeQueueStore(db);
 const nodeHealth = new NodeHealthMonitor();
+const updateMaintenance = new UpdateMaintenance();
+let updateLease: string | null = null;
+let updateTargetVersion: string | null = null;
 let lastQueueProgressAt: string | null = null;
 const nodeNetwork = new NodeNetwork(dataRoot);
+nodeNetwork.setUpdateMaintenance(() => updateMaintenance.active);
 const executionPolicies = new ExecutionPolicyStore(dataRoot);
 try {
   executionPolicies.load();
@@ -119,18 +133,63 @@ try {
   console.error(error instanceof Error ? error.message : '本机执行能力配置无法读取。');
 }
 let workerSampler: WorkerResourceSampler | null = null;
+let resources: { catalog: ResourceCatalog; directory: ResourceNetwork; files: ResourceFiles } | null = null;
+const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQueue, policies: executionPolicies,
+  resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()) });
+let resourceConfiguration = '';
+const resourceCapabilities = new ResourceCapabilityCache();
+function configureResources() {
+  const ownNode = nodeNetwork.snapshot().local;
+  if (!ownNode) return;
+  const policy = executionPolicies.snapshot();
+  const selected = policy.projectID ? projects().find((candidate) => candidate.id === policy.projectID) || null : null;
+  if (!resources) {
+    const transport: ResourceTransport = {
+      localName: () => nodeNetwork.snapshot().local?.name || 'Local',
+      peers: () => nodeNetwork.snapshot().paired || [],
+      trusted: (nodeID) => nodeNetwork.isTrustedNode(nodeID),
+      request: (nodeID, operation, payload) => nodeNetwork.collaborationRequest(nodeID, operation, payload),
+    };
+    const catalog = new ResourceCatalog(dataRoot, ownNode.id, {
+      changed: () => { resources?.directory.localChanged(); },
+      capabilities: async () => {
+        const currentPolicy = executionPolicies.snapshot();
+        const currentProject = projects().find((candidate) => candidate.id === currentPolicy.projectID);
+        if (!currentProject) return [];
+        const key = JSON.stringify([currentProject.directory, engineStatus.ready, engineStatus.models]);
+        return resourceCapabilities.get(key, () => probeResourceCapabilities(currentProject.directory, dataRoot, engineStatus.ready ? engineStatus.models : []));
+      },
+    });
+    const directory = new ResourceNetwork(dataRoot, catalog, transport, changed);
+    resources = { catalog, directory, files: new ResourceFiles(dataRoot, catalog, nodeNetwork.files, transport) };
+    nodeNetwork.setCollaborationHandler((peer, operation, payload) =>
+      operation === 'execution-context' || operation === 'execution-outcome' ? workflowRuntime.handle(peer, operation, payload) :
+      operation === 'resource-prepare' || operation === 'resource-chunk'
+        ? resources!.files.handle(peer, operation, payload) : directory.handle(peer, operation, payload));
+    directory.start();
+  }
+  const configuration = JSON.stringify([selected?.id, selected?.directory, engineStatus.ready, engineStatus.models]);
+  if (configuration !== resourceConfiguration) {
+    resourceConfiguration = configuration;
+    void resources.catalog.configure(selected ? { id: selected.id, name: selected.name, directory: selected.directory } : null)
+      .then(() => resources?.catalog.scheduleRefresh()).catch(() => undefined);
+  }
+  resources.directory.reconcile();
+}
+nodeNetwork.on('update', configureResources);
 nodeNetwork.setWorkerRegistrationProvider((nodeID) => {
   const policy = executionPolicies.snapshot();
   const configuredProject = policy.projectID
     ? projects().find((candidate) => candidate.id === policy.projectID) || null
     : null;
   const accepting =
+    !updateMaintenance.active &&
     policy.enabled &&
     !!configuredProject &&
     !!policy.model &&
     engineStatus.ready &&
     engineStatus.models.some((candidate) => candidate.id === policy.model);
-  const runningTasks = occupiedSlots();
+  const runningTasks = incomingOccupiedSlots();
   workerSampler ||= new WorkerResourceSampler(dataRoot);
   const report = workerSampler.sample({
     nodeID,
@@ -151,52 +210,58 @@ function queueForRemote(remote: RemoteTaskInvite) {
     ...(remote.brainTaskID ? { brainTaskID: remote.brainTaskID } : {}),
   });
 }
+function currentOccupancy(excludeTaskID?: string, excludeQueueID?: string) {
+  return executionOccupancy({
+    tasks: taskQueries.inStates([...activeStates, 'review', 'interrupted', 'ready']),
+    queue: nodeQueue.list(), remotes: nodeNetwork.remoteTaskRecords(),
+    taskState: (id) => taskQueries.stateForID(id), excludeTaskID, excludeQueueID,
+  });
+}
 function occupiedSlots(excludeTaskID?: string, excludeQueueID?: string) {
-  const localTasks = taskQueries.inStates([...activeStates, 'review', 'interrupted', 'ready']);
-  const occupied = new Set(
-    localTasks.filter((t) => t.id !== excludeTaskID && occupiesWorkerSlot(t)).map((t) => t.id),
-  );
-  for (const entry of nodeQueue.list()) {
-    if (
-      entry.id === excludeQueueID ||
-      entry.state !== 'admitted' ||
-      entry.localTaskID === excludeTaskID
-    )
-      continue;
-    // An ended Task can still have an admitted queue record briefly. Check its
-    // actual state, so filtering the initial occupancy query does not reserve it again.
-    const localState = entry.localTaskID ? taskQueries.stateForID(entry.localTaskID) : undefined;
-    if (!localState || localState === 'ready') occupied.add(entry.localTaskID || entry.id);
-  }
-  for (const remote of nodeNetwork.remoteTaskRecords()) {
-    if (remote.direction !== 'incoming' || !remote.brainTaskID || remote.status !== 'accepted')
-      continue;
-    const entry = queueForRemote(remote);
-    if (entry || remote.localTaskID || remote.executionSequence > 0) continue;
-    occupied.add(`remote:${remote.id}`);
-  }
-  return occupied.size;
+  const occupied = currentOccupancy(excludeTaskID, excludeQueueID);
+  return occupied.localOccupied + occupied.remoteOccupied;
+}
+function incomingOccupiedSlots(excludeTaskID?: string, excludeQueueID?: string) {
+  return currentOccupancy(excludeTaskID, excludeQueueID).remoteOccupied;
+}
+function assertExecutionCapacity(value: Task, entry?: NodeQueueEntry | null) {
+  if (!isRemoteExecution(value, nodeQueue.list(), nodeNetwork.remoteTaskRecords())) return;
+  requireThat(executionPolicies.allows(), 409, '本机执行能力已关闭。');
+  // A lower limit cannot revoke an execution or a durable admission already granted.
+  if (entry?.state === 'admitted' || occupiesWorkerSlot(value)) return;
+  requireThat(incomingOccupiedSlots(value.id, entry?.id) < executionPolicies.snapshot().maxConcurrent,
+    409, '其他机器任务的并发名额已用满，请等待或调整并发设置。');
 }
 function queueHealth() {
+  const snapshot = nodeQueue.snapshot();
+  const localCandidate = firstNodeQueueCandidate(snapshot.entries, 'local');
   return nodeHealth.assess({
-    queue: nodeQueue.snapshot(),
-    availableSlots: Math.max(0, 1 - occupiedSlots()),
-    executionPaused: !executionPolicies.allows(),
+    queue: snapshot,
+    availableSlots: localCandidate ? 1 : Math.max(0, executionPolicies.snapshot().maxConcurrent - incomingOccupiedSlots()),
+    executionPaused: !localCandidate && !executionPolicies.allows(),
     lastDispatchProgressAt: lastQueueProgressAt,
   });
 }
 nodeNetwork.setNodeQueueProvider(() => {
   const health = queueHealth();
   const snapshot = nodeQueue.snapshot();
+  const occupancy = currentOccupancy();
   return {
     waitingCount: health.waitingCount,
     paused: snapshot.paused || !executionPolicies.allows(),
     updatedAt: snapshot.updatedAt,
     sampledAt: health.updatedAt,
     health: health.state,
+    workload: {
+      occupiedSlots: occupancy.remoteOccupied,
+      totalSlots: executionPolicies.snapshot().maxConcurrent,
+      executingCount: occupancy.remoteExecuting,
+    },
+    concurrency: { ...occupancy, remoteLimit: executionPolicies.snapshot().maxConcurrent },
   };
 });
 function intakeRemoteQueue(remote: RemoteTaskInvite) {
+  requireThat(!updateMaintenance.active, 503, '正在准备软件更新，请稍后重试。');
   if (remote.direction !== 'incoming' || !remote.automaticEligible || remote.brainTaskID) return;
   if (!['pending', 'accepted'].includes(remote.status)) return;
   if (queueForRemote(remote)) return;
@@ -211,8 +276,12 @@ function intakeRemoteQueue(remote: RemoteTaskInvite) {
 }
 nodeNetwork.setRemoteTaskQueueIntake(intakeRemoteQueue);
 nodeNetwork.setRemoteQueueStartGuard((remoteTaskID) => {
+  if (updateMaintenance.active) return false;
   const remote = nodeNetwork.remoteTask(remoteTaskID);
-  return !!remote && queueForRemote(remote)?.state !== 'ended';
+  if (!remote) return false;
+  const entry = queueForRemote(remote);
+  return !entry || entry.state !== 'ended' || (entry.endReason?.code === 'stopped' &&
+    !!entry.localTaskID && entry.localTaskID === remote.localTaskID);
 });
 setTaskInputMaterializer((value, directory) => {
   if (!value.inputFiles?.length) return [];
@@ -223,6 +292,7 @@ setTaskInputMaterializer((value, directory) => {
   );
 });
 setTaskStartGuard((value) => {
+  requireThat(!updateMaintenance.active, 503, '正在准备软件更新，请稍后重试。');
   if (value.inputFiles?.length)
     requireThat(
       nodeNetwork.files.complete(
@@ -234,15 +304,11 @@ setTaskStartGuard((value) => {
     );
   const entry = nodeQueue.list().find((candidate) => candidate.localTaskID === value.id);
   requireThat(
-    !entry || entry.state === 'admitted',
+    !entry || entry.state === 'admitted' || (entry.state === 'ended' && entry.endReason?.code === 'stopped'),
     409,
     '此任务由 Node 队列管理，请等待准入或使用队列操作。',
   );
-  requireThat(
-    !occupiedSlots(value.id, entry?.id),
-    409,
-    '本机执行槽位已被运行、待验收或状态未知的任务占用。',
-  );
+  assertExecutionCapacity(value, entry);
   if (value.remoteOrigin)
     requireThat(
       nodeNetwork.isTrustedNode(value.remoteOrigin.ownerNodeID) &&
@@ -289,6 +355,71 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '128kb' }));
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || ['GET', 'HEAD', 'OPTIONS'].includes(req.method) ||
+    req.path.startsWith('/api/desktop-update/')) return next();
+  const finish = updateMaintenance.enterOperation();
+  if (!finish) return void res.status(503).json({ error: '正在准备软件更新，请稍后重试。' });
+  res.once('finish', finish);
+  // An aborted response does not prove its async handler has finished writing.
+  // Keep an uncertain request as a blocker until service restart.
+  next();
+});
+
+function authorizeNativeUpdate(req: Request) {
+  const provided = req.headers['x-rivloom-desktop-token'];
+  requireThat(desktop && desktopToken, 404, '接口不存在');
+  requireThat(typeof provided === 'string' && sameToken(provided, desktopToken), 403, '桌面身份校验失败');
+}
+function currentUpdateBlockers() {
+  const network = nodeNetwork.snapshot();
+  return updateBlockers({ tasks: tasks(), queues: nodeQueue.list(), workflows: workflowRuntime.store.list(),
+    remoteTasks: network.remoteTasks, brainTasks: network.brainTasks,
+    transfers: nodeNetwork.files.active ? nodeNetwork.files.deliveries().length : 0,
+    operations: updateMaintenance.pending + processingRemoteTasks.size + processingRemoteControls.size + nodeNetwork.updateOperations,
+    modelChecks: Object.values(modelSettings().checks).filter((check) => check.status === 'testing').length });
+}
+app.post('/api/desktop-update/prepare', async (req, res) => {
+  authorizeNativeUpdate(req);
+  const body = z.object({ version: z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/).max(80) }).strict().parse(req.body);
+  requireThat(updateMaintenance.acquire(), 409, '已有更新安装正在准备。');
+  try {
+    // Drain requests that entered before the gate. New intake is fenced synchronously.
+    const deadline = Date.now() + 3000;
+    let blockers = currentUpdateBlockers();
+    while (blockers.operations && Date.now() < deadline) {
+      await new Promise<void>((done) => setTimeout(done, 40));
+      blockers = currentUpdateBlockers();
+    }
+    if (!canPrepareUpdate(blockers)) {
+      updateMaintenance.release();
+      return void res.json({ ready: false, blockers, lease: null });
+    }
+    updateLease = id(); updateTargetVersion = body.version;
+    res.json({ ready: true, blockers, lease: updateLease });
+  } catch (error) { updateMaintenance.release(); throw error; }
+});
+app.post('/api/desktop-update/cancel', (req, res) => {
+  authorizeNativeUpdate(req);
+  const body = z.object({ lease: z.string().uuid() }).strict().parse(req.body);
+  requireThat(!updateMaintenance.committed && body.lease === updateLease, 409, '更新准备状态已改变。');
+  updateLease = null; updateTargetVersion = null; updateMaintenance.release();
+  res.json({ released: true });
+});
+app.post('/api/desktop-update/commit', (req, res) => {
+  authorizeNativeUpdate(req);
+  const body = z.object({ lease: z.string().uuid() }).strict().parse(req.body);
+  requireThat(!updateMaintenance.committed && updateMaintenance.active && body.lease === updateLease, 409, '更新准备状态已改变。');
+  const blockers = currentUpdateBlockers();
+  if (!canPrepareUpdate(blockers)) {
+    updateLease = null; updateTargetVersion = null; updateMaintenance.release();
+    return void res.status(409).json({ error: '还有工作尚未结束，请稍后安装更新。', blockers });
+  }
+  const update = { lease: body.lease, version: updateTargetVersion! };
+  requireThat(updateMaintenance.commit(), 409, '更新准备状态已改变。');
+  res.json({ ready: true });
+  setImmediate(() => void shutdown(update).catch(() => process.exit(1)));
+});
 app.get('/api/health', (_req, res) => res.json({ ok: true, engineReady: engineStatus.ready }));
 app.get('/api/auth/state', (_req, res) => res.json({ setupRequired: !users().length }));
 const credentials = z.object({
@@ -351,6 +482,7 @@ app.post('/api/auth/join', rateLimit, (req, res) => {
 });
 app.use('/api', authenticated);
 const who = (req: Request) => (req as AuthRequest).user;
+installWorkflowAPI(app, workflowRuntime, nodeNetwork, who);
 function visibleTask(req: Request) {
   const t = task(String(req.params.id));
   requireThat(participant(t, who(req)), 403, '你不是此任务的参与者');
@@ -396,10 +528,12 @@ function bootstrap(req: Request): Bootstrap {
     users: users(),
     projects: projects(),
     tasks: tasks().filter((t) => participant(t, who(req))),
+    workflows: workflowRuntime.store.list(who(req).id),
     engine: engineStatus,
     defaultModel: defaultModel(),
     executionPolicy: executionPolicies.snapshot(),
     network: visibleNetwork(req),
+    ...(who(req).owner ? { resourceDirectory: resources?.directory.nodes() || [] } : {}),
   };
 }
 app.get('/api/bootstrap', (req, res) => res.json(bootstrap(req)));
@@ -416,6 +550,22 @@ app.post('/api/attention/preferences', (req, res) =>
 app.get('/api/model-settings', (_req, res) => res.json(modelSettings()));
 app.get('/api/network', (req, res) => res.json(visibleNetwork(req)));
 app.get('/api/network/execution-policy', (_req, res) => res.json(executionPolicies.snapshot()));
+app.get('/api/resources', (req, res) => {
+  requireNetworkOwner(req);
+  res.json({ nodes: resources?.directory.nodes() || [] });
+});
+app.post('/api/resources/query', async (req, res) => {
+  requireNetworkOwner(req);
+  requireThat(validResourceQuery(req.body), 400, '资源查询条件无效。');
+  requireThat(resources, 503, '资源目录正在初始化，请稍后重试。');
+  res.json(await resources!.directory.query(req.body));
+});
+app.post('/api/resources/refresh', async (req, res) => {
+  requireNetworkOwner(req);
+  requireThat(resources, 503, '资源目录正在初始化，请稍后重试。');
+  await resources!.catalog.refresh(); resources!.directory.reconcile();
+  res.json({ nodes: resources!.directory.nodes() });
+});
 const requireNetworkOwner = (req: Request) =>
   requireThat(who(req).owner, 403, '只有本机所有者可以管理设备信任');
 app.post('/api/network/diagnostics/retry', async (req, res) => {
@@ -480,6 +630,7 @@ app.post('/api/network/execution-policy', (req, res) => {
       projectID: z.string().uuid().nullable(),
       model: z.string().min(3).max(200).nullable(),
       confirmed: z.literal(true),
+      maxConcurrent: z.number().int().min(minimumRemoteConcurrency).max(maximumRemoteConcurrency).optional(),
     })
     .parse(req.body);
   if (input.enabled) {
@@ -496,13 +647,25 @@ app.post('/api/network/execution-policy', (req, res) => {
     approvalMode: input.approvalMode,
     projectID: input.projectID,
     model: input.model,
+    ...(input.maxConcurrent !== undefined ? { maxConcurrent: input.maxConcurrent } : {}),
   });
+  configureResources();
   changed();
   queueMicrotask(() => void processRemoteTasks());
   res.json(saved);
 });
-installTaskFileAPI(app, nodeNetwork, who, tasks, changed);
-const attachmentIDsSchema = z.array(z.string().uuid()).max(10).optional();
+app.post('/api/network/execution-concurrency', (req, res) => {
+  requireNetworkOwner(req);
+  const input = z.object({
+    maxConcurrent: z.number().int().min(minimumRemoteConcurrency).max(maximumRemoteConcurrency),
+  }).strict().parse(req.body);
+  const saved = executionPolicies.saveConcurrency(input.maxConcurrent);
+  changed();
+  queueMicrotask(() => void processRemoteTasks());
+  res.json(saved);
+});
+installTaskFileAPI(app, nodeNetwork, who, tasks, changed, (local, fileID) => workflowRuntime.fileLocations(local, fileID));
+const attachmentIDsSchema = z.array(z.string().uuid()).max(taskFileUploadCount).optional();
 const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
 app.post('/api/network/tasks', async (req, res) => {
   requireNetworkOwner(req);
@@ -525,9 +688,10 @@ app.post('/api/network/tasks', async (req, res) => {
       confirmed: z.literal(true),
       requestID: z.string().uuid().optional(),
       attachmentIDs: attachmentIDsSchema,
+      queueConfirmedFor: z.string().min(1).max(80).optional(),
     })
     .parse(req.body);
-  const { requestID, attachmentIDs, ...normalized } = input;
+  const { requestID, attachmentIDs, queueConfirmedFor, ...normalized } = input;
   const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'automatic' },
@@ -545,6 +709,7 @@ app.post('/api/network/tasks', async (req, res) => {
         ...inputFileFields(inputFiles),
       },
       createdTaskID,
+      queueConfirmedFor,
     ),
   );
 });
@@ -559,10 +724,11 @@ app.post('/api/network/nodes/:nodeID/tasks', async (req, res) => {
       confirmed: z.literal(true),
       requestID: z.string().uuid().optional(),
       attachmentIDs: attachmentIDsSchema,
+      queueConfirmedFor: z.string().min(1).max(80).optional(),
     })
     .parse(req.body);
   const nodeID = networkNodeID(req.params.nodeID);
-  const { requestID, attachmentIDs, ...normalized } = input;
+  const { requestID, attachmentIDs, queueConfirmedFor, ...normalized } = input;
   const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'node', nodeID },
@@ -580,6 +746,7 @@ app.post('/api/network/nodes/:nodeID/tasks', async (req, res) => {
         ...inputFileFields(inputFiles),
       },
       createdTaskID,
+      queueConfirmedFor,
     ),
   );
 });
@@ -873,6 +1040,7 @@ async function publishRemoteExecution(taskID: string) {
 
 const onTaskUpdateForNetwork = (value: { taskID?: string }) => {
   if (value.taskID) void publishRemoteExecution(value.taskID);
+  if (!value.taskID) configureResources();
 };
 updates.on('update', onTaskUpdateForNetwork);
 
@@ -884,6 +1052,12 @@ async function processRemoteTask(taskID: string) {
       let currentRemote = nodeNetwork.remoteTask(taskID);
       let queueEntry = currentRemote ? queueForRemote(currentRemote) : null;
       if (queueEntry?.state === 'ended') return;
+      // A locally confirmed stop is sufficient even if the originating Node is offline.
+      const stoppedExecution = taskQueries.forRemote(taskID);
+      if (queueEntry && stoppedExecution?.state === 'stopped') {
+        const recovery = nodeQueueRecoveryDecision(queueEntry, { source: 'live', task: stoppedExecution });
+        if (recovery.action === 'end') { nodeQueue.end(queueEntry.id, recovery.reason); return; }
+      }
       const blocked = (code: NodeQueueReason['code']) => {
         if (queueEntry && queueEntry.state === 'waiting')
           nodeQueue.setBlockReason(queueEntry.id, { code });
@@ -1041,12 +1215,12 @@ async function processRemoteTask(taskID: string) {
             requirements: currentRemote.requirements,
           }))
       ) {
-        blocked(occupiedSlots() ? 'slot' : 'hardware_unavailable');
+        blocked(incomingOccupiedSlots() >= currentPolicy.maxConcurrent ? 'slot' : 'hardware_unavailable');
         await declinePending();
         return;
       }
       if (!localTask) {
-        if (occupiedSlots(queueEntry?.localTaskID || undefined, queueEntry?.id)) {
+        if (queueEntry?.state !== 'admitted' && incomingOccupiedSlots(queueEntry?.localTaskID || undefined, queueEntry?.id) >= currentPolicy.maxConcurrent) {
           blocked('slot');
           await declinePending();
           return;
@@ -1056,14 +1230,14 @@ async function processRemoteTask(taskID: string) {
           currentRemote.status === 'pending' &&
           nodeQueue
             .list()
-            .some((candidate) => candidate.id !== queueEntry?.id && isNodeQueueCandidate(candidate))
+            .some((candidate) => candidate.id !== queueEntry?.id && candidate.source.kind === 'remote' && isNodeQueueCandidate(candidate))
         ) {
           await declinePending();
           return;
         }
         if (queueEntry?.state === 'waiting') {
           queueEntry = nodeQueue.setBlockReason(queueEntry.id, null);
-          if (nodeQueue.list().find(isNodeQueueCandidate)?.id !== queueEntry.id) {
+          if (firstNodeQueueCandidate(nodeQueue.list(), 'remote')?.id !== queueEntry.id) {
             blocked('queue');
             return;
           }
@@ -1122,11 +1296,13 @@ async function processRemoteTask(taskID: string) {
           }
         }
         const createdAt = now();
+        const collaboration = workflowRuntime.contexts.bind(currentRemote, queueEntry.localTaskID!);
         localTask = {
           id: queueEntry.localTaskID!,
           number: taskQueries.nextNumber(),
           projectID,
           ...inputFileFields(currentRemote.inputFiles),
+          ...(collaboration ? { collaboration } : {}),
           title: currentRemote.title,
           description: currentRemote.description,
           criteria: currentRemote.criteria,
@@ -1278,13 +1454,13 @@ async function processLocalQueue(entryID: string) {
       setReason('project_unavailable');
       return;
     }
-    if (occupiedSlots(current.id, entry.id) || nodeNetwork.projectLeased(current.projectID)) {
+    if (nodeNetwork.projectLeased(current.projectID)) {
       setReason('slot');
       return;
     }
     if (entry.state === 'waiting') {
       entry = nodeQueue.setBlockReason(entry.id, null);
-      if (nodeQueue.list().find(isNodeQueueCandidate)?.id !== entry.id) {
+      if (firstNodeQueueCandidate(nodeQueue.list(), 'local')?.id !== entry.id) {
         setReason('queue');
         return;
       }
@@ -1325,7 +1501,7 @@ async function processLocalQueue(entryID: string) {
 }
 let dispatchingQueue = false;
 async function processRemoteTasks() {
-  if (dispatchingQueue) return;
+  if (dispatchingQueue || updateMaintenance.active) return;
   dispatchingQueue = true;
   try {
     const remotes = nodeNetwork
@@ -1429,12 +1605,8 @@ async function processRemoteControl(taskID: string, controlID: string) {
         exclusive('engine-settings', async () => {
           requireThat(executionPolicies.allows(), 409, '本机执行能力已关闭。');
           const entry = queueForRemote(remote);
-          requireThat(!entry || entry.state !== 'ended', 409, '此任务的队列已终止，不能继续执行。');
-          requireThat(
-            !occupiedSlots(localTask.id, entry?.id),
-            409,
-            '本机槽位已被其他执行或预留占用。',
-          );
+          requireThat(!entry || entry.state !== 'ended' || entry.endReason?.code === 'stopped', 409, '此任务的队列已终止，不能继续执行。');
+          assertExecutionCapacity(localTask, entry);
           assertCanStartTask();
           const updated = await addRequirement(localTask.id, localOwner, action.text);
           await exclusive(`project:${updated.projectID}`, () =>
@@ -1585,6 +1757,7 @@ app.post('/api/projects', async (req, res) => {
 });
 const taskInput = z.object({
   attachmentIDs: attachmentIDsSchema,
+  queueConfirmedFor: z.string().min(1).max(80).optional(),
   requestID: z.string().uuid().optional(),
   runRequested: z.boolean().default(false),
   projectID: z.string().uuid(),
@@ -1598,7 +1771,9 @@ const taskInput = z.object({
   approvalMode: z.enum(['ask', 'auto', 'full']),
 });
 app.post('/api/tasks', (req, res) => {
-  const { requestID, runRequested, attachmentIDs, ...input } = taskInput.parse(req.body);
+  const { requestID, runRequested, attachmentIDs, queueConfirmedFor, ...input } = taskInput.parse(
+    req.body,
+  );
   const inputFiles = nodeNetwork.files.uploaded(who(req).id, attachmentIDs || []);
   const createdTaskID = creationRequests.reserve(who(req).id, requestID, {
     routing: { kind: 'local' },
@@ -1621,6 +1796,13 @@ app.post('/api/tasks', (req, res) => {
   );
   if (runRequested) {
     requireThat(who(req).id === input.assigneeID, 403, '只有指定接受人可以请求立即排队执行。');
+    const localNode = nodeNetwork.snapshot().local;
+    requireQueueConfirmation(
+      localNode?.id || 'local',
+      localNode?.name || '本机',
+      queueHealth().waitingCount + occupiedSlots(),
+      queueConfirmedFor,
+    );
     requireThat(queueHealth().accepting, 409, '本机等待队列已达到接收上限。');
   }
   const t: Task = {
@@ -1653,7 +1835,7 @@ app.post('/api/tasks', (req, res) => {
     );
   if (runRequested) nodeQueue.enqueue({ kind: 'local', taskID: t.id }, () => saveTask(t));
   else saveTask(t);
-  activity(t.id, who(req).id, 'created', '创建任务并指定接受人、审批人和验收人。');
+  activity(t.id, who(req).id, 'created', '创建任务并指定执行人和审批人。');
   changed(t.id);
   if (runRequested) void processRemoteTasks();
   res.status(201).json(t);
@@ -1682,11 +1864,7 @@ app.post('/api/tasks/:id/run', async (req, res) => {
   res.json(
     await workerAdmission.run(() =>
       exclusive('engine-settings', async () => {
-        requireThat(
-          !occupiedSlots(t.id),
-          409,
-          '本机执行槽位已被运行、待验收或状态未知的任务占用。',
-        );
+        assertExecutionCapacity(t, nodeQueue.list().find((entry) => entry.localTaskID === t.id));
         assertCanStartTask();
         return exclusive(`project:${t.projectID}`, () => {
           requireThat(
@@ -1798,6 +1976,10 @@ if (dev) {
   app.get('/{*path}', (_req, res) => res.sendFile(resolve('dist/index.html')));
 }
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof QueueConfirmationRequired)
+    return void res
+      .status(error.status)
+      .json({ error: error.message, queueConfirmation: error.queueConfirmation });
   if (error instanceof z.ZodError)
     return void res.status(400).json({
       error: `输入不正确：${error.issues.map((i) => i.path.join('.') + ' ' + i.message).join('；')}`,
@@ -1838,22 +2020,34 @@ try {
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
   void nodeNetwork.start();
   void initializeEngine();
+  workflowRuntime.start();
 }
 let closing = false;
-export async function shutdown() {
+export async function shutdown(update?: { lease: string; version: string }) {
   if (closing) return;
   closing = true;
   workerSampler?.dispose();
   clearInterval(remoteTaskProcessor);
   updates.off('update', onTaskUpdateForNetwork);
   nodeNetwork.off('trust-revoked', onTrustRevoked);
-  const deadline = setTimeout(() => process.exit(1), 6000);
+  const deadline = setTimeout(() => process.exit(1), update ? 25_000 : 6000);
   deadline.unref();
   removeDesktopToken();
+  nodeNetwork.off('update', configureResources);
+  await workflowRuntime.close();
+  await resources?.files.close();
+  await resources?.directory.close();
+  await resources?.catalog.close();
   await nodeNetwork.stop();
-  await shutdownEngine();
+  await shutdownEngine(!!update);
+  if (update) {
+    nodeNetwork.files.close();
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    writeFileSync(join(dataRoot, 'update-shutdown.json'), JSON.stringify({ ...update, closed: true }), { mode: 0o600 });
+  }
   server.close();
   setTimeout(() => process.exit(0), 1000).unref();
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => void shutdown());
+process.on('SIGTERM', () => void shutdown());

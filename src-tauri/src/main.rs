@@ -19,6 +19,9 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod native_async;
+mod task_file_location;
+mod desktop_update;
+mod update_backup;
 #[cfg(windows)]
 mod windows_taskbar_icon;
 mod notification_target;
@@ -58,6 +61,16 @@ impl RuntimeProcess {
             let _ = self.child.kill();
         }
         let _ = self.child.wait();
+    }
+    fn wait_for_update_exit(&mut self) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return if status.success() { Ok(()) } else { Err("update_shutdown_failed".into()) },
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+                _ => return Err("update_shutdown_failed".into()),
+            }
+        }
     }
 }
 impl Drop for RuntimeProcess {
@@ -182,6 +195,16 @@ async fn choose_task_file_destination(window: WebviewWindow, app: tauri::AppHand
         .map_err(|_| native_text(&state.data_dir, "请求失败"))?
         .map(|p| p.into_path().map(|p| p.display().to_string())
         .map_err(|_| native_text(&state.data_dir, "不支持的保存路径"))).transpose()
+}
+
+#[tauri::command]
+async fn reveal_task_file(window: WebviewWindow, app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>, path: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    let locale = read_locale(&state.data_dir);
+    native_async::blocking(move || task_file_location::reveal(&path)).await
+        .map_err(|_| native_text(&app.state::<DesktopState>().data_dir, "无法打开文件所在文件夹。"))?
+        .map_err(|message| native_translation(locale, &message))
 }
 
 fn valid_runtime_url(parsed: &tauri::Url) -> bool {
@@ -345,7 +368,10 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") { let _ = window.unminimize(); let _ = window.set_focus(); }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, notify_attention, take_notification_target])
+        .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, notify_attention, take_notification_target,
+            desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
+            desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update])
         .setup(|app| {
             let data_dir = match std::env::var_os("RIVLOOM_DATA_DIR") {
                 Some(path) => PathBuf::from(path),
@@ -379,6 +405,8 @@ fn main() {
                 } else { Err("Notification activation is not registered for this installed executable".into()) }
             };
             app.manage(DesktopState { runtime: Mutex::new(runtime), origin: url.clone(), data_dir: data_dir.clone(), closing: AtomicBool::new(false), notification_target, last_notification: Mutex::new(None), #[cfg(windows)] notifications });
+            app.manage(desktop_update::UpdateState::new(&data_dir, !preview));
+            desktop_update::start_background(app.handle().clone());
             let allowed_origin = url.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
                 .title(native_text(&data_dir, "Rivloom · 人与 AI 的任务工作区")).inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)

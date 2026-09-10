@@ -1,0 +1,2 @@
+Rivloom update signature test fixture. This is plain text, not an installer.
+Changed bytes.

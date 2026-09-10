@@ -57,6 +57,14 @@ export type RemoteTaskControlAction =
   | { kind: 'supplement'; text: string }
   | { kind: 'accept'; note: string };
 export type Task = {
+  collaboration?: import('./workflows.ts').WorkflowExecutionContext;
+  collaborationOutcome?: {
+    sessionID: string;
+    attempt: number;
+    runAfter: number;
+    quiescence: { confirmed: boolean; reason: string };
+    value: import('./workflows.ts').PlanningOutcome | import('./workflows.ts').ExecutionOutcome;
+  };
   inputFiles?: import('./task-files.ts').TaskFileDescriptor[];
   id: string;
   number: number;
@@ -90,6 +98,8 @@ export type Task = {
   };
 };
 export type Bootstrap = {
+  resourceDirectory?: import('./resources.ts').ResourceDiscoveryNode[];
+  workflows?: import('./workflows.ts').Workflow[];
   user: User;
   users: User[];
   projects: Project[];
@@ -247,7 +257,8 @@ export type NodeExecutionPolicy = {
   approvalMode: ApprovalMode;
   projectID: string | null;
   model: string | null;
-  maxConcurrent: 1;
+  /** Concurrent executions received from other Nodes. Locally originated work has no fixed limit. */
+  maxConcurrent: number;
   updatedAt: string | null;
 };
 export type RivloomNode = {
@@ -367,10 +378,10 @@ export const stateLabels: Record<TaskState, string> = {
     return t('执行失败');
   },
   get review() {
-    return t('待验收');
+    return t('已完成');
   },
   get accepted() {
-    return t('已验收');
+    return t('已完成');
   },
 };
 export const approvalModeLabels: Record<ApprovalMode, string> = {

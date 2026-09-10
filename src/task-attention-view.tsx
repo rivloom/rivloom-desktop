@@ -129,7 +129,7 @@ export function TaskAttentionView({
             {t('待办')}
             <span>{items.length}</span>
           </h1>
-          <p>{t('审批、回答和验收都从这里回到原会话。')}</p>
+          <p>{t('审批和回答都从这里回到原会话。')}</p>
         </div>
         <button className="button" onClick={refresh}>
           <RefreshCw size={16} />
@@ -191,7 +191,6 @@ export function TaskAttentionView({
           ['all', t('全部')],
           ['approval', t('待审批')],
           ['input', t('待回答')],
-          ['review', t('待验收')],
           ['interrupted', t('执行中断')],
           ['failed', t('需要检查')],
         ].map(([key, label]) => (
@@ -237,7 +236,7 @@ export function TaskAttentionView({
           <strong>
             {items.length ? t('这个分类暂时没有待办') : t('当前没有需要你处理的任务')}
           </strong>
-          <span>{t('新的审批、提问和验收会出现在这里。')}</span>
+          <span>{t('新的审批和提问会出现在这里。')}</span>
         </div>
       )}
     </section>

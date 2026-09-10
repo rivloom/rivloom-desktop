@@ -1,0 +1,376 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { WorkflowStore, workflowStep, type WorkflowRequest } from '../server/workflows.ts';
+import { WorkflowService, type WorkflowExecutionAdapter, type WorkflowExecutionSnapshot } from '../server/workflow-service.ts';
+import type { ExecutionOutcome, WorkflowAttempt, WorkflowPlan, WorkflowStepPlan } from '../shared/workflows.ts';
+
+const A = 'A'.repeat(32); const B = 'B'.repeat(32); const C = 'C'.repeat(32);
+const step = (id: string, dependsOn: string[] = [], nodeID: string | null = null): WorkflowStepPlan =>
+  ({ id, title: id, instructions: `Complete ${id}`, dependsOn, nodeID, resources: [], software: [], requirements: {} });
+function setup() {
+  const db = new DatabaseSync(':memory:'); const store = new WorkflowStore(db);
+  const executions = new Map<string, WorkflowExecutionSnapshot>(); const starts: WorkflowAttempt[] = [];
+  let queries = 0; let waitingCount = 0; let dropAfterAdmission = false; let stopUnknown = false;
+  let beforeDispatch: (() => void) | null = null;
+  const adapter: WorkflowExecutionAdapter = {
+    candidates: () => [A, B, C].map((nodeID) => ({ nodeID, kind: nodeID === A ? 'local' : 'remote', waitingCount })),
+    evidence: () => 'catalog version 1',
+    lookup: async (_value, attempt) => executions.get(attempt.executionID) || null,
+    dispatch: async (value, _step, attempt, mayStart) => {
+      beforeDispatch?.();
+      if (!mayStart()) return { state: 'blocked', reason: 'cancelled' };
+      if (executions.has(attempt.executionID)) return { state: 'accepted' };
+      if (waitingCount >= 10 && !value.confirmations.some((c) => c.nodeID === attempt.nodeID)) return { state: 'confirmation', waitingCount };
+      starts.push(structuredClone(attempt));
+      executions.set(attempt.executionID, { phase: 'queued', summary: '', error: null, outcome: null, outputFiles: [], safeToTransfer: false });
+      if (dropAfterAdmission) throw new Error('lost_ack');
+      return { state: 'accepted' };
+    },
+    stop: async (_value, attempt) => {
+      if (stopUnknown) return 'unknown';
+      executions.set(attempt.executionID, { phase: 'stopped', summary: '', error: null, outcome: null, outputFiles: [], safeToTransfer: true });
+      return 'stopped';
+    },
+    query: async () => { queries++; return { results: ['B has the required resource'], status: 'complete' }; },
+    materialize: async () => [],
+    stageInputs: async (_value, _key, files) => files,
+  };
+  let service = new WorkflowService(store, adapter);
+  const request: WorkflowRequest = { requestID: randomUUID(), creatorID: 'owner', title: 'Make a short film',
+    description: 'Write a script, find material and edit the film', projectID: 'project', model: 'fixture/model',
+    approvalMode: 'ask', target: { mode: 'automatic' }, inputFiles: [] };
+  const create = (patch: Partial<WorkflowRequest> = {}) => service.create({ ...request, ...patch });
+  const finish = (attempt: WorkflowAttempt, outcome: WorkflowAttempt['outcome'], safeToTransfer = true) => {
+    executions.set(attempt.executionID, { phase: 'completed', summary: 'finished', error: null, outcome, outputFiles: [], safeToTransfer });
+  };
+  const planned = async (plan: WorkflowPlan, patch: Partial<WorkflowRequest> = {}) => {
+    const value = create(patch); await service.advance(value.id);
+    finish(starts[0], { kind: 'plan', plan }); await service.advance(value.id); return value.id;
+  };
+  return { db, store, adapter, executions, starts, request, create, finish, planned,
+    get service() { return service; }, get queries() { return queries; },
+    setQueue(value: number) { waitingCount = value; }, dropAck() { dropAfterAdmission = true; },
+    uncertainStop(value: boolean) { stopUnknown = value; }, beforeDispatch(callback: () => void) { beforeDispatch = callback; },
+    restart() { service = new WorkflowService(new WorkflowStore(db), adapter); },
+  };
+}
+const complete = (summary = 'done'): ExecutionOutcome => ({ kind: 'completed', summary, files: [] });
+
+const readyPlan = (f: ReturnType<typeof setup>, steps: WorkflowStepPlan[], target: WorkflowRequest['target'] = { mode: 'automatic' }) => {
+  const value = f.create({ requestID: randomUUID(), target });
+  f.store.update(value.id, (w) => { w.state = 'running'; w.planVersion = 1; w.summary = 'Automatic placement'; w.steps = steps.map(workflowStep); });
+  return value.id;
+};
+const resource = { nodeID: B, workspaceID: '00000000-0000-4000-8000-000000000001', id: 'a'.repeat(64), revision: 'b'.repeat(64) };
+const inputFile = { id: '00000000-0000-4000-8000-000000000002', name: 'material.txt', bytes: 4, sha256: 'c'.repeat(64), mime: 'text/plain' };
+
+test('automatic branches choose separate Nodes across asynchronous retrieval, staging and admission with stale load reports', async () => {
+  for (const waitingAt of ['materialize', 'stageInputs', 'dispatch'] as const) {
+    const f = setup();
+    try {
+      f.adapter.candidates = () => [B, C].map((nodeID) => ({ nodeID, kind: 'remote', waitingCount: 0 }));
+      const dispatch = f.adapter.dispatch;
+      f.adapter.dispatch = async (...args) => { if (waitingAt === 'dispatch') await Promise.resolve(); return dispatch(...args); };
+      f.adapter.materialize = async () => { if (waitingAt === 'materialize') await Promise.resolve(); return [inputFile]; };
+      f.adapter.stageInputs = async (_w, _key, files) => { if (waitingAt === 'stageInputs') await Promise.resolve(); return files; };
+      const id = readyPlan(f, [step('video'), step('audio')].map((s) => ({ ...s, resources: [resource] })));
+      await f.service.advance(id);
+      assert.deepEqual(f.starts.map((a) => a.nodeID), [B, C], waitingAt);
+      assert.equal(new Set(f.starts.map((a) => a.executionID)).size, 2);
+      assert(f.store.get(id)!.steps.every((s) => s.attempts.length === 1 && s.attempts[0].phase === 'queued'));
+      // Already admitted executions also count while a subsequent remote report still says zero.
+      const next = readyPlan(f, [step('image'), step('text')]); await f.service.advance(next);
+      assert.deepEqual(f.starts.slice(2).map((a) => a.nodeID), [B, C]);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('placement reservations are shared across concurrently advancing workflows', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = () => [B, C].map((nodeID) => ({ nodeID, kind: 'remote', waitingCount: 0 }));
+    f.adapter.materialize = async () => { await Promise.resolve(); return []; };
+    for (let i = 0; i < 4; i++) readyPlan(f, [{ ...step('independent'), resources: [resource] }]);
+    await f.service.tick();
+    assert.equal(f.starts.filter((a) => a.nodeID === B).length, 2);
+    assert.equal(f.starts.filter((a) => a.nodeID === C).length, 2);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('preferred Nodes break load ties while locked targets and bound continuations stay on their required Node', async () => {
+  for (const mode of ['preferred', 'planned', 'locked', 'continuation'] as const) {
+    const f = setup();
+    try {
+      f.adapter.candidates = () => [B, C].map((nodeID) => ({ nodeID, kind: 'remote', waitingCount: 0 }));
+      const steps = [step('video', [], mode === 'planned' ? B : null), step('audio', [], mode === 'planned' ? B : null)];
+      const id = readyPlan(f, steps, mode === 'preferred' || mode === 'locked' ? { mode, nodeID: B } : { mode: 'automatic' });
+      if (mode === 'continuation') f.store.update(id, (w) => { for (const s of w.steps) s.continuation = { nodeID: B, reason: 'Continue on the same Node', handoff: false }; });
+      await f.service.advance(id);
+      assert.deepEqual(f.starts.map((a) => a.nodeID), mode === 'locked' || mode === 'continuation' ? [B, B] : [B, C], mode);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('restart retains unacknowledged execution load and stopping releases it without duplicating work', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = () => [B, C].map((nodeID) => ({ nodeID, kind: 'remote', waitingCount: 0 }));
+    f.dropAck(); const first = readyPlan(f, [step('first')]); await f.service.advance(first);
+    assert.equal(f.store.get(first)!.steps[0].attempts[0].phase, 'intent');
+    f.restart(); const second = readyPlan(f, [step('second')]); await f.service.advance(second);
+    assert.deepEqual(f.starts.map((a) => a.nodeID), [B, C]);
+    await f.service.advance(first); assert.equal(f.starts.length, 2);
+    f.service.control(first, 'stop'); await f.service.advance(first);
+    const third = readyPlan(f, [step('third')]); await f.service.advance(third);
+    assert.equal(f.starts.at(-1)!.nodeID, B); assert.equal(f.store.get(first)!.state, 'stopped');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('stopping or failing during preparation releases its reservation and rechecks capability after retrieval', async () => {
+  for (const change of ['stop', 'failure', 'capability'] as const) {
+    const f = setup();
+    try {
+      let eligible = [B, C];
+      f.adapter.candidates = () => eligible.map((nodeID) => ({ nodeID, kind: 'remote', waitingCount: 0 }));
+      let entered!: () => void, release!: () => void;
+      const preparing = new Promise<void>((ok) => { entered = ok; }), held = new Promise<void>((ok) => { release = ok; });
+      f.adapter.materialize = async () => { entered(); await held; if (change === 'failure') throw new Error('input_failed'); return []; };
+      const id = readyPlan(f, [{ ...step('held'), resources: [resource] }]); const pending = f.service.advance(id); await preparing;
+      if (change === 'stop') f.service.control(id, 'stop');
+      if (change === 'capability') eligible = [C];
+      release(); await pending;
+      assert.deepEqual(f.starts.map((a) => a.nodeID), change === 'capability' ? [C] : []);
+      eligible = [B, C]; const next = readyPlan(f, [step('next')]); await f.service.advance(next);
+      assert.equal(f.starts.at(-1)!.nodeID, B);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('pending placements count toward queue confirmation without inventing an admitted execution', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 9 }];
+    f.adapter.materialize = async () => { await Promise.resolve(); return []; };
+    const id = readyPlan(f, [step('video'), step('audio')].map((s) => ({ ...s, resources: [resource] })));
+    await f.service.advance(id);
+    assert.equal(f.starts.length, 1); const pending = f.store.get(id)!;
+    assert.equal(pending.pendingConfirmation?.nodeID, B); assert.equal(pending.pendingConfirmation?.waitingCount, 10);
+    assert.equal(pending.steps[1].attempts.length, 0);
+    f.service.confirm(id, B); await f.service.advance(id); assert.equal(f.starts.length, 2);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('planner format correction is bounded, persists across restart and stays on the original Node', async () => {
+  const f = setup();
+  try {
+    const value = f.create({ target: { mode: 'preferred', nodeID: B } }); await f.service.advance(value.id);
+    for (let round = 0; round < 3; round++) {
+      const attempt = f.starts.at(-1)!;
+      f.executions.set(attempt.executionID, { phase: 'failed', summary: '', error: 'workflow_invalid_outcome', outcome: null, outputFiles: [], safeToTransfer: false });
+      await f.service.advance(value.id); f.restart(); await f.service.advance(value.id);
+      assert.equal(f.starts.length, Math.min(round + 2, 3));
+    }
+    const failed = f.store.get(value.id)!;
+    assert.equal(failed.state, 'failed'); assert.equal(failed.planner.validationRounds, 2); assert.equal(failed.steps.length, 0);
+    assert(f.starts.every((a) => a.nodeID === B && a.context.role === 'planner'));
+    assert.match(f.starts[1].context.priorContext, /1\/2/); assert.match(f.starts[2].context.priorContext, /2\/2/);
+    assert(failed.planner.attempts.every((a) => a.handled && a.error === 'workflow_invalid_outcome'));
+    const retried = f.service.control(value.id, 'retry_planning');
+    assert.equal(retried.id, value.id); assert.equal(retried.planner.attempts.length, 3);
+    assert.throws(() => f.service.control(value.id, 'retry_planning'), /invalid_control/);
+    await f.service.advance(value.id); assert.equal(f.starts.length, 4);
+    f.finish(f.starts[3], { kind: 'plan', plan: { summary: 'Recovered', steps: [step('business')] } });
+    await f.service.advance(value.id);
+    assert.deepEqual(f.starts.map((a) => a.context.role), ['planner', 'planner', 'planner', 'planner', 'executor']);
+    assert.throws(() => f.service.control(value.id, 'retry_planning'), /invalid_control/);
+  } finally { f.db.close(); }
+});
+
+test('paused format correction waits for resume and stop cancels the undispatched correction', async () => {
+  for (const action of ['resume', 'stop'] as const) {
+    const f = setup();
+    try {
+      const value = f.create(); await f.service.advance(value.id); f.service.control(value.id, 'pause');
+      f.finish(f.starts[0], null); await f.service.advance(value.id);
+      assert.equal(f.store.get(value.id)!.state, 'paused'); assert.equal(f.store.get(value.id)!.planner.state, 'ready');
+      f.restart(); await f.service.advance(value.id); assert.equal(f.starts.length, 1);
+      f.service.control(value.id, action); await f.service.advance(value.id);
+      assert.equal(f.starts.length, action === 'resume' ? 2 : 1);
+      if (action === 'stop') assert.equal(f.store.get(value.id)!.state, 'stopped');
+    } finally { f.db.close(); }
+  }
+});
+
+test('format handling never retries business execution or unknown planner delivery', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Work', steps: [step('business')] });
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', error: 'workflow_invalid_outcome', outcome: null, outputFiles: [], safeToTransfer: false });
+    await f.service.advance(id); f.restart(); await f.service.advance(id);
+    assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.state, 'failed');
+    assert.throws(() => f.service.control(id, 'retry_planning'), /invalid_control/);
+    const value = f.create({ requestID: randomUUID() }); await f.service.advance(value.id);
+    f.executions.set(f.starts[2].executionID, { phase: 'unknown', summary: '', error: 'workflow_invalid_outcome', outcome: null, outputFiles: [], safeToTransfer: false });
+    await f.service.advance(value.id); f.restart(); await f.service.advance(value.id);
+    assert.equal(f.starts.length, 3); assert.equal(f.store.get(value.id)!.planner.attempts.length, 1);
+  } finally { f.db.close(); }
+});
+
+test('original user constraints survive narrowed plans, handoff and evidence trimming', async () => {
+  const f = setup();
+  try {
+    const description = '范围说明。'.repeat(1800) + '\n禁止运行目录命令；只能写合成目录。END-CONSTRAINT';
+    f.adapter.evidence = () => '目录事实。'.repeat(5000);
+    const id = await f.planned({ summary: 'Narrowed plan', steps: [{ ...step('handoff'), instructions: '保存进度。'.repeat(700) }] },
+      { description, criteria: '最终文件必须叫 final.mp4' });
+    assert(f.starts[1].context.priorContext.includes(description)); assert.match(f.starts[1].context.priorContext, /最终文件必须叫 final\.mp4/);
+    assert(f.starts[1].context.priorContext.startsWith(`本次实际执行 Node：${f.starts[1].nodeID}`));
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: B, reason: 'Required tool', checkpoint: 'Saved progress', files: [], processesStopped: true });
+    await f.service.advance(id);
+    assert.equal(f.starts[2].nodeID, B); assert(f.starts[2].context.priorContext.includes(description));
+    assert(f.starts[2].context.priorContext.startsWith(`本次实际执行 Node：${B}`));
+    assert.match(f.starts[2].context.priorContext, /本次接收上一个 Node 的转交/);
+    assert.equal(f.starts[2].context.instructions, 'Saved progress', 'The target continues the checkpoint instead of repeating source instructions');
+    assert.equal(f.store.get(id)!.steps[0].instructions, '保存进度。'.repeat(700), 'The original plan stays available in history');
+    assert.match(f.starts[2].context.priorContext, /Saved progress/); assert(Buffer.byteLength(JSON.stringify(f.starts[2].context)) <= 55_000);
+  } finally { f.db.close(); }
+});
+
+test('requests that cannot fit with step instructions fail instead of trimming original constraints', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Too large', steps: [{ ...step('large'), instructions: '文'.repeat(12_000) }] }, { description: '界'.repeat(12_000) });
+    await f.service.advance(id); assert.equal(f.starts.length, 1);
+    assert.equal(f.store.get(id)!.state, 'failed'); assert.equal(f.store.get(id)!.error, 'workflow_context_limit');
+  } finally { f.db.close(); }
+});
+
+test('editing an unstarted step during material retrieval discards the old preparation', async () => {
+  const f = setup();
+  try {
+    let entered!: () => void; const preparing = new Promise<void>((ok) => { entered = ok; });
+    let release!: () => void; const held = new Promise<void>((ok) => { release = ok; });
+    f.adapter.materialize = async () => { entered(); await held; return []; };
+    const plannedStep = step('edit'); plannedStep.resources = [{ nodeID: B, workspaceID: randomUUID(), id: 'a'.repeat(64), revision: 'b'.repeat(64) }];
+    const value = f.create(); await f.service.advance(value.id); f.finish(f.starts[0], { kind: 'plan', plan: { summary: 'edit', steps: [plannedStep] } });
+    const pending = f.service.advance(value.id); await preparing;
+    const current = f.store.get(value.id)!;
+    f.service.editStep(value.id, current.version, { ...plannedStep, instructions: 'Updated requirements', resources: [] });
+    release(); await pending; assert.equal(f.starts.length, 1);
+    await f.service.advance(value.id); assert.equal(f.starts.length, 2); assert.equal(f.starts[1].context.instructions, 'Updated requirements');
+  } finally { f.db.close(); }
+});
+
+test('workflow creation is idempotent per owner and content; admission ACK loss and restart reuse the execution', async () => {
+  const f = setup();
+  try {
+    const value = f.create(); assert.equal(f.create().id, value.id);
+    assert.throws(() => f.create({ description: 'different' }), /workflow_request_conflict/);
+    assert.notEqual(f.create({ creatorID: 'other' }).id, value.id);
+    f.dropAck(); await f.service.advance(value.id);
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(value.id)!.planner.attempts[0].phase, 'intent');
+    f.restart(); await f.service.advance(value.id); await f.service.advance(value.id);
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(value.id)!.planner.attempts[0].phase, 'queued');
+    f.executions.delete(f.starts[0].executionID); await f.service.advance(value.id); await f.service.advance(value.id);
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(value.id)!.planner.attempts[0].phase, 'unknown');
+  } finally { f.db.close(); }
+});
+test('parallel branches start independently, joins require every dependency and failures block only descendants', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'parallel', steps: [step('script'), step('video', ['script'], B), step('audio', ['script'], C), step('edit', ['video', 'audio'])] });
+    assert.deepEqual(f.starts.map((a) => a.context.stepID), ['planner', 'script']);
+    f.finish(f.starts[1], complete() as never); await f.service.advance(id);
+    assert.deepEqual(f.starts.slice(2).map((a) => [a.context.stepID, a.nodeID]), [['video', B], ['audio', C]]);
+    const video = f.starts[2]; const audio = f.starts[3];
+    f.executions.set(video.executionID, { phase: 'failed', error: 'missing material', summary: '', outcome: null, outputFiles: [], safeToTransfer: true });
+    await f.service.advance(id);
+    assert.equal(f.store.get(id)!.steps.find((s) => s.id === 'edit')!.state, 'blocked');
+    assert.equal(f.store.get(id)!.state, 'running');
+    f.finish(audio, complete() as never); await f.service.advance(id);
+    assert.equal(f.store.get(id)!.state, 'failed'); assert.equal(f.starts.length, 4);
+  } finally { f.db.close(); }
+});
+test('pause accepts finished results without dispatching dependents; stale graph edits are rejected', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'sequence', steps: [step('first'), step('second', ['first'])] });
+    const version = f.store.get(id)!.version;
+    f.service.control(id, 'pause'); f.finish(f.starts[1], complete('checkpoint') as never); await f.service.advance(id);
+    assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.state, 'paused');
+    assert.throws(() => f.service.editStep(id, version, step('second', ['first'], B)), /workflow_version_conflict/);
+    f.service.editStep(id, f.store.get(id)!.version, step('second', ['first'], B));
+    f.service.control(id, 'resume'); await f.service.advance(id);
+    assert.equal(f.starts[2].nodeID, B); assert.match(f.starts[2].context.priorContext, /checkpoint/);
+    f.finish(f.starts[2], complete() as never); await f.service.advance(id); assert.equal(f.store.get(id)!.state, 'completed');
+  } finally { f.db.close(); }
+});
+test('stop fences dispatch races, retains unknown stops and never continues a stopped graph', async () => {
+  const f = setup();
+  try {
+    const value = f.create(); f.beforeDispatch(() => f.service.control(value.id, 'stop'));
+    await f.service.advance(value.id); assert.equal(f.starts.length, 0);
+    f.uncertainStop(true); await f.service.advance(value.id);
+    assert.equal(f.store.get(value.id)!.state, 'stopping'); assert.equal(f.store.get(value.id)!.planner.attempts[0].phase, 'unknown');
+    f.restart(); f.uncertainStop(false); await f.service.advance(value.id);
+    assert.equal(f.store.get(value.id)!.state, 'stopped'); await f.service.advance(value.id); assert.equal(f.starts.length, 0);
+  } finally { f.db.close(); }
+});
+test('queue confirmation belongs to the actual target and locked plans cannot escape through a handoff', async () => {
+  const f = setup();
+  try {
+    f.setQueue(10); const value = f.create({ target: { mode: 'locked', nodeID: B } });
+    await f.service.advance(value.id); assert.equal(f.starts.length, 0); assert.equal(f.store.get(value.id)!.pendingConfirmation?.nodeID, B);
+    assert.throws(() => f.service.confirm(value.id, A), /workflow_confirmation_changed/);
+    f.service.confirm(value.id, B); await f.service.advance(value.id); assert.equal(f.starts[0].nodeID, B);
+    f.finish(f.starts[0], { kind: 'plan', plan: { summary: 'one step', steps: [step('edit')] } });
+    await f.service.advance(value.id); assert.equal(f.starts[1].nodeID, B);
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: C, reason: 'needs gpu', checkpoint: '', files: [], processesStopped: true });
+    await f.service.advance(value.id); assert.equal(f.store.get(value.id)!.state, 'failed'); assert.equal(f.starts.length, 2);
+    assert.equal(f.store.get(value.id)!.steps[0].attempts[0].error, 'workflow_locked_handoff');
+  } finally { f.db.close(); }
+});
+test('planner queries are data operations and bounded continuations preserve the execution node', async () => {
+  const f = setup();
+  try {
+    const value = f.create({ target: { mode: 'preferred', nodeID: B } }); await f.service.advance(value.id);
+    const query = { text: 'video', kinds: [], limit: 10 };
+    // Query uses the actual shared shape, no execution is created by the adapter query.
+    for (let round = 0; round < 5; round++) {
+      f.finish(f.starts.at(-1)!, { kind: 'query', query, reason: 'Find material' } as never);
+      await f.service.advance(value.id);
+      if (round < 4) assert.equal(f.starts.at(-1)!.nodeID, B);
+    }
+    assert.equal(f.queries, 4); assert.equal(f.starts.length, 5); assert.equal(f.store.get(value.id)!.state, 'failed');
+  } finally { f.db.close(); }
+});
+test('handoff persists source/target attempts, excludes previous nodes and waits for independent quiescence', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'edit', steps: [step('edit')] });
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: B, reason: 'ffmpeg available on B', checkpoint: 'script written', files: [], processesStopped: true });
+    await f.service.advance(id); const transferred = f.starts[2]; assert.equal(transferred.nodeID, B);
+    assert.match(transferred.context.priorContext, /script written/); assert.equal(f.store.get(id)!.handoffs[0].phase, 'queued');
+    // A late source result cannot replace the current execution outcome.
+    f.finish(f.starts[1], complete('late source') as never); await f.service.advance(id);
+    assert.equal(f.store.get(id)!.steps[0].state, 'running');
+    f.finish(transferred, { kind: 'handoff', nodeID: C, reason: 'more memory', checkpoint: '', files: [], processesStopped: true }, false);
+    await f.service.advance(id); assert.equal(f.starts.length, 3);
+    assert.equal(f.store.get(id)!.steps[0].attempts[1].error, 'workflow_source_not_quiescent');
+  } finally { f.db.close(); }
+});
+test('execution expansion rewires pending dependents through the new leaves and retains one workflow', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'expand', steps: [step('prepare'), step('publish', ['prepare'])] });
+    f.finish(f.starts[1], { kind: 'expand', plan: { summary: 'need two materials', steps: [step('video', [], B), step('audio', [], C)] }, checkpoint: 'script ready', files: [] });
+    await f.service.advance(id);
+    const value = f.store.get(id)!; const added = value.steps.slice(2);
+    assert.deepEqual(value.steps[1].dependsOn, added.map((s) => s.id)); assert(added.every((s) => s.dependsOn[0] === 'prepare'));
+    assert.equal(f.starts.length, 4); assert.equal(f.store.list().length, 1);
+    f.finish(f.starts[2], complete() as never); await f.service.advance(id); assert.equal(f.starts.length, 4);
+    f.finish(f.starts[3], complete() as never); await f.service.advance(id); assert.equal(f.starts[4].context.stepID, 'publish');
+  } finally { f.db.close(); }
+});

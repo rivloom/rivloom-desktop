@@ -1,10 +1,13 @@
 import { t } from './i18n.ts';
 export const taskFileCapability = 'task-files-v1';
+export const taskFileLargeCapability = 'task-files-large-v1';
 export const taskFileChunkBytes = 32 * 1024;
-export const taskFileMaximumBytes = 20 * 1024 * 1024;
-export const taskFileBatchBytes = 50 * 1024 * 1024;
+export const taskFileMaximumBytes = 200 * 1024 * 1024;
+export const taskFileBatchBytes = 1000 * 1024 * 1024;
+export const taskFileUploadCount = 5;
+// Retain decoding of existing ten-file histories and result manifests.
 export const taskFileMaximumCount = 10;
-export const taskFileStorageBytes = 512 * 1024 * 1024;
+export const taskFileStorageBytes = 5 * 1024 * 1024 * 1024;
 export const taskFileIDPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -15,6 +18,20 @@ export type TaskFileDescriptor = {
   sha256: string;
   mime: string;
 };
+export function supportsTaskFiles(
+  capabilities: readonly string[],
+  files: readonly TaskFileDescriptor[] = [],
+) {
+  return (
+    !files.length ||
+    (capabilities.includes(taskFileCapability) &&
+      (!(
+        files.some((file) => file.bytes > 20 * 1024 * 1024) ||
+        files.reduce((sum, file) => sum + file.bytes, 0) > 50 * 1024 * 1024
+      ) ||
+        capabilities.includes(taskFileLargeCapability)))
+  );
+}
 export type TaskFileScope = 'local' | 'remote' | 'brain';
 export type TaskFilePurpose = 'input' | 'result';
 export type TaskFileRoute = { scope: TaskFileScope; taskID: string; purpose: TaskFilePurpose };

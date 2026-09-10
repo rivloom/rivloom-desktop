@@ -220,12 +220,13 @@ try {
   await member.call(`/tasks/${created.id}/run`, { confirmed: true });
   const concurrent = await owner.call<Task>(
     '/tasks',
-    taskBody(project.id, '阻止同项目并发', 'Do nothing.'),
+    taskBody(project.id, '允许同项目并发', 'Reply briefly without tools.'),
     201,
   );
   await member.call(`/tasks/${concurrent.id}/claim`, {});
-  await member.call(`/tasks/${concurrent.id}/run`, { confirmed: true }, 409);
-  pass('Same-project concurrent execution blocked');
+  await member.call(`/tasks/${concurrent.id}/run`, { confirmed: true });
+  assert((await get(concurrent.id)).sessionID);
+  pass('Same-project local concurrent execution allowed');
   const handled = new Set<string>();
   const verifiedActions = new Set<string>();
   let finished: Task | undefined;
@@ -251,12 +252,12 @@ try {
       if (p.patterns.includes('node --test slugify.test.mjs')) verifiedActions.add('test-command');
       console.log('APPROVAL', p.permission, p.patterns.join(', '));
     }
-    if (t.state === 'review') {
+    if (t.state === 'accepted') {
       finished = t;
       break;
     }
   }
-  assert(finished, 'Task never reached review');
+  assert(finished, 'Task never completed automatically');
   assert(handled.size >= 2);
   assert(verifiedActions.has('edit') && verifiedActions.has('test-command'));
   assert(streamText.includes('event: delta'));
@@ -265,20 +266,8 @@ try {
   pass(
     'Real model execution, streaming, edit + command approval and test success in a plain folder',
   );
-  await member.call(
-    `/tasks/${created.id}/accept`,
-    { confirmed: true, version: finished.version, note: 'unauthorized' },
-    403,
-  );
-  const original = readFileSync(join(repo, 'slugify.mjs'), 'utf8');
-  writeFileSync(join(repo, 'slugify.mjs'), original + '\n// external edit\n');
-  await owner.call(`/tasks/${created.id}/accept`, {
-    confirmed: true,
-    version: finished.version,
-    note: '已直接核对本地文件、真实测试输出和验收标准。',
-  });
-  writeFileSync(join(repo, 'slugify.mjs'), original);
-  pass('Only the reviewer can accept; acceptance does not scan or hash the folder');
+  assert.equal(finished.acceptedBy, null);
+  pass('Successful execution completes automatically without a manual acceptance step');
   feedAbort.abort();
   await readStream;
   await stop();

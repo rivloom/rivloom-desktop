@@ -1,0 +1,18 @@
+.desktop-update { display: grid; gap: 18px; min-width: 0; }
+.desktop-update p { margin: 0; line-height: 1.7; }
+.desktop-update-state { display: flex; align-items: center; gap: 10px; padding: 16px 0; }
+.desktop-update-state svg { flex-shrink: 0; color: var(--blue, #2774d3); }
+.desktop-update-notes { max-height: 240px; overflow-y: auto; border: 1px solid var(--line, #e2e7ee); border-radius: 10px; padding: 14px 16px; }
+.desktop-update-notes h3 { margin: 0 0 10px; font-size: 13px; }
+.desktop-update-notes p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.desktop-update-note, .desktop-update-download small { color: var(--muted, #66788b); font-size: 12px; }
+.desktop-update-download p { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.desktop-update-download progress { width: 100%; height: 9px; accent-color: #2774d3; margin: 10px 0 4px; }
+.desktop-update-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.desktop-update-blockers { margin: 0; padding-left: 20px; color: var(--muted, #66788b); font-size: 12px; line-height: 1.9; }
+.desktop-update-settings { display: grid; gap: 8px; border-top: 1px solid var(--line, #e2e7ee); padding-top: 18px; }
+.desktop-update-settings > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.desktop-update-settings > div > strong { font-size: 13px; }
+.desktop-update-settings p, .desktop-update-settings small { margin: 0; font-size: 12px; color: var(--muted, #66788b); }
+.desktop-update-settings .text-button { justify-self: start; }
+@media (max-width: 520px) { .desktop-update-actions .button { flex: 1; } .desktop-update-notes { max-height: 200px; } }

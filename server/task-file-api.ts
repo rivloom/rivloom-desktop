@@ -4,6 +4,7 @@ import type { Task, User } from '../shared/types.ts';
 import {
   validTaskFileDescriptor,
   taskFileChunkBytes,
+  taskFileUploadCount,
   type TaskFileScope,
   type TaskFileRoute,
 } from '../shared/task-files.ts';
@@ -16,12 +17,13 @@ export function installTaskFileAPI(
   who: (req: Request) => User,
   localTasks: () => Task[],
   changed: () => void,
+  locations: (local: Task, fileID: string) => { root: string; path: string }[] = () => [],
 ) {
   const files = network.files;
   const check = (condition: unknown, status: number, message: string) => {
     if (!condition) throw new TaskFileError(status, message);
   };
-  const ids = z.array(z.string().uuid()).max(10);
+  const ids = z.array(z.string().uuid()).max(taskFileUploadCount);
   const accessible = (req: Request) => {
     const scope = z.enum(['local', 'remote', 'brain']).parse(req.params.scope),
       taskID = z.string().uuid().parse(req.params.taskID);
@@ -153,10 +155,10 @@ export function installTaskFileAPI(
       403,
       '文件未绑定此任务。',
     );
-    return fileID;
+    return { fileID, local: access.local };
   };
   app.get('/api/task-files/:scope/:taskID/:fileID/content', (req, res) => {
-    const fileID = selectedFile(req),
+    const { fileID } = selectedFile(req),
       descriptor = files.descriptorFor(fileID);
     res.set({
       'Content-Type': 'application/octet-stream',
@@ -166,11 +168,16 @@ export function installTaskFileAPI(
     res.send(files.content(fileID));
   });
   app.post('/api/task-files/:scope/:taskID/:fileID/export', (req, res) => {
-    const fileID = selectedFile(req),
+    const { fileID } = selectedFile(req),
       input = z
         .object({ destination: z.string().min(1).max(1000) })
         .strict()
         .parse(req.body);
     res.json(files.exportFile(fileID, input.destination));
+  });
+  app.post('/api/task-files/:scope/:taskID/:fileID/location', async (req, res) => {
+    const { fileID, local } = selectedFile(req);
+    z.object({}).strict().parse(req.body);
+    res.json(await files.location(fileID, local ? locations(local, fileID) : []));
   });
 }

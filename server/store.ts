@@ -5,9 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { dataRoot } from './engine.ts';
 import type { User, Project, Task, Activity } from '../shared/types.ts';
 import { TaskQueries, decodeTask } from './task-queries.ts';
+import { assertReadableWorkspaceDatabase } from './data-format.ts';
 
 mkdirSync(dataRoot, { recursive: true });
 export const db = new DatabaseSync(join(dataRoot, 'rivloom.sqlite'));
+assertReadableWorkspaceDatabase(db);
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, name TEXT NOT NULL, owner INTEGER NOT NULL DEFAULT 0, password TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);

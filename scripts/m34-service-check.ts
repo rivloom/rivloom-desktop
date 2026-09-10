@@ -69,6 +69,7 @@ try {
     201,
   );
   await worker.call('/network/execution-policy', {
+    maxConcurrent: 1,
     enabled: true,
     projectID: project.id,
     model: 'fixture/m34',
@@ -180,35 +181,14 @@ try {
   pass(
     'Portable Task runs in an ordinary per-Execution folder; authorized Project is not copied or initialized with Git',
   );
-  fixture.release();
-  await until(
-    () => worker.bootstrap(),
-    (state) => state.tasks[0]?.state === 'review',
-    'fixture result reaches review',
-  );
-  const report = (await worker.network()).local!.worker!;
-  assert.equal(report.load.availableSlots, 0);
-  assert.equal(report.load.runningTasks, 1);
-  pass('Review continues to occupy the final local slot and the published capacity agrees');
-  await until(
-    async () =>
-      (await Promise.all([left.network(), right.network()])).flatMap(
-        (network) => network.brainTasks,
-      ),
-    (tasks) =>
-      tasks.some((task) => task.status === 'review') &&
-      tasks.some((task) => task.status === 'queued'),
-    'Master receives result',
-  );
-  pass('Winning Brain receives ordered review status; losing Task stays with its original Brain');
   const operator = (await worker.bootstrap()).user;
   const local = await worker.call(
     '/tasks',
     {
       projectID: project.id,
       title: 'Local slot contender',
-      description: 'Do not execute',
-      criteria: 'Must wait for the occupied slot',
+      description: 'Reply briefly without tools',
+      criteria: 'Local execution is independent of incoming capacity',
       assigneeID: operator.id,
       approverID: operator.id,
       reviewerID: operator.id,
@@ -218,9 +198,34 @@ try {
     201,
   );
   await worker.call(`/tasks/${local.id}/claim`, {});
-  await worker.call(`/tasks/${local.id}/run`, { confirmed: true }, 409);
-  assert.equal((await worker.call(`/tasks/${local.id}`)).task.sessionID, null);
-  pass('Local manual start cannot bypass the same Node-wide slot held by a remote Task');
+  await worker.call(`/tasks/${local.id}/run`, { confirmed: true });
+  assert((await worker.call(`/tasks/${local.id}`)).task.sessionID);
+  pass('Local manual start runs independently while the configured incoming slot remains reserved');
+  fixture.release();
+  await until(
+    () => worker.bootstrap(),
+    (state) => state.tasks.find((task) => task.id === running.id)?.state === 'accepted',
+    'first result completes automatically',
+  );
+  await until(
+    async () =>
+      (await Promise.all([left.network(), right.network()])).flatMap(
+        (network) => network.brainTasks,
+      ),
+    (tasks) => tasks.length === 2 && tasks.every((task) => task.status === 'completed'),
+    'both Brains complete their original tasks',
+  );
+  const report = await until(
+    () => worker.network(),
+    (network) =>
+      network.local?.worker?.load.availableSlots === 1 &&
+      network.local.worker.load.runningTasks === 0,
+    'completed tasks release all capacity',
+  );
+  assert.equal(report.local!.worker!.load.availableSlots, 1);
+  pass(
+    'Successful tasks complete automatically; the queued Brain proceeds and the Worker releases capacity',
+  );
   proof.status = 'passed';
 } catch (error) {
   proof.status = 'failed';

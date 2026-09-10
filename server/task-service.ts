@@ -13,6 +13,10 @@ import {
 } from './store.ts';
 import { openCodeArtifacts, sanitize, redact } from './artifacts.ts';
 import { activeStates, type Task, type User, type Message } from '../shared/types.ts';
+import { parseWorkflowOutcome, plannerPermissions, workflowPrompt, workflowSystemPrompt } from './workflow-prompts.ts';
+import { checkWorkflowQuiescence } from './workflow-quiescence.ts';
+import { taskApprovalPrompt } from './task-prompts.ts';
+import { EnginePermissionEvents } from './engine-permissions.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -29,6 +33,7 @@ export const engineStatus = {
 let engine: Awaited<ReturnType<typeof startEngine>> | null = null;
 let shuttingDown = false;
 const streams = new Map<string, AbortController>();
+const permissionEvents = new EnginePermissionEvents();
 let monitoring = false;
 let taskStartGuard: ((value: Task) => void) | null = null;
 let taskInputMaterializer: ((value: Task, directory: string) => string[]) | null = null;
@@ -42,6 +47,12 @@ export function setTaskStartGuard(guard: (value: Task) => void) {
 }
 
 export async function initializeEngine() {
+  // Legacy review records already represent a successful, finished engine run.
+  // Migrate only those records; interrupted/active work is never inferred complete.
+  for (const t of taskQueries.inStates(['review'])) {
+    patchTask(t.id, { state: 'accepted', acceptedBy: null });
+    activity(t.id, null, 'completed', '执行已完成，已移除人工验收环节。');
+  }
   // Never infer successful completion after a restart, or automatically resume a task.
   for (const t of taskQueries.inStates(activeStates)) {
     patchTask(t.id, {
@@ -120,6 +131,7 @@ export async function refreshEngineConfiguration() {
   // Auth changes must take effect in every project instance, not only the settings page.
   for (const abort of streams.values()) abort.abort();
   streams.clear();
+  permissionEvents.clear();
   await client().global.dispose();
   await refreshEngineModels();
   changed();
@@ -128,12 +140,15 @@ async function subscribe(directory: string) {
   if (streams.has(directory)) return;
   const abort = new AbortController();
   streams.set(directory, abort);
+  const permissionFeed = permissionEvents.open(directory);
   try {
     const feed = await client().event.subscribe({ directory }, { signal: abort.signal });
     const partKinds = new Map<string, string>();
     void (async () => {
       try {
         for await (const event of feed.stream) {
+          if (event.type === 'permission.asked') permissionEvents.asked(directory, event.properties, permissionFeed);
+          if (event.type === 'permission.replied') permissionEvents.replied(directory, event.properties.requestID, permissionFeed);
           if (event.type === 'message.part.updated') {
             partKinds.set(event.properties.part.id, event.properties.part.type);
           }
@@ -162,14 +177,18 @@ async function subscribe(directory: string) {
       } catch {
         /* Polling below reconciles state and reopens the feed. */
       } finally {
-        streams.delete(directory);
+        permissionEvents.close(directory, permissionFeed);
+        if (streams.get(directory) === abort) streams.delete(directory);
       }
     })();
   } catch (error) {
-    streams.delete(directory);
+    permissionEvents.close(directory, permissionFeed);
+    if (streams.get(directory) === abort) streams.delete(directory);
     throw error;
   }
 }
+const readPermissions = (directory: string, sessionID: string) => permissionEvents.read(directory, sessionID,
+  async () => (await client().permission.list({ directory })).data || []);
 function normalizeMessages(
   messages: Awaited<ReturnType<ReturnType<typeof client>['session']['messages']>>['data'],
 ): Message[] {
@@ -205,13 +224,13 @@ export async function sync(taskID: string) {
     const directory = project(t.projectID).directory;
     const [rawMessages, rawPermissions, rawQuestions, statuses] = await Promise.all([
       client().session.messages({ directory, sessionID: t.sessionID }),
-      client().permission.list({ directory }),
+      readPermissions(directory, t.sessionID),
       client().question.list({ directory }),
       client().session.status({ directory }),
     ]);
     const messages = normalizeMessages(rawMessages.data);
     const approvals = sanitize(
-      (rawPermissions.data || []).filter((p) => p.sessionID === t.sessionID),
+      rawPermissions,
     );
     const questions = sanitize(
       (rawQuestions.data || []).filter((p) => p.sessionID === t.sessionID),
@@ -232,7 +251,7 @@ export async function sync(taskID: string) {
         last?.role === 'assistant' &&
         last.time.completed
       ) {
-        state = last.error ? 'failed' : 'review';
+        state = last.error ? 'failed' : 'accepted';
         error = last.error
           ? redact(
               'data' in last.error && 'message' in last.error.data
@@ -243,7 +262,22 @@ export async function sync(taskID: string) {
       } else state = 'running';
     }
     const patch: Partial<Task> = { messages, approvals, questions, state, error };
-    if (state === 'review' && t.state !== 'review') {
+    if (state === 'accepted' && t.state !== 'accepted' && t.collaboration) {
+      const assistantMessages = (rawMessages.data || []).filter((m) => m.info.role === 'assistant' && m.info.time.created >= t.runAfter);
+      const last = assistantMessages.at(-1);
+      try {
+        const value = parseWorkflowOutcome(t.collaboration.role,
+          last?.info.role === 'assistant' ? last.info.structured : undefined,
+          last?.parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n') || '');
+        const quiescence = await checkWorkflowQuiescence({ directory,
+          tools: assistantMessages.flatMap((m) => m.parts.filter((p) => p.type === 'tool')) });
+        patch.collaborationOutcome = { sessionID: t.sessionID, attempt: t.collaboration.attempt, runAfter: t.runAfter, quiescence, value };
+      } catch {
+        patch.state = 'failed'; patch.error = 'workflow_invalid_outcome';
+      }
+    }
+    if (patch.state === 'accepted' && t.state !== 'accepted') {
+      patch.acceptedBy = null;
       Object.assign(patch, await readSessionArtifacts(directory, t.sessionID));
     }
     if (
@@ -256,8 +290,8 @@ export async function sync(taskID: string) {
           t.id,
           null,
           patch.state!,
-          patch.state === 'review'
-            ? 'AI 执行结束，执行结果已更新，等待指定人员验收。'
+          patch.state === 'accepted'
+            ? 'AI 执行完成，执行结果已更新。'
             : patch.state === 'failed'
               ? patch.error || '执行失败'
               : `引擎状态：${patch.state}`,
@@ -297,18 +331,6 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
     );
     const projectInfo = project(t.projectID);
     const directory = projectInfo.directory;
-    requireThat(
-      !taskQueries
-        .inStates([...activeStates, 'review', 'interrupted'])
-        .some(
-          (other) =>
-            other.id !== t.id &&
-            other.projectID === t.projectID &&
-            (activeStates.includes(other.state) || ['review', 'interrupted'].includes(other.state)),
-        ),
-      409,
-      '同一项目已有执行、未确认中断或待验收任务，请先处理',
-    );
     if (t.sessionID) {
       const statuses = (await client().session.status({ directory })).data;
       requireThat(statuses && typeof statuses === 'object', 503, '无法确认引擎会话状态。');
@@ -333,7 +355,7 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
           await client().session.create({
             directory,
             title: t.title,
-            permission: sessionPermissions(t.approvalMode),
+            permission: t.collaboration?.role === 'planner' ? plannerPermissions() : sessionPermissions(t.approvalMode),
           })
         ).data;
         requireThat(session?.id, 503, '引擎没有返回会话标识。');
@@ -360,8 +382,8 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
     taskStartGuard?.(task(t.id));
     const runAfter = Date.now();
     const instructions =
-      addition ||
-      `任务：${t.title}\n\n要求：\n${t.description}\n\n验收标准：\n${t.criteria}\n\n在当前项目文件夹完成编程任务并运行必要测试。每次修改和命令等待审批。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。`;
+      (t.collaboration ? workflowPrompt(t.collaboration) + (addition ? `\n\n用户补充：\n${addition}` : '') : addition) ||
+      `任务：${t.title}\n\n要求：\n${t.description}\n\n验收标准：\n${t.criteria}\n\n在当前项目文件夹完成编程任务并运行必要测试。遵守当前任务审批模式。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。`;
     patchTask(t.id, {
       state: 'running',
       runAfter,
@@ -370,6 +392,7 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       questions: [],
       artifacts: [],
       diffSource: '',
+      ...(t.collaboration ? { collaborationOutcome: undefined } : {}),
     });
     changed(t.id);
     activity(
@@ -384,6 +407,11 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
         directory,
         sessionID: t.sessionID!,
         model: { providerID, modelID: rest.join('/') },
+        system: t.collaboration?.role === 'planner' ? workflowSystemPrompt :
+          (t.collaboration ? `${workflowSystemPrompt}\n\n` : '') + taskApprovalPrompt(t.approvalMode),
+        // OpenCode 1.18.25 cannot re-encode stored message.info.format (upstream #40169).
+        // Keep the official session readable: workflowPrompt supplies the schema and sync strictly
+        // validates the final JSON in this exact session/run. Never send a formatted prompt here.
         parts: [
           {
             type: 'text',
@@ -424,9 +452,11 @@ export async function stopTask(taskID: string, actor: User) {
       requireThat(statuses && typeof statuses === 'object', 503, '停止后的引擎状态未返回。');
       const status = statuses[t.sessionID];
       requireThat(!status || status.type === 'idle', 409, '引擎仍报告执行中，停止尚未确认。');
-      const pending = (await client().permission.list({ directory })).data || [];
-      for (const p of pending.filter((p) => p.sessionID === t.sessionID))
+      const pending = await readPermissions(directory, t.sessionID);
+      for (const p of pending) {
         await client().permission.reply({ directory, requestID: p.id, reply: 'reject' });
+        permissionEvents.replied(directory, p.id);
+      }
       const questions = (await client().question.list({ directory })).data || [];
       for (const q of questions.filter((q) => q.sessionID === t.sessionID))
         await client().question.reject({ directory, requestID: q.id });
@@ -508,6 +538,7 @@ export async function replyPermission(
       requestID,
       reply,
     });
+    permissionEvents.replied(project(t.projectID).directory, requestID);
     patchTask(t.id, { approvals: t.approvals.filter((p) => p.id !== requestID) });
     activity(
       t.id,
@@ -580,7 +611,7 @@ export async function requestChanges(taskID: string, actor: User, note: string) 
     return result;
   });
 }
-export async function shutdownEngine() {
+export async function shutdownEngine(waitForExit = false) {
   shuttingDown = true;
   clearInterval(timer);
   for (const abort of streams.values()) abort.abort();
@@ -597,5 +628,6 @@ export async function shutdownEngine() {
         ),
     );
     engine.close();
+    if (waitForExit) await engine.waitForExit();
   }
 }

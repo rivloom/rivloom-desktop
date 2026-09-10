@@ -1,0 +1,48 @@
+# History Quiet States
+
+## Latest user refinement
+
+The user further requested removal of the many completion checkmarks, clearer light styling for own conversations and dark styling for incoming conversations, and smaller history typography inspired by Codex. Apply this on top of the quiet-state candidate: omit the completed-state trailing element entirely while retaining its full status in the accessible label and hover title; keep actionable/active/ended status text. Reduce titles from 13px to 12px with normal weight and a restrained selected weight. Own rows use near-white with lighter text; incoming rows use a muted blue-gray tint with dark text. Neither source has a border or shadow. The current 40px row geometry and 4px executing pulse remain.
+
+This refinement changes only history CSS and its rendered status element. Earlier notes below about transparent rows or completion icons describe the previous candidate. Validate source distinction, title sizing, absence of completed checkmarks, current state labels, actual motion/reduced motion and the existing locale/sidebar/draft regressions; regenerate the local installer for the user without executing or publishing it.
+
+Latest refinement verification: production/type/localization checks and the existing 37 focused logic tests passed. The 60 sidebar regressions passed with all eight prior visible-history counts unchanged. Thirteen isolated presentation/motion checks passed, including 12px/400 titles (500 when selected), no completed icon or empty status slot, preserved completed status in tooltips/accessibility, light own versus darker incoming surfaces, text contrast, actual pulse, reduced motion, current status changes and locale/draft/mobile behavior. Final synthetic screenshots and reports are under `.data/verification/history-refinement-20260908/verified-sidebar/` and `verified-motion/`. No new logic test or dependency was added in this refinement.
+
+Latest installer: `.data/verification/history-refinement-candidate-20260908/delivery/Rivloom_0.1.4_historyclean_20260908_16700099_x64-setup.exe`, 79,866,837 bytes, SHA-256 `bb383965bfaa8e9e41205b2acb6d5d6c978592669e279f38079ac46f52607754`. Source digest `167000994f54a0d901b59cd4515a15ef0135c43b2366dfc65529a202205c4823` covers 1,085 files on the same `cad78d38a26cebc95909531870bf6b38cf58cac1` base. Rust 1.98.1 Release/NSIS, frozen-source/prepared-runtime consistency, all 7,643 extracted runtime files and the x64 EXE's known three-byte NSIS marker validation passed. Generated installer commands match the prior quiet candidate after asset filenames/size normalization. `ui-source-link.json` confirms exactly two changed product files relative to that candidate: history CSS and its JSX rendering. Evidence and `delivery-result.json` are under `.data/verification/history-refinement-candidate-20260908/`. The installer is local and unsigned, has not been executed or published, and the prior packages remain available. Post-capture changes only update this record and the three handoff documents.
+
+## Design read and audit
+
+Treat this as a targeted desktop-workspace refinement for daily use: a quiet, dense list inspired by the user's Codex sidebar screenshot. Apply the explicitly requested `design-taste-frontend` skill's contextual redesign audit, hierarchy, restrained motion and accessibility guidance. Its marketing layouts and unrelated dependency/theme prescriptions do not apply to this existing product surface.
+
+Existing foundation: Manrope with Microsoft YaHei fallback, cobalt brand accent, cool neutral sidebar, 40px single-line history rows, source icons, full accessible title/source/state, persistent resizable sidebars and independent scroll. The current white/dark-blue filled history cards and strong selected borders compete with the conversation. Retire those history-row fills; retain the established brand, components, information order and business behavior.
+
+`DESIGN_VARIANCE: 3`, `MOTION_INTENSITY: 4` (only a small execution-state pulse), `VISUAL_DENSITY: 8` (retain current row dimensions). Transparent idle rows, subtle neutral hover/selected treatment, source differences through icons/text, lighter regular title weight and no row shadows. Running states alone receive a small slow opacity pulse, static under reduced-motion preferences. No animated text, row movement, glow, timers or new animation dependency.
+
+## Implementation and verification
+
+1. Preserve the previous visual candidate and save the current production baseline in `.data/verification/history-quiet-20260908/`.
+2. Refine only history CSS and its presentation state. Derive running from the same current raw-state precedence as the existing state label, including local/remote/Brain observations; queued, held, approval, review and terminal states do not pulse.
+3. Verify the state boundary with focused conversation tests, type/localization/production build, the existing sidebar regression updated for the newly requested source treatment, and isolated screenshot/motion checks in Chinese and English. Keep 40px rows, complete accessible labels, focus, selection, drafts, resizing and visible-history density. Review the actual motion and reduced-motion fallback.
+4. Create a fresh local NSIS package from frozen source and verify prepared/extracted runtime and installer resources. Do not run the installer or publish; the user continues to install their own desktop builds. Record actual results here and update handoff documents.
+
+The prior deferred physical/long-running performance tests stay deferred. The user's pending discussion of desktop responsiveness and important interaction points remains the next topic after this refinement.
+
+## Verified implementation
+
+The history-specific changes are confined to `src/conversation-workspace.css`, `HistoryRow` presentation in `src/conversation-workspace.tsx`, a pure `conversationIsRunning` display helper in `src/conversations.ts`, and its state-boundary coverage in `tests/conversations.test.ts`. Existing labels, handlers, filters, state transitions, source grouping, queue controls and data formats are unchanged. No dependency, interval, observer or per-frame React update was added.
+
+37/37 focused language/conversation/filter/sidebar/draft tests passed. Localization, TypeScript and production Vite build passed. The machine's `npm` launcher initially resolved a missing per-user npm module; running the exact three build-script commands through the available Node binary succeeded without changing system settings. The existing Vite bundle-size advisory remains.
+
+60/60 sidebar regression checks passed using an isolated copy of the prior harness. Its single source-style assertion now checks text-color differentiation instead of different solid backgrounds, as requested. All eight Chinese/English viewport combinations retain their previous full visible history counts and 40px rows: 1280×840 8/8, 960×640 4/4, 860×640 4/3, 390×700 4/4.
+
+11/11 additional presentation checks passed, including actual time-separated opacity samples, fixed row geometry, static queue/approval/input/review/completed states, completion removing the marker, reduced-motion behavior, keyboard focus, source/selection styling, locale/draft retention and mobile overflow. Text contrast is at least 4.70:1 on the darkest row surface. The only continuous animation is a 4px execution marker with a 2.8-second opacity cycle. There were zero browser exceptions and zero non-loopback requests. Final screenshots and reports are in `.data/verification/history-quiet-20260908/verified-sidebar/` and `verified-motion/`; they contain synthetic task/device data.
+
+Pre-flight review: the reference-inspired list is visibly unfilled when idle, selected rows use one neutral highlight, source icons and full accessible labels remain, typography is lighter, and motion expresses only actual execution. Existing brand, navigation, content, theme and responsive layout remain intact. Marketing-page hero, SEO, imagery, dark-mode rollout and animation-library requirements are outside this focused desktop request. No installed-client or measured performance claim is made.
+
+## Local delivery completed
+
+Installer: `.data/verification/history-quiet-candidate-20260908/delivery/Rivloom_0.1.4_historyquiet_20260908_95aa0c2c_x64-setup.exe`, 79,823,427 bytes, SHA-256 `83e539322bc674116391278c425039d3c806fa7a657dcf05ee01a0d1e5802d4d`. Rivloom 0.1.4 and `com.rivloom.desktop` remain. This is an unsigned local candidate for the user to install, not a published release; the installer was not executed.
+
+Frozen source digest: `95aa0c2cabd6858d94fbd4b176a25e3d9e380008753078aceaad9ae4a27cfcc5`, 1,085 source files on base `cad78d38a26cebc95909531870bf6b38cf58cac1`. Rust 1.98.1 Release/NSIS succeeded. Source/prepared runtime were unchanged during packaging, production output matches prepared runtime, and all 7,643 extracted runtime files match prepared bytes and pass the runtime gate. The packaged x64 EXE matches the native build except the verified three-byte Tauri NSIS marker. The generated installer matches the prior visual candidate after only expected asset-filename and size changes.
+
+`ui-source-link.json` verifies that product/test source differs from the prior visual candidate only in the four history files listed above; other source differences are documentation. `build-result.json`, `extraction-result.json`, `installer-static-review.json` and `delivery-result.json` provide the remaining evidence under `.data/verification/history-quiet-candidate-20260908/`. Post-capture changes are limited to this record and the three handoff documents. No commit, push, public download update or installed-client action was performed.

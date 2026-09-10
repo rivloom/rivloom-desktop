@@ -1,6 +1,6 @@
 # Windows x64 发行记录契约
 
-这是阶段 D 的本地数据契约与工具基础。当前没有已发布发行记录、频道指针或可下载样例；不会自动选取现有 UI Preview，也没有签名、上传、公网验证或应用内更新行为。发布门槛仍见 [RELEASING](../RELEASING.md) 和[官网/CI/CD计划](../plans/2026-09-05-website-ci-cd-and-updates.md)。
+这是阶段 D 的自定义签名发行记录契约与工具基础，保留其原有更严格声明要求。当前普通 Release / R2 手动下载使用独立 DownloadRecord；0.1.5 新增的 Tauri 签名清单也独立校验，见 [应用内更新](../DESKTOP-UPDATES.md)。下文自定义契约不是线上手动下载记录或 Tauri JSON，不能混用。发布门槛仍见 [RELEASING](../RELEASING.md) 和[官网/CI/CD计划](../plans/2026-09-05-website-ci-cd-and-updates.md)。
 
 ## 唯一记录与身份边界
 

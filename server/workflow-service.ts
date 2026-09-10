@@ -1,0 +1,442 @@
+import { randomUUID } from 'node:crypto';
+import { jsonBytes } from '../shared/collaboration.ts';
+import { taskFileBatchBytes, taskFileMaximumCount, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
+import { canRetryWorkflowPlanning, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError,
+  type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
+import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
+import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
+
+export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; localConfig?: { projectID: string; model: string } };
+export type WorkflowExecutionSnapshot = {
+  phase: Exclude<WorkflowAttempt['phase'], 'intent'>; summary: string; error: string | null;
+  outcome: WorkflowAttempt['outcome']; outputFiles: TaskFileDescriptor[]; safeToTransfer: boolean;
+};
+export type WorkflowDispatchResult = { state: 'accepted' } | { state: 'confirmation'; waitingCount: number } |
+  { state: 'blocked' | 'uncertain'; reason: string };
+export interface WorkflowExecutionAdapter {
+  candidates(workflow: Workflow, step: WorkflowStep, role: WorkflowExecutionContext['role']): WorkflowCandidate[];
+  evidence(workflow: Workflow): string;
+  lookup(workflow: Workflow, attempt: WorkflowAttempt): Promise<WorkflowExecutionSnapshot | null>;
+  /** Implementations must reuse executionID and check mayStart immediately before durable admission. */
+  dispatch(workflow: Workflow, step: WorkflowStep, attempt: WorkflowAttempt, mayStart: () => boolean): Promise<WorkflowDispatchResult>;
+  stop(workflow: Workflow, attempt: WorkflowAttempt): Promise<'stopped' | 'unknown'>;
+  query(workflow: Workflow, query: ResourceQuery): Promise<unknown>;
+  materialize(workflow: Workflow, references: ResourceReference[]): Promise<TaskFileDescriptor[]>;
+  stageInputs(workflow: Workflow, key: string, files: TaskFileDescriptor[], mayRead: () => boolean): Promise<TaskFileDescriptor[]>;
+}
+const terminalAttempt = (attempt: WorkflowAttempt) => ['completed', 'failed', 'stopped'].includes(attempt.phase);
+const terminalStep = (step: WorkflowStep) => ['completed', 'failed', 'cancelled', 'blocked'].includes(step.state);
+const terminalWorkflow = (workflow: Workflow) => ['stopped', 'completed', 'failed'].includes(workflow.state);
+const getStep = (workflow: Workflow, id: string) => id === 'planner' ? workflow.planner : workflow.steps.find((step) => step.id === id);
+function currentStep(workflow: Workflow, stepID: string, executionID: string) {
+  const step = getStep(workflow, stepID);
+  return step?.attempts.at(-1)?.executionID === executionID ? step : null;
+}
+function boundedText(value: string, characters: number, bytes: number): string {
+  let result = value.slice(0, characters);
+  while (jsonBytes(result) > bytes) result = result.slice(0, Math.floor(result.length * 0.85));
+  return result;
+}
+function mergeFiles(...groups: TaskFileDescriptor[][]): TaskFileDescriptor[] {
+  const files = new Map<string, TaskFileDescriptor>();
+  for (const group of groups) for (const file of group) {
+    const previous = files.get(file.id);
+    if (previous && !sameTaskFile(previous, file)) throw new Error('workflow_file_identity_conflict');
+    files.set(file.id, file);
+  }
+  const result = [...files.values()];
+  if (result.length > taskFileMaximumCount || result.reduce((sum, file) => sum + file.bytes, 0) > taskFileBatchBytes)
+    throw new Error('workflow_input_quota');
+  return result;
+}
+/** Drives stable logical steps through existing durable queues. It never starts model sessions itself. */
+export class WorkflowService {
+  readonly store: WorkflowStore;
+  private adapter: WorkflowExecutionAdapter;
+  private onChange: () => void;
+  private advancing = new Map<string, Promise<void>>();
+  private preparing = new Map<symbol, string>();
+  private assignedByWorkflow = new Map<string, string[]>();
+  private assigned = new Map<string, number>();
+  private closed = false;
+  constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}) {
+    this.store = store; this.adapter = adapter; this.onChange = onChange;
+    for (const value of store.list()) this.trackAssignments(value);
+  }
+  private update(id: string, change: (workflow: Workflow) => void, version?: number) {
+    const result = this.store.update(id, change, version); this.trackAssignments(result); this.onChange(); return result;
+  }
+  /** Durable intents remain load until their execution is known to have ended, including after restart. */
+  private trackAssignments(value: Workflow) {
+    for (const nodeID of this.assignedByWorkflow.get(value.id) || []) {
+      const count = (this.assigned.get(nodeID) || 0) - 1;
+      if (count) this.assigned.set(nodeID, count); else this.assigned.delete(nodeID);
+    }
+    const nodes = [value.planner, ...value.steps].flatMap((step) => step.attempts.filter((attempt) => !terminalAttempt(attempt)).map((attempt) => attempt.nodeID));
+    if (nodes.length) this.assignedByWorkflow.set(value.id, nodes); else this.assignedByWorkflow.delete(value.id);
+    for (const nodeID of nodes) this.assigned.set(nodeID, (this.assigned.get(nodeID) || 0) + 1);
+  }
+  private candidates(value: Workflow, step: WorkflowStep) {
+    let candidates = this.adapter.candidates(value, step, step.id === 'planner' ? 'planner' : 'executor');
+    if (value.target.mode === 'locked') { const target = value.target.nodeID; candidates = candidates.filter((c) => c.nodeID === target); }
+    if (step.continuation?.nodeID) candidates = candidates.filter((c) => c.nodeID === step.continuation!.nodeID);
+    if (step.continuation?.handoff) candidates = candidates.filter((c) => !step.attempts.some((a) => a.nodeID === c.nodeID));
+    return candidates;
+  }
+  private selectCandidate(value: Workflow, step: WorkflowStep, reservation: symbol) {
+    const preparing = new Map<string, number>();
+    for (const [key, nodeID] of this.preparing) if (key !== reservation) preparing.set(nodeID, (preparing.get(nodeID) || 0) + 1);
+    const preferred = step.nodeID || (value.target.mode === 'preferred' ? value.target.nodeID : null);
+    return this.candidates(value, step).map((candidate) => ({ ...candidate,
+      // Reports can lag our own admissions. Use known executions as a floor, avoiding double-counting acknowledged queue entries.
+      waitingCount: Math.max(candidate.waitingCount, this.assigned.get(candidate.nodeID) || 0) + (preparing.get(candidate.nodeID) || 0),
+    })).sort((a, b) => a.waitingCount - b.waitingCount || Number(b.nodeID === preferred) - Number(a.nodeID === preferred))[0];
+  }
+  create(request: WorkflowRequest) { const value = this.store.create(request); this.onChange(); return value; }
+  control(id: string, action: 'pause' | 'resume' | 'stop' | 'retry_planning') {
+    return this.update(id, (value) => {
+      if (action === 'retry_planning') {
+        if (!canRetryWorkflowPlanning(value)) throw new Error('workflow_invalid_control');
+        value.state = 'planning'; value.error = null; value.pendingConfirmation = null;
+        value.planner.state = 'ready'; value.planner.validationRounds = 0; value.planner.queryRounds = 0; value.planner.evidence = '';
+        value.planner.continuation = { nodeID: value.planner.attempts.at(-1)!.nodeID, reason: 'Retry planning', handoff: false };
+        workflowEvent(value, 'state', value.state); return;
+      }
+      if (terminalWorkflow(value)) throw new Error('workflow_already_finished');
+      if (action === 'pause' && ['planning', 'running'].includes(value.state)) value.state = 'paused';
+      else if (action === 'resume' && value.state === 'paused') value.state = value.planVersion ? 'running' : 'planning';
+      else if (action === 'stop') { value.state = 'stopping'; value.pendingConfirmation = null; }
+      else throw new Error('workflow_invalid_control');
+      workflowEvent(value, 'state', value.state);
+    });
+  }
+  confirm(id: string, nodeID: string) {
+    return this.update(id, (value) => {
+      if (value.pendingConfirmation?.nodeID !== nodeID || terminalWorkflow(value) || value.state === 'stopping')
+        throw new Error('workflow_confirmation_changed');
+      value.confirmations = value.confirmations.filter((item) => item.nodeID !== nodeID);
+      value.confirmations.push({ nodeID, confirmedAt: new Date().toISOString() }); value.pendingConfirmation = null;
+    });
+  }
+  editStep(id: string, version: number, replacement: WorkflowStepPlan) {
+    return this.update(id, (value) => {
+      if (!['running', 'paused'].includes(value.state)) throw new Error('workflow_not_editable');
+      const step = value.steps.find((step) => step.id === replacement.id);
+      if (!step || step.attempts.length || terminalStep(step)) throw new Error('workflow_step_started');
+      const next = value.steps.map((s) => s.id === replacement.id ? replacement : s);
+      // Only plan fields belong in validation, never internal execution state.
+      const plan = { summary: value.summary, steps: next.map(planFields) };
+      const error = workflowPlanError(plan, value.target);
+      if (error) throw new Error(error);
+      Object.assign(step, structuredClone(replacement)); value.planVersion++;
+      workflowEvent(value, 'plan', 'Step updated', step.id);
+    }, version);
+  }
+  advance(id: string): Promise<void> {
+    const previous = this.advancing.get(id);
+    if (previous) return previous;
+    const pending = this.advanceOne(id).finally(() => this.advancing.delete(id));
+    this.advancing.set(id, pending); return pending;
+  }
+  async tick() {
+    const ids = this.store.list().filter((w) => !terminalWorkflow(w)).map((w) => w.id);
+    for (let start = 0; start < ids.length && !this.closed; start += 4)
+      await Promise.allSettled(ids.slice(start, start + 4).map((id) => this.advance(id)));
+  }
+  async close() { this.closed = true; await Promise.allSettled([...this.advancing.values()]); }
+  private mayStart(id: string, stepID: string, executionID?: string) {
+    if (this.closed) return false;
+    const value = this.store.get(id);
+    return !!value && ['planning', 'running'].includes(value.state) &&
+      (executionID ? !!currentStep(value, stepID, executionID) : getStep(value, stepID)?.state === 'ready');
+  }
+  private async advanceOne(id: string) {
+    let value = this.store.get(id);
+    if (!value || terminalWorkflow(value) || this.closed) return;
+    this.trackAssignments(value);
+    if (value.state === 'stopping') { await this.stopAll(value); return; }
+    const steps = value.planVersion ? value.steps : [value.planner];
+    await Promise.all(steps.filter((step) => step.state === 'running').map((step) => this.reconcile(value!, step)));
+    value = this.store.get(id)!;
+    if (value.state === 'stopping') { await this.stopAll(value); return; }
+    if (terminalWorkflow(value)) return;
+    if (value.planVersion) this.settle(id);
+    value = this.store.get(id)!;
+    if (!['planning', 'running'].includes(value.state)) return;
+    await Promise.all((value.planVersion ? value.steps : [value.planner]).filter((step) => step.state === 'ready')
+      .map((step) => this.prepare(value!, step)));
+  }
+  private async stopAll(value: Workflow) {
+    await Promise.all([value.planner, ...value.steps].map(async (step) => {
+      const attempt = step.attempts.at(-1);
+      if (attempt && !terminalAttempt(attempt)) {
+        let state: 'stopped' | 'unknown' = 'unknown';
+        try { state = await this.adapter.stop(value, attempt); } catch { /* Keep the uncertain stop visible. */ }
+        this.update(value.id, (latest) => {
+          const current = currentStep(latest, step.id, attempt.executionID);
+          if (!current) return;
+          const execution = current.attempts.at(-1)!; execution.phase = state; execution.updatedAt = new Date().toISOString();
+          if (state === 'stopped') { execution.handled = true; current.state = 'cancelled'; }
+          else { execution.error = 'workflow_stop_unconfirmed'; latest.error = execution.error; }
+        });
+      } else if (!terminalStep(step)) this.update(value.id, (latest) => { getStep(latest, step.id)!.state = 'cancelled'; });
+    }));
+    const latest = this.store.get(value.id)!;
+    if ([latest.planner, ...latest.steps].every((step) => !step.attempts.length || terminalAttempt(step.attempts.at(-1)!)))
+      this.update(value.id, (current) => { current.state = 'stopped'; current.error = null; workflowEvent(current, 'state', 'stopped'); });
+  }
+  private settle(id: string) {
+    const value = this.store.get(id)!;
+    if (terminalWorkflow(value) || value.state === 'stopping') return;
+    const stateBefore = JSON.stringify([value.state, value.steps.map((s) => s.state)]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const step of value.steps) if (['waiting', 'ready'].includes(step.state)) {
+        const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
+        const next = parents.some((p) => ['failed', 'cancelled', 'blocked'].includes(p.state)) ? 'blocked' :
+          parents.every((p) => p.state === 'completed') ? 'ready' : 'waiting';
+        if (next !== step.state) { step.state = next; changed = true; }
+      }
+    }
+    if (value.steps.every(terminalStep) && value.state !== 'paused') {
+      value.state = value.steps.every((s) => s.state === 'completed') ? 'completed' : 'failed';
+      value.error = value.state === 'failed' ? value.steps.flatMap((s) => s.attempts).findLast((a) => a.error)?.error || value.error || 'workflow_dependency_failed' : null;
+    }
+    if (stateBefore !== JSON.stringify([value.state, value.steps.map((s) => s.state)])) this.update(id, (latest) => {
+      latest.steps.forEach((step, i) => { step.state = value.steps[i].state; }); latest.state = value.state; latest.error = value.error;
+      if (terminalWorkflow(latest)) workflowEvent(latest, 'state', latest.state);
+    }, value.version);
+  }
+  private async prepare(value: Workflow, step: WorkflowStep) {
+    const reservation = Symbol(step.id);
+    try {
+      const role = step.id === 'planner' ? 'planner' : 'executor';
+      const continuation = step.continuation;
+      let candidate = this.selectCandidate(value, step, reservation);
+      if (!candidate || !this.mayStart(value.id, step.id)) return;
+      if (candidate.waitingCount >= 10 && !value.confirmations.some((c) => c.nodeID === candidate.nodeID)) {
+        this.confirmation(value.id, step.id, candidate.nodeID, candidate.waitingCount); return;
+      }
+      // Synchronous reservation covers input I/O; a persisted intent takes over before remote admission awaits its ACK.
+      this.preparing.set(reservation, candidate.nodeID);
+      const resources = step.resources.length ? await this.adapter.materialize(value, step.resources) : [];
+      if (!this.mayStart(value.id, step.id)) return;
+      // An unstarted step can be edited while material retrieval is awaiting I/O.
+      // Discard this preparation so the next tick uses the newly saved requirements.
+      const prepared = this.store.get(value.id)!;
+      const preparedStep = getStep(prepared, step.id);
+      if (!preparedStep || JSON.stringify(planFields(preparedStep)) !== JSON.stringify(planFields(step))) return;
+      candidate = this.selectCandidate(prepared, preparedStep, reservation);
+      if (!candidate) return;
+      if (candidate.waitingCount >= 10 && !prepared.confirmations.some((c) => c.nodeID === candidate.nodeID)) {
+        this.confirmation(value.id, step.id, candidate.nodeID, candidate.waitingCount); return;
+      }
+      this.preparing.set(reservation, candidate.nodeID);
+      const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
+      const originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
+      const inputFiles = candidate.kind === 'remote' && originalFiles.length
+        ? await this.adapter.stageInputs(value, `${step.id}:${step.attempts.length + 1}:${candidate.nodeID}`, originalFiles, () => this.mayStart(value.id, step.id))
+        : originalFiles;
+      if (!this.mayStart(value.id, step.id) || JSON.stringify(planFields(getStep(this.store.get(value.id)!, step.id)!)) !== JSON.stringify(planFields(step))) return;
+      if (!this.candidates(this.store.get(value.id)!, step).some((c) => c.nodeID === candidate.nodeID)) return;
+      const evidence = boundedText([this.adapter.evidence(value), step.evidence].filter(Boolean).join('\n\n'), 12_000, 18_000);
+      const correction = role === 'planner' && step.validationRounds
+        ? `上次只读规划未通过 JSON 格式校验。这是第 ${step.validationRounds}/2 次格式纠正；尚未执行业务步骤。重新按原需求返回一个且仅一个完整 JSON 对象。检查资源引用与文件/软件区别；无输入文件用 resources:[]；缺少事实只返回 query，已有事实只返回 plan。` : '';
+      const location = `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
+        (continuation?.handoff ? '本次接收上一个 Node 的转交；从下方已保存检查点继续，不重复源端已完成的操作，不再次转交给自己。' : '');
+      const originalRequest = role === 'executor' ? `用户完整需求（本步骤及后续转交都必须遵守其中适用的约束；只执行当前步骤）：\n${value.planner.instructions}` : '';
+      if (location.length + originalRequest.length + 4 > 16_000) throw new Error('workflow_context_limit');
+      let progress = boundedText([correction, step.checkpoint, ...parents.map((p) => `${p.title}\n${p.checkpoint}`)].filter(Boolean).join('\n\n'),
+        Math.min(8000, Math.max(0, 16_000 - location.length - originalRequest.length - 4)), 12_000);
+      const priorContext = [location, originalRequest, progress].filter(Boolean).join('\n\n');
+      const context: WorkflowExecutionContext = { workflowID: value.id, stepID: step.id, attempt: step.attempts.length + 1,
+        role, target: value.target, instructions: continuation?.handoff && step.checkpoint ? step.checkpoint : step.instructions, evidence, priorContext };
+      // Preserve the actual request; reduce supporting evidence to fit the authenticated channel in UTF-8.
+      while (jsonBytes({ executionID: '0'.repeat(36), context, inputFiles }) > 58_000 || jsonBytes(context) > 55_000) {
+        if (context.evidence.length > 100) context.evidence = context.evidence.slice(0, Math.floor(context.evidence.length * 0.8));
+        else if (progress.length > 100) {
+          progress = progress.slice(0, Math.floor(progress.length * 0.8));
+          context.priorContext = [location, originalRequest, progress].filter(Boolean).join('\n\n');
+        }
+        else throw new Error('workflow_context_limit');
+      }
+      if (!validWorkflowExecutionContext(context)) throw new Error('workflow_context_limit');
+      const at = new Date().toISOString();
+      const attempt: WorkflowAttempt = { number: context.attempt, executionID: randomUUID(), nodeID: candidate.nodeID, kind: candidate.kind,
+        ...(candidate.localConfig ? { localConfig: candidate.localConfig } : {}), phase: 'intent',
+        context, createdAt: at, updatedAt: at, summary: '', outcome: null, inputFiles, outputFiles: [], error: null, handled: false };
+      const saved = this.update(value.id, (latest) => {
+        const current = getStep(latest, step.id)!;
+        if (!['planning', 'running'].includes(latest.state) || current.state !== 'ready') throw new Error('workflow_dispatch_cancelled');
+        if (current.continuation?.handoff) {
+          const previous = current.attempts.at(-1)!;
+          latest.handoffs.push({ id: randomUUID(), stepID: step.id, fromAttempt: previous.number, toAttempt: attempt.number,
+            fromNodeID: previous.nodeID, toNodeID: attempt.nodeID, reason: current.continuation.reason, phase: 'transferring', at });
+          workflowEvent(latest, 'handoff', current.continuation.reason, step.id);
+        }
+        current.state = 'running'; current.attempts.push(attempt); current.continuation = null;
+      });
+      this.preparing.delete(reservation);
+      await this.dispatch(saved, getStep(saved, step.id)!, attempt);
+    } catch (error) {
+      const latest = this.store.get(value.id);
+      if (latest && this.mayStart(value.id, step.id)) this.update(value.id, (current) => {
+        current.error = errorCode(error); workflowEvent(current, 'error', current.error, step.id);
+        getStep(current, step.id)!.state = 'failed'; if (step.id === 'planner') current.state = 'failed';
+      });
+    } finally { this.preparing.delete(reservation); }
+  }
+  private confirmation(id: string, stepID: string, nodeID: string, waitingCount: number) {
+    this.update(id, (value) => {
+      if (!value.pendingConfirmation && !terminalWorkflow(value) && value.state !== 'stopping')
+        value.pendingConfirmation = { nodeID, stepID, waitingCount };
+    });
+  }
+  private async dispatch(value: Workflow, step: WorkflowStep, attempt: WorkflowAttempt) {
+    if (!this.mayStart(value.id, step.id, attempt.executionID)) return;
+    if (value.pendingConfirmation?.nodeID === attempt.nodeID && value.pendingConfirmation.stepID === step.id &&
+      !value.confirmations.some((c) => c.nodeID === attempt.nodeID)) return;
+    let result: WorkflowDispatchResult;
+    try { result = await this.adapter.dispatch(value, step, attempt, () => this.mayStart(value.id, step.id, attempt.executionID)); }
+    catch (error) { result = { state: 'uncertain', reason: errorCode(error) }; }
+    if (result.state === 'confirmation') this.confirmation(value.id, step.id, attempt.nodeID, result.waitingCount);
+    this.update(value.id, (latest) => {
+      const current = currentStep(latest, step.id, attempt.executionID);
+      if (!current) return;
+      const active = current.attempts.at(-1)!;
+      if (active.phase !== 'intent') return;
+      // Keep uncertain delivery as a durable intent: lookup and idempotent admission use the same ID.
+      if (result.state === 'accepted') active.phase = 'queued';
+      active.error = 'reason' in result ? result.reason : null; active.updatedAt = new Date().toISOString();
+      const handoff = latest.handoffs.find((h) => h.stepID === step.id && h.toAttempt === active.number);
+      if (handoff && result.state === 'accepted') handoff.phase = 'queued';
+    });
+  }
+  private async reconcile(value: Workflow, step: WorkflowStep) {
+    const attempt = step.attempts.at(-1);
+    if (!attempt) return;
+    let snapshot: WorkflowExecutionSnapshot | null;
+    try { snapshot = await this.adapter.lookup(value, attempt); } catch { return; }
+    if (!snapshot) {
+      if (attempt.phase === 'intent') await this.dispatch(this.store.get(value.id)!, step, attempt);
+      // Missing an acknowledged execution is uncertainty, never permission to create another one.
+      else if (!terminalAttempt(attempt) && attempt.phase !== 'unknown') this.update(value.id, (latest) => {
+        const current = currentStep(latest, step.id, attempt.executionID);
+        if (current) { current.attempts.at(-1)!.phase = 'unknown'; current.attempts.at(-1)!.error = 'workflow_execution_unconfirmed'; }
+      });
+      return;
+    }
+    const latest = this.store.get(value.id)!;
+    if (!currentStep(latest, step.id, attempt.executionID) || latest.state === 'stopping') return;
+    if (JSON.stringify([attempt.phase, attempt.summary, attempt.error, attempt.outcome, attempt.outputFiles]) !==
+      JSON.stringify([snapshot.phase, snapshot.summary, snapshot.error, snapshot.outcome, snapshot.outputFiles])) this.update(value.id, (current) => {
+      const execution = currentStep(current, step.id, attempt.executionID)?.attempts.at(-1);
+      if (execution && !execution.handled) Object.assign(execution, { phase: snapshot.phase, summary: snapshot.summary,
+        error: snapshot.error, outcome: snapshot.outcome, outputFiles: snapshot.outputFiles, updatedAt: new Date().toISOString() });
+    });
+    if (snapshot.phase === 'completed' && !attempt.handled) await this.outcome(value.id, step.id, attempt.executionID, snapshot);
+    else if (['failed', 'stopped'].includes(snapshot.phase)) this.update(value.id, (current) => {
+      const active = currentStep(current, step.id, attempt.executionID);
+      if (!active) return;
+      if (snapshot.phase === 'failed' && this.correctPlanningFormat(current, active, snapshot.error)) return;
+      active.state = snapshot.phase === 'stopped' ? 'cancelled' : 'failed'; active.attempts.at(-1)!.handled = true;
+      if (step.id === 'planner') { current.state = 'failed'; current.error = snapshot.error || 'workflow_planning_failed'; }
+    });
+  }
+  private correctPlanningFormat(value: Workflow, step: WorkflowStep, error: string | null): boolean {
+    if (step.id !== 'planner' || value.planVersion || value.steps.length || value.state === 'stopping' ||
+      error !== 'workflow_invalid_outcome' || (step.validationRounds || 0) >= 2 || step.attempts.length >= 16) return false;
+    const attempt = step.attempts.at(-1)!;
+    if (!['failed', 'completed'].includes(attempt.phase)) return false;
+    attempt.handled = true; attempt.error = error;
+    step.validationRounds = (step.validationRounds || 0) + 1; step.state = 'ready';
+    step.continuation = { nodeID: attempt.nodeID, reason: 'Correct planning JSON', handoff: false };
+    value.error = null;
+    workflowEvent(value, 'error', error, step.id); return true;
+  }
+  private async outcome(id: string, stepID: string, executionID: string, snapshot: WorkflowExecutionSnapshot) {
+    const value = this.store.get(id)!; const step = currentStep(value, stepID, executionID);
+    if (!step || step.attempts.at(-1)!.handled || value.state === 'stopping') return;
+    const outcome = snapshot.outcome;
+    const planner = stepID === 'planner';
+    try {
+      if (planner ? !validPlanningOutcome(outcome) : !validExecutionOutcome(outcome)) throw new Error('workflow_invalid_outcome');
+      let queryEvidence: string | null = null;
+      let materials = mergeFiles(step.materials, snapshot.outputFiles);
+      if (outcome!.kind === 'query' || outcome!.kind === 'resources') {
+        if (step.queryRounds >= 4) throw new Error('workflow_query_limit');
+        if (outcome!.kind === 'query') queryEvidence = boundedText(JSON.stringify(await this.adapter.query(value, outcome!.query)), 12_000, 18_000);
+        else materials = mergeFiles(materials, await this.adapter.materialize(value, outcome!.resources));
+      }
+      if (outcome!.kind === 'plan' || outcome!.kind === 'expand') {
+        const error = workflowPlanError(outcome!.plan, value.target);
+        if (error) throw new Error(error);
+        if (outcome!.plan.steps.some((s) => s.id === 'planner')) throw new Error('workflow_reserved_step_id');
+        if (outcome!.kind === 'expand' && !snapshot.safeToTransfer) throw new Error('workflow_source_not_quiescent');
+      }
+      if (outcome!.kind === 'handoff') {
+        if (value.target.mode === 'locked') throw new Error('workflow_locked_handoff');
+        if (!snapshot.safeToTransfer || !outcome!.processesStopped) throw new Error('workflow_source_not_quiescent');
+        if (value.handoffs.filter((h) => h.stepID === stepID).length >= 4) throw new Error('workflow_handoff_limit');
+        if (outcome!.nodeID && step.attempts.some((a) => a.nodeID === outcome!.nodeID)) throw new Error('workflow_handoff_cycle');
+      }
+      const latest = this.store.get(id)!;
+      if (!currentStep(latest, stepID, executionID) || latest.state === 'stopping' || this.closed) return;
+      this.update(id, (current) => {
+        const active = currentStep(current, stepID, executionID)!; const attempt = active.attempts.at(-1)!;
+        attempt.handled = true; active.materials = materials;
+        if (outcome!.kind === 'plan') {
+          current.summary = outcome!.plan.summary; current.steps = outcome!.plan.steps.map(workflowStep); current.planVersion++;
+          active.state = 'completed'; if (current.state !== 'paused') current.state = 'running';
+          workflowEvent(current, 'plan', current.summary);
+        } else if (outcome!.kind === 'completed') {
+          active.checkpoint = outcome!.summary; active.state = 'completed';
+          const handoff = current.handoffs.findLast((h) => h.stepID === stepID && h.toAttempt <= attempt.number && h.toNodeID === attempt.nodeID);
+          if (handoff) handoff.phase = 'completed';
+        } else {
+          if ('checkpoint' in outcome!) active.checkpoint = outcome!.checkpoint;
+          if (outcome!.kind === 'expand') this.expand(current, active, outcome!.plan);
+          else {
+            active.state = 'ready';
+            active.continuation = { nodeID: outcome!.kind === 'handoff' ? outcome!.nodeID : attempt.nodeID,
+              reason: outcome!.reason, handoff: outcome!.kind === 'handoff' };
+            if (outcome!.kind !== 'handoff') {
+              active.queryRounds++; if (queryEvidence !== null) active.evidence = queryEvidence;
+              workflowEvent(current, 'query', outcome!.reason, stepID);
+            }
+          }
+        }
+      });
+    } catch (error) {
+      const latest = this.store.get(id)!;
+      if (latest.state === 'stopping') return;
+      this.update(id, (current) => {
+        const active = currentStep(current, stepID, executionID);
+        if (!active) return;
+        if (this.correctPlanningFormat(current, active, errorCode(error))) return;
+        active.state = 'failed'; active.attempts.at(-1)!.handled = true; active.attempts.at(-1)!.error = errorCode(error);
+        current.error = errorCode(error); if (planner) current.state = 'failed'; workflowEvent(current, 'error', current.error, stepID);
+      });
+    }
+  }
+  private expand(value: Workflow, step: WorkflowStep, plan: WorkflowPlan) {
+    if (value.steps.length + plan.steps.length > 32) throw new Error('workflow_expansion_limit');
+    const prefix = `s${value.planVersion + 1}_`;
+    const idMap = new Map(plan.steps.map((s, i) => [s.id, `${prefix}${i + 1}`]));
+    const newSteps = plan.steps.map((s) => workflowStep({ ...s, id: idMap.get(s.id)!,
+      dependsOn: s.dependsOn.length ? s.dependsOn.map((id) => idMap.get(id)!) : [step.id] }));
+    const leaves = newSteps.filter((s) => !newSteps.some((other) => other.dependsOn.includes(s.id))).map((s) => s.id);
+    for (const next of value.steps) if (next.dependsOn.includes(step.id)) {
+      if (next.attempts.length) throw new Error('workflow_expansion_started_dependency');
+      next.dependsOn = [...new Set([...next.dependsOn.filter((id) => id !== step.id), ...leaves])];
+    }
+    step.state = 'completed'; value.steps.push(...newSteps); value.planVersion++;
+    workflowEvent(value, 'plan', plan.summary, step.id);
+  }
+}
+function planFields(step: WorkflowStepPlan): WorkflowStepPlan {
+  return { id: step.id, title: step.title, instructions: step.instructions, dependsOn: step.dependsOn,
+    nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements };
+}
+function errorCode(error: unknown) { return error instanceof Error ? error.message.slice(0, 300) : 'workflow_operation_failed'; }

@@ -1,6 +1,6 @@
 # 官网分发与安全更新方案
 
-更新日期：2026-09-06。状态：**从 0.1.4 起统一以 Rivloom 正式身份发布普通 GitHub Release；官网去掉对外 Preview 标记。R2 公开文件同步与官网自动刷新已通过真实验证，签名与 updater 尚未实施。** 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合实际实现维护；本轮去 Preview 的用户决定取代此前仅发布独立预览的命名安排，不改写历史验证结果。
+更新日期：2026-09-09。状态：**0.1.5 已实现应用内更新及独立签名频道发布代码，本地验证通过；本轮未安装、发布或配置远端签名密钥。既有普通 Release、R2 公开文件与官网刷新链路保留。** 当前实现、首次接入与上线步骤见 [应用内更新](DESKTOP-UPDATES.md)。 本文依据用户提供的[《官网分发与更新方案》分享对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，结合实际实现维护；本轮去 Preview 的用户决定取代此前仅发布独立预览的命名安排，不改写历史验证结果。
 
 M2 负责 Windows 安装与客户端更新，M5 负责官网与分发。main 上已验收候选通过 `ci-release.ts` 自动发布普通 Release；公开文件同步采用新的严格 desktop 下载记录，配置和重试规则见 [CI](CI.md#同步-rivloom-到官网公开下载)。R2 桶与下载域已活动，新增持续访问密钥和 Pages Hook 仍待此前授权，本次不创建凭据。新版云端、安装和发布结果须按实际源码另行核对；M3.5 用户与双物理机验收、签名和升级矩阵仍分别推进。历史事实见 [VERIFICATION](VERIFICATION.md)。
 
@@ -23,14 +23,14 @@ M2 负责 Windows 安装与客户端更新，M5 负责官网与分发。main 上
 
 ## 2. 当前仓库基线
 
-- 正式应用版本为 `0.1.4`，名称 Rivloom，identifier 为 `com.rivloom.desktop`。当前 NSIS 为 currentUser 安装，缺失 WebView2 时使用联网 bootstrapper。
+- 当前源码正式应用版本为 `0.1.5`，名称 Rivloom，identifier 为 `com.rivloom.desktop`。当前 NSIS 为 currentUser 安装，缺失 WebView2 时使用联网 bootstrapper。
 - `tauri.preview.conf.json` 继续供开发验证使用，其独立身份为 `com.rivloom.conversationpreview`；普通发行不加载它。旧 Preview 的安装和数据保留，不自动迁移为正式身份。既有正式 0.1.3 的覆盖升级仍需独立验收，不能用 Preview 改名或全新安装检查代替。
-- 当前没有 updater 插件、公钥或更新端点。候选显式关闭 updater artifacts，安装验收通过后 publish 创建 `prerelease:false` 的普通 Release；这不代表已签名或具备安全自动更新。website-download 由明确的启用变量控制，当前已启用并完成首轮真实同步。两个源码仓库保持私有，GitHub 下载仍需仓库访问权限；官网 R2 入口提供匿名下载。
+- 已接入官方 updater、内置公钥及 `updates/stable/latest.json`。候选仍关闭 updater artifacts，安装验收通过后 publish 创建普通 Release，website-download 验证公开文件，再由独立 updater job 对同一安装器签名并提升更新频道；未启用该 job 时仍只有手动下载。website-download 由明确的启用变量控制，当前已启用并完成首轮真实同步。两个源码仓库保持私有，GitHub 下载仍需仓库访问权限；官网 R2 入口提供匿名下载。
 - `server/node-identity.ts` 已定义 `nodeProtocolVersion = 1`；`server/node-network.ts` 使用协议版本校验与 `remote-execution-v1`、`brain-task-v1`、队列回执等 capability。已有机制应延续，不能随意放宽握手或向旧严格消息结构添加字段。
-- 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，这还不是完整的有序迁移或拒绝降级机制。
+- 本地持久状态包含 SQLite 和多类 JSON；`server/store.ts` 当前设置 `PRAGMA user_version=3`，新增读前拒绝未来格式守卫；仍不是完整的有序迁移或自动恢复机制。
 - 客户端管理本地业务服务、Node 和官方 OpenCode 子进程。Task/Execution、Node 身份、信任与 Brain 归属必须跨升级保持；当前固定 Master Host 无自动接管，关闭客户端会影响执行与调度。
 
-官网已通过 Cloudflare Pages 上线，本轮去掉对外 Preview。桌面各层检查及边界见 [CI](CI.md)、[runtime 校验](CI-RUNTIME.md) 与[签名发行契约](releases/README.md)。已有官网上线和本地测试不代表 R2 公开同步、签名或 updater 已通过。
+官网已通过 Cloudflare Pages 上线，本轮去掉对外 Preview。桌面各层检查及边界见 [CI](CI.md)、[runtime 校验](CI-RUNTIME.md) 与[签名发行契约](releases/README.md)。历史官网与 R2 结果不替代本版公网更新和真实安装验收。
 
 ## 3. 最小分发架构
 
@@ -84,7 +84,7 @@ R2 凭据仅限专属桶对象读写，Pages Hook 绑定官网 main；秘密只�
 
 ## 4. 更新清单、签名与频道
 
-使用 [Tauri 2 官方 Updater](https://v2.tauri.app/plugin/updater/)，实施时选择并锁定与本项目兼容的插件版本，配置受控 HTTPS endpoints、内置公钥和 `bundle.createUpdaterArtifacts`。使用构建工具生成的实际文件与签名，不手工猜测产物名或从其他平台复制元数据。
+0.1.5 已使用 [Tauri 2 官方 Updater](https://v2.tauri.app/plugin/updater/) 并锁定插件 2.11.0；固定 HTTPS endpoint 与内置公钥，独立发布 job 对经过安装验收的同一 NSIS 字节签名，候选阶段不提前生成 updater artifacts。下方旧示例保留为契约说明，实际额外签名的清单以 [应用内更新](DESKTOP-UPDATES.md) 和 `scripts/updater-manifest.ts` 为准。使用构建工具生成的实际文件与签名，不手工猜测产物名或从其他平台复制元数据。
 
 静态清单应遵循官方字段，示意如下；示例签名和版本不是可发布产物：
 

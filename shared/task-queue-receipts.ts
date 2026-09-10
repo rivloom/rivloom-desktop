@@ -1,10 +1,28 @@
+import { validRemoteConcurrency } from './execution-concurrency.ts';
+
 export const queueReceiptCapability = 'node-queue-v1';
+export const nodeWorkloadCapability = 'node-workload-v1';
+export const nodeConcurrencyCapability = 'node-concurrency-v1';
+export type NodeConcurrency = {
+  localOccupied: number;
+  remoteOccupied: number;
+  localExecuting: number;
+  remoteExecuting: number;
+  remoteLimit: number;
+};
+export type NodeWorkload = {
+  occupiedSlots: number;
+  totalSlots: number;
+  executingCount: number;
+};
 export type NodeQueuePublicStats = {
   waitingCount: number;
   paused: boolean;
   updatedAt: string;
   sampledAt: string;
   health: 'normal' | 'unknown' | 'congested' | 'resource_anomaly' | 'stalled';
+  workload?: NodeWorkload;
+  concurrency?: NodeConcurrency;
 };
 
 /** Only routing and this task's queue facts cross the encrypted connection. */
@@ -29,11 +47,56 @@ const date = (value: unknown) =>
 const exactKeys = (value: Record<string, unknown>, keys: string[]) =>
   Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 
+export function validNodeWorkload(value: unknown): value is NodeWorkload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    exactKeys(v, ['occupiedSlots', 'totalSlots', 'executingCount']) &&
+    Object.values(v).every(
+      (count) => Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 100_000,
+    ) &&
+    Number(v.executingCount) <= Number(v.occupiedSlots)
+  );
+}
+
+export function validNodeConcurrency(value: unknown): value is NodeConcurrency {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return exactKeys(v, ['localOccupied', 'remoteOccupied', 'localExecuting', 'remoteExecuting', 'remoteLimit']) &&
+    Object.values(v).every((count) => Number.isSafeInteger(count) && Number(count) >= 0 && Number(count) <= 100_000) &&
+    validRemoteConcurrency(v.remoteLimit) && Number(v.localExecuting) <= Number(v.localOccupied) &&
+    Number(v.remoteExecuting) <= Number(v.remoteOccupied);
+}
+
+/** Older node-queue-v1 decoders enforce exact keys. Never send them workload. */
+export function nodeQueueForCapabilities(
+  value: NodeQueuePublicStats | null,
+  capabilities: readonly string[],
+): NodeQueuePublicStats | null {
+  if (!value || !capabilities.includes(queueReceiptCapability)) return null;
+  const { workload, concurrency, ...legacy } = value;
+  return {
+    ...legacy,
+    ...(capabilities.includes(nodeWorkloadCapability) && workload ? { workload } : {}),
+    ...(capabilities.includes(nodeConcurrencyCapability) && concurrency ? { concurrency } : {}),
+  };
+}
+
 export function validNodeQueuePublicStats(value: unknown): value is NodeQueuePublicStats {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
   return (
-    exactKeys(v, ['waitingCount', 'paused', 'updatedAt', 'sampledAt', 'health']) &&
+    exactKeys(v, [
+      'waitingCount',
+      'paused',
+      'updatedAt',
+      'sampledAt',
+      'health',
+      ...(Object.hasOwn(v, 'workload') ? ['workload'] : []),
+      ...(Object.hasOwn(v, 'concurrency') ? ['concurrency'] : []),
+    ]) &&
+    (!Object.hasOwn(v, 'workload') || validNodeWorkload(v.workload)) &&
+    (!Object.hasOwn(v, 'concurrency') || validNodeConcurrency(v.concurrency)) &&
     Number.isSafeInteger(v.waitingCount) &&
     Number(v.waitingCount) >= 0 &&
     Number(v.waitingCount) <= 100_000 &&

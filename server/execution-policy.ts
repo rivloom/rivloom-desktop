@@ -9,8 +9,9 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { NodeExecutionPolicy } from '../shared/types.ts';
+import { defaultRemoteConcurrency, validRemoteConcurrency } from '../shared/execution-concurrency.ts';
 
-type StoredPolicy = { version: 2; policy: NodeExecutionPolicy };
+type StoredPolicy = { version: 3; policy: NodeExecutionPolicy };
 type LegacyPolicy = {
   enabled: boolean;
   mode: 'automatic' | 'limited' | 'confirm';
@@ -28,7 +29,7 @@ const emptyPolicy = (): NodeExecutionPolicy => ({
   approvalMode: 'ask',
   projectID: null,
   model: null,
-  maxConcurrent: 1,
+  maxConcurrent: defaultRemoteConcurrency,
   updatedAt: null,
 });
 
@@ -42,7 +43,7 @@ function validPolicy(value: unknown): value is NodeExecutionPolicy {
       (typeof item.projectID === 'string' && uuidPattern.test(item.projectID))) &&
     (item.model === null ||
       (typeof item.model === 'string' && item.model.length >= 3 && item.model.length <= 200)) &&
-    item.maxConcurrent === 1 &&
+    validRemoteConcurrency(item.maxConcurrent) &&
     (item.updatedAt === null ||
       (typeof item.updatedAt === 'string' && Number.isFinite(Date.parse(item.updatedAt)))) &&
     (!item.enabled || (item.projectID !== null && item.model !== null))
@@ -82,19 +83,29 @@ export class ExecutionPolicyStore {
       )
         throw new Error('本机执行能力配置无效；自动调用保持关闭。');
       const keepEnabled = legacy.enabled && legacy.mode === 'automatic';
-      this.value = {
+      const migrated = {
         enabled: keepEnabled,
-        approvalMode: 'ask',
+        approvalMode: 'ask' as const,
         projectID: keepEnabled ? legacy.projectID : null,
         model: keepEnabled ? legacy.model : null,
-        maxConcurrent: 1,
+        maxConcurrent: defaultRemoteConcurrency,
         updatedAt: legacy.updatedAt,
       };
-      if (!validPolicy(this.value)) throw new Error('本机执行能力配置无效；自动调用保持关闭。');
-      this.persist();
+      if (!validPolicy(migrated)) throw new Error('本机执行能力配置无效；自动调用保持关闭。');
+      this.persist(migrated);
+      this.value = migrated;
       return this.snapshot();
     }
-    if (record.version !== 2 || !validPolicy(record.policy))
+    if (record.version === 2) {
+      const legacy = record.policy as NodeExecutionPolicy;
+      if (!validPolicy(legacy) || legacy.maxConcurrent !== 1)
+        throw new Error('本机执行能力配置无效；自动调用保持关闭。');
+      const migrated = { ...legacy, maxConcurrent: defaultRemoteConcurrency };
+      this.persist(migrated);
+      this.value = migrated;
+      return this.snapshot();
+    }
+    if (record.version !== 3 || !validPolicy(record.policy))
       throw new Error('本机执行能力配置无效；自动调用保持关闭。');
     this.value = { ...(record as StoredPolicy).policy };
     return this.snapshot();
@@ -104,18 +115,18 @@ export class ExecutionPolicyStore {
     return { ...this.value };
   }
 
-  save(input: Omit<NodeExecutionPolicy, 'maxConcurrent' | 'updatedAt'>) {
+  save(input: Omit<NodeExecutionPolicy, 'maxConcurrent' | 'updatedAt'> & { maxConcurrent?: number }) {
     const next: NodeExecutionPolicy = {
       enabled: input.enabled,
       approvalMode: input.approvalMode,
       projectID: input.enabled ? input.projectID : null,
       model: input.enabled ? input.model : null,
-      maxConcurrent: 1,
+      maxConcurrent: input.maxConcurrent === undefined ? this.value.maxConcurrent : input.maxConcurrent,
       updatedAt: new Date().toISOString(),
     };
     if (!validPolicy(next)) throw new Error('本机执行能力配置无效。');
+    this.persist(next);
     this.value = next;
-    this.persist();
     return this.snapshot();
   }
 
@@ -123,11 +134,19 @@ export class ExecutionPolicyStore {
     return this.value.enabled;
   }
 
-  private persist() {
+  saveConcurrency(maxConcurrent: number) {
+    if (!validRemoteConcurrency(maxConcurrent)) throw new Error('远端任务并发数必须是 1–10 的整数。');
+    const next = { ...this.value, maxConcurrent, updatedAt: new Date().toISOString() };
+    this.persist(next);
+    this.value = next;
+    return this.snapshot();
+  }
+
+  private persist(policy = this.value) {
     mkdirSync(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;
     try {
-      const stored: StoredPolicy = { version: 2, policy: this.value };
+      const stored: StoredPolicy = { version: 3, policy };
       writeFileSync(temporary, JSON.stringify(stored, null, 2), { mode: 0o600, flag: 'wx' });
       renameSync(temporary, this.path);
       try {

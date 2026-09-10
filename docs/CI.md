@@ -191,3 +191,14 @@ latest 使用 no-store；公开 latest 复核成功后才 POST Pages main Hook�
 | [actions/download-artifact](https://github.com/actions/download-artifact/releases/tag/v8.0.1) | v8.0.1 | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` |
 
 四份 YAML 已用官方 [actionlint 1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12) 本地校验通过。Windows amd64 ZIP 的官方 SHA256 为 `6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9`，下载后核对一致才运行；工具保存在被忽略的 `test-results/ci-tools/`，不成为产品依赖。该结果只证明本地工作流检查，不代表云运行、分支保护或远端发布环境已经配置。
+
+
+## 应用内更新签名频道（0.1.5）
+
+Windows candidate 流程新增 updater job，依赖 candidate、publish、website-download 全部成功，且 RIVLOOM_UPDATES_ENABLED 与 RIVLOOM_PUBLIC_DOWNLOADS_ENABLED 均为 true。先安装锁定的官方 CLI，再在独立步骤暴露签名和 R2 Secrets；原安装包不重建、不改字节。仅上传 test-results/updater/result.json 与 latest.json，不上传 staging、运行时或密钥。
+
+发布脚本核对候选与当前公开下载记录；官方 CLI 对安装器和版本绑定元数据分别签名，验证匿名安装器字节后写不可变版本 JSON，再 CAS 推进 stable/latest.json。与 website-download 共用 public-rivloom-download 并发组；保留原手动下载记录，不降低旧 stable/beta 自定义契约要求。同一版本换包被拒绝，需递增版本。
+
+配置匹配的 RIVLOOM_UPDATER_PRIVATE_KEY 与可选 PASSWORD Secret、启用变量及后续公开/安装验收，详见 [应用内更新](DESKTOP-UPDATES.md)。本轮没有配置远端 Secrets 或运行发布步骤；旧版首次接入需手动安装。
+
+更新单元测试纳入 logic；官方签名与发布反例纳入 ci:selftest；desktop-update 服务检查已加入显式 Windows 服务矩阵，验证本地鉴权、维护释放、活跃任务保护、真实服务/引擎退出及数据重启保留。不会由该检查运行 NSIS 安装器或外部模型。

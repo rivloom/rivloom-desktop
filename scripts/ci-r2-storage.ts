@@ -56,7 +56,7 @@ export function r2Configuration(environment: NodeJS.ProcessEnv): R2Configuration
 export function downloadObjectKey(key: string) {
   requireDownload(
     exact(
-      /^releases\/(?:latest\.json|v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom_[0-9A-Za-z.+_-]{1,100}_x64-setup\.exe|SHA256SUMS\.txt))$/,
+      /^(?:releases\/(?:latest\.json|v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom_[0-9A-Za-z.+_-]{1,100}_x64-setup\.exe|SHA256SUMS\.txt))|updates\/stable\/(?:latest|(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\.json)$/,
       key,
     ),
     'invalid-download-object-key',

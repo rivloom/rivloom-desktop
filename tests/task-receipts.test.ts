@@ -38,7 +38,7 @@ test('accepted remote results retain redaction, size limits and an accurate empt
   const summary = remoteExecutionSummary(value);
   assert(!summary.includes('abcdefghijklmnopqrstuvwxyz123456'));
   assert(summary.length <= 12000);
-  assert.equal(remoteExecutionSummary({ ...value, messages: [] }), '已验收');
+  assert.equal(remoteExecutionSummary({ ...value, messages: [] }), '已完成');
   assert.equal(remoteExecutionSummary({ ...value, state: 'running' }), 'OpenCode 正在执行任务。');
 });
 
@@ -127,8 +127,8 @@ test('rejection and cancellation remain terminal; review and unknown execution k
     conversation({ executionState: 'review', executionSequence: 5, queueReceipt: receipt() }),
     { connected: true },
   );
-  assert.equal(reviewing?.label, '待验收');
-  assert.match(reviewing!.detail, /执行槽继续保留/);
+  assert.equal(reviewing?.label, '已完成');
+  assert.match(reviewing!.detail, /旧版执行节点/);
   const unknown = taskReceiptView(
     conversation({ executionState: 'interrupted', executionSequence: 5 }),
     { connected: true },
@@ -205,7 +205,7 @@ test('direct local execution retains priority and an unstarted local queue rejec
     localTask: { state: 'accepted', sessionID: 'local-session' } as Task,
   };
   const completed = taskReceiptView(item, { connected: true });
-  assert.equal(completed?.label, '已验收');
+  assert.equal(completed?.label, '已完成');
   assert.equal(completed?.tone, 'ended');
   item.localTask.state = 'waiting_input';
   assert.equal(taskReceiptView(item, { connected: true })?.label, '待补充');

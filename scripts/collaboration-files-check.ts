@@ -54,13 +54,12 @@ async function upload(client: ServiceClient, name: string, bytes: Buffer) {
 }
 const taskFiles = (client: ServiceClient, scope: string, id: string) =>
   client.call<TaskFileConversation>(`/task-files/${scope}/${id}`);
-async function accept(client: ServiceClient, id: string) {
-  const { task } = await client.call(`/tasks/${id}`);
-  await client.call(`/tasks/${id}/accept`, {
-    version: task.version,
-    note: 'Fixture verified',
-    confirmed: true,
-  });
+async function completed(client: ServiceClient, id: string) {
+  await until(
+    () => client.call(`/tasks/${id}`),
+    (value) => value.task.state === 'accepted',
+    'automatic completion',
+  );
 }
 async function contents(client: ServiceClient, scope: string, id: string, fileID: string) {
   const response = await fetch(`${client.base}/api/task-files/${scope}/${id}/${fileID}/content`, {
@@ -128,7 +127,7 @@ try {
   );
   const reviewed = await until(
     () => submitter.bootstrap(),
-    (b) => b.tasks.find((t) => t.id === local.id)?.state === 'review',
+    (b) => b.tasks.find((t) => t.id === local.id)?.state === 'accepted',
     'local attachment run',
   );
   assert.equal(reviewed.tasks.length, 1);
@@ -153,7 +152,9 @@ try {
     409,
   );
   assert.equal(readFileSync(savePath, 'utf8'), 'local result');
-  await accept(submitter, local.id);
+  assert.equal((await submitter.call(`/task-files/local/${local.id}/${localResult.id}/location`, {})).path, savePath);
+  assert.equal((await submitter.call(`/task-files/local/${local.id}/${localFile.id}/location`, {})).path, join(folders[0].directory, relative));
+  await completed(submitter, local.id);
   pass(
     'Local attachments gate creation, enter one official session, and selected results save without overwrite',
   );
@@ -168,6 +169,9 @@ try {
     code: invitation.code,
   });
   await member.call(`/task-files/local/${local.id}`, undefined, 403);
+  await member.call(`/task-files/local/${local.id}/${localResult.id}/location`, {}, 403);
+  await submitter.call(`/task-files/local/${local.id}/${incomplete.id}/location`, {}, 403);
+  await submitter.call(`/task-files/local/${local.id}/${localResult.id}/location`, { path: savePath }, 400);
   await member.call(
     `/task-files/uploads/${localFile.id}/chunk`,
     { offset: 0, data: inputBytes.toString('base64') },
@@ -182,6 +186,7 @@ try {
   const unauth = new ServiceClient(submitter.root);
   unauth.base = submitter.base;
   await unauth.call('/task-files/uploads', descriptor('unauth.txt', Buffer.alloc(0)), 401);
+  await unauth.call(`/task-files/local/${local.id}/${localResult.id}/location`, {}, 401);
   await submitter.call('/network/diagnostics/retry', { nodeID: 'Z'.repeat(32) }, 404);
   assert(!existsSync(join(root, 'forbidden.txt')));
   pass(
@@ -240,7 +245,7 @@ try {
     () => worker.bootstrap(),
     (b) =>
       b.tasks.some(
-        (t) => t.remoteOrigin?.remoteTaskID === direct.createdTaskID && t.state === 'review',
+        (t) => t.remoteOrigin?.remoteTaskID === direct.createdTaskID && t.state === 'accepted',
       ),
     'resumed original direct task',
     90000,
@@ -272,24 +277,24 @@ try {
     await until(
       () => master.network(),
       (n) =>
-        n.remoteTasks.some((t) => t.id === direct.createdTaskID && t.executionState === 'review'),
+        n.remoteTasks.some((t) => t.id === direct.createdTaskID && t.executionState === 'accepted'),
       'direct result summary',
     )
   ).remoteTasks.find((t) => t.id === direct.createdTaskID)!.executionSummary;
   assert(directSummary.trim());
-  await accept(worker, directLocal.id);
+  await completed(worker, directLocal.id);
   const directAccepted = await until(
     () => master.network(),
     (n) =>
       n.remoteTasks.some((t) => t.id === direct.createdTaskID && t.executionState === 'accepted'),
-    'direct accepted summary',
+    'direct completed summary',
   );
   assert.equal(
     directAccepted.remoteTasks.find((t) => t.id === direct.createdTaskID)!.executionSummary,
     directSummary,
   );
   pass(
-    'Explicit Worker result returns byte for byte and the original model response survives acceptance',
+    'Explicit Worker result returns byte for byte and the original model response survives automatic completion',
   );
 
   await pairServices(submitter, worker);
@@ -327,7 +332,7 @@ try {
     () => worker.bootstrap(),
     (b) =>
       b.network.remoteTasks.some(
-        (t) => t.brainTaskID === brain.createdTaskID && t.executionState === 'review',
+        (t) => t.brainTaskID === brain.createdTaskID && t.executionState === 'accepted',
       ),
     'Brain file execution',
     90000,
@@ -370,16 +375,16 @@ try {
   const brainSummary = (
     await until(
       () => submitter.network(),
-      (n) => n.brainTasks.some((t) => t.id === brain.createdTaskID && t.status === 'review'),
+      (n) => n.brainTasks.some((t) => t.id === brain.createdTaskID && t.status === 'completed'),
       'Brain result summary',
     )
   ).brainTasks.find((t) => t.id === brain.createdTaskID)!.executionSummary;
   assert(brainSummary.trim());
-  await accept(worker, execution.localTaskID!);
+  await completed(worker, execution.localTaskID!);
   const brainAccepted = await until(
     () => submitter.network(),
     (n) => n.brainTasks.some((t) => t.id === brain.createdTaskID && t.status === 'completed'),
-    'Brain accepted summary',
+    'Brain completed summary',
   );
   assert.equal(
     brainAccepted.brainTasks.find((t) => t.id === brain.createdTaskID)!.executionSummary,

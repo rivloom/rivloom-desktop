@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createReadStream,
   constants,
   copyFileSync,
   existsSync,
@@ -23,6 +24,7 @@ import {
   taskFileChunkBytes,
   taskFileIDPattern,
   taskFileMaximumCount,
+  taskFileUploadCount,
   taskFileNameError,
   taskFileStorageBytes,
   validTaskFileDescriptor,
@@ -113,6 +115,7 @@ export class TaskFileStore {
       CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY,body TEXT NOT NULL,bytes INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bindings (scope TEXT NOT NULL,task_id TEXT NOT NULL,purpose TEXT NOT NULL,file_id TEXT NOT NULL,
         PRIMARY KEY(scope,task_id,purpose,file_id));
+      CREATE TABLE IF NOT EXISTS file_locations (file_id TEXT PRIMARY KEY,path TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS deliveries (scope TEXT NOT NULL,task_id TEXT NOT NULL,purpose TEXT NOT NULL,file_id TEXT NOT NULL,peer_id TEXT NOT NULL,
         state TEXT NOT NULL,bytes INTEGER NOT NULL,error TEXT,PRIMARY KEY(scope,task_id,purpose,file_id,peer_id));`);
     return this.db;
@@ -297,7 +300,7 @@ export class TaskFileStore {
   }
   uploaded(userID: string, ids: string[]) {
     check(
-      ids.length <= taskFileMaximumCount && new Set(ids).size === ids.length,
+      ids.length <= taskFileUploadCount && new Set(ids).size === ids.length,
       400,
       '每批最多选择 10 个不同文件。',
     );
@@ -307,7 +310,7 @@ export class TaskFileStore {
       check(value.state === 'complete', 409, '附件尚未上传并校验完成。');
       return this.descriptor(value);
     });
-    check(validTaskFileManifest(files), 400, '这一批文件超过 50 MiB。');
+    check(validTaskFileManifest(files), 400, '这一批文件超过 1000 MiB。');
     return files;
   }
   private bind(route: TaskFileRoute, files: TaskFileDescriptor[]) {
@@ -318,7 +321,7 @@ export class TaskFileStore {
       combined.length <= taskFileMaximumCount &&
         combined.reduce((n, f) => n + f.bytes, 0) <= taskFileBatchBytes,
       409,
-      '此任务同类文件最多 10 个、合计 50 MiB。',
+      '此任务同类文件最多 10 个、合计 1000 MiB。',
     );
     const statement = this.database().prepare('INSERT OR IGNORE INTO bindings VALUES (?,?,?,?)');
     for (const file of files) statement.run(route.scope, route.taskID, route.purpose, file.id);
@@ -539,6 +542,7 @@ export class TaskFileStore {
         }
       }
       paths.push(relative(root, destination).split(sep).join('/'));
+      this.rememberLocation(file.id, destination);
     }
     return paths;
   }
@@ -567,6 +571,65 @@ export class TaskFileStore {
       503,
       '保存后的文件校验失败，请检查目标磁盘。',
     );
+    this.rememberLocation(id, resolve(destination));
     return { path: destination, bytes: this.descriptorFor(id).bytes };
+  }
+  private rememberLocation(id: string, path: string) {
+    this.database()
+      .prepare(
+        'INSERT INTO file_locations VALUES (?,?) ON CONFLICT(file_id) DO UPDATE SET path=excluded.path',
+      )
+      .run(id, path);
+  }
+  /** Local paths never enter a manifest or peer message. Callers supply only known task paths. */
+  async location(id: string, candidates: { root: string; path: string }[] = []) {
+    const value = this.record(id);
+    check(value?.state === 'complete', 409, '任务文件尚未完整接收。');
+    const matches = async (root: string, path: string) => {
+      try {
+        check(isAbsolute(path) && samePath(realpathSync(root), root), 409, '文件路径无效。');
+        within(root, path);
+        const before = lstatSync(path);
+        if (!before.isFile() || before.nlink !== 1 || before.size !== value.bytes) return false;
+        const digest = createHash('sha256');
+        let bytes = 0;
+        for await (const chunk of createReadStream(path)) {
+          bytes += chunk.length;
+          if (bytes > value.bytes) return false;
+          digest.update(chunk);
+        }
+        within(root, path);
+        const after = lstatSync(path);
+        return (
+          after.isFile() &&
+          after.nlink === 1 &&
+          before.ino === after.ino &&
+          before.dev === after.dev &&
+          before.mtimeMs === after.mtimeMs &&
+          before.ctimeMs === after.ctimeMs &&
+          after.size === value.bytes &&
+          bytes === value.bytes &&
+          digest.digest('hex') === value.sha256
+        );
+      } catch {
+        return false;
+      }
+    };
+    const saved = this.database()
+      .prepare('SELECT path FROM file_locations WHERE file_id=?')
+      .get(id);
+    const known = [...candidates];
+    if (saved) known.push({ root: dirname(String(saved.path)), path: String(saved.path) });
+    for (const candidate of known)
+      if (await matches(candidate.root, candidate.path)) return { path: candidate.path };
+    // A received file gets its real filename, isolated by ID so equal names never overwrite each other.
+    const destination = join(this.root, 'received', id, value.name);
+    within(this.root, destination);
+    if (!existsSync(destination)) {
+      mkdirSync(dirname(destination), { recursive: true });
+      this.exportFile(id, destination);
+    }
+    check(await matches(this.root, destination), 409, '本机文件副本已改变，请另存文件后重试。');
+    return { path: destination };
   }
 }

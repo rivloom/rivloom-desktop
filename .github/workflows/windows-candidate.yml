@@ -215,3 +215,56 @@ jobs:
           path: test-results/website-download/result.json
           if-no-files-found: warn
           retention-days: 14
+
+  updater:
+    name: Sign and publish the verified desktop update
+    if: vars.RIVLOOM_UPDATES_ENABLED == 'true' && vars.RIVLOOM_PUBLIC_DOWNLOADS_ENABLED == 'true'
+    needs: [candidate, publish, website-download]
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: public-rivloom-download
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ env.RIVLOOM_CANDIDATE_SHA }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Install the pinned official signing CLI before exposing secrets
+        run: npm ci
+      - name: Download the exact installed candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.candidate.outputs.artifact-id }}
+          path: test-results/candidate
+          digest-mismatch: error
+      - name: Sign the existing installer and promote the verified update
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RIVLOOM_UPDATES_ENABLED: 'true'
+          RIVLOOM_CANDIDATE_ARTIFACT_ID: ${{ needs.candidate.outputs.artifact-id }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.RIVLOOM_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.RIVLOOM_UPDATER_PRIVATE_KEY_PASSWORD }}
+          RIVLOOM_R2_ACCOUNT_ID: ${{ vars.RIVLOOM_R2_ACCOUNT_ID }}
+          RIVLOOM_R2_BUCKET: ${{ vars.RIVLOOM_R2_BUCKET }}
+          RIVLOOM_R2_ACCESS_KEY_ID: ${{ secrets.RIVLOOM_R2_ACCESS_KEY_ID }}
+          RIVLOOM_R2_SECRET_ACCESS_KEY: ${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}
+        run: node scripts/ci-updater.ts
+      - name: Preserve public update metadata and bounded result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-updater-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/updater/result.json
+            test-results/updater/latest.json
+          if-no-files-found: warn
+          retention-days: 14

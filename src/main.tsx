@@ -4,6 +4,7 @@ import { I18nextProvider, useTranslation } from 'react-i18next';
 import { i18n } from '../shared/i18n';
 import { initializeLanguage } from './i18n';
 import { LanguageSwitcher } from './language-switcher';
+import { DesktopUpdateProvider } from './desktop-update';
 import { createRoot } from 'react-dom/client';
 import { ArrowRight, Bot, CircleCheck, CircleDot, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -55,7 +56,7 @@ function Auth({ onLogin }: { onLogin: () => void }) {
           <p>
             {t('把任务交给 AI，把关键决定留给人。')}
             <br />
-            {t('从发起、执行到验收，每一步都有负责人。')}
+            {t('任务自动完成，重要操作由你决定。')}
           </p>
           <div className="journey">
             <span>
@@ -257,7 +258,7 @@ await initializeLanguage();
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <I18nextProvider i18n={i18n}>
-      <App />
+      <DesktopUpdateProvider><App /></DesktopUpdateProvider>
     </I18nextProvider>
   </React.StrictMode>,
 );

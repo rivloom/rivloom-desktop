@@ -30,7 +30,8 @@ export async function until<T>(
   throw new Error(`${label}: timeout ${lastError}`);
 }
 
-export async function modelFixture(timeout = 120_000) {
+export type FixtureModelReply = { content: string } | { toolName: string; arguments: Record<string, unknown> };
+export async function modelFixture(timeout = 120_000, replyFor?: (input: any) => FixtureModelReply | Promise<FixtureModelReply>) {
   let released = false;
   let requests = 0;
   const pending = new Set<() => void>();
@@ -44,7 +45,7 @@ export async function modelFixture(timeout = 120_000) {
     }
     requests += 1;
     const input = JSON.parse(body);
-    const finish = () => {
+    const finish = async () => {
       pending.delete(finish);
       if (response.destroyed) return;
       const base = {
@@ -52,6 +53,13 @@ export async function modelFixture(timeout = 120_000) {
         created: Math.floor(Date.now() / 1000),
         model: input.model,
       };
+      let reply: FixtureModelReply;
+      try { reply = await replyFor?.(input) || { content: 'M3.4 loopback fixture completed. No tools or files were changed.' }; }
+      catch (error) { if (!response.destroyed) response.writeHead(500).end(String(error)); return; }
+      if (response.destroyed) return;
+      const toolCall = 'toolName' in reply ? { id: `call_fixture_${requests}`, type: 'function',
+        function: { name: reply.toolName, arguments: JSON.stringify(reply.arguments) } } : null;
+      const finishReason = toolCall ? 'tool_calls' : 'stop';
       if (input.stream) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
         response.write(
@@ -63,7 +71,7 @@ export async function modelFixture(timeout = 120_000) {
                 index: 0,
                 delta: {
                   role: 'assistant',
-                  content: 'M3.4 loopback fixture completed. No tools or files were changed.',
+                  ...(toolCall ? { tool_calls: [{ index: 0, ...toolCall }] } : { content: 'content' in reply ? reply.content : '' }),
                 },
                 finish_reason: null,
               },
@@ -74,7 +82,7 @@ export async function modelFixture(timeout = 120_000) {
           `data: ${JSON.stringify({
             ...base,
             object: 'chat.completion.chunk',
-            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
             usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
           })}\n\n`,
         );
@@ -87,8 +95,8 @@ export async function modelFixture(timeout = 120_000) {
             choices: [
               {
                 index: 0,
-                message: { role: 'assistant', content: 'M3.4 fixture' },
-                finish_reason: 'stop',
+                message: { role: 'assistant', ...(toolCall ? { content: null, tool_calls: [toolCall] } : { content: 'content' in reply ? reply.content : 'M3.4 fixture' }) },
+                finish_reason: finishReason,
               },
             ],
             usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },

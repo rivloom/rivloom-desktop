@@ -176,7 +176,7 @@ export function taskReceiptView(
       'ended',
     );
   if (terminalExecution)
-    return base(stateLabels[executionState!], t('保留原执行记录与验收结果。'), 'ended');
+    return base(stateLabels[executionState!], t('保留原执行记录与结果。'), 'ended');
   if (local?.state === 'ended')
     return base(
       queueReasonLabel(local.endReason) || t('本机队列项已结束'),
@@ -191,7 +191,7 @@ export function taskReceiptView(
       executionState === 'interrupted'
         ? t('结果待确认，执行槽继续保留，不自动重新执行。')
         : executionState === 'review'
-          ? t('等待验收，执行槽继续保留。')
+          ? t('执行已完成。旧版执行节点仍可能保留槽位，请更新该节点。')
           : t('已收到实际执行状态。'),
       'working',
     );
@@ -200,7 +200,7 @@ export function taskReceiptView(
       brain.status === 'running'
         ? t('执行中')
         : brain.status === 'review'
-          ? t('待验收')
+          ? t('已完成')
           : t('等待处理'),
       executionSummaryText(brain.executionSummary, brain.status) ||
         t('原 Brain 已收到实际执行状态。'),

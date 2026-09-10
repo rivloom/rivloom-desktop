@@ -26,7 +26,7 @@ export async function uploadTaskFile(
 ) {
   const error = taskFileNameError(item.file.name);
   if (error) throw new Error(error);
-  if (item.file.size > taskFileMaximumBytes) throw new Error(t('单个文件最多 20 MiB。'));
+  if (item.file.size > taskFileMaximumBytes) throw new Error(t('单个文件最多 200 MiB。'));
   const buffer = await item.file.arrayBuffer();
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   const descriptor: TaskFileDescriptor = {

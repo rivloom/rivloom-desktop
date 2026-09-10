@@ -1,0 +1,65 @@
+# Rivloom 应用内更新
+
+更新：2026-09-09。源码版本 `0.1.5`，Windows x64 / Rivloom / `com.rivloom.desktop`。客户端和签名发布流程已实现并通过下述本地检查；本轮未安装、提交、推送、配置远端密钥或上线更新频道。
+
+## 用户操作
+
+- 正式客户端打开后约 12 秒检查官方版本，此后每 6 小时检查。网络或官网暂时不可用不会阻止使用，也不会反复弹错；“关于 Rivloom”中显示状态并可手动重试。
+- 新版本弹窗显示版本号、更新说明、“跳过此版本”和“下载并安装”。关闭弹窗或按 Escape 也会跳过该版本，选择跨重启保存；更高版本继续提醒。手动检查仍可更新已跳过的版本。
+- 下载提供进度、后台下载和取消。签名及文件哈希通过后准备安装；有运行、审批、提问、队列、未知执行、未结束工作流或跨机回执时保留下载并说明原因，用户处理后点击“重试安装”。不会自动停止这些工作。
+- 安装准备期间封闭新请求与任务准入，安全退出自有服务和引擎后备份应用数据，再调用官方 Tauri NSIS 更新流程。安装完成重新打开 Rivloom；安装未完成、备份失败或进程退出未获确认时提供明确提示。
+- 下载保留在当前进程内存，退出后需重新下载。备份不会修改原数据；不承诺自动降级、自动恢复数据库或备份用户项目原文件。
+
+**首次接入：** 已发布的旧 `0.1.4` 二进制没有更新功能，需要先手动安装首个含本功能的版本。发布新清单无法给旧二进制增加代码。Preview 身份保持独立，更新功能禁用。
+
+## 信任与发布
+
+原生固定读取 `https://downloads.rivloom.com/updates/stable/latest.json`；只允许更高的规范 stable 版本，以及官方 `releases/v<version>-<commit12>-<artifactID>/Rivloom_<version>_x64-setup.exe` 地址。拒绝重定向、其他主机、参数、凭据、同版本、降级和预发布版本。
+
+采用官方 `tauri-plugin-updater 2.11.0`。`src-tauri/updater.pub` 与 Tauri 配置保存同一公钥；前端只能调用受窗口和精确 origin 校验的操作，不能传下载地址、公钥、文件路径或安装参数。安装包用官方 CLI Minisign 签名；清单额外签名绑定版本、地址、说明、大小、SHA-256 与安装包签名，防止把旧的合法签名安装包冒充新版。下载后和安装前分别核验不可变字节。
+
+`scripts/ci-updater.ts` 在现有 candidate → publish → website-download 成功后运行，重新验证原候选证据及当前公开下载记录，签名同一安装器的副本，再匿名下载官网原文件验证字节。先写不可变 `updates/stable/<version>.json`，验证公开可读后，使用强 ETag / CAS 更新 `updates/stable/latest.json`（`no-store`）。拒绝同版本换包和降级；重试复用已存在的相同签名清单。与官网同步共用 `public-rivloom-download` 并发组。
+
+原 `releases/latest.json` 仍是手动下载记录，不能作为安全更新授权。Windows Authenticode 与 updater 签名不同：本轮没有 Windows 代码签名证书或 Authenticode 签名，Windows 安装器的发布者提示仍受此影响。
+
+首次正式发布前配置桌面仓库 Actions：
+
+| 名称 | 用途 |
+| --- | --- |
+| Secret `RIVLOOM_UPDATER_PRIVATE_KEY` | 与已内置公钥配对的 Tauri 私钥内容 |
+| Secret `RIVLOOM_UPDATER_PRIVATE_KEY_PASSWORD` | 私钥密码；当前本地生成的密钥无密码，可留空 |
+| Variable `RIVLOOM_UPDATES_ENABLED=true` | 启用签名更新 job；原 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED` 也须启用 |
+| 既有 R2 变量与 Secrets | 复用下载专属桶权限，需允许 `updates/stable/` 路径 |
+| `docs/releases/<version>.md` | 该版实际更新说明，UTF-8 不超过 12,000 字节 |
+
+本地生产私钥已用官方 CLI 生成，存于忽略目录 `.data/updater-signing/rivloom.key`，目录 ACL 限当前 Windows 用户和 SYSTEM。**不要重新生成或覆盖这把密钥；首次发布前安全备份并配置匹配的 Actions Secret。** 不将私钥放入 Git、日志、截图、安装包或 CI artifact；CI 仅上传公共清单与有限结果。测试夹具使用另一把独立密钥，产品公钥明确拒绝这些夹具。
+
+线上启用后还需验证 R2 清单与安装包匿名读取、真实旧版→新版 NSIS 安装、取消/失败恢复及设备组合；目前未声称通过公网升级。未来发布必须递增版本，不能复用已公开 `0.1.4` 或覆盖相同版本文件。
+
+## 数据与进程
+
+服务通过原生 token 鉴权的 prepare / cancel / commit 流程收紧准入。准备最长等待在途操作 3 秒，调用方丢失时 120 秒后解除；commit 后不可取消或过期。中断的 HTTP 写请求会保留为未知在途操作，需重启服务才能解除，避免把客户端断开当成写操作结束。
+
+原生等待自有 Node 服务成功退出及本次 lease 对应的 `update-shutdown.json`，服务同时确认引擎树退出并关闭 SQLite。缺失或不匹配的回执、非零退出、超时均阻止安装，不通过强杀后台继续安装。引擎宿主不会把失败的 taskkill 当成安全退出成功。
+
+完整应用备份位于实际数据目录 `.updates/backups/<from>-to-<to>-<timestamp>/`，包含 SQLite、身份/信任 JSON、任务文件、资源数据与引擎配置/数据/状态。排除 `.updates` 自身、WebView 缓存、引擎 cache/temp、锁与本次运行凭据。拒绝符号链接或 reparse point；不沿数据库中的项目路径复制。`backup-manifest.json` 记录文件长度与哈希，只有最后写入 `complete:true` 的备份才完整。
+
+安装前保存 `pending-install.json`；下次版本已达到目标则清除，仍是原版本则显示上次安装未完成。SQLite 读入前拒绝高于当前支持的 `user_version=3`，不改写未来格式。本次没有改变数据 schema，也未实现任意版本间的有序迁移、自动回滚或用户可操作的恢复工具。
+
+## 本地验证
+
+证据目录：`.data/verification/desktop-updater-20260909/`。已通过 341 项逻辑、13 项协议、2 项官方引擎生命周期、65 项 CI helper、18 项 Rust 测试（另 1 项 Explorer 手动检查保持忽略）、5 项完整隔离服务检查和 7 项生产构建 UI 场景。服务使用官方 OpenCode 与回环模型，界面使用合成数据与原生桥接夹具，未调用外部真实模型。
+
+覆盖错误签名、公钥不匹配、损坏文件、旧包冒充新版、非官方 URL、发布竞争、持久跳过、安装中断恢复、未来数据库拒写、备份、维护释放、任务保留、服务重启、中文/英文、窄窗口、键盘和后台下载受阻后的再次提示。类型、国际化、Vite 构建和版本同步检查通过；Rust 依赖许可证更新至实际 Windows 解析的 316 项。
+
+本地安装候选另存于 `.data/verification/desktop-updater-candidate-20260909/`，构建与解包结果以该目录实际报告为准。它不是干净源码的云端发行候选。安装由用户自行完成；暂停的物理机、真实模型及性能补测继续保持暂停。
+
+
+## 0.1.5 本地安装候选（本轮最终记录）
+
+- 安装包：[Rivloom 0.1.5 更新功能候选](../.data/verification/desktop-updater-candidate-20260909/delivery/Rivloom_0.1.5_desktop_updater_20260909_cd898d08_x64-setup.exe)。
+- 大小 81,093,072 字节；SHA-256：`964b44b6cf6ea73c57dd2179973bc675265ff5af4d481e03b78b15ebdbe7bd45`。
+- 冻结源码 1251 个文件，digest：`cd898d081937a4531056a097834c03d9959e12c08053b8e66b8e6d0c1597563e`；保留已有未提交成果，无文件删除。
+- Release/NSIS 构建、构建前后源码/runtime 一致性、7,736 个运行时文件解包比对和 NSIS 安装/卸载控制流静态对比通过。
+- 本地包未安装、未进行 Windows 代码签名、未发布；不替代真实升级测试或云端干净候选。旧版先手动接入，签名频道按 [应用内更新说明](DESKTOP-UPDATES.md) 后续配置。
+- 本段及 HANDOFF 顶部指向最终包的文字在冻结后补写，仅文档变更；不改变冻结快照与安装包，不把当前整棵工作区重新声明为该 digest。

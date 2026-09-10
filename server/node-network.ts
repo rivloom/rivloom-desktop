@@ -1,4 +1,6 @@
 import Bonjour from 'bonjour-service';
+import { collaborationCapability, validCollaborationRequest, validCollaborationResponse,
+  type CollaborationRequest, type CollaborationResponse } from '../shared/collaboration.ts';
 import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
 import { EventEmitter } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -10,6 +12,8 @@ import { join } from 'node:path';
 import { TaskFileStore, TaskFileError } from './task-files.ts';
 import {
   taskFileCapability,
+  taskFileLargeCapability,
+  supportsTaskFiles,
   validTaskFileMessage,
   validTaskFileResponse,
   sameTaskFileManifest,
@@ -61,6 +65,8 @@ import {
   channelMessageWindowMilliseconds,
   channelSessionLifetimeMilliseconds,
   decryptChannelPayload,
+  decryptChannelDataReply,
+  encryptChannelDataReply,
   encryptChannelPayload,
   encryptChannelEventAck,
   verifyChannelEventAck,
@@ -102,10 +108,15 @@ import {
 } from './brain-tasks.ts';
 import {
   queueReceiptCapability,
+  nodeWorkloadCapability,
+  nodeConcurrencyCapability,
+  nodeQueueForCapabilities,
   validNodeQueuePublicStats,
   type NodeQueuePublicStats,
   type TaskQueueReceipt,
 } from '../shared/task-queue-receipts.ts';
+import { nodeQueueBacklog } from '../shared/queue-backlog.ts';
+import { requireQueueConfirmation } from './queue-confirmation.ts';
 import {
   TaskQueueReceiptStore,
   validQueueReceiptMessage,
@@ -207,13 +218,18 @@ const serviceType = 'rivloom';
 const capabilities = [
   'brain',
   'executor',
-  'human-ui',
+  // Keep the signed hello within older decoders' 12-capability bound.
+  // The obsolete descriptive human-ui flag has no protocol behavior.
   'remote-execution-v1',
   'remote-control-v1',
   'remote-results-v1',
   'brain-task-v1',
   queueReceiptCapability,
+  nodeWorkloadCapability,
+  nodeConcurrencyCapability,
   taskFileCapability,
+  taskFileLargeCapability,
+  collaborationCapability,
 ];
 const maximumHelloBytes = 16 * 1024;
 const maximumChannelRequestBytes = 96 * 1024;
@@ -593,6 +609,54 @@ export class NodeNetwork extends EventEmitter {
   private readonly seenChannelOpens = new Map<string, number>();
   private readonly seenChannelRecoveries = new Map<string, number>();
   private readonly channelSendQueues = new Map<string, Promise<unknown>>();
+  private collaborationHandler: ((peerNodeID: string, operation: string, payload: unknown) => unknown) | null = null;
+  private nextCollaborationSendAt = 0;
+  private updateMaintenance: (() => boolean) = () => false;
+  private updatePeerRequests = 0;
+
+  setUpdateMaintenance(provider: () => boolean) { this.updateMaintenance = provider; }
+  get updateOperations() {
+    return this.schedulingBrainTasks.size + this.deliveringRemoteTasks.size + this.deliveringBrainTasks.size +
+      this.deliveringQueueReceipts.size + this.channelSendQueues.size + this.transferringFiles.size +
+      this.syncingDirectories.size + this.updatePeerRequests;
+  }
+
+  setCollaborationHandler(handler: typeof this.collaborationHandler) {
+    this.collaborationHandler = handler;
+  }
+
+  /** Data-only extension requests share the authenticated, sequenced transport, never task admission. */
+  async collaborationRequest(peerNodeID: string, operationName: string, payload: unknown) {
+    if (this.updateMaintenance()) throw new NodeNetworkError(503, '正在准备软件更新，请稍后重试。');
+    const request: CollaborationRequest = { type: 'collaboration-request', requestID: randomUUID(), operation: operationName, payload };
+    if (!validCollaborationRequest(request) || Buffer.byteLength(JSON.stringify(request)) > 60 * 1024)
+      throw new NodeNetworkError(400, '协作查询格式或大小无效。');
+    const previous = this.channelSendQueues.get(peerNodeID) || Promise.resolve();
+    const operation = previous.catch(() => undefined).then(async () => {
+      const sendAt = Math.max(Date.now(), this.nextCollaborationSendAt);
+      this.nextCollaborationSendAt = sendAt + 40;
+      if (sendAt > Date.now()) await new Promise<void>((resolve) => setTimeout(resolve, sendAt - Date.now()));
+      const node = this.nodes.get(peerNodeID), channel = this.channels.get(peerNodeID);
+      if (!node?.online || !node.trusted || !node.channelReady || !channel || channel.expiresAt <= Date.now() ||
+        !node.capabilities.includes(collaborationCapability)) throw new NodeNetworkError(503, '协作节点尚未连接或需要更新版本。');
+      let response: unknown;
+      try {
+        const envelope = encryptChannelPayload(channel, request);
+        const result = await this.postToNode(node, '/v1/channel/collaboration', envelope);
+        response = decryptChannelDataReply(channel, envelope, result);
+        if (!validCollaborationResponse(response) || response.requestID !== request.requestID ||
+          !this.isTrustedNode(peerNodeID) || this.channels.get(peerNodeID) !== channel) throw new Error('invalid_reply');
+      } catch {
+        if (this.channels.get(peerNodeID) === channel) this.closeChannel(peerNodeID);
+        throw new NodeNetworkError(502, '协作查询回执未确认，请在连接恢复后重试。');
+      }
+      if (!response.ok) throw new NodeNetworkError(409, response.error || '协作请求无法处理。');
+      return response.payload;
+    });
+    this.channelSendQueues.set(peerNodeID, operation);
+    try { return await operation; }
+    finally { if (this.channelSendQueues.get(peerNodeID) === operation) this.channelSendQueues.delete(peerNodeID); }
+  }
   private readonly syncingDirectories = new Set<string>();
   private readonly deliveringRemoteTasks = new Set<string>();
   private readonly deliveringBrainTasks = new Set<string>();
@@ -966,7 +1030,7 @@ export class NodeNetwork extends EventEmitter {
 
   private rateLimited(
     remoteAddress: string,
-    scope: 'discovery' | 'hello' | 'control' | 'channel' | 'file' = 'control',
+    scope: 'discovery' | 'hello' | 'control' | 'channel' | 'file' | 'collaboration' = 'control',
   ) {
     const at = Date.now();
     for (const [key, value] of this.requests) if (value.until < at) this.requests.delete(key);
@@ -974,7 +1038,7 @@ export class NodeNetwork extends EventEmitter {
     // Every class is still bounded before authentication and uses the actual socket address.
     const key = `${scope}:${normalizedAddress(remoteAddress)}`;
     const limit =
-      scope === 'file' ? 2400 : scope === 'channel' ? 600 : scope === 'hello' ? 120 : 60;
+      scope === 'file' || scope === 'collaboration' ? 2400 : scope === 'channel' ? 600 : scope === 'hello' ? 120 : 60;
     if (!this.requests.has(key) && this.requests.size >= 1024) return true;
     const bucket = this.requests.get(key) || { count: 0, until: at + 60_000 };
     bucket.count++;
@@ -1227,6 +1291,7 @@ export class NodeNetwork extends EventEmitter {
     value: ChannelEnvelope,
     remote: string | undefined,
     fileOnly = false,
+    collaborationOnly = false,
   ) {
     const node = this.nodeForRemote(value.senderNodeID, remote);
     const record = node ? this.trustStore.record(node.id) : null;
@@ -1251,13 +1316,29 @@ export class NodeNetwork extends EventEmitter {
     }
     if (fileOnly !== validTaskFileMessage(message))
       throw new NodeNetworkError(400, '加密消息类型与通道接口不匹配。');
+    if (collaborationOnly !== validCollaborationRequest(message))
+      throw new NodeNetworkError(400, '协作消息类型与通道接口不匹配。');
     const eventAck = () =>
       node.capabilities.includes(queueReceiptCapability)
         ? encryptChannelEventAck(channel, value)
         : null;
+    if (validCollaborationRequest(message)) {
+      if (!node.capabilities.includes(collaborationCapability) || !this.collaborationHandler)
+        throw new NodeNetworkError(409, '尚未协商协作查询能力。');
+      let response: CollaborationResponse;
+      try {
+        const payload = this.collaborationHandler(node.id, message.operation, message.payload);
+        if (payload instanceof Promise || Buffer.byteLength(JSON.stringify(payload ?? null)) > 60 * 1024)
+          throw new Error('response_limit');
+        response = { type: 'collaboration-response', requestID: message.requestID, ok: true, payload: payload ?? null, error: null };
+      } catch {
+        response = { type: 'collaboration-response', requestID: message.requestID, ok: false, payload: null, error: '协作数据无效、已变更或当前不可用。' };
+      }
+      return encryptChannelDataReply(channel, value, response);
+    }
     if (validTaskFileMessage(message)) {
-      if (!node.capabilities.includes(taskFileCapability))
-        throw new NodeNetworkError(409, '尚未协商任务文件能力。');
+      if (!supportsTaskFiles(node.capabilities, [message.file]))
+        throw new NodeNetworkError(409, '尚未协商此附件所需的文件传输能力。');
       let response: TaskFileResponse;
       const base = {
         type: 'task-file-response' as const,
@@ -1315,7 +1396,7 @@ export class NodeNetwork extends EventEmitter {
       const topologyChanged = this.topology.reconcile(node.id, message.hostedBrains);
       const response: BrainDirectoryResponse = {
         ...(message.capabilities.includes(queueReceiptCapability)
-          ? { nodeQueue: this.currentNodeQueue() }
+          ? { nodeQueue: nodeQueueForCapabilities(this.currentNodeQueue(), message.capabilities) }
           : {}),
         profile: this.profiles.local(this.identity!.nodeID),
         type: 'brain-directory-response',
@@ -1340,7 +1421,7 @@ export class NodeNetwork extends EventEmitter {
           brains: message.brains.map((brain) => ({ ...brain })),
           worker: message.worker,
           nodeQueue: message.capabilities.includes(queueReceiptCapability)
-            ? (message.nodeQueue ?? null)
+            ? nodeQueueForCapabilities(message.nodeQueue ?? null, message.capabilities)
             : null,
         });
       if (topologyChanged || current) this.update();
@@ -1374,7 +1455,7 @@ export class NodeNetwork extends EventEmitter {
       try {
         changed = this.brainTasks.receiveSubmission(message);
         if (message.inputFiles?.length) {
-          if (!node.capabilities.includes(taskFileCapability))
+          if (!supportsTaskFiles(node.capabilities, message.inputFiles))
             throw new Error('任务文件能力不可用。');
           this.files.expectIncoming(
             { scope: 'brain', taskID: message.taskID, purpose: 'input' },
@@ -1419,7 +1500,7 @@ export class NodeNetwork extends EventEmitter {
           throw new Error('远端任务邀请路由与当前节点不匹配。');
         changed = this.remoteTasks.receiveOffer(message);
         if (message.inputFiles?.length) {
-          if (!node.capabilities.includes(taskFileCapability))
+          if (!supportsTaskFiles(node.capabilities, message.inputFiles))
             throw new Error('任务文件能力不可用。');
           this.files.expectIncoming(
             { scope: 'remote', taskID: message.taskID, purpose: 'input' },
@@ -1532,7 +1613,7 @@ export class NodeNetwork extends EventEmitter {
           throw new NodeNetworkError(503, '受信节点的加密通道尚未就绪。');
         const request: BrainDirectoryRequest = {
           ...(current.capabilities.includes(queueReceiptCapability)
-            ? { nodeQueue: this.currentNodeQueue() }
+            ? { nodeQueue: nodeQueueForCapabilities(this.currentNodeQueue(), current.capabilities) }
             : {}),
           profile: this.profiles.local(this.identity!.nodeID),
           type: 'brain-directory-request',
@@ -1582,7 +1663,7 @@ export class NodeNetwork extends EventEmitter {
           brains: message.brains.map((brain) => ({ ...brain })),
           worker: message.worker,
           nodeQueue: message.capabilities.includes(queueReceiptCapability)
-            ? (message.nodeQueue ?? null)
+            ? nodeQueueForCapabilities(message.nodeQueue ?? null, message.capabilities)
             : null,
         });
         if (topologyChanged || latest) this.update();
@@ -1841,6 +1922,17 @@ export class NodeNetwork extends EventEmitter {
         const { route, fileID } = delivery;
         let offset = delivery.bytes;
         const file = this.files.descriptorFor(fileID);
+        if (!supportsTaskFiles(peer.capabilities, this.files.manifest(route))) {
+          this.files.deliveryState(
+            route,
+            fileID,
+            peerID,
+            'failed',
+            offset,
+            '对方版本不支持此附件大小，请升级后重试。',
+          );
+          continue;
+        }
         try {
           this.assertFilePeer(route, peerID, 'send', file);
         } catch {
@@ -1918,6 +2010,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   refreshTaskFiles() {
+    if (this.updateMaintenance()) return;
     this.repairFileRoutes();
     if (this.files.active)
       for (const delivery of this.files.deliveries())
@@ -2362,6 +2455,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async handlePeerRequest(request: IncomingMessage, response: ServerResponse) {
+    if (this.updateMaintenance()) throw new NodeNetworkError(503, '正在准备软件更新，请稍后重试。');
     const remote = request.socket.remoteAddress;
     if (!this.allowed(remote)) throw new NodeNetworkError(403, '只接受局域网节点请求。');
     const url = new URL(request.url || '/', 'http://rivloom.local');
@@ -2372,6 +2466,8 @@ export class NodeNetwork extends EventEmitter {
           ? 'channel'
           : request.method === 'POST' && url.pathname === '/v1/channel/file'
             ? 'file'
+            : request.method === 'POST' && url.pathname === '/v1/channel/collaboration'
+              ? 'collaboration'
             : 'control';
     if (this.rateLimited(remote!, scope)) throw new NodeNetworkError(429, '节点请求过于频繁。');
     if (request.method === 'GET' && url.pathname === '/v1/hello') {
@@ -2396,10 +2492,12 @@ export class NodeNetwork extends EventEmitter {
     if (request.method !== 'POST') throw new NodeNetworkError(404, '节点接口不存在。');
     const value = await requestJson(
       request,
-      ['/v1/channel/message', '/v1/channel/file'].includes(url.pathname)
+      ['/v1/channel/message', '/v1/channel/file', '/v1/channel/collaboration'].includes(url.pathname)
         ? maximumChannelRequestBytes
         : maximumHelloBytes,
     );
+    // A request can begin reading its body before the native updater closes intake.
+    if (this.updateMaintenance()) throw new NodeNetworkError(503, '正在准备软件更新，请稍后重试。');
     if (url.pathname === '/v1/pairing/request' && validPairingMessage(value)) {
       jsonResponse(response, 200, await this.handlePairingRequest(value, remote));
       return;
@@ -2429,10 +2527,10 @@ export class NodeNetwork extends EventEmitter {
       return;
     }
     if (
-      ['/v1/channel/message', '/v1/channel/file'].includes(url.pathname) &&
+      ['/v1/channel/message', '/v1/channel/file', '/v1/channel/collaboration'].includes(url.pathname) &&
       validChannelEnvelope(value)
     ) {
-      const result = this.handleChannelMessage(value, remote, url.pathname === '/v1/channel/file');
+      const result = this.handleChannelMessage(value, remote, url.pathname === '/v1/channel/file', url.pathname === '/v1/channel/collaboration');
       if (result) jsonResponse(response, 200, result);
       else response.writeHead(204).end();
       return;
@@ -2442,6 +2540,7 @@ export class NodeNetwork extends EventEmitter {
 
   private createPeerServer(_identity: NodeIdentity) {
     const server = createServer((request, response) => {
+      this.updatePeerRequests++;
       response.setHeader('X-Content-Type-Options', 'nosniff');
       response.setHeader('Cache-Control', 'no-store');
       response.setHeader('Referrer-Policy', 'no-referrer');
@@ -2453,7 +2552,7 @@ export class NodeNetwork extends EventEmitter {
         jsonResponse(response, status, {
           error: error instanceof NodeNetworkError ? error.message : '节点请求未完成。',
         });
-      });
+      }).finally(() => { this.updatePeerRequests--; });
     });
     server.headersTimeout = 5000;
     server.requestTimeout = 5000;
@@ -2599,8 +2698,8 @@ export class NodeNetwork extends EventEmitter {
       throw new NodeNetworkError(404, '本机尚未注册目标 Brain。');
     if (!node.capabilities.includes('remote-execution-v1'))
       throw new NodeNetworkError(409, '目标节点版本尚不支持策略化任务执行。');
-    if (input.inputFiles?.length && !node.capabilities.includes(taskFileCapability))
-      throw new NodeNetworkError(409, '目标 Node 版本不支持任务文件，请先升级。');
+    if (!supportsTaskFiles(node.capabilities, input.inputFiles))
+      throw new NodeNetworkError(409, '目标 Node 版本不支持此批附件，请先升级。');
     const title = input.title.trim();
     const description = input.description.trim();
     const criteria = input.criteria.trim();
@@ -2655,6 +2754,7 @@ export class NodeNetwork extends EventEmitter {
       inputFiles?: TaskFileDescriptor[];
     },
     taskID?: string,
+    queueConfirmedFor?: string,
   ) {
     const existing = taskID ? this.remoteTasks.record(taskID) : null;
     if (existing) {
@@ -2671,6 +2771,7 @@ export class NodeNetwork extends EventEmitter {
     const node = this.nodes.get(nodeID);
     if (!node?.online || !node.trusted || !node.channelReady)
       throw new NodeNetworkError(409, '目标 Node 当前不在线或加密通道尚未就绪。');
+    requireQueueConfirmation(node.id, node.name, nodeQueueBacklog(node), queueConfirmedFor);
     const brain = this.snapshot()
       .brains.filter(
         (candidate) =>
@@ -2710,6 +2811,7 @@ export class NodeNetwork extends EventEmitter {
       inputFiles?: TaskFileDescriptor[];
     },
     taskID?: string,
+    queueConfirmedFor?: string,
   ) {
     const existing = taskID ? this.brainTasks.record(taskID) : null;
     if (existing) {
@@ -2732,9 +2834,11 @@ export class NodeNetwork extends EventEmitter {
         (brain) =>
           (brain.hosted ||
             this.nodes.get(brain.masterNodeID)?.capabilities.includes('brain-task-v1')) &&
-          (!input.inputFiles?.length ||
-            brain.hosted ||
-            this.nodes.get(brain.masterNodeID)?.capabilities.includes(taskFileCapability)),
+          (brain.hosted ||
+            supportsTaskFiles(
+              this.nodes.get(brain.masterNodeID)?.capabilities || [],
+              input.inputFiles,
+            )),
       )
       .map((brain) => ({
         ...brain,
@@ -2749,7 +2853,7 @@ export class NodeNetwork extends EventEmitter {
               peer.trusted &&
               peer.channelReady &&
               peer.capabilities.includes('remote-execution-v1') &&
-              (!input.inputFiles?.length || peer.capabilities.includes(taskFileCapability)))
+              supportsTaskFiles(peer.capabilities, input.inputFiles))
           );
         }),
       }));
@@ -2763,6 +2867,14 @@ export class NodeNetwork extends EventEmitter {
         input.requestedProjectID
           ? '当前没有在线 Brain 同时具备该项目、所需硬件和可用执行槽位。'
           : '当前没有在线 Brain 同时具备匹配 Worker 和可用执行槽位。',
+      );
+    const queueNode = this.snapshot().nearby.find((node) => node.id === placement.worker.nodeID);
+    if (queueNode)
+      requireQueueConfirmation(
+        queueNode.id,
+        queueNode.name,
+        nodeQueueBacklog(queueNode),
+        queueConfirmedFor,
       );
     const direction = placement.brain.hosted ? 'owned' : 'submitted';
     const master =
@@ -2804,7 +2916,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async scheduleBrainTask(taskID: string) {
-    if (!this.identity || this.schedulingBrainTasks.has(taskID)) return;
+    if (this.updateMaintenance() || !this.identity || this.schedulingBrainTasks.has(taskID)) return;
     const task = this.brainTasks.record(taskID);
     if (
       !task ||
@@ -2838,7 +2950,7 @@ export class NodeNetwork extends EventEmitter {
               peer.trusted &&
               peer.channelReady &&
               peer.capabilities.includes('remote-execution-v1') &&
-              (!task.inputFiles?.length || peer.capabilities.includes(taskFileCapability))
+              supportsTaskFiles(peer.capabilities, task.inputFiles)
             );
           }),
         },

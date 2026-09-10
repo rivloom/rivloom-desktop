@@ -13,6 +13,7 @@ import {
 } from '../server/node-channel.ts';
 import {
   taskFileCapability,
+  taskFileLargeCapability,
   validTaskFileResponse,
   type TaskFileMessage,
   type TaskFileRoute,
@@ -374,6 +375,44 @@ test('file manifests survive task stores and participate in creation identity wh
   restored.load();
   assert.deepEqual(restored.record(created.id)!.inputFiles, [bytes]);
 });
+test('encrypted large-file receiver requires the negotiated capability before accepting any bytes', async () => {
+  const h = harness();
+  try {
+    const f = { ...file(Buffer.from('large descriptor')), bytes: 200 * 1024 ** 2 };
+    const brainID = randomUUID();
+    const task = h.a.remoteTasks.create(h.ids[0], brainID, h.ids[1], brainID, {
+      title: 'large attachment',
+      description: 'negotiated transfer',
+      criteria: 'bounded',
+      inputFiles: [f],
+    });
+    const offer = h.a.remoteTasks.message(task.id);
+    assert(validRemoteTaskOffer(offer));
+    h.b.remoteTasks.receiveOffer(offer);
+    const route: TaskFileRoute = { scope: 'remote', taskID: task.id, purpose: 'input' };
+    h.networks[1].files.expectIncoming(route, [f], h.ids[0]);
+    const request: TaskFileMessage = {
+      type: 'task-file',
+      version: 1,
+      requestID: randomUUID(),
+      route,
+      file: f,
+    };
+    await assert.rejects(h.a.exchangeTaskFile(h.peers[1], request), /协商/);
+    h.peers[0].capabilities.push(taskFileLargeCapability);
+    h.peers[1].capabilities.push(taskFileLargeCapability);
+    h.reconnect();
+    const received = await h.a.exchangeTaskFile(h.peers[1], {
+      ...request,
+      requestID: randomUUID(),
+    });
+    assert.equal((received as { state: string }).state, 'receiving');
+    assert.equal(h.networks[1].files.views(route)[0].receivedBytes, 0);
+  } finally {
+    h.close();
+  }
+});
+
 test('upload retry resumes the same selected file after an uncertain block acknowledgement', async () => {
   const bytes = Buffer.alloc(40000, 65),
     id = randomUUID(),

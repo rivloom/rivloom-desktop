@@ -9,7 +9,57 @@ import {
   receiptMatchesRemote,
   validQueueReceiptMessage,
 } from '../server/task-queue-receipts.ts';
-import { validNodeQueuePublicStats, validTaskQueueReceipt } from '../shared/task-queue-receipts.ts';
+import {
+  validNodeQueuePublicStats,
+  validTaskQueueReceipt,
+  nodeQueueForCapabilities,
+  nodeWorkloadCapability,
+  nodeConcurrencyCapability,
+  queueReceiptCapability,
+} from '../shared/task-queue-receipts.ts';
+
+test('origin concurrency reports retain overcommitted counts and negotiate each telemetry extension independently', () => {
+  const base = { waitingCount: 1, paused: false, updatedAt: new Date().toISOString(), sampledAt: new Date().toISOString(), health: 'normal' as const };
+  const concurrency = { localOccupied: 12, localExecuting: 11, remoteOccupied: 3, remoteExecuting: 3, remoteLimit: 1 };
+  const modern = { ...base, concurrency, workload: { occupiedSlots: 3, executingCount: 3, totalSlots: 1 } };
+  assert(validNodeQueuePublicStats(modern));
+  assert.deepEqual(nodeQueueForCapabilities(modern, [queueReceiptCapability]), base);
+  assert.deepEqual(nodeQueueForCapabilities(modern, [queueReceiptCapability, nodeConcurrencyCapability]), { ...base, concurrency });
+  assert.deepEqual(nodeQueueForCapabilities(modern, [queueReceiptCapability, nodeWorkloadCapability]), { ...base, workload: modern.workload });
+  for (const invalid of [null, {}, { ...concurrency, remoteLimit: 11 }, { ...concurrency, localExecuting: 13 }, { ...concurrency, privateTitle: 'secret' }])
+    assert(!validNodeQueuePublicStats({ ...base, concurrency: invalid }));
+});
+
+test('workload telemetry validates bounded counts and strips extensions for old queue decoders', () => {
+  const stats = {
+    waitingCount: 2,
+    paused: false,
+    updatedAt: new Date().toISOString(),
+    sampledAt: new Date().toISOString(),
+    health: 'normal' as const,
+  };
+  const workload = { occupiedSlots: 2, totalSlots: 1, executingCount: 1 };
+  const modern = { ...stats, workload };
+  assert(validNodeQueuePublicStats(modern));
+  for (const invalid of [
+    null,
+    undefined,
+    [],
+    { ...workload, titles: ['private'] },
+    { ...workload, occupiedSlots: -1 },
+    { ...workload, totalSlots: 1.5 },
+    { ...workload, executingCount: 3 },
+    { ...workload, totalSlots: 100_001 },
+  ])
+    assert(!validNodeQueuePublicStats({ ...stats, workload: invalid }));
+  assert.deepEqual(nodeQueueForCapabilities(modern, [queueReceiptCapability]), stats);
+  assert.deepEqual(
+    nodeQueueForCapabilities(modern, [queueReceiptCapability, nodeWorkloadCapability]),
+    modern,
+  );
+  assert.equal(nodeQueueForCapabilities(modern, [nodeWorkloadCapability]), null);
+  assert.deepEqual(modern.workload, workload, 'serialization does not mutate the local report');
+});
 
 function setup() {
   mkdirSync('.data/verification', { recursive: true });

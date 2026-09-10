@@ -595,3 +595,44 @@ export function verifyChannelEventAck(
     return false;
   }
 }
+
+type ChannelDataReply = Omit<ChannelEventAck, 'type'> & { type: 'data-reply' };
+function dataReplyKey(key: Buffer, sessionID: string) {
+  return Buffer.from(hkdfSync('sha256', key, Buffer.from(sessionID), Buffer.from('rivloom-collaboration-data-reply-v1'), 32));
+}
+function dataReplyAAD(reply: Omit<ChannelDataReply, 'ciphertext' | 'tag'>) {
+  return Buffer.from(JSON.stringify({ protocol: reply.protocol, version: reply.version, type: reply.type,
+    sessionID: reply.sessionID, senderNodeID: reply.senderNodeID, recipientNodeID: reply.recipientNodeID, iv: reply.iv }));
+}
+/** Negotiated collaboration replies bind their payload to one request using a domain-separated key.
+ * Like event ACKs, they do not enter the opposite-direction request stream. */
+export function encryptChannelDataReply(session: SecureChannelSession, request: ChannelEnvelope, payload: unknown): ChannelDataReply {
+  if (session.expiresAt <= Date.now() || request.sessionID !== session.id || request.senderNodeID !== session.peerNodeID ||
+    request.recipientNodeID !== session.localNodeID || request.sequence !== session.receiveSequence)
+    throw new Error('Data reply requires the current authenticated request');
+  const plaintext = Buffer.from(JSON.stringify({ requestSequence: request.sequence, requestDigest: eventRequestDigest(request), payload }));
+  if (plaintext.length > 64 * 1024) throw new Error('Data reply is too large');
+  const header: Omit<ChannelDataReply, 'ciphertext' | 'tag'> = { protocol: 'rivloom-secure-channel', version: 1,
+    type: 'data-reply', sessionID: session.id, senderNodeID: session.localNodeID, recipientNodeID: session.peerNodeID,
+    iv: randomBytes(12).toString('base64url') };
+  const cipher = createCipheriv('aes-256-gcm', dataReplyKey(session.sendKey, session.id), Buffer.from(header.iv, 'base64url'));
+  cipher.setAAD(dataReplyAAD(header));
+  return { ...header, ciphertext: Buffer.concat([cipher.update(plaintext), cipher.final()]).toString('base64url'), tag: cipher.getAuthTag().toString('base64url') };
+}
+export function decryptChannelDataReply(session: SecureChannelSession, request: ChannelEnvelope, value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid data reply');
+  const reply = value as ChannelDataReply;
+  if (Object.keys(reply).length !== 9 || reply.protocol !== 'rivloom-secure-channel' || reply.version !== 1 || reply.type !== 'data-reply' ||
+    session.expiresAt <= Date.now() || reply.sessionID !== session.id || request.sessionID !== session.id ||
+    reply.senderNodeID !== session.peerNodeID || reply.recipientNodeID !== session.localNodeID ||
+    request.senderNodeID !== session.localNodeID || request.recipientNodeID !== session.peerNodeID ||
+    typeof reply.iv !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(reply.iv) ||
+    typeof reply.ciphertext !== 'string' || reply.ciphertext.length > 88_000 || !/^[A-Za-z0-9_-]+$/.test(reply.ciphertext) ||
+    typeof reply.tag !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(reply.tag)) throw new Error('Invalid data reply');
+  const decipher = createDecipheriv('aes-256-gcm', dataReplyKey(session.receiveKey, session.id), Buffer.from(reply.iv, 'base64url'));
+  decipher.setAAD(dataReplyAAD(reply)); decipher.setAuthTag(Buffer.from(reply.tag, 'base64url'));
+  const proof = JSON.parse(Buffer.concat([decipher.update(Buffer.from(reply.ciphertext, 'base64url')), decipher.final()]).toString('utf8'));
+  if (!proof || Object.keys(proof).length !== 3 || proof.requestSequence !== request.sequence || proof.requestDigest !== eventRequestDigest(request))
+    throw new Error('Data reply does not match the request');
+  return proof.payload;
+}

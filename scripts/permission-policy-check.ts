@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ApprovalMode } from '../shared/types.ts';
+import { checkApprovalExecution } from './approval-execution-check.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'rivloom-permission-policy-'));
 process.env.RIVLOOM_DATA_DIR = root;
@@ -47,3 +48,5 @@ try {
   await Promise.race([exited, new Promise<void>((resolveWait) => setTimeout(resolveWait, 5000))]);
   rmSync(root, { recursive: true, force: true });
 }
+
+await checkApprovalExecution();

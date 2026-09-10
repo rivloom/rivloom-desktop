@@ -1,5 +1,6 @@
 import { t } from '../shared/i18n.ts';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import type { DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
 
 export const desktop = isTauri();
 export type DesktopInfo = {
@@ -28,6 +29,13 @@ export async function authenticateDesktop() {
 export const chooseProjectDirectory = () => invoke<string | null>('choose_project_directory');
 export const chooseTaskFileDestination = (name: string) =>
   invoke<string | null>('choose_task_file_destination', { name });
+export const revealTaskFile = (path: string) => invoke<void>('reveal_task_file', { path });
 export const notifyAttention = (target: string, kind: string, count: number) =>
   invoke<boolean>('notify_attention', { target, kind, count });
 export const takeNotificationTarget = () => invoke<string | null>('take_notification_target');
+export const desktopUpdateSnapshot = () => invoke<DesktopUpdateSnapshot>('desktop_update_snapshot');
+export const checkDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('check_desktop_update');
+export const skipDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('skip_desktop_update');
+export const downloadDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('download_desktop_update');
+export const cancelDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('cancel_desktop_update');
+export const installDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('install_desktop_update');

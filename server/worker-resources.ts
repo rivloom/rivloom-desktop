@@ -152,7 +152,17 @@ export function workerMatchesTask(
   if (worker.load.availableSlots < 1) return false;
   if (task.projectID && !worker.projects.some((project) => project.id === task.projectID))
     return false;
-  const requirements = task.requirements;
+  return workerHardwareMatches(worker.hardware, task.requirements);
+}
+
+/** Queue placement checks compatibility without pretending a busy worker has a free execution slot. */
+export function workerCanQueueTask(worker: WorkerRegistration, task: TaskPlacementRequirements, at = Date.now()) {
+  return validWorkerRegistration(worker) && worker.accepting && workerReportFresh(worker, at) &&
+    (!task.projectID || worker.projects.some((project) => project.id === task.projectID)) &&
+    workerHardwareMatches(worker.hardware, task.requirements);
+}
+export function workerHardwareMatches(hardware: WorkerHardware, requirements: TaskPlacementRequirements['requirements']) {
+  const worker = { hardware };
   if (requirements.platform && requirements.platform !== worker.hardware.platform) return false;
   if (requirements.architecture && requirements.architecture !== worker.hardware.architecture)
     return false;
@@ -167,7 +177,6 @@ export function workerMatchesTask(
   )
     return false;
   if (requirements.gpu === true && worker.hardware.gpus.length === 0) return false;
-  if (requirements.gpu === false && worker.hardware.gpus.length > 0) return false;
   if (requirements.minimumGpuMemoryBytes !== undefined) {
     const maximum = Math.max(-1, ...worker.hardware.gpus.map((gpu) => gpu.memoryBytes ?? -1));
     if (maximum < requirements.minimumGpuMemoryBytes) return false;

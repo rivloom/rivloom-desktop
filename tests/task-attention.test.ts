@@ -50,7 +50,7 @@ test('attention filters actual approval/input/review roles and excludes passive 
     ],
   );
 });
-test('linked local and remote records produce one actionable item; historical retry failures stay hidden', () => {
+test('linked completed records produce one completion event without review actions; historical retry failures stay hidden', () => {
   const data = fixture([task('review')]);
   data.network.remoteTasks = [
     {
@@ -80,9 +80,11 @@ test('linked local and remote records produce one actionable item; historical re
     },
   ] as BrainTask[];
   assert.deepEqual(
-    collectAttention(data).items.map((i) => i.conversationKey),
+    collectAttention(data).events.map((i) => i.conversationKey),
     ['brain:brain'],
   );
+  assert.equal(collectAttention(data).items.length, 0);
+  assert.equal(collectAttention(data).events[0].kind, 'completed');
   data.tasks = [];
   data.network.brainTasks[0].status = 'queued';
   data.network.brainTasks[0].executionID = null;

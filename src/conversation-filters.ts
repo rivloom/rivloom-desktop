@@ -30,7 +30,7 @@ const taskStatusGroups: Record<TaskState, ConversationStatusGroup> = {
   stopped: 'ended',
   interrupted: 'attention',
   failed: 'ended',
-  review: 'attention',
+  review: 'completed',
   accepted: 'completed',
 };
 
@@ -40,13 +40,18 @@ const brainStatusGroups: Record<BrainTask['status'], ConversationStatusGroup> = 
   assigned: 'active',
   running: 'active',
   waiting: 'attention',
-  review: 'attention',
+  review: 'completed',
   completed: 'completed',
   failed: 'ended',
 };
 
 /** Classify raw state codes, independently of the displayed language. */
 export function conversationStatusGroup(item: Conversation): ConversationStatusGroup {
+  if (item.workflow) {
+    if (item.workflow.state === 'completed') return 'completed';
+    if (['stopped', 'failed'].includes(item.workflow.state)) return 'ended';
+    return item.workflowAttention ? 'attention' : 'active';
+  }
   const localState = item.localTask?.state;
   const localGroup = localState ? taskStatusGroups[localState] : undefined;
   // A local execution is the most direct observation; an initial task can still be queued.

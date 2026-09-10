@@ -87,7 +87,6 @@ test('review, interrupted and started-but-missing execution retain their reserva
       'interrupted',
       'waiting_approval',
       'waiting_input',
-      'stopped',
       'failed',
     ])
       assert.equal(
@@ -108,6 +107,18 @@ test('review, interrupted and started-but-missing execution retain their reserva
   } finally {
     f.close();
   }
+});
+
+test('only a finished read-only planner format failure ends its queue record', () => {
+  const f = queueFixture();
+  try {
+    const q = f.store.enqueue(localSource()); f.store.admit(q.id, q.version, q.localTaskID!); f.store.markStarting(q.id);
+    const started = f.store.markStarted(q.id);
+    const task = { id: q.localTaskID!, state: 'failed', sessionID: 'ses_existing', error: 'workflow_invalid_outcome', collaboration: { role: 'planner' } };
+    assert.deepEqual(nodeQueueRecoveryDecision(started, { source: 'live', task }), { action: 'end', reason: { code: 'failed' } });
+    for (const patch of [{ state: 'running' }, { state: 'interrupted' }, { error: 'engine_unknown' }, { collaboration: { role: 'executor' } }, { collaboration: undefined }])
+      assert.equal(nodeQueueRecoveryDecision(started, { source: 'live', task: { ...task, ...patch } }).action, 'retain_execution');
+  } finally { f.close(); }
 });
 
 test('cancelled, expired and revoked waiting records end; accepted scans cannot resurrect them', () => {
@@ -133,6 +144,32 @@ test('cancelled, expired and revoked waiting records end; accepted scans cannot 
     } finally {
       f.close();
     }
+  }
+});
+
+test('confirmed stop closes local and remote reservations across restart without replay', () => {
+  for (const source of [localSource(), remoteSource()]) for (const phase of ['bound', 'starting', 'started']) {
+    const f = queueFixture();
+    try {
+      const queued = f.store.enqueue(source);
+      const taskID = queued.localTaskID || randomUUID();
+      f.store.admit(queued.id, queued.version, taskID); f.store.bindTask(queued.id, taskID);
+      if (phase !== 'bound') f.store.markStarting(queued.id);
+      if (phase === 'started') f.store.markStarted(queued.id);
+      const restored = f.reopen().get(queued.id)!;
+      const facts = { source: 'live' as const, task: { id: taskID, state: 'stopped', sessionID: 'ses_original' } };
+      assert.equal(nodeQueueRecoveryDecision(restored, { ...facts, task: { ...facts.task, id: randomUUID() } }).action, 'interrupt');
+      const decision = nodeQueueRecoveryDecision(restored, facts);
+      assert.deepEqual(decision, { action: 'end', reason: { code: 'stopped' } });
+      if (decision.action !== 'end') throw new Error('Expected confirmed stop');
+      f.store.end(queued.id, decision.reason);
+      const ended = f.reopen().enqueue(source);
+      assert.equal(ended.id, queued.id); assert.equal(ended.localTaskID, taskID);
+      assert.equal(ended.state, 'ended'); assert.equal(ended.endReason?.code, 'stopped');
+      assert.deepEqual(nodeQueueRecoveryDecision(ended, facts), { action: 'none' });
+      assert.deepEqual(nodeQueueRecoveryDecision(ended, { ...facts, task: { ...facts.task, state: 'running' } }), { action: 'none' });
+      assert.equal(f.store.snapshot().entries.filter((entry) => entry.state !== 'ended').length, 0);
+    } finally { f.close(); }
   }
 });
 

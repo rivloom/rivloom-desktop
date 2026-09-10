@@ -67,7 +67,7 @@ const executionCases: [Task['state'], ConversationStatusGroup][] = [
   ['stopping', 'active'],
   ['waiting_approval', 'attention'],
   ['waiting_input', 'attention'],
-  ['review', 'attention'],
+  ['review', 'completed'],
   ['interrupted', 'attention'],
   ['accepted', 'completed'],
   ['stopped', 'ended'],
@@ -104,7 +104,7 @@ test('Brain states classify correctly even when the device has no execution snap
     ['assigned', 'active'],
     ['running', 'active'],
     ['waiting', 'attention'],
-    ['review', 'attention'],
+    ['review', 'completed'],
     ['completed', 'completed'],
     ['failed', 'ended'],
   ];
@@ -236,7 +236,7 @@ test('status, source, and title or source-name search combine without changing o
   assert.deepEqual(
     filterConversations(
       items,
-      { status: 'attention', source: 'incoming', query: '  DESIGN  ' },
+      { status: 'completed', source: 'incoming', query: '  DESIGN  ' },
       nodeName,
     ),
     [incoming],
@@ -290,7 +290,7 @@ test('requirement-body search combines with status and source for already loaded
   assert.deepEqual(
     filterConversations(
       items,
-      { query: '退款流程', source: 'incoming', status: 'attention' },
+      { query: '退款流程', source: 'incoming', status: 'completed' },
       nodeName,
     ),
     [incoming],

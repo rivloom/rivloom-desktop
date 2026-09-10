@@ -6,6 +6,10 @@ import { draftFilesReady } from './task-file-upload';
 import { CopyButton } from './copy-button';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
 import { ConversationFilterButton } from './conversation-filter-button';
+import { PairedMachines } from './paired-machines';
+import { WorkflowView } from './workflow-view';
+import { ResourceDiscovery } from './resource-discovery';
+import type { Workflow } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
 import {
   filterConversations,
@@ -41,38 +45,41 @@ import {
   X,
   LoaderCircle,
   ListOrdered,
-  Radio,
   PanelLeft,
   FileCode2,
   Bot,
   ShieldCheck,
   ChevronRight,
   AtSign,
-  Pencil,
   Pause,
   Inbox,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
-import { api, ApiError, type CreatedNodeTaskResponse } from './api';
+import { api, ApiError } from './api';
+import type { QueueConfirmation } from '../shared/queue-backlog';
 import { desktop, chooseProjectDirectory } from './desktop';
-import { NodeNetworkView } from './node-network';
+import { NodeNetworkView, ExecutionPolicyCard } from './node-network';
 import { ModelSettingsView } from './model-settings';
+import { ExecutionConcurrencySettings } from './execution-concurrency-settings';
 import { TaskAttentionView, useTaskAttention } from './task-attention-view';
 import { NodeDiagnosticsView } from './node-diagnostics';
 import { NodeAvatar, NodeProfileEditor, NodeRemarkEditor } from './node-avatar';
 import {
   activeNodeMention,
+  boundNodeMentionMode,
   isNodeMentionComposing,
   nodeCapabilitySummary,
   nodeDisplayName,
   recentNodeMentions,
+  nodeMentionPrefix,
+  replaceBoundNodeMention,
   type ActiveNodeMention,
 } from './node-mentions';
 import {
   clearSubmittedDraft,
   conversationCreationNeedsModel,
   conversationInputUsage,
-  createConversationDraft,
+  createWorkflowDraft,
   createdConversationKey,
   prepareConversationRequest,
   updateConversationDraft,
@@ -83,6 +90,8 @@ import { Button, Field, Modal, Wordmark } from './ui';
 import {
   conversations,
   conversationState,
+  conversationIsRunning,
+  executionQueueEntries,
   pairedNodes,
   showNetworkRail,
   type Conversation,
@@ -111,8 +120,9 @@ const dateLabel = (value: string) =>
 
 function queueConversation(entry: NodeQueueItem, items: Conversation[]) {
   const source = entry.source;
-  return items.find((item) =>
-    source.kind === 'local'
+  return items.find((item) => item.workflow
+    ? [item.workflow.planner, ...item.workflow.steps].some((step) => step.attempts.some((attempt) =>
+      attempt.executionID === (source.kind === 'local' ? source.taskID : source.remoteTaskID))) : source.kind === 'local'
       ? item.localTask?.id === source.taskID
       : item.remote?.id === source.remoteTaskID ||
         item.attempts.some((attempt) => attempt.id === source.remoteTaskID),
@@ -120,7 +130,10 @@ function queueConversation(entry: NodeQueueItem, items: Conversation[]) {
 }
 
 function QueuePanel({
+  remoteConcurrency,
+  configure,
   snapshot,
+  tasks,
   items,
   nodeName,
   busy,
@@ -130,7 +143,10 @@ function QueuePanel({
   pause,
   retry,
 }: {
+  remoteConcurrency: number;
+  configure: () => void;
   snapshot: NodeQueueSnapshot | null;
+  tasks: Task[];
   items: Conversation[];
   nodeName: (id: string | null) => string;
   busy: boolean;
@@ -140,7 +156,7 @@ function QueuePanel({
   pause: (paused: boolean) => void;
   retry?: () => void;
 }) {
-  const entries = snapshot?.entries.filter((entry) => entry.state !== 'ended') || [];
+  const entries = executionQueueEntries(snapshot?.entries || [], tasks);
   return (
     <section className="node-queue">
       <div className="rail-heading">
@@ -148,13 +164,17 @@ function QueuePanel({
         <h2>{t('本机执行队列')}</h2>
         <span>{snapshot ? entries.length : '—'}</span>
       </div>
+      <button type="button" className="queue-concurrency-control" onClick={configure}>
+        <span><small>{t('当前并发')}</small><strong>{t('本机不限 · 其他机器 {{count}} 项', { count: remoteConcurrency })}</strong></span>
+        <span className="queue-concurrency-edit"><Settings2 size={13} />{t('修改')}</span>
+      </button>
       <div className="queue-toolbar">
         <small>
           {error
             ? t('正在确认队列状态')
             : snapshot?.paused
               ? t('后续启动已暂停')
-              : t('按本机接收顺序执行')}
+              : t('按来源分别排队执行')}
         </small>
         <button
           type="button"
@@ -180,6 +200,7 @@ function QueuePanel({
       )}
       <div className="queue-list">
         {entries.map((entry) => {
+          const executing = entry.state === 'admitted' || entry.state === 'ended';
           const item = queueConversation(entry, items);
           const incoming = item?.incoming ?? entry.source.kind === 'remote';
           const title = item?.title || t('正在同步会话');
@@ -187,7 +208,7 @@ function QueuePanel({
           const state =
             entry.state === 'held'
               ? t('已暂缓')
-              : entry.state === 'admitted'
+              : executing
                 ? item
                   ? conversationState(item)
                   : t('已获执行槽')
@@ -204,7 +225,7 @@ function QueuePanel({
                 title={title}
               >
                 <span className="queue-number">
-                  {entry.state === 'admitted' ? (
+                  {executing ? (
                     <ShieldCheck size={14} />
                   ) : entry.state === 'held' ? (
                     <Pause size={13} />
@@ -267,7 +288,7 @@ function QueuePanel({
                   </button>
                 </div>
               )}
-              {entry.state === 'admitted' && (
+              {executing && (
                 <p className="queue-protected">
                   {item?.localTask?.state === 'accepted' ||
                   item?.remote?.executionState === 'accepted' ||
@@ -321,15 +342,14 @@ const HistoryRow = memo(function HistoryRow({
         {item.incoming ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
       </span>
       <strong>{item.title}</strong>
-      <span className={`conversation-item-state ${group}`} aria-hidden="true">
-        {group === 'completed' ? (
-          <Check size={14} />
-        ) : group === 'ended' ? (
-          <X size={14} />
-        ) : (
+      {group !== 'completed' && (
+        <span
+          className={`conversation-item-state ${group} ${conversationIsRunning(item) ? 'is-running' : ''}`}
+          aria-hidden="true"
+        >
           <small>{state}</small>
-        )}
-      </span>
+        </span>
+      )}
     </button>
   );
 });
@@ -434,16 +454,14 @@ export function ConversationWorkspace({
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
   const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(() => ({
-    new: createConversationDraft(),
+    new: createWorkflowDraft(),
   }));
-  const emptyDraft = useRef(createConversationDraft());
+  const emptyDraft = useRef(createWorkflowDraft());
   const [busy, setBusy] = useState(false);
   const operation = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [modal, setModal] = useState<'profile' | 'folder' | 'review' | 'queue' | 'about' | null>(
-    null,
-  );
+  const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | null>(null);
   const [queueSnapshot, setQueueSnapshot] = useState<NodeQueueSnapshot | null>(null);
   const [queueError, setQueueError] = useState('');
   const [rejectQueueEntry, setRejectQueueEntry] = useState<NodeQueueItem | null>(null);
@@ -457,13 +475,57 @@ export function ConversationWorkspace({
     data.executionPolicy.projectID || data.projects[0]?.id || '',
   );
   const [model, setModel] = useState(data.defaultModel);
-  const [mode, setMode] = useState<ApprovalMode>('ask');
+  const [approvalChoice, setApprovalChoice] = useState<ApprovalMode | 'default'>('default');
+  const mode = approvalChoice === 'default' ? data.executionPolicy.approvalMode : approvalChoice;
   const [criteria, setCriteria] = useState('');
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [mention, setMention] = useState<ActiveNodeMention | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [deleteNodeID, setDeleteNodeID] = useState<string | null>(null);
+  const [queueConfirmation, setQueueConfirmation] = useState<
+    (QueueConfirmation & { title: string }) | null
+  >(null);
+  const queueAnswer = useRef<((answer: boolean) => void) | null>(null);
+  useEffect(
+    () => () => {
+      queueAnswer.current?.(false);
+    },
+    [],
+  );
+  function answerQueue(answer: boolean) {
+    const resolve = queueAnswer.current;
+    queueAnswer.current = null;
+    setQueueConfirmation(null);
+    resolve?.(answer);
+  }
+  async function createTask<T>(path: string, input: Record<string, unknown>): Promise<T | null> {
+    const body: Record<string, unknown> = {
+      ...input,
+      requestID: input.requestID || crypto.randomUUID(),
+    };
+    let confirmedFor: string | undefined;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await api<T>(
+          path,
+          { ...body, ...(confirmedFor ? { queueConfirmedFor: confirmedFor } : {}) },
+          { timeoutMilliseconds: 15_000 },
+        );
+      } catch (error) {
+        if (!(error instanceof ApiError) || !error.queueConfirmation) throw error;
+        const confirmation = error.queueConfirmation;
+        const confirmed = await new Promise<boolean>((resolve) => {
+          queueAnswer.current = resolve;
+          setQueueConfirmation({ ...confirmation, title: String(body.title || '') });
+        });
+        if (!confirmed) return null;
+        confirmedFor = confirmation.nodeID;
+      }
+    }
+    throw new Error(t('目标机器发生变化，请检查队列后重新提交。'));
+  }
   const [remarkNodeID, setRemarkNodeID] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const scrollPinned = useRef(true);
@@ -472,7 +534,7 @@ export function ConversationWorkspace({
   const composing = useRef(false);
   const all = useMemo(
     () => conversations(data),
-    [data.tasks, data.network.local?.id, data.network.remoteTasks, data.network.brainTasks],
+    [data.tasks, data.workflows, data.network.local?.id, data.network.remoteTasks, data.network.brainTasks],
   );
   function openAttention(key: string) {
     if (key === 'attention') {
@@ -505,16 +567,20 @@ export function ConversationWorkspace({
     }));
   const setDraft = (text: string) => changeDraft({ text });
   const setRouting = (routing: ConversationRouting) => changeDraft({ routing });
-  const scope = draftState.routing.kind === 'automatic' ? 'automatic' : 'local';
-  const setScope = (kind: 'local' | 'automatic') => setRouting({ kind });
-  const targetNodeID = draftState.routing.kind === 'node' ? draftState.routing.nodeID : null;
+  const workflowTarget = draftState.routing.kind === 'workflow' ? draftState.routing.target :
+    draftState.routing.kind === 'node' ? { mode: 'preferred' as const, nodeID: draftState.routing.nodeID } : { mode: 'automatic' as const };
+  const scope = workflowTarget.mode === 'automatic' ? 'automatic' : 'local';
+  const setScope = (kind: 'local' | 'automatic') => setRouting({ kind: 'workflow', target:
+    kind === 'local' && data.network.local ? { mode: 'locked', nodeID: data.network.local.id } : { mode: 'automatic' } });
+  const targetNodeID = workflowTarget.mode === 'automatic' ? null : workflowTarget.nodeID;
+  const targetMode = workflowTarget.mode === 'locked' ? 'locked' : 'preferred';
   const local = data.network.local;
   const peers = useMemo(() => pairedNodes(data), [data.network.paired, data.network.nearby]);
-  const targetNode = peers.find((node) => node.id === targetNodeID) || null;
+  const targetNode = [local, ...peers].find((node) => node?.id === targetNodeID) || null;
   const targetName = targetNode
     ? nodeDisplayName(targetNode)
-    : draftState.routing.kind === 'node'
-      ? `${draftState.routing.name} · ${draftState.routing.nodeID.slice(0, 6)}`
+    : targetNodeID
+      ? `${'name' in draftState.routing ? draftState.routing.name || '' : ''} · ${targetNodeID.slice(0, 6)}`
       : '';
   const remarkNode = peers.find((node) => node.id === remarkNodeID) || null;
   const mentionNodes = mention ? recentNodeMentions(peers, mention.query).slice(0, 8) : [];
@@ -525,7 +591,7 @@ export function ConversationWorkspace({
   const receiptPeer =
     remote?.direction === 'outgoing' ? peers.find((node) => node.id === remote.targetNodeID) : null;
   const currentReceipt = current
-    ? taskReceiptView(current, {
+    && !current.workflow ? taskReceiptView(current, {
         connected:
           connected &&
           !connectionError &&
@@ -583,14 +649,12 @@ export function ConversationWorkspace({
   const approvals = task?.approvals || remote?.remoteApprovals || [];
   const questions = task?.questions || remote?.remoteQuestions || [];
   const artifacts = task?.artifacts || remote?.remoteArtifacts || [];
-  const reviewing = task?.state === 'review' || (!task && remote?.executionState === 'review');
   const running = task
     ? activeStates.includes(task.state) || task.state === 'interrupted'
     : !!remote &&
       remote.executionState !== 'not_started' &&
       activeStates.includes(remote.executionState);
   const canApprove = task ? task.approverID === data.user.id : canRemoteControl;
-  const canReview = task ? task.reviewerID === data.user.id : canRemoteControl;
 
   useEffect(() => {
     if (!model && data.defaultModel) setModel(data.defaultModel);
@@ -657,7 +721,7 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
     if (transcript.current && scrollPinned.current)
-      transcript.current.scrollTop = transcript.current.scrollHeight;
+      transcript.current.scrollTop = current?.workflow ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
     selected,
@@ -671,7 +735,7 @@ export function ConversationWorkspace({
     const element = transcript.current;
     if (!element) return;
     const observer = new ResizeObserver(() => {
-      if (scrollPinned.current) element.scrollTop = element.scrollHeight;
+      if (scrollPinned.current && !current?.workflow) element.scrollTop = element.scrollHeight;
       updateScrollPosition();
     });
     observer.observe(element);
@@ -744,15 +808,31 @@ export function ConversationWorkspace({
     if (operation.current) return;
     const node = peers.find((candidate) => candidate.id === nodeID);
     if (!node || !mention) return;
-    const next = `${draft.slice(0, mention.start)}@${node.name} ${draft.slice(mention.end)}`;
-    const cursor = mention.start + node.name.length + 2;
-    changeDraft({ text: next, routing: { kind: 'node', nodeID: node.id, name: node.name } });
+    const mode = mention.mode || 'preferred'; const prefix = nodeMentionPrefix(mode);
+    const next = `${draft.slice(0, mention.start)}${prefix}${node.name} ${draft.slice(mention.end)}`;
+    const cursor = mention.start + node.name.length + prefix.length + 1;
+    changeDraft({ text: next, routing: { kind: 'workflow', target: { mode, nodeID: node.id }, name: node.name } });
     setMention(null);
     setMentionIndex(0);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(cursor, cursor);
     });
+  }
+  function showMention(mode: 'preferred' | 'locked') {
+    const input = inputRef.current; const cursor = input?.selectionStart ?? draft.length;
+    const active = mention || activeNodeMention(draft, cursor, peers);
+    const start = active?.start ?? cursor; const end = active?.end ?? cursor;
+    const padding = start > 0 && !/\s/.test(draft[start - 1]) ? ' ' : '';
+    const replacement = padding + nodeMentionPrefix(mode) + (active?.query || '');
+    const next = draft.slice(0, start) + replacement + draft.slice(end); const caret = start + replacement.length;
+    setDraft(next); setMention({ start: start + padding.length, end: caret, query: active?.query || '', mode }); setMentionIndex(0);
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(caret, caret); });
+  }
+  function changeTargetMode(mode: 'preferred' | 'locked' | null) {
+    const name = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
+    changeDraft({ text: name ? replaceBoundNodeMention(draft, name, mode) : draft,
+      routing: { kind: 'workflow', target: mode && targetNodeID ? { mode, nodeID: targetNodeID } : { mode: 'automatic' }, ...(mode ? { name } : {}) } });
   }
   async function refreshQueue() {
     if (!data.user.owner) return;
@@ -797,6 +877,9 @@ export function ConversationWorkspace({
   }
   const queuePanel = () => (
     <QueuePanel
+      remoteConcurrency={data.executionPolicy.maxConcurrent}
+      configure={() => setModal('concurrency')}
+      tasks={data.tasks}
       snapshot={queueSnapshot}
       items={all}
       nodeName={nodeName}
@@ -857,10 +940,6 @@ export function ConversationWorkspace({
       (!current && !draftFilesReady(draftState.files))
     )
       return;
-    if (!current && draftState.routing.kind === 'local' && !projectID) {
-      setModal('folder');
-      return;
-    }
     await perform(async () => {
       if (current) {
         if (task) {
@@ -880,27 +959,13 @@ export function ConversationWorkspace({
           .slice(0, 120);
         const acceptance =
           criteria.trim() || t('完成会话要求，说明结果、验证情况和仍需处理的问题。');
-        const routing = draftState.routing;
+        const routing: ConversationRouting = { kind: 'workflow', target: workflowTarget };
         const body = {
           title,
           ...(draftState.files?.length ? { attachmentIDs: draftState.files.map((f) => f.id) } : {}),
           description: text,
           criteria: acceptance,
-          ...(routing.kind === 'local'
-            ? {
-                projectID,
-                model,
-                approvalMode: mode,
-                runRequested: true,
-                assigneeID: data.user.id,
-                approverID: data.user.id,
-                reviewerID: data.user.id,
-              }
-            : {
-                ...(routing.kind === 'automatic' ? { requestedProjectID: projectID || null } : {}),
-                requirements: {},
-                confirmed: true,
-              }),
+          projectID: projectID || null, model: model || null, approvalMode: mode, target: workflowTarget,
         };
         const prepared = prepareConversationRequest(draftState, body);
         setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
@@ -911,39 +976,10 @@ export function ConversationWorkspace({
             setSelected(createdKey);
             setMention(null);
           }
-          setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID));
+          setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID, createWorkflowDraft));
         };
-        if (routing.kind === 'node') {
-          // Always use the bound ID, including when the directory is temporarily unavailable.
-          const result = await api<CreatedNodeTaskResponse>(
-            `/network/nodes/${routing.nodeID}/tasks`,
-            {
-              ...body,
-              requestID: prepared.requestID,
-            },
-            { timeoutMilliseconds: 15_000 },
-          );
-          completeCreation(result.createdTaskID);
-        } else if (routing.kind === 'automatic') {
-          const result = await api<CreatedNodeTaskResponse>(
-            '/network/tasks',
-            {
-              ...body,
-              requestID: prepared.requestID,
-            },
-            { timeoutMilliseconds: 15_000 },
-          );
-          completeCreation(result.createdTaskID);
-        } else {
-          const result = await api<Task>(
-            '/tasks',
-            { ...body, requestID: prepared.requestID },
-            { timeoutMilliseconds: 15_000 },
-          );
-          completeCreation(result.id);
-          await refreshQueue();
-          setNotice(t('会话已保存到本机执行队列，执行条件就绪后会自动开始。'));
-        }
+        const result = await api<Workflow>('/workflows', { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
+        completeCreation(result.id); await refreshQueue();
       }
     });
   }
@@ -954,12 +990,11 @@ export function ConversationWorkspace({
       void perform(() => api(`/network/pairings/${id}/confirm`, {})),
     onCancelPairing: (id: string) => void perform(() => api(`/network/pairings/${id}/cancel`, {})),
     onRevokeTrust: (id: string) => {
-      if (confirm(t('撤销配对后，将停止这台设备发来且仍在本机执行的任务。确定撤销吗？')))
-        void perform(() => api(`/network/trusted/${id}/revoke`, { confirmed: true }));
+      setDeleteNodeID(id);
     },
     onEditNodeRemark: (id: string) => setRemarkNodeID(id),
     onCreateRemoteTask: (input: { title: string; description: string; criteria: string }) =>
-      void perform(() => api('/network/tasks', { ...input, confirmed: true })),
+      void perform(() => createTask('/network/tasks', { ...input, confirmed: true })),
     onCancelRemoteTask: (id: string) =>
       void perform(() => api(`/network/tasks/${id}/cancel`, { confirmed: true })),
     onControlRemoteTask: (id: string, sequence: number, action: RemoteTaskControlAction) =>
@@ -1080,6 +1115,17 @@ export function ConversationWorkspace({
             <span className="attention-count">{attention.snapshot?.items.length ?? '—'}</span>
           </button>
           <button
+            className={view === 'network' || view === 'models' ? 'active' : ''}
+            onClick={() => {
+              setView('models');
+              setMobileSidebar(false);
+            }}
+          >
+            <Settings2 size={17} />
+            {t('设备与模型')}
+            <ChevronRight size={14} />
+          </button>
+          <button
             className={view === 'diagnostics' ? 'active' : ''}
             onClick={() => {
               setDiagnosticTarget(null);
@@ -1089,28 +1135,6 @@ export function ConversationWorkspace({
           >
             <DiagnosticIcon size={17} />
             {t('连接诊断')}
-            <ChevronRight size={14} />
-          </button>
-          <button
-            className={view === 'network' ? 'active' : ''}
-            onClick={() => {
-              setView('network');
-              setMobileSidebar(false);
-            }}
-          >
-            <Network size={17} />
-            {t('节点与 Brain')}
-            <ChevronRight size={14} />
-          </button>
-          <button
-            className={view === 'models' ? 'active' : ''}
-            onClick={() => {
-              setView('models');
-              setMobileSidebar(false);
-            }}
-          >
-            <Settings2 size={17} />
-            {t('模型与额度')}
             <ChevronRight size={14} />
           </button>
           <div className="sidebar-signature">
@@ -1141,9 +1165,9 @@ export function ConversationWorkspace({
           <div>
             <span>
               {view === 'network'
-                ? t('节点与 Brain')
+                ? t('设备与模型')
                 : view === 'models'
-                  ? t('模型与额度')
+                  ? t('设备与模型')
                   : view === 'attention'
                     ? t('待办中心')
                     : view === 'diagnostics'
@@ -1152,11 +1176,12 @@ export function ConversationWorkspace({
             </span>
             {view === 'chat' && current && <small>{conversationState(current)}</small>}
           </div>
-          {view === 'chat' && data.user.owner && (
+          {view === 'chat' && data.user.owner && !rail && (
             <button
               className="local-queue-entry"
               onClick={() => setModal('queue')}
               aria-label={t('打开本机执行队列')}
+              aria-haspopup="dialog"
             >
               <ListOrdered size={15} />
               <span>{t('本机队列')}</span>
@@ -1191,7 +1216,7 @@ export function ConversationWorkspace({
                 aria-label={t('会话消息')}
                 onScroll={updateScrollPosition}
               >
-                {current ? (
+                {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName} /></div> : current ? (
                   <div className="transcript-content">
                     {currentReceipt && (
                       <section
@@ -1321,7 +1346,7 @@ export function ConversationWorkspace({
                         !queueRejected &&
                         !['waiting', 'held'].includes(currentQueueEntry?.state || '') &&
                         !(currentQueueEntry?.state === 'admitted' && !task.sessionID) &&
-                        ['open', 'ready', 'stopped', 'failed', 'interrupted', 'review'].includes(
+                        ['open', 'ready', 'stopped', 'failed', 'interrupted'].includes(
                           task.state,
                         ) && (
                           <Button
@@ -1345,16 +1370,6 @@ export function ConversationWorkspace({
                           {t('停止')}
                         </Button>
                       )}
-                      {reviewing && canReview && (
-                        <Button
-                          variant="primary"
-                          disabled={busy || remote?.controlPending}
-                          onClick={() => setModal('review')}
-                        >
-                          <Check size={15} />
-                          {t('确认完成')}
-                        </Button>
-                      )}
                     </div>
                     {current && (
                       <details className="conversation-details">
@@ -1367,7 +1382,7 @@ export function ConversationWorkspace({
                           <dd>{nodeName(current.sourceNodeID)}</dd>
                           <dt>{t('创建时间')}</dt>
                           <dd>{dateLabel(current.createdAt)}</dd>
-                          <dt>{t('验收要求')}</dt>
+                          <dt>{t('完成要求')}</dt>
                           <dd>
                             {task?.criteria || current.brainTask?.criteria || remote?.criteria}
                           </dd>
@@ -1406,7 +1421,7 @@ export function ConversationWorkspace({
                         ))}
                         {!artifacts.length && (
                           <p className="muted">
-                            {t('尚无官方文件差异。验收时请结合执行记录与实际文件核对。')}
+                            {t('尚无官方文件差异，请结合执行记录与实际文件查看结果。')}
                           </p>
                         )}
                         {current.brainTask?.executions.map((execution) => (
@@ -1451,7 +1466,7 @@ export function ConversationWorkspace({
                   </div>
                 )}
               </div>
-              {current && awayFromLatest && (
+              {current && !current.workflow && awayFromLatest && (
                 <button
                   type="button"
                   className="return-to-latest"
@@ -1464,7 +1479,7 @@ export function ConversationWorkspace({
               )}
             </div>
             <div className="composer-area">
-              <form
+              {!current?.workflow && <form
                 className={`conversation-composer ${!canWrite ? 'read-only' : ''}`}
                 onSubmit={send}
               >
@@ -1486,6 +1501,11 @@ export function ConversationWorkspace({
                     }
                   />
                 )}
+                {!current && data.user.owner && <div className="composer-target-hints">
+                  <span>{t('先分析与规划，再自动执行')}</span>
+                  <button type="button" disabled={busy} onClick={() => showMention('preferred')}>@ {t('首选 Node')}</button>
+                  <button type="button" disabled={busy} onClick={() => showMention('locked')}>@@ {t('锁定 Node')}</button>
+                </div>}
                 <textarea
                   ref={inputRef}
                   aria-label={t('会话消息')}
@@ -1513,7 +1533,11 @@ export function ConversationWorkspace({
                   value={draft}
                   onChange={(event) => {
                     const next = event.target.value;
-                    setDraft(next);
+                    const boundName = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
+                    const typedMode = boundName ? boundNodeMentionMode(next, boundName) : null;
+                    if (!current && targetNodeID && typedMode && typedMode !== targetMode) changeDraft({ text: next,
+                      routing: { kind: 'workflow', target: { mode: typedMode, nodeID: targetNodeID }, name: boundName } });
+                    else setDraft(next);
                     if (!current && data.user.owner) {
                       setMention(activeNodeMention(next, event.target.selectionStart, peers));
                       setMentionIndex(0);
@@ -1606,15 +1630,19 @@ export function ConversationWorkspace({
                 )}
                 {mention && (
                   <div
-                    id="node-mention-options"
                     className="node-mention-menu"
-                    role="listbox"
-                    aria-label={t('最近使用的 Node')}
+                    role="dialog"
+                    aria-label={t('选择执行 Node')}
                   >
                     <div className="node-mention-heading">
                       <AtSign size={14} />
                       <span>{mention.query ? t('匹配的 Node') : t('最近使用的 Node')}</span>
                     </div>
+                    <div className="node-mention-mode">{(['preferred', 'locked'] as const).map((mode) => <button type="button" key={mode}
+                      aria-pressed={(mention.mode || 'preferred') === mode} onMouseDown={(e) => e.preventDefault()} onClick={() => showMention(mode)}>
+                      {nodeMentionPrefix(mode)} {mode === 'preferred' ? t('首选') : t('锁定')}</button>)}</div>
+                    <p className="node-mention-mode-help">{mention.mode === 'locked' ? t('全部执行留在此 Node；仍可查询和取回其他节点的材料。') : t('优先使用此 Node；资源或工具不适合时可自动转交。')}</p>
+                    <div role="listbox" id="node-mention-options" aria-label={t('最近使用的 Node')}>
                     {mentionNodes.map((node, index) => {
                       const capability = nodeCapabilitySummary(
                         node,
@@ -1656,28 +1684,31 @@ export function ConversationWorkspace({
                       );
                     })}
                     {!mentionNodes.length && <p>{t('没有匹配的已配对 Node')}</p>}
+                    </div>
                   </div>
                 )}
                 {!current && targetNodeID && (
                   <div
                     className={`directed-node-chip ${!targetNode ? 'unavailable' : ''}`}
-                    title={t('固定目标：{{value1}}（{{value2}}）', {
+                    title={t('目标 Node：{{value1}}（{{value2}}）', {
                       value1: targetName,
                       value2: targetNodeID,
                     })}
                   >
                     <AtSign size={14} />
                     <span>
-                      {t('任务将发送给')}
+                      {targetMode === 'locked' ? '@@ ' + t('锁定') + ' ' : '@ ' + t('首选') + ' '}
                       {targetName}
                       {!targetNode && t(' · 目标暂未出现在已配对目录中，重试时会确认原投递')}
                     </span>
+                    <button type="button" className="target-mode-toggle" disabled={busy} onClick={() => changeTargetMode(targetMode === 'locked' ? 'preferred' : 'locked')}>
+                      {targetMode === 'locked' ? t('改为首选') : t('改为锁定')}</button>
                     <button
                       type="button"
-                      aria-label={t('取消指定 Node，改为本机执行')}
-                      title={t('取消指定 Node，改为本机执行')}
+                      aria-label={t('清除目标，自动选择 Node')}
+                      title={t('清除目标，自动选择 Node')}
                       disabled={busy}
-                      onClick={() => setRouting({ kind: 'local' })}
+                      onClick={() => changeTargetMode(null)}
                     >
                       <X size={13} />
                     </button>
@@ -1705,7 +1736,7 @@ export function ConversationWorkspace({
                               }}
                             >
                               <option value="">
-                                {scope === 'automatic' ? t('临时工作目录') : t('选择文件夹')}
+                                {t('本机规划工作目录')}
                               </option>
                               {data.projects.map((p) => (
                                 <option key={p.id} value={p.id}>
@@ -1718,7 +1749,7 @@ export function ConversationWorkspace({
                             </select>
                           </label>
                         )}
-                        {!targetNodeID && scope === 'local' && (
+                        {(!targetNodeID || targetNodeID === local?.id) && (
                           <label className="composer-select model-select">
                             <Bot size={15} />
                             <select
@@ -1798,9 +1829,9 @@ export function ConversationWorkspace({
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => setRouting({ kind: 'local' })}
+                          onClick={() => changeTargetMode(null)}
                         >
-                          {t('取消指定，改为本机')}
+                          {t('清除目标，自动选择 Node')}
                         </button>
                       </div>
                     ) : (
@@ -1810,23 +1841,25 @@ export function ConversationWorkspace({
                           disabled={busy}
                           onChange={(e) => {
                             setScope(e.target.value as typeof scope);
-                            if (e.target.value === 'automatic') setProjectID('');
                           }}
                         >
-                          <option value="local">{t('本机执行')}</option>
+                          <option value="local">{t('@@ 锁定本机执行')}</option>
                           {data.user.owner && (
                             <option value="automatic">{t('自动分配到可用节点')}</option>
                           )}
                         </select>
                       </Field>
                     )}
-                    {!targetNodeID && scope === 'local' ? (
-                      <Field label={t('AI 审批')}>
+                    {!targetNodeID || targetNodeID === local?.id ? (
+                      <Field label={t('本机执行审批')}>
                         <select
-                          value={mode}
+                          value={approvalChoice}
                           disabled={busy}
-                          onChange={(e) => setMode(e.target.value as ApprovalMode)}
+                          onChange={(e) => setApprovalChoice(e.target.value as ApprovalMode | 'default')}
                         >
+                          <option value="default">
+                            {t('跟随本机设置（{{mode}}）', { mode: approvalModeLabels[data.executionPolicy.approvalMode] })}
+                          </option>
                           {Object.entries(approvalModeLabels).map(([value, label]) => (
                             <option value={value} key={value}>
                               {label}
@@ -1835,9 +1868,9 @@ export function ConversationWorkspace({
                         </select>
                       </Field>
                     ) : (
-                      <p className="muted">{t('执行节点使用自己的模型和审批设置。')}</p>
+                      <p className="muted">{t('远端执行使用目标 Node 配置的模型、目录和审批设置。')}</p>
                     )}
-                    {mode === 'full' && scope === 'local' && !targetNodeID && (
+                    {mode === 'full' && (!targetNodeID || targetNodeID === local?.id) && (
                       <p className="notice">
                         {t('允许文件、命令、联网及项目外目录操作自动执行。请只用于你信任的环境。')}
                       </p>
@@ -1847,16 +1880,16 @@ export function ConversationWorkspace({
                         value={criteria}
                         disabled={busy}
                         onChange={(e) => setCriteria(e.target.value)}
-                        maxLength={scope === 'automatic' || targetNodeID ? 2000 : 4000}
+                        maxLength={4000}
                         rows={2}
                         placeholder={t('例如：通过测试，并说明修改结果')}
                       />
                     </Field>
                   </div>
                 )}
-              </form>
+              </form>}
               <div className="composer-hint">
-                {waitingForRemoteSession
+                {current?.workflow ? t('展开执行过程，可查看计划、步骤详情和执行记录。') : waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')
@@ -1865,17 +1898,33 @@ export function ConversationWorkspace({
                       : current
                         ? t('Enter 发送 · Shift + Enter 换行')
                         : targetNodeID
-                          ? t('发送后由 {{value1}} 按自己的模型和审批设置执行。', {
-                              value1: targetName,
-                            })
-                          : scope === 'automatic'
-                            ? t('发送后由可用节点执行，文件和模型由执行节点管理。')
-                            : t('发送后在所选文件夹执行，AI 按当前审批设置操作。')}
+                          ? targetMode === 'locked'
+                            ? t('先分析与规划，全部执行锁定在 {{node}}；仍可查询其他节点的材料。', { node: targetName })
+                            : t('先分析与规划，优先使用 {{node}}；必要时自动转交。', { node: targetName })
+                          : t('发送后先分析与规划，再按资源与依赖自动执行。')}
               </div>
             </div>
           </>
         ) : (
           <div className="conversation-settings-page">
+            {(view === 'models' || view === 'network') && (
+              <nav className="device-settings-tabs" aria-label={t('设备设置分类')}>
+                <button
+                  type="button"
+                  aria-current={view === 'models' ? 'page' : undefined}
+                  onClick={() => setView('models')}
+                >
+                  {t('模型与执行')}
+                </button>
+                <button
+                  type="button"
+                  aria-current={view === 'network' ? 'page' : undefined}
+                  onClick={() => setView('network')}
+                >
+                  {t('节点与 Brain')}
+                </button>
+              </nav>
+            )}
             {view === 'diagnostics' ? (
               <NodeDiagnosticsView
                 key={diagnosticTarget || 'local'}
@@ -1896,10 +1945,43 @@ export function ConversationWorkspace({
                 owner={data.user.owner}
                 engineReady={data.engine.ready}
                 onChanged={() => void refresh()}
+                executionSettings={
+                  data.user.owner && (
+                    <section className="network-section local-execution-settings">
+                      <div className="section-title">
+                        <h2>{t('本机执行能力')}</h2>
+                      </div>
+                      <ExecutionPolicyCard
+                        key={data.executionPolicy.updatedAt || 'new-policy'}
+                        policy={data.executionPolicy}
+                        projects={data.projects}
+                        models={data.engine.models}
+                        actions={{
+                          owner: data.user.owner,
+                          busy,
+                          saveExecutionPolicy: networkActions.onSaveExecutionPolicy,
+                        }}
+                      />
+                      <ExecutionConcurrencySettings policy={data.executionPolicy} onChanged={() => void refresh()} />
+                      <Button onClick={() => setModal('folder')}>
+                        <FolderOpen size={16} />
+                        {t('添加执行文件夹')}
+                      </Button>
+                      <ResourceDiscovery
+                        nodes={data.resourceDirectory || []}
+                        refresh={refresh}
+                        nodeName={nodeName}
+                        localNodeID={local?.id}
+                        projects={data.projects}
+                      />
+                    </section>
+                  )
+                }
               />
             ) : (
               <>
                 <NodeNetworkView
+                  onEditConcurrency={() => setModal('concurrency')}
                   network={data.network}
                   owner={data.user.owner}
                   projects={data.projects}
@@ -1907,6 +1989,7 @@ export function ConversationWorkspace({
                   executionPolicy={data.executionPolicy}
                   busy={busy}
                   conversationsInSidebar
+                  hideExecutionPolicy
                   {...networkActions}
                 />
                 {data.user.owner && (
@@ -1931,93 +2014,24 @@ export function ConversationWorkspace({
           ) : (
             <p className="muted">{t('本机队列由 Node 所有者管理。')}</p>
           )}
-          <section className="paired-machines">
-            <div className="rail-heading">
-              <Radio size={17} />
-              <h2>{t('已配对机器')}</h2>
-              <span>{peers.length}</span>
-            </div>
-            <div className="machine-list">
-              {peers.map((node) => {
-                const capability = nodeCapabilitySummary(
-                  node,
-                  Date.now(),
-                  connected && !connectionError,
-                );
-                const fresh = capability.loadFresh;
-                return (
-                  <article
-                    className={`machine-card ${node.online ? '' : 'offline'}`}
-                    key={node.id}
-                    title={capability.detail}
-                  >
-                    <div className="machine-heading">
-                      <NodeAvatar icon={node.icon} name={node.name} />
-                      <div>
-                        <strong>{nodeDisplayName(node)}</strong>
-                        <small>
-                          <i
-                            className={`status-dot ${node.online && node.channelReady ? 'online' : ''}`}
-                          />
-                          {capability.status}
-                        </small>
-                      </div>
-                      {data.user.owner && (
-                        <button
-                          className="machine-remark-button"
-                          aria-label={t('编辑 {{value1}} 的备注名', { value1: node.name })}
-                          title={t('编辑本地备注名')}
-                          onClick={() => setRemarkNodeID(node.id)}
-                        >
-                          <Pencil size={13} />
-                        </button>
-                      )}
-                    </div>
-                    {fresh && node.worker && (
-                      <div className="machine-load">
-                        <span>
-                          {t('执行中')}
-                          <b>{node.worker.load.runningTasks}</b>
-                        </span>
-                        <span>
-                          {t('空闲槽')}
-                          <b>{node.worker.load.availableSlots}</b>
-                        </span>
-                        <span>
-                          {t('等待')}
-                          <b>{capability.waiting ?? t('未知')}</b>
-                        </span>
-                        <div className="machine-load-bar">
-                          <i
-                            style={{
-                              width: `${Math.max(0, Math.min(100, node.worker.load.memoryUsedPercent))}%`,
-                            }}
-                          />
-                        </div>
-                        <small>
-                          {t('内存 {{value1}}% {{value2}}', {
-                            value1: Math.round(node.worker.load.memoryUsedPercent),
-                            value2:
-                              node.worker.load.cpuPercent !== null
-                                ? ` · CPU ${Math.round(node.worker.load.cpuPercent)}%`
-                                : '',
-                          })}
-                        </small>
-                      </div>
-                    )}
-                    {node.online && node.channelReady && node.worker && !fresh && (
-                      <p className="muted">{t('等待最新负载')}</p>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          </section>
+          <PairedMachines
+            nodes={peers}
+            items={all}
+            connected={connected && !connectionError}
+            owner={data.user.owner}
+            remark={setRemarkNodeID}
+            remove={setDeleteNodeID}
+          />
           <div className="rail-footer">
             <i className={`status-dot ${connected ? 'online' : ''}`} />
             {connected ? t('状态实时同步') : t('正在恢复状态连接')}
           </div>
         </aside>
+      )}
+      {modal === 'concurrency' && data.user.owner && (
+        <Modal title={t('并发设置')} close={() => setModal(null)}>
+          <ExecutionConcurrencySettings policy={data.executionPolicy} onChanged={() => void refresh()} />
+        </Modal>
       )}
       {modal === 'about' && (
         <AboutRivloom
@@ -2176,50 +2190,53 @@ export function ConversationWorkspace({
           </form>
         </Modal>
       )}
-      {modal === 'review' && current && (
+      {queueConfirmation && (
         <Modal
-          title={t('确认会话完成')}
-          subtitle={t('请先检查实际文件和执行结果。')}
-          close={() => setModal(null)}
+          title={t('队列任务较多')}
+          subtitle={queueConfirmation.name}
+          close={() => answerQueue(false)}
         >
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              const note = String(form.get('note'));
-              void perform(async () => {
-                if (task)
-                  await api(`/tasks/${task.id}/accept`, {
-                    version: task.version,
-                    note,
-                    confirmed: true,
-                  });
-                else await control({ kind: 'accept', note });
-                setModal(null);
-              });
-            }}
-          >
-            <Field label={t('核对结果')}>
-              <textarea
-                name="note"
-                required
-                maxLength={4000}
-                rows={4}
-                placeholder={t('说明你检查了什么，以及完成情况')}
-              />
-            </Field>
-            <label className="checkbox">
-              <input type="checkbox" required />
-              {t('已核对结果符合要求，确认完成。')}
-            </label>
-            {error && <p className="error">{systemText(error)}</p>}
-            <div className="modal-actions">
-              <Button onClick={() => setModal(null)}>{t('取消')}</Button>
-              <Button type="submit" variant="primary" disabled={busy}>
-                {t('确认完成')}
-              </Button>
-            </div>
-          </form>
+          <p>
+            {t('该 Node「{{name}}」已有 {{count}} 个任务堆积，是否继续提交任务？', {
+              name: queueConfirmation.name,
+              count: queueConfirmation.count,
+            })}
+          </p>
+          <p className="muted">{queueConfirmation.title}</p>
+          <p className="muted">
+            {t('默认在 10 个任务时提醒。继续提交后，任务会按队列顺序等待执行。')}
+          </p>
+          <div className="modal-actions">
+            <Button onClick={() => answerQueue(false)}>{t('取消')}</Button>
+            <Button variant="primary" onClick={() => answerQueue(true)}>
+              {t('继续提交')}
+            </Button>
+          </div>
+        </Modal>
+      )}
+      {deleteNodeID && (
+        <Modal
+          title={t('删除配对机器')}
+          subtitle={nodeName(deleteNodeID)}
+          close={() => setDeleteNodeID(null)}
+        >
+          <p>{t('将取消与这台机器的配对。由它发来且仍在本机执行的任务将停止。')}</p>
+          {error && <p className="error">{systemText(error)}</p>}
+          <div className="modal-actions">
+            <Button onClick={() => setDeleteNodeID(null)}>{t('取消')}</Button>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={() =>
+                void perform(async () => {
+                  await api(`/network/trusted/${deleteNodeID}/revoke`, { confirmed: true });
+                  setDeleteNodeID(null);
+                })
+              }
+            >
+              {t('确认删除')}
+            </Button>
+          </div>
         </Modal>
       )}
     </ResizableWorkspace>

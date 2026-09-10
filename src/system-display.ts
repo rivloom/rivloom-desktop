@@ -33,7 +33,7 @@ export function executionStateText(value: string) {
         assigned: t('已分配'),
         running: t('执行中'),
         waiting: t('等待处理'),
-        review: t('待验收'),
+        review: t('已完成'),
         completed: t('已完成'),
         failed: t('执行失败'),
         error: t('执行失败'),

@@ -1,6 +1,6 @@
 import { executionSummaryText } from './system-display';
 import { t, systemText, language } from '../shared/i18n.ts';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   BrainCircuit,
   Check,
@@ -29,10 +29,12 @@ import type {
   RemoteTaskInvite,
   RivloomNode,
 } from '../shared/types';
-import { stateLabels } from '../shared/types';
+import { approvalModeLabels, stateLabels } from '../shared/types';
 import { NodeAvatar } from './node-avatar';
 import { nodeDisplayName } from './node-mentions';
 import { useDisplayClock } from './use-display-clock';
+import { queueReminderThreshold } from '../shared/queue-backlog.ts';
+import { machineStatus } from './machine-status';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -259,10 +261,12 @@ const bytes = (value: number | null) => {
 
 function BrainTopologyCard({
   brain,
+  nodes,
   localNodeID,
   now,
 }: {
   brain: BrainTopology;
+  nodes: RivloomNode[];
   localNodeID?: string;
   now: number;
 }) {
@@ -299,6 +303,10 @@ function BrainTopologyCard({
         {brain.workers.length ? (
           brain.workers.map((worker) => {
             const fresh = now - Date.parse(worker.load.sampledAt) <= 30_000;
+            const node = nodes.find((node) => node.id === worker.nodeID);
+            const report = node ? machineStatus(node, now) : null;
+            const remoteLimit = report?.concurrency?.remoteLimit ?? (fresh && worker.accepting
+              ? worker.load.runningTasks + worker.load.availableSlots : null);
             return (
               <article key={worker.nodeID} className={!fresh ? 'stale' : ''}>
                 <div className="brain-worker-heading">
@@ -307,10 +315,14 @@ function BrainTopologyCard({
                   </strong>
                   <span>
                     {fresh
-                      ? t('{{value1}} 个可用槽位', { value1: worker.load.availableSlots })
+                      ? t('可立即执行 {{value1}} 项', { value1: worker.load.availableSlots })
                       : t('报告已过期')}
                   </span>
                 </div>
+                <p className="brain-worker-concurrency">
+                  {report?.concurrency && <span>{t('本机任务不设固定上限')} · </span>}
+                  {remoteLimit !== null && <strong>{t('其他机器任务并发上限：{{count}}', { count: remoteLimit })}</strong>}
+                </p>
                 <p>
                   {t('{{value1}} · {{value2}} 线程 · 内存{{value3}} {{value4}}', {
                     value1: worker.hardware.cpuModel,
@@ -453,7 +465,7 @@ function ScheduledTaskForm({
         <textarea name="description" required maxLength={4000} rows={3} />
       </label>
       <label>
-        <span>{t('验收标准')}</span>
+        <span>{t('完成要求')}</span>
         <textarea name="criteria" required maxLength={2000} rows={2} />
       </label>
       <div className="scheduled-requirements">
@@ -510,7 +522,7 @@ const brainTaskStatus: Record<BrainTask['status'], string> = {
     return t('等待处理');
   },
   get review() {
-    return t('等待验收');
+    return t('已完成');
   },
   get completed() {
     return t('已完成');
@@ -546,7 +558,7 @@ function BrainTaskCard({
       </div>
       <p className="remote-task-description">{task.description}</p>
       <div className="remote-task-criteria">
-        <strong>{t('验收标准')}</strong>
+        <strong>{t('完成要求')}</strong>
         <p>{task.criteria}</p>
       </div>
       <div className="remote-task-meta">
@@ -609,7 +621,7 @@ function BrainTaskCard({
   );
 }
 
-function ExecutionPolicyCard({
+export function ExecutionPolicyCard({
   policy,
   projects,
   models,
@@ -618,9 +630,10 @@ function ExecutionPolicyCard({
   policy: NodeExecutionPolicy;
   projects: Project[];
   models: { id: string; name: string }[];
-  actions: NetworkActions;
+  actions: Pick<NetworkActions, 'owner' | 'busy' | 'saveExecutionPolicy'>;
 }) {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(policy.approvalMode);
+  useEffect(() => setApprovalMode(policy.approvalMode), [policy.approvalMode, policy.updatedAt]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -636,11 +649,13 @@ function ExecutionPolicyCard({
       <div>
         <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
         <strong>{policy.enabled ? t('本机执行能力已开放') : t('本机执行能力已关闭')}</strong>
+        <p>{t('已保存的审批模式：{{mode}}', { mode: approvalModeLabels[policy.approvalMode] })}</p>
         <p>
           {t(
             '旧版受信邀请可接收后等待；自动调度只在能力开放且有空闲槽位时接受执行。 模型和审批模式由本机管理，路径与凭据不外传。Portable 任务使用独立普通文件夹。',
           )}
         </p>
+        <p>{t('新任务默认沿用已保存的审批模式；本机发起时可单独选择。已有任务继续使用创建时的模式。')}</p>
       </div>
       <form onSubmit={submit}>
         <label>
@@ -661,6 +676,7 @@ function ExecutionPolicyCard({
                 ? t('项目内修改和命令自动批准；联网操作仍会询问。')
                 : t('文件、命令、联网和项目外目录自动批准。敏感凭据与子代理仍禁止。')}
           </small>
+          {approvalMode !== policy.approvalMode && <small role="status">{t('审批模式尚未保存，请点击下方按钮保存后生效。')}</small>}
         </label>
         <label>
           <span>{t('本机项目')}</span>
@@ -761,7 +777,7 @@ function RemoteTaskCard({
       </div>
       <p className="remote-task-description">{task.description}</p>
       <div className="remote-task-criteria">
-        <strong>{t('验收标准')}</strong>
+        <strong>{t('完成要求')}</strong>
         <p>{task.criteria}</p>
       </div>
       <div className="remote-task-meta">
@@ -822,7 +838,7 @@ function RemoteTaskCard({
             ) : (
               <p>
                 {t(
-                  'OpenCode 没有返回可展示的会话差异。Rivloom 不扫描或哈希执行机文件夹；验收前请结合执行摘要，必要时让执行机参与者直接检查本地文件。',
+                  'OpenCode 没有返回可展示的会话差异。Rivloom 不扫描或哈希执行机文件夹；请结合执行摘要，必要时让执行机参与者直接检查本地文件。',
                 )}
               </p>
             )}
@@ -975,12 +991,9 @@ function RemoteTaskCard({
           'stopped',
           'interrupted',
           'failed',
-          'review',
         ].includes(task.executionState) && (
           <details className="remote-followup">
-            <summary>
-              {task.executionState === 'review' ? t('退回修改并继续') : t('补充任务要求')}
-            </summary>
+            <summary>{t('补充任务要求')}</summary>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -996,54 +1009,17 @@ function RemoteTaskCard({
                 required
                 maxLength={12000}
                 rows={4}
-                placeholder={t('补充新的约束、修改意见或验收要求…')}
+                placeholder={t('补充新的约束、修改意见或完成要求…')}
               />
               <button
                 className="button primary compact"
                 type="submit"
                 disabled={actions.busy || task.controlPending || task.deliveryPending}
               >
-                {task.executionState === 'review' ? t('退回并继续执行') : t('发送补充要求')}
+                {t('发送补充要求')}
               </button>
             </form>
           </details>
-        )}
-      {actions.owner &&
-        task.direction === 'outgoing' &&
-        task.executionState === 'review' &&
-        peer?.capabilities.includes('remote-results-v1') && (
-          <form
-            className="remote-acceptance-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = new FormData(event.currentTarget);
-              actions.controlRemoteTask(task.id, task.executionSequence, {
-                kind: 'accept',
-                note: String(form.get('remote-acceptance-note') || ''),
-              });
-            }}
-          >
-            <strong>{t('归属 Brain 验收')}</strong>
-            <textarea
-              name="remote-acceptance-note"
-              required
-              maxLength={4000}
-              rows={3}
-              placeholder={t('记录已核对的结果、测试和限制…')}
-            />
-            <label>
-              <input type="checkbox" required />
-              {t('我已根据可见差异、执行摘要和验收标准核对本次交付；验收不会提交、推送或部署。')}
-            </label>
-            <button
-              className="button primary compact"
-              type="submit"
-              disabled={actions.busy || task.controlPending || task.deliveryPending}
-            >
-              <Check size={14} />
-              {t('确认远程验收')}
-            </button>
-          </form>
         )}
       {actions.owner &&
         task.direction === 'outgoing' &&
@@ -1065,7 +1041,9 @@ function RemoteTaskCard({
 }
 
 export function NodeNetworkView({
+  onEditConcurrency,
   conversationsInSidebar = false,
+  hideExecutionPolicy = false,
   network,
   owner,
   projects,
@@ -1082,7 +1060,9 @@ export function NodeNetworkView({
   onControlRemoteTask,
   onSaveExecutionPolicy,
 }: {
+  onEditConcurrency?: () => void;
   conversationsInSidebar?: boolean;
+  hideExecutionPolicy?: boolean;
   network: NodeNetwork;
   owner: boolean;
   projects: Project[];
@@ -1197,11 +1177,19 @@ export function NodeNetworkView({
           </div>
           <p>{t('每个 Brain 固定一个 Master Host；同一 Worker 可直接注册给多个 Brain。')}</p>
         </div>
+        <p className="muted">
+          {t('本机任务不设固定并发上限；其他机器任务默认同时执行 3 项，可调整为 1–10 项。队列达到 {{count}} 项时提醒，确认后仍可继续提交。', { count: queueReminderThreshold })}
+        </p>
+        {owner && onEditConcurrency && <button type="button" className="queue-concurrency-control brain-concurrency-control" onClick={onEditConcurrency}>
+          <strong>{t('当前本机设置：本机不限 · 其他机器 {{count}} 项', { count: executionPolicy.maxConcurrent })}</strong>
+          <span className="queue-concurrency-edit"><Pencil size={13} />{t('修改并发')}</span>
+        </button>}
         {network.brains.length ? (
           <div className="brain-topology-grid">
             {network.brains.map((brain) => (
               <BrainTopologyCard
                 brain={brain}
+                nodes={[...(network.local ? [network.local] : []), ...(network.paired || []), ...network.nearby]}
                 localNodeID={network.local?.id}
                 now={now}
                 key={brain.id}
@@ -1228,7 +1216,7 @@ export function NodeNetworkView({
         </section>
       )}
 
-      {owner && (
+      {owner && !hideExecutionPolicy && (
         <section className="network-section">
           <div className="section-title">
             <div>

@@ -1,6 +1,8 @@
 import { t } from '../shared/i18n.ts';
+import type { WorkflowTarget } from '../shared/workflows.ts';
 export type ConversationRouting =
-  { kind: 'local' } | { kind: 'automatic' } | { kind: 'node'; nodeID: string; name: string };
+  { kind: 'local' } | { kind: 'automatic' } | { kind: 'node'; nodeID: string; name: string } |
+  { kind: 'workflow'; target: WorkflowTarget; name?: string };
 
 export type ConversationDraft = {
   files?: import('./task-file-upload.ts').DraftTaskFile[];
@@ -16,10 +18,13 @@ export function createConversationDraft(
 ): ConversationDraft {
   return { text: '', routing: { kind: 'local' }, requestID };
 }
+export function createWorkflowDraft(requestID: string = crypto.randomUUID()): ConversationDraft {
+  return { text: '', routing: { kind: 'workflow', target: { mode: 'automatic' } }, requestID };
+}
 
 /** Match textarea maxLength, including its UTF-16 length convention. Never modify the draft. */
 export function conversationInputUsage(draft: ConversationDraft, existingConversation: boolean) {
-  const limit = !existingConversation && draft.routing.kind !== 'local' ? 4000 : 12000;
+  const limit = !existingConversation && draft.routing.kind !== 'local' && draft.routing.kind !== 'workflow' ? 4000 : 12000;
   const length = draft.text.length;
   const remaining = limit - length;
   return {
@@ -32,6 +37,8 @@ export function conversationInputUsage(draft: ConversationDraft, existingConvers
 }
 
 function routingIdentity(routing: ConversationRouting) {
+  if (routing.kind === 'workflow') return routing.target.mode === 'automatic' ? 'workflow:automatic' :
+    `workflow:${routing.target.mode}:${routing.target.nodeID}`;
   return routing.kind === 'node' ? `node:${routing.nodeID}` : routing.kind;
 }
 
@@ -88,15 +95,16 @@ export function clearSubmittedDraft(
   drafts: Record<string, ConversationDraft>,
   key: string,
   requestID: string,
+  factory: () => ConversationDraft = createConversationDraft,
 ): Record<string, ConversationDraft> {
   if (drafts[key]?.requestID !== requestID) return drafts;
-  return { ...drafts, [key]: createConversationDraft() };
+  return { ...drafts, [key]: factory() };
 }
 
 export function createdConversationKey(routing: ConversationRouting, taskID: string): string {
   if (!taskID?.trim()) throw new Error(t('服务端没有返回已创建会话的标识，请保留草稿并重试确认。'));
   const prefix =
-    routing.kind === 'node' ? 'remote' : routing.kind === 'automatic' ? 'brain' : 'local';
+    routing.kind === 'workflow' ? 'workflow' : routing.kind === 'node' ? 'remote' : routing.kind === 'automatic' ? 'brain' : 'local';
   return `${prefix}:${taskID}`;
 }
 

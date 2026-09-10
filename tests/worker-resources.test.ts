@@ -135,6 +135,19 @@ test('worker inventory is asynchronous and unknown GPU hardware cannot admit tas
   await settle();
 });
 
+test('CPU-only requirements allow GPU-equipped workers while required GPU capacity is enforced', async () => {
+  const f = fixture();
+  try {
+    const report = await f.ready();
+    assert(report.hardware.gpus.length > 0);
+    assert(workerMatchesTask(report, { projectID: null, requirements: { gpu: false } }, initialTime));
+    assert(workerMatchesTask(report, { projectID: null, requirements: { gpu: true } }, initialTime));
+    assert(!workerMatchesTask({ ...report, hardware: { ...report.hardware, gpus: [] } },
+      { projectID: null, requirements: { gpu: true } }, initialTime));
+    assert(!workerMatchesTask(report, { projectID: null, requirements: { gpu: false, minimumGpuMemoryBytes: Number.MAX_SAFE_INTEGER } }, initialTime));
+  } finally { f.sampler.dispose(); }
+});
+
 test('cached OS measurements preserve sample time while admission inputs remain live', async () => {
   const f = fixture();
   const first = await f.ready();

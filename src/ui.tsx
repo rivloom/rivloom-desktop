@@ -53,7 +53,7 @@ export function Modal({
     ref.current?.showModal();
   }, []);
   return (
-    <dialog ref={ref} className="modal conversation-modal" onCancel={close}>
+    <dialog ref={ref} className="modal conversation-modal" onCancel={(event) => { event.preventDefault(); close(); }} aria-label={title}>
       <div className="modal-heading">
         <div>
           <h2>{title}</h2>

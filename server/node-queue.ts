@@ -164,14 +164,14 @@ export class NodeQueueStore {
 
   snapshot(): NodeQueueSnapshot {
     const metadata = this.metadata();
-    let position = 0;
+    const position = { local: 0, remote: 0 };
     return {
       version: metadata.version,
       paused: !!metadata.paused,
       updatedAt: metadata.updated_at,
       entries: this.list().map((entry) => ({
         ...entry,
-        position: !metadata.paused && isNodeQueueCandidate(entry) ? ++position : null,
+        position: !metadata.paused && isNodeQueueCandidate(entry) ? ++position[entry.source.kind] : null,
       })),
     };
   }
@@ -467,7 +467,7 @@ export function canReleaseUnboundReservation(
 export type NodeQueueRecoveryFacts = {
   source: 'live' | 'missing' | 'terminal';
   endReason?: NodeQueueReason;
-  task: { id: string; state: string; sessionID: string | null } | null;
+  task: { id: string; state: string; sessionID: string | null; error?: string | null; collaboration?: { role: string } } | null;
 };
 export type NodeQueueRecoveryDecision =
   | { action: 'none' | 'reconcile_binding' | 'resume_binding' | 'dispatch' | 'retain_execution' }
@@ -482,6 +482,10 @@ export function nodeQueueRecoveryDecision(
   if (entry.state === 'admitted' && facts.task) {
     if (facts.task.id !== entry.localTaskID)
       return { action: 'interrupt', reason: { code: 'state_unknown' } };
+    // Task reaches stopped only after the existing stop flow confirms termination.
+    // Reconcile persisted rows too; a restart must never re-dispatch this execution.
+    if (facts.task.state === 'stopped')
+      return { action: 'end', reason: { code: 'stopped' } };
     if (facts.task.state === 'accepted')
       return {
         action: 'end',
@@ -489,6 +493,8 @@ export function nodeQueueRecoveryDecision(
           code: 'completed',
         },
       };
+    if (facts.task.state === 'failed' && facts.task.collaboration?.role === 'planner' && facts.task.error === 'workflow_invalid_outcome')
+      return { action: 'end', reason: { code: 'failed' } };
     if (entry.admissionPhase === 'started') return { action: 'retain_execution' };
     if (entry.admissionPhase === 'starting' || facts.task.sessionID)
       return facts.task.state === 'ready'

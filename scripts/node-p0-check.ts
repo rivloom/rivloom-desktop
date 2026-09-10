@@ -146,6 +146,7 @@ try {
     201,
   );
   const policy = {
+    maxConcurrent: 1,
     projectID: project.id,
     model: 'fixture/m34',
     approvalMode: 'ask',
@@ -245,14 +246,14 @@ try {
   model.releaseNext();
   await until(
     () => receiver.bootstrap(),
-    (state) => state.tasks.find((item) => item.id === task.id)?.state === 'review',
-    'deterministic result reaches review',
+    (state) => state.tasks.find((item) => item.id === task.id)?.state === 'accepted',
+    'deterministic result completes automatically',
   );
   await until(
     () => sender.network(),
     (network) =>
-      network.remoteTasks.find((item) => item.id === remoteID)?.executionState === 'review',
-    'sender receives review state',
+      network.remoteTasks.find((item) => item.id === remoteID)?.executionState === 'accepted',
+    'sender receives completion state',
   );
   await receiver.stop();
   await start(receiver);
@@ -262,9 +263,13 @@ try {
   await wait(5500); // Cross the real processor tick; no second task/session may appear.
   await assertSingleExecution(remoteID, task.id, task.sessionID!);
   const reviewed = (await receiver.bootstrap()).tasks.find((item) => item.id === task.id)!;
-  assert.equal(reviewed.state, 'review');
-  assert.equal((await receiver.network()).local!.worker!.load.availableSlots, 0);
-  pass('Restart and late retry retain one reviewed session; review still occupies the Node slot', {
+  assert.equal(reviewed.state, 'accepted');
+  await until(
+    () => receiver.network(),
+    (network) => network.local?.worker?.load.availableSlots === 1,
+    'completion frees capacity',
+  );
+  pass('Restart and late retry retain one completed session with its capacity released', {
     remoteID,
     taskID: task.id,
     sessionID: task.sessionID,
@@ -348,24 +353,12 @@ try {
       );
       return result.createdTaskID;
     };
-    const acceptRemote = async (owner: ServiceClient, id: string) => {
-      const network = await until(
+    const waitRemoteCompletion = async (owner: ServiceClient, id: string) => {
+      await until(
         () => owner.network(),
         (network) =>
-          network.remoteTasks.find((item) => item.id === id)?.executionState === 'review',
-        'remote review available',
-      );
-      const invite = network.remoteTasks.find((item) => item.id === id)!;
-      await owner.call(`/network/tasks/${id}/control`, {
-        confirmed: true,
-        expectedExecutionSequence: invite.executionSequence,
-        action: { kind: 'accept', note: 'Verified the isolated deterministic result.' },
-      });
-      await until(
-        () => receiver.bootstrap(),
-        (state) =>
-          state.tasks.find((item) => item.remoteOrigin?.remoteTaskID === id)?.state === 'accepted',
-        'originating Node accepts its own result',
+          network.remoteTasks.find((item) => item.id === id)?.executionState === 'accepted',
+        'remote automatic completion',
       );
     };
     const run = async (id: string, remote: boolean) => {
@@ -384,7 +377,7 @@ try {
       )!;
       assert(current.sessionID);
       assert.equal(
-        state.tasks.filter((item) =>
+        state.tasks.filter((item) => !!item.remoteOrigin === remote &&
           ['running', 'waiting_approval', 'waiting_input', 'review', 'interrupted'].includes(
             item.state,
           ),
@@ -402,12 +395,13 @@ try {
       model.releaseNext(Math.max(1, model.pendingRequests));
       await until(
         () => receiver.bootstrap(),
-        (state) => state.tasks.find((item) => item.id === id)?.state === 'review',
-        'current execution reaches review',
+        (state) => state.tasks.find((item) => item.id === id)?.state === 'accepted',
+        'current execution completes automatically',
       );
     };
 
-    // Keep the first verified session in review, creating real ordinary busy capacity.
+    // Pause the queue explicitly; completed tasks no longer hold execution capacity.
+    await pause(true);
     const a1 = await send(sender, 'M3.5 queue sender A1');
     const operator = (await receiver.bootstrap()).user.id;
     const local = await receiver.call<Task>(
@@ -441,18 +435,18 @@ try {
       ),
       [a1, local.id, c1, a2],
     );
-    assert(waiting.every((entry, index) => entry.position === index + 1));
-    assert.equal((await receiver.bootstrap()).tasks.length, 2); // Existing review + unstarted local Task.
+    assert(waiting.every((entry) => entry.position === null));
+    assert.equal((await receiver.bootstrap()).tasks.length, 2); // Existing completion + unstarted local Task.
     assert.deepEqual(officialSessions(receiver), [task.sessionID]);
-    await receipt(sender, a1, 'queued', 1);
-    await receipt(other, c1, 'queued', 3);
-    await receipt(sender, a2, 'queued', 4);
+    await receipt(sender, a1, 'queued', null);
+    await receipt(other, c1, 'queued', null);
+    await receipt(sender, a2, 'queued', null);
     const senderQueueSequence = (await sender.network()).remoteTasks.find((item) => item.id === a1)!
       .queueReceipt!.queueSequence;
     const a1Entry = remoteRow(queued, a1)!;
     const c1Entry = remoteRow(queued, c1)!;
     const a2Entry = remoteRow(queued, a2)!;
-    pass('Ordinary busy Node accepts mixed-source FIFO without precreating remote business Tasks', {
+    pass('Paused Node accepts mixed-source FIFO without precreating remote business Tasks', {
       receivedOrder: waiting.map((entry) => ({
         source: entry.source,
         sequence: entry.receivedSequence,
@@ -479,7 +473,7 @@ try {
     assert.deepEqual(rejectedReplay, rejected.result);
     await receipt(sender, a1, 'held', null);
     await receipt(sender, a2, 'rejected', null);
-    await receipt(other, c1, 'queued', 1);
+    await receipt(other, c1, 'queued', null);
     const receiptAfterControl = (await sender.network()).remoteTasks.find(
       (item) => item.id === a1,
     )!;
@@ -516,7 +510,7 @@ try {
       afterRestart.entries.map((entry) => [entry.id, entry.order, entry.state, entry.localTaskID]),
       beforeRestart.entries.map((entry) => [entry.id, entry.order, entry.state, entry.localTaskID]),
     );
-    await acceptRemote(sender, remoteID);
+    await waitRemoteCompletion(sender, remoteID);
     await wait(5500);
     assert.deepEqual(officialSessions(receiver), [task.sessionID]);
     pass(
@@ -536,22 +530,14 @@ try {
       },
       409,
     );
-    await finish(c1Task.id);
-    assert.equal((await receiver.network()).local!.worker!.load.availableSlots, 0);
-    await acceptRemote(other, c1);
     const localTask = await run(local.id, false);
+    await finish(c1Task.id);
+    await until(() => receiver.bootstrap(), (state) => state.tasks.find((item) => item.id === localTask.id)?.state === 'accepted', 'concurrent local finishes');
+    await waitRemoteCompletion(other, c1);
     await control(a1Entry.id, 'resume');
-    await receipt(sender, a1, 'queued', 1);
-    await finish(localTask.id);
-    const localReview = (await receiver.bootstrap()).tasks.find((item) => item.id === local.id)!;
-    await receiver.call(`/tasks/${local.id}/accept`, {
-      confirmed: true,
-      version: localReview.version,
-      note: 'Verified local deterministic result.',
-    });
     const a1Task = await run(a1, true);
     await finish(a1Task.id);
-    await acceptRemote(sender, a1);
+    await waitRemoteCompletion(sender, a1);
     await until(
       queue,
       (snapshot) => snapshot.entries.every((entry) => entry.state === 'ended'),
@@ -568,7 +554,7 @@ try {
       'rejected',
     );
     pass(
-      'Actual execution order matches queue controls; review holds the slot, rejected work never starts, each task has one session',
+      'Remote execution order matches queue controls while local work runs independently; rejected work never starts and each task has one session',
       {
         executedAfterOriginal: [c1Task.id, localTask.id, a1Task.id],
         rejectedRemoteID: a2,
@@ -635,7 +621,7 @@ try {
       (await loser.master.network()).brainTasks.find((item) => item.id === loser.task.id)?.status,
       'queued',
     );
-    await acceptRemote(winner.master, winner.current.executionID!);
+    await waitRemoteCompletion(winner.master, winner.current.executionID!);
     const directedTask = await run(directed, true);
     assert.equal(
       (await loser.master.network()).brainTasks.find((item) => item.id === loser.task.id)?.id,
@@ -646,7 +632,7 @@ try {
       loser.task.brainID,
     );
     await finish(directedTask.id);
-    await acceptRemote(sender, directed);
+    await waitRemoteCompletion(sender, directed);
     const retriedNetwork = await until(
       () => loser.master.network(),
       (network) =>

@@ -7,6 +7,8 @@ import {
   nodeCapabilitySummary,
   nodeDisplayName,
   recentNodeMentions,
+  boundNodeMentionMode,
+  replaceBoundNodeMention,
 } from '../src/node-mentions.ts';
 
 const node = (id: string, extra: Partial<RivloomNode> = {}) =>
@@ -35,6 +37,20 @@ test('@ detects only the active node query at the caret', () => {
   assert.equal(activeNodeMention('mail@example.com', 16), null);
   assert.equal(activeNodeMention('@设计 后续内容', 8), null);
   assert.equal(activeNodeMention('上一行 @设计\n下一行', 11), null);
+});
+
+test('preferred and locked mentions preserve exact names, ignore code and follow manual mode edits', () => {
+  const name = 'Studio [B].1';
+  assert.equal(activeNodeMention('@@Studio', 8)?.mode, 'locked');
+  assert.equal(activeNodeMention('`@@Studio', 9), null);
+  assert.equal(activeNodeMention('```\n@@Studio', 12), null);
+  assert.equal(activeNodeMention('email@@Studio', 13), null);
+  assert.equal(boundNodeMentionMode(`@@${name} edit`, name), 'locked');
+  assert.equal(boundNodeMentionMode(`@${name} edit`, name), 'preferred');
+  assert.equal(boundNodeMentionMode(`\`@@${name}\``, name), null);
+  assert.equal(boundNodeMentionMode(`@${name}2 edit`, name), null);
+  assert.equal(replaceBoundNodeMention(`@${name} edit`, name, 'locked'), `@@${name} edit`);
+  assert.equal(replaceBoundNodeMention(`@@${name} edit`, name, null), ' edit');
 });
 
 test('busy mentions remain selectable and use only fresh Node queue counts', () => {

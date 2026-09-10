@@ -1,7 +1,7 @@
 import { t } from '../shared/i18n.ts';
 import type { RivloomNode } from '../shared/types';
 
-export type ActiveNodeMention = { start: number; end: number; query: string };
+export type ActiveNodeMention = { start: number; end: number; query: string; mode?: 'preferred' | 'locked' };
 
 export function nodeDisplayName(node: Pick<RivloomNode, 'name' | 'remark'>) {
   return node.remark ? `${node.name}（${node.remark}）` : node.name;
@@ -13,16 +13,32 @@ export function activeNodeMention(
   nodes: Pick<RivloomNode, 'name' | 'remark'>[] = [],
 ): ActiveNodeMention | null {
   const prefix = text.slice(0, cursor);
-  const match = prefix.match(/(?:^|\s)@([^@\r\n]*)$/u);
+  if ((prefix.match(/```/g)?.length || 0) % 2 || (prefix.split('\n').at(-1)?.match(/`/g)?.length || 0) % 2) return null;
+  const match = prefix.match(/(?:^|\s)(@@?)([^@\r\n]*)$/u);
   if (!match) return null;
   // Spaces can be part of a real Node name, but an ordinary sentence after a mention is not a query.
-  if (/\s/u.test(match[1])) {
-    const query = match[1].toLocaleLowerCase('zh-CN');
+  if (/\s/u.test(match[2])) {
+    const query = match[2].toLocaleLowerCase('zh-CN');
     if (!nodes.some((node) => nodeDisplayName(node).toLocaleLowerCase('zh-CN').includes(query)))
       return null;
   }
-  const start = prefix.length - match[1].length - 1;
-  return { start, end: cursor, query: match[1] };
+  const start = prefix.length - match[2].length - match[1].length;
+  return { start, end: cursor, query: match[2], ...(match[1] === '@@' ? { mode: 'locked' as const } : {}) };
+}
+export const nodeMentionPrefix = (mode: 'preferred' | 'locked') => mode === 'locked' ? '@@' : '@';
+export function boundNodeMentionMode(text: string, name: string): 'preferred' | 'locked' | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const match of text.matchAll(new RegExp(`(^|\\s)(@@?)${escaped}(?=\\s|$)`, 'gu'))) {
+    const prefix = text.slice(0, match.index + match[1].length);
+    if ((prefix.match(/```/g)?.length || 0) % 2 || (prefix.split('\n').at(-1)?.match(/`/g)?.length || 0) % 2) continue;
+    return match[2] === '@@' ? 'locked' : 'preferred';
+  }
+  return null;
+}
+export function replaceBoundNodeMention(text: string, name: string, mode: 'preferred' | 'locked' | null) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(new RegExp(`(^|\\s)@@?${escaped}(?=\\s|$)`, 'u'), (_whole, before: string) =>
+    mode ? `${before}${nodeMentionPrefix(mode)}${name}` : before);
 }
 
 export function isNodeMentionComposing(
