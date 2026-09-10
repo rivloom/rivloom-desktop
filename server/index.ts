@@ -571,6 +571,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 function bootstrap(req: Request): Bootstrap {
   return conversationHistory.filter({
+    directoryAliases: workspacePreferences.directoryAliases(who(req).id),
     user: who(req),
     users: users(),
     projects: projects(),
@@ -610,6 +611,10 @@ app.get('/api/ui/sidebar-widths', (req, res) =>
 app.post('/api/ui/sidebar-widths', (req, res) =>
   res.json(workspacePreferences.saveSidebarWidths(who(req).id, req.body)),
 );
+app.post('/api/ui/directory-alias', (req, res) => {
+  const aliases = workspacePreferences.saveDirectoryAlias(who(req).id, req.body);
+  changed(); res.json(aliases);
+});
 app.post('/api/attention/check', (req, res) => res.json(taskAttention.check(bootstrap(req))));
 app.post('/api/attention/preferences', (req, res) =>
   res.json(taskAttention.savePreferences(who(req).id, req.body)),

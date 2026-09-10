@@ -93,6 +93,21 @@ test('working directory groups preserve recency and separate ambiguous remote pr
     requestedProjectID: 'same-id', targetNodeID, createdAt: at, updatedAt: at })) as RemoteTaskInvite[];
   assert.equal(groupConversationHistory(conversations(input), input).length, 2);
 });
+
+test('directory aliases change only display names and never merge distinct folders or lose full paths', () => {
+  const input = data(), second = local(); second.projectID = 'p2'; input.tasks.push(second);
+  input.projects.push({ id: 'p2', name: 'Second folder', directory: 'D:/work/one', createdAt: at });
+  const before = JSON.stringify(input);
+  const plain = groupConversationHistory(conversations(input), input);
+  assert.equal(plain.length, 2); assert(plain.every((group) => group.name === 'one'));
+  const aliases = Object.fromEntries(plain.map((group) => [group.key, '同名别名']));
+  const named = groupConversationHistory(conversations(input), input, aliases);
+  assert.equal(named.length, 2); assert(named.every((group) => group.name === '同名别名'));
+  assert.deepEqual(named.map((group) => group.key), plain.map((group) => group.key));
+  assert.deepEqual(named.map((group) => group.label), plain.map((group) => group.label));
+  assert.deepEqual(named.map((group) => group.items), plain.map((group) => group.items));
+  assert.equal(JSON.stringify(input), before);
+});
 test('attachment purge preserves shared blobs and project originals, removes only unused app copies', async () => {
   const folder = root(), store = new TaskFileStore(folder), body = 'original-project-data';
   const file: TaskFileDescriptor = { id: randomUUID(), name: 'source.txt', bytes: Buffer.byteLength(body), sha256: createHash('sha256').update(body).digest('hex'), mime: 'application/octet-stream' };

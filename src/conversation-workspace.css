@@ -86,7 +86,7 @@
   overflow-y: auto;
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, #f4f6fa 0%, var(--sidebar) 38%);
-  padding: 20px 14px 0;
+  padding: 12px 14px 0;
 }
 .node-identity-button {
   display: flex;
@@ -98,15 +98,16 @@
   box-shadow: var(--shadow-sm);
   color: var(--ink);
   width: 100%;
-  padding: 10px 6px;
+  padding: 6px 8px;
   margin-bottom: 5px;
   gap: 7px;
 }
 .node-identity-button > .node-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
 }
+.node-identity-button > .node-avatar > svg { width: 18px; height: 18px; }
 .node-identity-button:hover:enabled {
   border-color: var(--line-strong);
 }
@@ -121,16 +122,16 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
   letter-spacing: -0.015em;
 }
 .node-identity-button small {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
-  margin-top: 5px;
+  margin-top: 2px;
 }
 .node-identity-button:disabled {
   opacity: 1;
@@ -335,15 +336,6 @@ html[lang='en'] .new-conversation {
 .history-filter-reset:hover:enabled {
   text-decoration: underline;
 }
-.history-heading {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 8px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.025em;
-  color: var(--muted);
-}
 .history-filters {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -372,17 +364,6 @@ html[lang='en'] .new-conversation {
   background: var(--surface-soft);
   color: var(--text);
   font-size: 11px;
-}
-.history-heading {
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-}
-.history-heading > span {
-  white-space: nowrap;
-}
-.history-heading > span:first-child {
-  margin-right: auto;
 }
 .history-selection-note {
   margin: -2px 6px 10px;
@@ -427,11 +408,17 @@ html[lang='en'] .new-conversation {
 .history-delete:disabled { opacity: .24; cursor: default; }
 .history-delete:not(:disabled):hover { color: #b04545; background: #fbecec; }
 .history-directory { margin-bottom: 9px; }
-.history-directory-toggle { display: flex; align-items: center; width: 100%; gap: 6px; padding: 9px 3px; border: 0; background: transparent; color: var(--muted); text-align: left; }
+.history-directory-heading { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.history-directory-toggle { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; padding: 8px 3px; border: 0; background: transparent; color: var(--ink); text-align: left; }
 .history-directory-toggle > svg { flex-shrink: 0; }
-.history-directory-toggle > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.history-directory-toggle > small { font-size: 10px; }
+.history-directory-toggle > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.history-directory-toggle > small { font-size: 10px; color: var(--muted); }
 .history-directory-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 5px; }
+.history-directory-edit.icon-button { width: 26px; height: 28px; flex: 0 0 26px; color: var(--muted); opacity: .65; }
+.history-directory-heading:hover .history-directory-edit, .history-directory-edit:focus-visible { opacity: 1; }
+.history-directory-items { margin-left: 10px; padding-left: 13px; border-left: 1px solid var(--line); }
+.directory-alias-editor { display: grid; gap: 18px; }
+.directory-alias-location { margin: 0; padding: 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; color: var(--muted); overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
 .conversation-trash { width: 100%; max-width: 1040px; margin: 0 auto; }
 .trash-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .trash-heading h2 { font-size: 22px; margin: 0 0 14px; }

@@ -24,6 +24,18 @@ try {
   const task = await client.call<Task>('/tasks', request, 201), key = `local:${task.id}`;
   const invitation = await client.call('/invitations', {}); const member = new ServiceClient(client.root); member.base = client.base;
   await member.call('/auth/join', { code: invitation.code, username: 'history_member', name: 'History fixture member', password: `fixture-${randomUUID()}` });
+  const directoryKey = `local:${directory.replaceAll('\\', '/').replace(/\/$/, '').toLowerCase()}`;
+  await client.call('/ui/directory-alias', { key: directoryKey, alias: '官网研发' }, 403, { Origin: 'https://untrusted.example' });
+  await member.call('/ui/directory-alias', { key: directoryKey, alias: 'Wrong user', userID: owner }, 400);
+  await client.call('/ui/directory-alias', { key: directoryKey, alias: '官网研发' });
+  assert.equal((await client.bootstrap()).directoryAliases?.[directoryKey], '官网研发');
+  assert.deepEqual((await member.bootstrap()).directoryAliases, {});
+  await member.call('/ui/directory-alias', { key: directoryKey, alias: '成员本机别名' });
+  assert.equal((await member.bootstrap()).directoryAliases?.[directoryKey], '成员本机别名');
+  assert.equal((await client.bootstrap()).directoryAliases?.[directoryKey], '官网研发');
+  assert.equal((await client.bootstrap()).projects.find((p) => p.id === project.id)?.name, 'History fixture directory');
+  assert.equal((await client.bootstrap()).projects.find((p) => p.id === project.id)?.directory, directory);
+  pass('Directory aliases enforce origin and user scope without changing real folders, project names or another user display');
   for (const [path, body] of [['trash', { key }], ['restore', { key }], ['purge', { key, confirmed: true }], ['empty', { confirmed: true }]] as const)
     await member.call(`/history/${path}`, body, 403);
   await client.call('/history/trash', { key }, 403, { Origin: 'https://untrusted.example' });
@@ -33,6 +45,10 @@ try {
   const hidden = await client.bootstrap(); assert(!hidden.tasks.some((v) => v.id === task.id)); assert.equal(hidden.conversationTrash?.[0].key, key);
   await client.call(`/tasks/${task.id}/run`, {}, 410); await client.call('/tasks', request, 410);
   await client.stop(); await client.start({ logPath: join(root, 'restart.log') });
+  assert.equal((await client.bootstrap()).directoryAliases?.[directoryKey], '官网研发');
+  await client.call('/ui/directory-alias', { key: directoryKey, alias: null });
+  assert.equal((await client.bootstrap()).directoryAliases?.[directoryKey], undefined);
+  pass('Directory aliases survive service restart and can reset to the original folder name');
   assert.equal((await client.bootstrap()).conversationTrash?.[0].key, key);
   await client.call('/history/restore', { key }); const restored = (await client.bootstrap()).tasks.find((v) => v.id === task.id)!;
   assert.deepEqual(restored, task);

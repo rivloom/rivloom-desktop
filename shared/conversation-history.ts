@@ -2,6 +2,7 @@ import type { Bootstrap } from './types.ts';
 import type { Conversation } from './conversations.ts';
 import type { NodeQueueEntry } from './node-queue.ts';
 import { t } from './i18n.ts';
+import { directoryDisplayName, type DirectoryAliases } from './directory-aliases.ts';
 
 export type HistoryMembers = { local: string[]; remote: string[]; brain: string[]; workflow: string[]; requests: string[] };
 export type TrashEntry = { key: string; title: string; directory: string; deletedAt: string; expiresAt: string; purging: boolean };
@@ -56,11 +57,11 @@ export function conversationDirectory(item: Conversation, data: Pick<Bootstrap, 
   }
   return { key: 'unspecified', label: t('未指定工作目录') };
 }
-export function groupConversationHistory(items: Conversation[], data: Pick<Bootstrap, 'projects' | 'network'>) {
-  const groups = new Map<string, { key: string; label: string; items: Conversation[] }>();
+export function groupConversationHistory(items: Conversation[], data: Pick<Bootstrap, 'projects' | 'network'>, aliases: DirectoryAliases = {}) {
+  const groups = new Map<string, { key: string; label: string; name: string; items: Conversation[] }>();
   for (const item of items) {
     const directory = conversationDirectory(item, data);
-    const group = groups.get(directory.key) || { ...directory, items: [] };
+    const group = groups.get(directory.key) || { ...directory, name: directoryDisplayName(directory, aliases), items: [] };
     group.items.push(item); groups.set(directory.key, group);
   }
   return [...groups.values()];

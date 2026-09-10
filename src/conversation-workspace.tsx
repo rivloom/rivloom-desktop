@@ -8,6 +8,8 @@ import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivl
 import { ConversationFilterButton } from './conversation-filter-button';
 import { ConversationTrash } from './conversation-trash';
 import { conversationDirectory, groupConversationHistory, historyCanTrash } from '../shared/conversation-history';
+import { directoryDisplayName, validDirectoryKey } from '../shared/directory-aliases';
+import { DirectoryAliasEditor } from './directory-alias-editor';
 import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
 import { ResourceDiscovery } from './resource-discovery';
@@ -56,6 +58,7 @@ import {
   Pause,
   Inbox,
   Trash2,
+  Pencil,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -467,6 +470,7 @@ export function ConversationWorkspace({
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [historyAction, setHistoryAction] = useState<{ action: 'trash' | 'purge' | 'empty'; key?: string; title?: string } | null>(null);
+  const [aliasDirectory, setAliasDirectory] = useState<{ key: string; label: string; name: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
   const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(() => ({
@@ -635,11 +639,14 @@ export function ConversationWorkspace({
         all,
         { status: statusFilter, source: sourceFilter, query: '' },
         nodeName,
-      ).filter((item) => !search.trim() || conversationDirectory(item, data).label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()) ||
-        filterConversations([item], { status: 'all', source: 'all', query: search }, nodeName).length > 0),
-    [all, statusFilter, sourceFilter, search, nodeName, data.projects, data.network],
+      ).filter((item) => {
+        const directory = conversationDirectory(item, data);
+        return !search.trim() || `${directory.label} ${directoryDisplayName(directory, data.directoryAliases)}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()) ||
+          filterConversations([item], { status: 'all', source: 'all', query: search }, nodeName).length > 0;
+      }),
+    [all, statusFilter, sourceFilter, search, nodeName, data.projects, data.network, data.directoryAliases],
   );
-  const historyGroups = groupConversationHistory(visible, data);
+  const historyGroups = groupConversationHistory(visible, data, data.directoryAliases);
   const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
   const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all';
   function clearFilters() {
@@ -1091,29 +1098,23 @@ export function ConversationWorkspace({
             onClear={clearFilters}
           />
         </div>
-        <div className="history-heading">
-          <span>{t('历史会话')}</span>
-          <span
-            aria-label={t('显示 {{shown}} 个，共 {{total}} 个会话', {
-              shown: visible.length,
-              total: all.length,
-            })}
-          >
-            {filtering ? `${visible.length} / ${all.length}` : all.length}
-          </span>
-        </div>
         {view === 'chat' && current && !visible.some((item) => item.key === current.key) && (
           <p className="history-selection-note">{t('当前打开的会话不在筛选结果中。')}</p>
         )}
         <div className="conversation-history">
-          {historyGroups.map((group) => <section className="history-directory" key={group.key}>
-            <button type="button" className="history-directory-toggle" title={group.label}
+          {historyGroups.map((group) => <section className="history-directory" key={group.key} aria-label={group.name}>
+            <div className="history-directory-heading">
+            <button type="button" className="history-directory-toggle" title={`${group.name}\n${group.label}`}
               aria-expanded={!collapsedGroups.has(group.key) || !!search.trim()}
               onClick={() => setCollapsedGroups((previous) => { const next = new Set(previous); if (next.has(group.key)) next.delete(group.key); else next.add(group.key); return next; })}>
               {collapsedGroups.has(group.key) && !search.trim() ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-              <FolderOpen size={14} /><span>{group.label}</span><small>{group.items.length}</small>
+              <FolderOpen size={14} /><span>{group.name}</span><small>{group.items.length}</small>
             </button>
-          {(!collapsedGroups.has(group.key) || !!search.trim()) && group.items.map((item) => (
+            {validDirectoryKey(group.key) && <button type="button" className="history-directory-edit icon-button" disabled={busy}
+              aria-label={t('设置目录别名：{{name}}', { name: group.name })} title={t('设置目录别名')}
+              onClick={() => { setError(''); setAliasDirectory({ key: group.key, label: group.label, name: group.name }); }}><Pencil size={12} /></button>}
+            </div>
+          {(!collapsedGroups.has(group.key) || !!search.trim()) && <div className="history-directory-items" role="group" aria-label={group.name}>{group.items.map((item) => (
             <HistoryRow
               key={item.key}
               item={item}
@@ -1125,7 +1126,7 @@ export function ConversationWorkspace({
               canRemove={data.user.owner && !busy && historyCanTrash(item, data, queueSnapshot?.entries || [])}
               locale={locale}
             />
-          ))}</section>)}
+          ))}</div>}</section>)}
           {!visible.length && (
             <div className="history-empty">
               <p>{filtering ? t('没有符合筛选条件的会话') : t('你的会话会保存在这里')}</p>
@@ -2066,6 +2067,9 @@ export function ConversationWorkspace({
           </div>
         </aside>
       )}
+      {aliasDirectory && <DirectoryAliasEditor key={aliasDirectory.key} directory={aliasDirectory}
+        alias={data.directoryAliases?.[aliasDirectory.key] || ''} busy={busy} failureMessage={error}
+        close={() => setAliasDirectory(null)} save={(alias) => perform(() => api('/ui/directory-alias', { key: aliasDirectory.key, alias }))} />}
       {modal === 'concurrency' && data.user.owner && (
         <Modal title={t('并发设置')} close={() => setModal(null)}>
           <ExecutionConcurrencySettings policy={data.executionPolicy} onChanged={() => void refresh()} />

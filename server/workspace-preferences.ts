@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { maximumDirectoryAliases, validDirectoryAlias, validDirectoryKey, type DirectoryAliases } from '../shared/directory-aliases.ts';
 import {
   defaultSidebarWidths,
   sidebarBounds,
@@ -23,10 +24,31 @@ const widthsSchema = z
   })
   .strict();
 
+const aliasKeySchema = z.string().refine(validDirectoryKey);
+const aliasValueSchema = z.string().refine(validDirectoryAlias).transform((value) => value.trim());
+const aliasesSchema = z.record(aliasKeySchema, aliasValueSchema).refine((value) => Object.keys(value).length <= maximumDirectoryAliases);
+const aliasChangeSchema = z.object({ key: aliasKeySchema, alias: aliasValueSchema.nullable() }).strict();
+
 export class WorkspacePreferences {
   private readonly db: DatabaseSync;
   constructor(db: DatabaseSync) {
     this.db = db;
+  }
+
+  directoryAliases(userID: string): DirectoryAliases {
+    const row = this.db.prepare('SELECT value FROM app_settings WHERE key=?').get(`ui.directory-aliases:${userID}`);
+    try { return aliasesSchema.parse(JSON.parse(String(row?.value))); }
+    catch { return {}; }
+  }
+
+  saveDirectoryAlias(userID: string, input: unknown): DirectoryAliases {
+    const { key, alias } = aliasChangeSchema.parse(input);
+    const aliases = this.directoryAliases(userID);
+    if (alias === null) delete aliases[key]; else aliases[key] = alias;
+    aliasesSchema.parse(aliases);
+    this.db.prepare('INSERT INTO app_settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+      .run(`ui.directory-aliases:${userID}`, JSON.stringify(aliases));
+    return aliases;
   }
 
   sidebarWidths(userID: string): SidebarWidths {

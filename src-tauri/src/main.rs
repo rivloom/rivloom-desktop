@@ -129,7 +129,7 @@ fn save_locale(data_dir: &Path, locale: &str) -> Result<(), String> {
 fn set_desktop_language(window: WebviewWindow, state: tauri::State<DesktopState>, locale: String) -> Result<(), String> {
     authorize(&window, &state)?;
     save_locale(&state.data_dir, &locale)?;
-    let _ = window.set_title(&native_text(&state.data_dir, "Rivloom · 人与 AI 的任务工作区"));
+    let _ = window.set_title("Rivloom");
     Ok(())
 }
 
@@ -409,7 +409,7 @@ fn main() {
             desktop_update::start_background(app.handle().clone());
             let allowed_origin = url.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
-                .title(native_text(&data_dir, "Rivloom · 人与 AI 的任务工作区")).inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
+                .title("Rivloom").inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
                 .visible(false)
                 .data_directory(data_dir.join("webview"))
                 .on_navigation(move |target| target.origin().ascii_serialization() == allowed_origin)

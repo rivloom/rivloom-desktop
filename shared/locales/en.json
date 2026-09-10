@@ -703,7 +703,6 @@
   "本机已入队": "Queued on this device",
   "本机已暂缓": "On hold on this device",
   "不支持的界面语言": "Unsupported interface language",
-  "Rivloom · 人与 AI 的任务工作区": "Rivloom · A task workspace for people and AI",
   "无法确认桌面窗口": "Could not verify the desktop window",
   "拒绝来自非应用窗口的原生操作": "Native operation rejected: the window does not belong to the application",
   "桌面认证信息不可用，请重启客户端": "Desktop authentication is unavailable. Restart the client",
@@ -1104,5 +1103,14 @@
   "会话已永久删除。": "The conversations have been permanently deleted.",
   "工作目录已不可用": "Working directory unavailable",
   "远端设备": "Remote device",
-  "未指定工作目录": "No working directory specified"
+  "未指定工作目录": "No working directory specified",
+  "目录别名": "Directory alias",
+  "别名": "Alias",
+  "仅在本机显示，不改变真实目录或其他设备上的名称。清空后恢复目录名称。": "Shown only on this device. The actual folder and names on other devices stay the same. Clear the alias to show the folder name.",
+  "别名最多 64 个字符，不能包含换行或控制字符。": "Use up to 64 characters without line breaks or control characters.",
+  "目录别名未能保存，请重试。": "Could not save the directory alias. Please try again.",
+  "恢复目录名称": "Reset to folder name",
+  "正在保存…": "Saving…",
+  "设置目录别名：{{name}}": "Set directory alias: {{name}}",
+  "设置目录别名": "Set directory alias"
 }

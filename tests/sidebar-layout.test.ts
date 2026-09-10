@@ -11,6 +11,7 @@ import {
   sidebarLayout,
 } from '../shared/sidebar-layout.ts';
 import { WorkspacePreferences } from '../server/workspace-preferences.ts';
+import { directoryDisplayName } from '../shared/directory-aliases.ts';
 
 test('sidebar defaults preserve desktop, narrow-window and unpaired layouts', () => {
   for (const [width, paired, history, network] of [
@@ -107,4 +108,44 @@ test('invalid width writes are rejected without replacing stored values; malform
   } finally {
     db.close();
   }
+});
+
+test('directory aliases persist per user and stable directory key, without replacing neighboring aliases', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'rivloom-directory-aliases-'));
+  const file = join(directory, 'preferences.sqlite');
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(file);
+    db.exec('CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    let store = new WorkspacePreferences(db);
+    store.saveDirectoryAlias('one', { key: 'local:c:/work/site', alias: '  官网  ' });
+    store.saveDirectoryAlias('one', { key: 'remote:peer:project', alias: '远端项目' });
+    store.saveDirectoryAlias('two', { key: 'local:c:/work/site', alias: '我的网站' });
+    db.close(); db = new DatabaseSync(file); store = new WorkspacePreferences(db);
+    assert.deepEqual(store.directoryAliases('one'), { 'local:c:/work/site': '官网', 'remote:peer:project': '远端项目' });
+    assert.deepEqual(store.directoryAliases('two'), { 'local:c:/work/site': '我的网站' });
+    assert.deepEqual(store.directoryAliases('unknown'), {});
+    store.saveDirectoryAlias('one', { key: 'local:c:/work/site', alias: null });
+    assert.deepEqual(store.directoryAliases('one'), { 'remote:peer:project': '远端项目' });
+    assert.equal(directoryDisplayName({ key: 'local:c:/work/site', label: 'C:\\work\\site\\' }, store.directoryAliases('one')), 'site');
+  } finally { db?.close(); rmSync(file, { force: true }); rmdirSync(directory); }
+});
+
+test('invalid aliases and failed writes preserve prior values; unrelated user fields cannot change ownership', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec('CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    const store = new WorkspacePreferences(db), key = 'local:c:/work/site';
+    store.saveDirectoryAlias('one', { key, alias: 'Keep' });
+    for (const input of [{ key, alias: '' }, { key, alias: '   ' }, { key, alias: 'x'.repeat(65) },
+      { key, alias: 'line\nbreak' }, { key, alias: 'hidden\u0000text' }, { key: '__proto__', alias: 'bad' },
+      { key: 'local:\nsecret', alias: 'bad' }, { key, alias: 'other', userID: 'two' }, { key }, null]) {
+      assert.throws(() => store.saveDirectoryAlias('one', input));
+      assert.deepEqual(store.directoryAliases('one'), { [key]: 'Keep' });
+      assert.deepEqual(store.directoryAliases('two'), {});
+    }
+    db.exec("CREATE TRIGGER reject_alias_write BEFORE UPDATE ON app_settings BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
+    assert.throws(() => store.saveDirectoryAlias('one', { key, alias: 'Changed' }));
+    assert.deepEqual(store.directoryAliases('one'), { [key]: 'Keep' });
+  } finally { db.close(); }
 });
