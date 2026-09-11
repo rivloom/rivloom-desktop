@@ -6,6 +6,7 @@ import { validWorkflowExecutionContext, type WorkflowExecutionContext } from '..
 import type { RemoteTaskInvite } from '../shared/types.ts';
 
 export type WorkflowContextRecord = { executionID: string; ownerNodeID: string; digest: string; context: WorkflowExecutionContext;
+  resultDelivery?: 'on-demand';
   inputFiles: TaskFileDescriptor[]; localTaskID: string | null; createdAt: string };
 export function workflowContextDigest(context: WorkflowExecutionContext, inputFiles: TaskFileDescriptor[]) {
   return createHash('sha256').update(JSON.stringify([context.workflowID, context.stepID, context.attempt, context.role,
@@ -27,12 +28,13 @@ export class WorkflowContexts {
     return row ? JSON.parse(String(row.body)) : null;
   }
   receive(peer: string, payload: unknown) {
-    if (!record(payload) || !keys(payload, ['executionID', 'context', 'inputFiles']) || !uuid(payload.executionID) ||
+    if (!record(payload) || !keys(payload, ['executionID', 'context', 'inputFiles'], ['resultDelivery']) ||
+      (payload.resultDelivery !== undefined && payload.resultDelivery !== 'on-demand') || !uuid(payload.executionID) ||
       !validWorkflowExecutionContext(payload.context) || !validTaskFileManifest(payload.inputFiles)) throw new Error('workflow_invalid_metadata');
     if (payload.context.target.mode === 'locked' && payload.context.target.nodeID !== this.ownNode()) throw new Error('workflow_locked_target');
     const digest = workflowContextDigest(payload.context, payload.inputFiles); const previous = this.get(payload.executionID);
     if (previous) {
-      if (previous.ownerNodeID !== peer || previous.digest !== digest) throw new Error('workflow_metadata_conflict');
+      if (previous.ownerNodeID !== peer || previous.digest !== digest || previous.resultDelivery !== payload.resultDelivery) throw new Error('workflow_metadata_conflict');
       return { executionID: previous.executionID, digest: previous.digest };
     }
     // A preexisting offer without this context belongs to another creation. Never retrofit execution authority.
@@ -40,6 +42,7 @@ export class WorkflowContexts {
     const pending = this.db.prepare("SELECT COUNT(*) AS count FROM workflow_contexts WHERE owner_node_id=? AND json_extract(body,'$.localTaskID') IS NULL").get(peer)!;
     if (!integer(Number(pending.count), 127)) throw new Error('workflow_metadata_quota');
     const value: WorkflowContextRecord = { executionID: payload.executionID, ownerNodeID: peer, digest, context: payload.context,
+      ...(payload.resultDelivery === 'on-demand' ? { resultDelivery: 'on-demand' } : {}),
       inputFiles: payload.inputFiles, localTaskID: null, createdAt: new Date().toISOString() };
     this.db.prepare('INSERT INTO workflow_contexts VALUES (?,?,?)').run(value.executionID, peer, JSON.stringify(value));
     return { executionID: value.executionID, digest };

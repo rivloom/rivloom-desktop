@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { jsonBytes, uuid } from '../shared/collaboration.ts';
 import { taskFileBatchBytes, taskFileMaximumCount, taskFileUploadCount, validTaskFileManifest, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
-import { canRetryWorkflowPlanning, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError, workflowPendingMessages, workflowAllSteps,
+import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError, workflowPendingMessages, workflowAllSteps,
   type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
 
-export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; localConfig?: { projectID: string; model: string } };
+export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string } };
 export type WorkflowExecutionSnapshot = {
   phase: Exclude<WorkflowAttempt['phase'], 'intent'>; summary: string; error: string | null;
   outcome: WorkflowAttempt['outcome']; outputFiles: TaskFileDescriptor[]; safeToTransfer: boolean;
@@ -24,6 +24,8 @@ export interface WorkflowExecutionAdapter {
   materialize(workflow: Workflow, references: ResourceReference[]): Promise<TaskFileDescriptor[]>;
   stageInputs(workflow: Workflow, key: string, files: TaskFileDescriptor[], mayRead: () => boolean): Promise<TaskFileDescriptor[]>;
   conversationContext?(workflow: Workflow): Promise<TaskFileDescriptor>;
+  retryReady?(workflow: Workflow, attempt: WorkflowAttempt): Promise<boolean>;
+  prepareInputs?(workflow: Workflow, files: TaskFileDescriptor[], role: WorkflowExecutionContext['role'], required: TaskFileDescriptor[]): Promise<TaskFileDescriptor[] | null>;
 }
 const terminalAttempt = (attempt: WorkflowAttempt) => ['completed', 'failed', 'stopped'].includes(attempt.phase);
 const terminalStep = (step: WorkflowStep) => ['completed', 'failed', 'cancelled', 'blocked'].includes(step.state);
@@ -155,6 +157,34 @@ export class WorkflowService {
       value.confirmations = value.confirmations.filter((item) => item.nodeID !== nodeID);
       value.confirmations.push({ nodeID, confirmedAt: new Date().toISOString() }); value.pendingConfirmation = null;
     });
+  }
+  async retryStep(id: string, request: { version: number; roundRequestID: string; stepID: string; attempt: number; requestID: string }) {
+    const value = this.store.get(id);
+    if (!value || (value.roundRequestID || value.requestID) !== request.roundRequestID || !uuid(request.requestID)) throw new Error('workflow_retry_changed');
+    const step = value.steps.find((s) => s.id === request.stepID);
+    const receipt = step?.retries?.find((r) => r.requestID === request.requestID);
+    if (receipt) {
+      if (receipt.attempt !== request.attempt) throw new Error('workflow_retry_changed');
+      return value;
+    }
+    if (!step || value.version !== request.version || step.attempts.length !== request.attempt || !canRetryWorkflowStep(value, step))
+      throw new Error('workflow_retry_changed');
+    const descendants = new Set([step.id]);
+    for (let i = 0; i < value.steps.length; i++) for (const other of value.steps)
+      if (other.dependsOn.some((parent) => descendants.has(parent))) descendants.add(other.id);
+    if (value.steps.some((s) => s.id !== step.id && descendants.has(s.id) && s.attempts.length)) throw new Error('workflow_retry_changed');
+    const last = step.attempts.at(-1);
+    if (last && !(await this.adapter.retryReady?.(value, last))) throw new Error('workflow_retry_unconfirmed');
+    return this.update(id, (current) => {
+      if (this.closed || (current.roundRequestID || current.requestID) !== request.roundRequestID) throw new Error('workflow_retry_changed');
+      const failed = current.steps.find((s) => s.id === step.id)!;
+      if (!canRetryWorkflowStep(current, failed)) throw new Error('workflow_retry_changed');
+      (failed.retries ||= []).push({ requestID: request.requestID, attempt: request.attempt });
+      failed.state = 'ready'; failed.continuation = null; failed.queryRounds = 0;
+      for (const next of current.steps) if (next.state === 'blocked' && descendants.has(next.id)) next.state = 'waiting';
+      current.state = 'running'; current.error = null; current.pendingConfirmation = null;
+      workflowEvent(current, 'state', 'Step retried', failed.id);
+    }, request.version);
   }
   editStep(id: string, version: number, replacement: WorkflowStepPlan) {
     return this.update(id, (value) => {
@@ -304,7 +334,13 @@ export class WorkflowService {
       }
       this.preparing.set(reservation, candidate.nodeID);
       const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
-      const originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
+      let originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
+      if (this.adapter.prepareInputs) {
+        const ready = await this.adapter.prepareInputs(value, originalFiles, role,
+          [...step.materials, ...resources, ...parents.flatMap((p) => p.attempts.at(-1)?.outputFiles || [])]);
+        if (!ready) return;
+        originalFiles = ready;
+      }
       const inputFiles = candidate.kind === 'remote' && originalFiles.length
         ? await this.adapter.stageInputs(value, `${value.roundRequestID || value.requestID}:${step.id}:${step.attempts.length + 1}:${candidate.nodeID}`, originalFiles, () => this.mayStart(value.id, step.id))
         : originalFiles;
@@ -313,7 +349,7 @@ export class WorkflowService {
       const evidence = boundedText([this.adapter.evidence(value), step.evidence].filter(Boolean).join('\n\n'), 12_000, 18_000);
       const correction = role === 'planner' && step.validationRounds
         ? `上次只读规划未通过 JSON 格式校验。这是第 ${step.validationRounds}/2 次格式纠正；尚未执行业务步骤。重新按原需求返回一个且仅一个完整 JSON 对象。检查资源引用与文件/软件区别；无输入文件用 resources:[]；缺少事实只返回 query，已有事实只返回 plan。` : '';
-      const location = (value.conversationContextFile ? `这是同一会话的后续请求。先读取输入文件 ${value.conversationContextFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。\n` : '') +
+      const location = (value.conversationContextFile ? `这是同一会话的后续请求。先读取输入文件 ${value.conversationContextFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n` : '') +
         `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
         (continuation?.handoff ? '本次接收上一个 Node 的转交；从下方已保存检查点继续，不重复源端已完成的操作，不再次转交给自己。' : '');
       const originalRequest = role === 'executor' ? `用户完整需求（本步骤及后续转交都必须遵守其中适用的约束；只执行当前步骤）：\n${value.planner.instructions}` : '';
@@ -335,6 +371,7 @@ export class WorkflowService {
       if (!validWorkflowExecutionContext(context)) throw new Error('workflow_context_limit');
       const at = new Date().toISOString();
       const attempt: WorkflowAttempt = { number: context.attempt, executionID: randomUUID(), nodeID: candidate.nodeID, kind: candidate.kind,
+        ...(candidate.resultDelivery ? { resultDelivery: candidate.resultDelivery } : {}),
         ...(candidate.localConfig ? { localConfig: candidate.localConfig } : {}), phase: 'intent',
         context, createdAt: at, updatedAt: at, summary: '', outcome: null, inputFiles, outputFiles: [], error: null, handled: false };
       const saved = this.update(value.id, (latest) => {

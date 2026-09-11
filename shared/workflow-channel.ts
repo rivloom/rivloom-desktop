@@ -1,6 +1,7 @@
 import { digest, integer, jsonBytes, keys, record, text, uuid } from './collaboration.ts';
 import { validTaskFileManifest, type TaskFileDescriptor } from './task-files.ts';
 import { validExecutionOutcome, validPlanningOutcome, type ExecutionOutcome, type PlanningOutcome, type WorkflowAttempt } from './workflows.ts';
+export const workflowControlsCapability = 'workflow-controls-v1';
 export type WorkflowOutcomeReply = {
   executionID: string; digest: string; sessionID: string | null; attempt: number; runAfter: number;
   phase: Exclude<WorkflowAttempt['phase'], 'intent'>; summary: string; error: string | null;

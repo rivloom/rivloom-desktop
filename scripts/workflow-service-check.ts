@@ -46,6 +46,8 @@ function workflowReply(input: any): FixtureModelReply {
     if (userText.includes('CASE_QUERY') && !userText.includes('queriedAt')) return { toolName: 'StructuredOutput', arguments: {
       kind: 'query', query: { text: 'source.txt', kinds: ['document'], limit: 10 }, reason: 'Locate the task material' } };
     const steps = userText.includes('CASE_CONTINUITY') ? [step('continue', 'CONTINUITY_FIRST')] :
+      userText.includes('CASE_RETRY_WORK') ? [step('keep', 'KEEP_RESULT'), step('retry', 'FAIL_FIRST', ['keep']), step('after', 'AFTER_RETRY', ['retry'])] :
+      userText.includes('CASE_REMOTE_DELIVERY') ? [step('write', 'REMOTE_WRITE_CHECKPOINT EXTRA_OUTPUT', [], otherNode)] :
       userText.includes('CASE_FOLLOWUP') ? [step('continue', 'CASE_FOLLOWUP')] :
       userText.includes('CASE_AUTO_PARALLEL') ? [step('script', 'AUTO_SCRIPT'),
       { ...step('video', 'AUTO_PARALLEL_VIDEO', ['script']), resources: [resourceReference!] },
@@ -63,7 +65,9 @@ function workflowReply(input: any): FixtureModelReply {
     const written = input.messages.some((m: any) => m.role === 'assistant' && m.tool_calls?.some((call: any) => call.function?.name === 'write'));
     if (!written) return { toolName: 'write', arguments: { filePath: join(remoteDirectory, 'checkpoint.txt'), content: 'Roundtrip checkpoint.\n' } };
     outcome.files = ['checkpoint.txt'];
+    if (userText.includes('EXTRA_OUTPUT')) outcome.files = ['checkpoint.txt', 'remote-extra.txt'];
   }
+  if (userText.includes('FAIL_FIRST') && userText.includes('这是当前步骤的第 1 次尝试')) return { content: 'Synthetic invalid executor outcome' };
   if (userText.includes('REMOTE_READ_CHECKPOINT')) {
     const read = input.messages.some((m: any) => m.role === 'assistant' && m.tool_calls?.some((call: any) => call.function?.name === 'read'));
     const path = /"(\.rivloom-inputs\/[^"\n]+\/checkpoint\.txt)"/.exec(userText)?.[1]; assert(path, 'Returned file needs an actual receiving-side attachment path');
@@ -115,6 +119,7 @@ try {
   outputDirectory = folders[0].directory;
   remoteDirectory = folders[1].directory;
   writeFileSync(join(folders[1].directory, 'source.txt'), 'Shared versioned material.\n');
+  writeFileSync(join(folders[1].directory, 'remote-extra.txt'), 'Leave this file on the remote device.\n');
   await pairServices(origin, worker);
   const beforeSelection = await origin.call('/resources');
   assert(beforeSelection.nodes.every((n: any) => !n.head?.workspaceID));
@@ -196,6 +201,20 @@ try {
   assert.equal(retried.id, invalid.id); assert.equal(retried.planner.attempts.length, 3);
   const stillInvalid = await completed(invalid.id); assert.equal(stillInvalid.planner.attempts.length, 6); assert.equal(stillInvalid.steps.length, 0);
   pass('An invalid cyclic plan stops after two corrections; explicit re-planning keeps its history and never starts business work');
+  for (const target of [ownNode, otherNode]) {
+    const failed = await completed((await create('CASE_RETRY_WORK', { mode: 'locked', nodeID: target })).id);
+    assert.equal(failed.state, 'failed', JSON.stringify(failed));
+    assert.deepEqual(failed.steps.map((s) => s.state), ['completed', 'failed', 'blocked']);
+    const request = { version: failed.version, roundRequestID: failed.roundRequestID || failed.requestID,
+      stepID: 'retry', attempt: 1, requestID: randomUUID() };
+    await origin.call(`/workflows/${failed.id}/steps/retry`, request);
+    await origin.call(`/workflows/${failed.id}/steps/retry`, request);
+    const recovered = await completed(failed.id); assert.equal(recovered.state, 'completed', JSON.stringify(recovered));
+    assert.deepEqual(recovered.steps.map((s) => s.attempts.length), [1, 2, 1]);
+    assert.equal(recovered.steps[0].attempts[0].executionID, failed.steps[0].attempts[0].executionID);
+    assert.equal(recovered.steps[1].attempts[0].error, 'workflow_invalid_outcome'); assert.equal(recovered.queuePaused, true);
+  }
+  pass('Local and remote failed steps retry once after a fresh official-session check; completed prerequisites and failure history survive');
   const queried = await completed((await create('CASE_QUERY')).id); assert.equal(queried.state, 'completed', JSON.stringify(queried));
   assert.equal(queried.planner.attempts.length, 2); assert.equal(queried.planner.queryRounds, 1);
   pass('The official planner can request a bounded catalog query and continue from its evidence');
@@ -209,6 +228,32 @@ try {
   assert.equal(readFileSync(join(folders[0].directory, '.rivloom-inputs', material.steps[0].attempts.at(-1)!.executionID, attached.id, attached.name), 'utf8'), 'Shared versioned material.\n');
   pass('A locked workflow retrieves authorized materials from another Node while keeping every execution on its locked Node');
   await worker.call('/network/execution-policy', { enabled: true, projectID: folders[1].id, model: 'fixture/m34', approvalMode: 'auto', confirmed: true });
+  const remoteDelivery = await completed((await create('CASE_REMOTE_DELIVERY', { mode: 'locked', nodeID: otherNode })).id);
+  assert.equal(remoteDelivery.state, 'completed', JSON.stringify(remoteDelivery));
+  const remoteAttempt = remoteDelivery.steps[0].attempts[0]; assert.equal(remoteAttempt.resultDelivery, 'on-demand');
+  const remotePath = `/task-files/remote/${remoteAttempt.executionID}`;
+  const metadata = await origin.call(remotePath);
+  assert.deepEqual(metadata.results.map((f: any) => f.state), ['remote', 'remote']);
+  const sourceFiles = await worker.call(remotePath);
+  assert(sourceFiles.results.every((f: any) => f.deliveries.length === 0), 'Completion must not enqueue result bytes');
+  const metadataRequest = randomUUID();
+  await origin.call(`/workflows/${remoteDelivery.id}/messages`, { requestID: metadataRequest,
+    text: 'CASE_METADATA_ONLY: use the previous result description without opening any output files', attachmentIDs: [] }, 201);
+  const metadataFollowup = await until(() => origin.call<Workflow>(`/workflows/${remoteDelivery.id}`),
+    (w) => w.roundRequestID === metadataRequest && ['completed', 'failed'].includes(w.state), 'metadata-only continuation', 90_000);
+  assert.equal(metadataFollowup.state, 'completed', JSON.stringify(metadataFollowup));
+  for (const attempt of [...metadataFollowup.planner.attempts, ...metadataFollowup.steps.flatMap((s) => s.attempts)])
+    assert(attempt.inputFiles.every((f) => f.name.startsWith('rivloom-conversation-')));
+  assert.deepEqual((await origin.call(remotePath)).results.map((f: any) => f.state), ['remote', 'remote']);
+  pass('A later round can use result records without downloading prior remote outputs for planning or execution');
+  await origin.call(`${remotePath}/fetch`, { fileID: randomUUID() }, 409);
+  await origin.call(`${remotePath}/fetch`, { fileID: remoteAttempt.outputFiles[0].id });
+  await origin.call(`${remotePath}/fetch`, { fileID: remoteAttempt.outputFiles[0].id });
+  const fetched = await until(() => origin.call(remotePath), (v) => v.results[0].state === 'complete', 'selected remote file retrieval');
+  assert.equal(fetched.results[1].state, 'remote');
+  assert.equal(fetched.results[0].sha256, remoteAttempt.outputFiles[0].sha256);
+  const sourceAfter = await worker.call(remotePath); assert.equal(sourceAfter.results[1].deliveries.length, 0);
+  pass('Remote completion exposes two authenticated files without transfer; fetching one leaves the other on its source Node');
   const returned = await completed((await create('CASE_RETURNED_FILE', { mode: 'locked', nodeID: otherNode })).id); assert.equal(returned.state, 'completed', JSON.stringify(returned));
   assert(returned.steps.every((s) => s.attempts.length === 1 && s.attempts[0].nodeID === otherNode));
   const originalFile = returned.steps[0].attempts[0].outputFiles[0], returnedFile = returned.steps[1].attempts[0].inputFiles[0];
@@ -243,6 +288,8 @@ try {
   assert.equal(continuityRestored.roundRequestID, queuedRequest.requestID); assert.equal(continuityRestored.rounds!.length, 1);
   const restored = await origin.call<Workflow>(`/workflows/${handoff.id}`);
   assert.equal(restored.state, 'completed'); assert.equal(restored.steps[0].attempts.length, 2);
+  const restoredFiles = await origin.call(remotePath);
+  assert.deepEqual(restoredFiles.results.map((f: any) => f.state), ['complete', 'remote']);
   pass('Coordinator restart preserves completed graph and attempt identities without replay');
   const restart = await create('CASE_RESTART_HANDOFF');
   const pendingTarget = await until(() => worker.bootstrap(), (b) => b.tasks.some((t) => t.collaboration?.workflowID === restart.id && t.state === 'waiting_approval'), 'target handoff approval');

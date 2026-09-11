@@ -43,7 +43,9 @@ export type TaskFileDelivery = {
   error: string | null;
 };
 export type TaskFileView = TaskFileDescriptor & {
-  state: TaskFileState;
+  state: TaskFileState | 'remote';
+  sourceNodeID?: string;
+  sourcePath?: string;
   receivedBytes: number;
   error: string | null;
   updatedAt: string;

@@ -40,8 +40,11 @@ test('independent terminal deliverables retain separate source steps', () => {
 test('incomplete workflows and non-completion attempts cannot appear as final answers', () => {
   const value = fixture(); value.steps = [step('result')]; value.steps[0].state = 'completed';
   value.steps[0].attempts = [{ ...attempt(1), outcome: { kind: 'completed', summary: 'Old result', files: [] } }];
-  for (const state of ['running', 'paused', 'stopping', 'failed', 'stopped', 'planning'] as const) {
+  for (const state of ['running', 'paused', 'stopping', 'planning'] as const) {
     value.state = state; assert.deepEqual(workflowResults(value), []);
+  }
+  for (const state of ['failed', 'stopped'] as const) {
+    value.state = state; assert.equal(workflowResults(value)[0].summary, 'Old result', 'Retain completed work in partial results');
   }
   value.state = 'completed';
   value.steps[0].attempts.push({ ...attempt(2), phase: 'failed' });

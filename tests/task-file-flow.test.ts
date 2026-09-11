@@ -51,6 +51,7 @@ type Internals = {
   postToNode: (peer: RivloomNode, path: string, value: ChannelEnvelope) => Promise<unknown>;
   exchangeTaskFile: (peer: RivloomNode, message: TaskFileMessage) => Promise<unknown>;
   flushTaskFiles: (peerID: string) => Promise<void>;
+  repairFileRoutes: () => void;
   assertFilePeer: (
     route: TaskFileRoute,
     peer: string,
@@ -162,6 +163,34 @@ test('file transfer waits for the authenticated task offer and then completes wi
   } finally {
     h.close();
   }
+});
+
+test('on-demand workflow results bind metadata without deliveries while legacy results still auto-queue', () => {
+  const h = harness();
+  try {
+    const brain = randomUUID(), localID = randomUUID();
+    const outgoing = h.a.remoteTasks.create(h.ids[0], brain, h.ids[1], brain, { title: 'Results', description: 'Fixture', criteria: 'Verified' });
+    h.b.remoteTasks.receiveOffer(h.a.remoteTasks.message(outgoing.id) as any);
+    h.b.remoteTasks.decide(outgoing.id, 'accepted');
+    const response = h.b.remoteTasks.message(outgoing.id);
+    assert(response);
+    h.b.remoteTasks.markDelivered(outgoing.id, response, true);
+    h.b.remoteTasks.bindLocalTask(outgoing.id, localID);
+    const body = Buffer.from('A remote business file'), f = file(body);
+    h.networks[1].files.beginUpload('fixture', f); h.networks[1].files.uploadChunk('fixture', f.id, 0, body.toString('base64'));
+    h.networks[1].files.bindExisting({ scope: 'local', taskID: localID, purpose: 'result' }, [f]);
+    h.networks[1].setDeferredWorkflowResults((id) => id === outgoing.id); h.b.repairFileRoutes();
+    const result = { scope: 'remote' as const, taskID: outgoing.id, purpose: 'result' as const };
+    assert.equal(h.networks[1].files.manifest(result).length, 1); assert.equal(h.networks[1].files.views(result)[0].deliveries.length, 0);
+    h.networks[1].files.queueDelivery(result, f.id, h.ids[0]); h.b.repairFileRoutes();
+    assert.equal(h.networks[1].files.views(result)[0].deliveries.length, 1, 'Requested files remain queued during repairs');
+    const second = { ...file(body), name: 'legacy.txt' }; h.networks[1].files.beginUpload('fixture', second);
+    h.networks[1].files.uploadChunk('fixture', second.id, 0, body.toString('base64'));
+    h.networks[1].files.bindExisting({ scope: 'local', taskID: localID, purpose: 'result' }, [second]);
+    h.b.repairFileRoutes(); assert.equal(h.networks[1].files.views(result)[1].deliveries.length, 0);
+    h.networks[1].setDeferredWorkflowResults(() => false); h.b.repairFileRoutes();
+    assert.equal(h.networks[1].files.views(result)[1].deliveries.length, 1, 'Unnegotiated legacy transfers preserve existing behavior');
+  } finally { h.close(); }
 });
 
 test('a pending Brain submission does not block another task file for the same peer', async () => {

@@ -64,4 +64,12 @@ export function installWorkflowAPI(app: Express, runtime: WorkflowRuntime, netwo
       const result = runtime.service.editStep(value.id, body.version, body.step); runtime.kick(); res.json(result);
     } catch (value) { error(value); }
   });
+  app.post('/api/workflows/:id/steps/retry', async (req, res) => {
+    try {
+      const value = visible(req);
+      const body = z.object({ version: z.number().int().min(1), roundRequestID: z.string().uuid(),
+        stepID: z.string().min(1).max(48), attempt: z.number().int().min(0).max(15), requestID: z.string().uuid() }).strict().parse(req.body);
+      const result = await runtime.service.retryStep(value.id, body); runtime.kick(); res.json(result);
+    } catch (value) { error(value); }
+  });
 }

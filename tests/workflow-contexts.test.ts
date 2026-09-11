@@ -34,6 +34,24 @@ test('remote execution metadata persists before offers, binds one owner and cann
     assert.throws(() => store.receive(A, { ...payload, executionID: oldID }), /already_exists/);
   } finally { db.close(); }
 });
+
+test('on-demand result policy survives restart and cannot be downgraded by metadata replay', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const store = new WorkflowContexts(db, () => B, () => null);
+    const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'write', attempt: 1, role: 'executor', target: { mode: 'automatic' }, instructions: 'Write', evidence: '', priorContext: '' };
+    const payload = { executionID: randomUUID(), context, inputFiles: [], resultDelivery: 'on-demand' };
+    const ack = store.receive(A, payload); const restarted = new WorkflowContexts(db, () => B, () => null);
+    assert.equal(restarted.owned(A, ack).resultDelivery, 'on-demand');
+    assert.deepEqual(restarted.receive(A, payload), ack);
+    const { resultDelivery: _policy, ...legacy } = payload;
+    assert.throws(() => restarted.receive(A, legacy), /conflict/);
+    assert.throws(() => restarted.receive(A, { ...payload, resultDelivery: 'automatic' }), /invalid_metadata/);
+    const old = { ...legacy, executionID: randomUUID() }; restarted.receive(A, old);
+    assert.equal(restarted.get(old.executionID)!.resultDelivery, undefined);
+    assert.throws(() => restarted.receive(A, { ...old, resultDelivery: 'on-demand' }), /conflict/);
+  } finally { db.close(); }
+});
 test('remote completion replies require a bound session, generation and exact bounded file manifest', () => {
   const reply = { executionID: randomUUID(), digest: 'a'.repeat(64), sessionID: 'ses_fixture', attempt: 2, runAfter: 1700000000000,
     phase: 'completed', summary: 'done', error: null, outcome: { kind: 'completed', summary: 'done', files: [] }, outputFiles: [], safeToTransfer: true };

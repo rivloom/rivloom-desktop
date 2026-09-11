@@ -36,6 +36,7 @@ function setup() {
     query: async () => { queries++; return { results: ['B has the required resource'], status: 'complete' }; },
     materialize: async () => [],
     stageInputs: async (_value, _key, files) => files,
+    retryReady: async (_value, attempt) => executions.get(attempt.executionID)?.safeToTransfer === true,
   };
   let service = new WorkflowService(store, adapter);
   const request: WorkflowRequest = { requestID: randomUUID(), creatorID: 'owner', title: 'Make a short film',
@@ -57,6 +58,79 @@ function setup() {
   };
 }
 const complete = (summary = 'done'): ExecutionOutcome => ({ kind: 'completed', summary, files: [] });
+
+test('retry restores only a failed branch and its blocked descendants, preserving results, queue pause and durable receipts', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Branches', steps: [step('ready'), step('bad'), step('join', ['ready', 'bad'])] });
+    const success = f.starts.find((a) => a.context.stepID === 'ready')!, failed = f.starts.find((a) => a.context.stepID === 'bad')!;
+    f.finish(success, complete('Keep this answer'));
+    f.executions.set(failed.executionID, { phase: 'failed', summary: 'Failed first try', error: 'synthetic_failure', outcome: null, outputFiles: [], safeToTransfer: true });
+    await f.service.advance(id);
+    f.service.enqueue(id, randomUUID(), 'Do not start the next round', []);
+    const before = f.store.get(id)!;
+    const request = { version: before.version, roundRequestID: before.requestID, stepID: 'bad', attempt: 1, requestID: randomUUID() };
+    f.restart(); const retried = await f.service.retryStep(id, request);
+    assert.equal(retried.queuePaused, true); assert.equal(retried.steps[2].state, 'waiting');
+    assert.deepEqual(retried.steps[0], before.steps[0]); assert.deepEqual(retried.steps[1].attempts, before.steps[1].attempts);
+    assert.deepEqual(await f.service.retryStep(id, request), retried);
+    f.restart(); await f.service.advance(id);
+    const second = f.starts.at(-1)!; assert.equal(second.context.stepID, 'bad'); assert.equal(second.number, 2);
+    assert.notEqual(second.executionID, failed.executionID); assert.equal(f.starts.filter((a) => a.context.stepID === 'ready').length, 1);
+    f.finish(second, complete('Recovered')); await f.service.advance(id);
+    assert.equal(f.starts.at(-1)!.context.stepID, 'join'); f.finish(f.starts.at(-1)!, complete('All done'));
+    await f.service.advance(id); await f.service.tick();
+    const done = f.store.get(id)!; assert.equal(done.state, 'completed'); assert.equal(done.rounds, undefined);
+    assert.equal(done.steps[1].attempts[0].error, 'synthetic_failure');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('retry refuses unconfirmed execution, stale identity, unknown phases and races with a new round', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Fail', steps: [step('work')] });
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', error: 'failure', outcome: null, outputFiles: [], safeToTransfer: false });
+    await f.service.advance(id);
+    const value = f.store.get(id)!;
+    const request = { version: value.version, roundRequestID: value.requestID, stepID: 'work', attempt: 1, requestID: randomUUID() };
+    await assert.rejects(f.service.retryStep(id, request), /unconfirmed/); assert.equal(f.starts.length, 2);
+    for (const patch of [{ version: 1 }, { roundRequestID: randomUUID() }, { attempt: 0 }, { stepID: 'planner' }])
+      await assert.rejects(f.service.retryStep(id, { ...request, ...patch }), /changed/);
+    let release!: (ready: boolean) => void;
+    f.adapter.retryReady = () => new Promise((resolve) => { release = resolve; });
+    const pending = f.service.retryStep(id, request);
+    f.service.enqueue(id, randomUUID(), 'Next round', []); f.service.messageControl(id, 'resume'); await f.service.advance(id);
+    release(true); await assert.rejects(pending, /version_conflict|changed/);
+    assert.equal(f.starts.length, 2);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('retry of one failed branch keeps an independent failure and shared dependents blocked', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Two failures', steps: [step('a'), step('b'), step('join', ['a', 'b'])] });
+    for (const attempt of f.starts.slice(1)) f.executions.set(attempt.executionID, { phase: 'failed', summary: '', error: 'failure', outcome: null, outputFiles: [], safeToTransfer: true });
+    await f.service.advance(id); const value = f.store.get(id)!;
+    await f.service.retryStep(id, { version: value.version, roundRequestID: value.requestID, stepID: 'a', attempt: 1, requestID: randomUUID() });
+    await f.service.advance(id); f.finish(f.starts.at(-1)!, complete()); await f.service.advance(id);
+    assert.deepEqual(f.store.get(id)!.steps.map((s) => s.state), ['completed', 'failed', 'blocked']);
+    assert.equal(f.starts.filter((a) => a.context.stepID === 'b').length, 1);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('material preparation waits without dispatch and retains negotiated output policy on restart', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 0, resultDelivery: 'on-demand' }];
+    let ready = false;
+    f.adapter.prepareInputs = async (_w, files, role) => role === 'planner' || ready ? files : null;
+    const id = await f.planned({ summary: 'Remote files', steps: [step('consume')] });
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(id)!.steps[0].state, 'ready');
+    f.restart(); await f.service.advance(id); assert.equal(f.starts.length, 1);
+    ready = true; await f.service.advance(id);
+    assert.equal(f.starts[1].resultDelivery, 'on-demand'); assert.equal(f.store.get(id)!.steps[0].attempts[0].resultDelivery, 'on-demand');
+  } finally { await f.service.close(); f.db.close(); }
+});
 
 test('conversation messages queue through questions and restart, preserve rounds and never interrupt current work', async () => {
   const f = setup();

@@ -583,5 +583,6 @@
   "会话已不可用，请刷新后重试。": "This conversation is no longer available. Refresh and try again.",
   "无法打开文件，请检查默认应用或另存后打开。": "Could not open the file. Check the default app or save a copy first.",
   "无法打开文件夹，请检查目录是否存在。": "Could not open the folder. Check that it still exists.",
-  "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。\n": "This is a follow-up in the same conversation. Read input file {{value1}} first for all earlier requests, results and file records. Preserve applicable constraints and continue from existing work.\n"
+  "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。\n": "This is a follow-up in the same conversation. Read input file {{value1}} first for all earlier requests, results and file records. Preserve applicable constraints and continue from existing work.\n",
+  "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n": "This is a follow-up in the same conversation. First read {{value1}}, which contains previous requests, results and file records. Preserve applicable constraints and continue from existing work. Remote outputs remain on the recorded Node; do not assume they are attached. If cross-Node access is needed, query the resource directory and request the file through resources. Otherwise use the result records only.\n"
 }

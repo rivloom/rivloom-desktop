@@ -8,6 +8,7 @@ import {
   taskFileUploadCount,
   type TaskFileScope,
   type TaskFileRoute,
+  type TaskFileView,
 } from '../shared/task-files.ts';
 import { TaskFileError } from './task-files.ts';
 import type { NodeNetwork } from './node-network.ts';
@@ -20,6 +21,7 @@ export function installTaskFileAPI(
   changed: () => void,
   locations: (local: Task, fileID: string) => { root: string; path: string }[] = () => [],
   protectedFile: (fileID: string) => boolean = () => false,
+  remoteResults?: { views: (executionID: string) => TaskFileView[]; fetch: (executionID: string, fileID: string) => Promise<void> },
 ) {
   const files = network.files;
   const check = (condition: unknown, status: number, message: string) => {
@@ -146,11 +148,19 @@ export function installTaskFileAPI(
       route = routes(access.scope, access.taskID);
     res.json({
       inputs: files.views(route.input),
-      results: files.views(route.result),
+      results: access.scope === 'remote' && remoteResults?.views(access.taskID).length ? remoteResults.views(access.taskID) : files.views(route.result),
       canPublish: access.canPublish,
       canSave: true,
       canRetry: access.canRetry,
     });
+  });
+  app.post('/api/task-files/:scope/:taskID/fetch', async (req, res) => {
+    const access = accessible(req);
+    const body = z.object({ fileID: z.string().uuid() }).strict().parse(req.body);
+    check(access.scope === 'remote' && remoteResults, 409, '此文件不支持远端取回。');
+    try { await remoteResults!.fetch(access.taskID, body.fileID); }
+    catch (error) { throw new TaskFileError(409, error instanceof Error ? error.message : 'workflow_file_not_available'); }
+    res.json({ requested: true });
   });
   app.post('/api/task-files/:scope/:taskID/results', (req, res) => {
     const access = accessible(req);

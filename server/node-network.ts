@@ -1,4 +1,5 @@
 import Bonjour from 'bonjour-service';
+import { workflowControlsCapability } from '../shared/workflow-channel.ts';
 import { collaborationCapability, validCollaborationRequest, validCollaborationResponse,
   type CollaborationRequest, type CollaborationResponse } from '../shared/collaboration.ts';
 import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
@@ -217,9 +218,9 @@ export class NodeNetworkError extends Error {
 const serviceType = 'rivloom';
 const capabilities = [
   'brain',
-  'executor',
+  workflowControlsCapability,
   // Keep the signed hello within older decoders' 12-capability bound.
-  // The obsolete descriptive human-ui flag has no protocol behavior.
+  // Obsolete descriptive flags have no protocol behavior.
   'remote-execution-v1',
   'remote-control-v1',
   'remote-results-v1',
@@ -610,6 +611,8 @@ export class NodeNetwork extends EventEmitter {
   private readonly seenChannelRecoveries = new Map<string, number>();
   private readonly channelSendQueues = new Map<string, Promise<unknown>>();
   private collaborationHandler: ((peerNodeID: string, operation: string, payload: unknown) => unknown) | null = null;
+  private deferredWorkflowResults: (executionID: string) => boolean = () => false;
+  setDeferredWorkflowResults(provider: (executionID: string) => boolean) { this.deferredWorkflowResults = provider; }
   private nextCollaborationSendAt = 0;
   private updateMaintenance: (() => boolean) = () => false;
   private updatePeerRequests = 0;
@@ -1348,16 +1351,18 @@ export class NodeNetwork extends EventEmitter {
     if (validCollaborationRequest(message)) {
       if (!node.capabilities.includes(collaborationCapability) || !this.collaborationHandler)
         throw new NodeNetworkError(409, '尚未协商协作查询能力。');
-      let response: CollaborationResponse;
-      try {
-        const payload = this.collaborationHandler(node.id, message.operation, message.payload);
-        if (payload instanceof Promise || Buffer.byteLength(JSON.stringify(payload ?? null)) > 60 * 1024)
-          throw new Error('response_limit');
-        response = { type: 'collaboration-response', requestID: message.requestID, ok: true, payload: payload ?? null, error: null };
-      } catch {
-        response = { type: 'collaboration-response', requestID: message.requestID, ok: false, payload: null, error: '协作数据无效、已变更或当前不可用。' };
-      }
-      return encryptChannelDataReply(channel, value, response);
+      return (async () => {
+        let response: CollaborationResponse;
+        try {
+          const payload = await this.collaborationHandler!(node.id, message.operation, message.payload);
+          if (Buffer.byteLength(JSON.stringify(payload ?? null)) > 60 * 1024 || !this.isTrustedNode(node.id))
+            throw new Error('response_limit');
+          response = { type: 'collaboration-response', requestID: message.requestID, ok: true, payload: payload ?? null, error: null };
+        } catch {
+          response = { type: 'collaboration-response', requestID: message.requestID, ok: false, payload: null, error: '协作数据无效、已变更或当前不可用。' };
+        }
+        return encryptChannelDataReply(channel, value, response);
+      })();
     }
     if (validTaskFileMessage(message)) {
       if (!supportsTaskFiles(node.capabilities, [message.file]))
@@ -1829,7 +1834,7 @@ export class NodeNetwork extends EventEmitter {
           bind(
             result,
             this.files.manifest({ scope: 'local', taskID: task.localTaskID, purpose: 'result' }),
-            task.ownerNodeID,
+            this.deferredWorkflowResults(task.id) ? undefined : task.ownerNodeID,
           );
         } else if (task.direction === 'outgoing' && task.brainTaskID) {
           const brain = this.brainTasks.record(task.brainTaskID);
@@ -2555,7 +2560,7 @@ export class NodeNetwork extends EventEmitter {
       ['/v1/channel/message', '/v1/channel/file', '/v1/channel/collaboration'].includes(url.pathname) &&
       validChannelEnvelope(value)
     ) {
-      const result = this.handleChannelMessage(value, remote, url.pathname === '/v1/channel/file', url.pathname === '/v1/channel/collaboration');
+      const result = await this.handleChannelMessage(value, remote, url.pathname === '/v1/channel/file', url.pathname === '/v1/channel/collaboration');
       if (result) jsonResponse(response, 200, result);
       else response.writeHead(204).end();
       return;

@@ -1171,5 +1171,16 @@
   "这条消息已经开始执行，无法从队列移除。": "This message has started and can no longer be removed from the queue.",
   "此前会话记录暂时无法准备，请重试继续消息队列。": "Earlier conversation records could not be prepared. Try resuming the queue again.",
   "消息队列已暂停": "Message queue paused",
-  "消息排队中": "Messages queued"
+  "消息排队中": "Messages queued",
+  "也可粘贴或拖入文件": "You can also paste or drop files",
+  "完成": "Done",
+  "已完成的部分": "Completed work",
+  "重试此步骤": "Retry this step",
+  "保留在远端": "Stored on remote device",
+  "取回到本机": "Fetch to this device",
+  "重试取回": "Retry fetch",
+  "文件取回未确认，请重试。": "File retrieval was not confirmed. Please retry.",
+  "步骤状态已变化，请刷新后重试。": "The step has changed. Refresh and try again.",
+  "暂时无法确认上次执行已停止，请检查源 Node 在线且已更新后再重试。": "Could not confirm the previous execution has stopped. Check that the source Node is online and up to date, then retry.",
+  "此文件不支持远端取回。": "This file does not support remote retrieval."
 }

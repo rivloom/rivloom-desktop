@@ -318,6 +318,25 @@ const timer = setInterval(async () => {
 }, 1500);
 timer.unref();
 
+/** A terminal database state alone cannot authorize another execution after an uncertain failure. */
+export async function workflowRetryReady(taskID: string): Promise<boolean> {
+  const value = task(taskID);
+  if (shuttingDown || !value.collaboration || !['accepted', 'failed', 'stopped'].includes(value.state)) return false;
+  if (!value.sessionID) return !db.prepare('SELECT task_id FROM task_engine_intents WHERE task_id=?').get(value.id);
+  if (!engineStatus.ready || isLocked(taskID)) return false;
+  try {
+    const directory = project(value.projectID).directory;
+    const [statuses, messages] = await Promise.all([client().session.status({ directory }),
+      client().session.messages({ directory, sessionID: value.sessionID })]);
+    if (!statuses.data || !messages.data || statuses.data[value.sessionID]?.type && statuses.data[value.sessionID].type !== 'idle') return false;
+    const assistants = messages.data.filter((m) => m.info.role === 'assistant' && m.info.time.created >= value.runAfter);
+    const last = assistants.at(-1)?.info;
+    if (!last || last.role !== 'assistant' || !last.time.completed) return false;
+    const check = await checkWorkflowQuiescence({ directory, tools: assistants.flatMap((m) => m.parts.filter((p) => p.type === 'tool')) });
+    const latest = task(taskID);
+    return check.confirmed && latest.version === value.version && !shuttingDown;
+  } catch { return false; }
+}
 export async function runTask(taskID: string, actor: User, addition?: string) {
   return exclusive(taskID, async () => {
     let t = task(taskID);

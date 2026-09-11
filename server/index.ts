@@ -208,7 +208,7 @@ function configureResources() {
     const directory = new ResourceNetwork(dataRoot, catalog, transport, changed);
     resources = { catalog, directory, files: new ResourceFiles(dataRoot, catalog, nodeNetwork.files, transport) };
     nodeNetwork.setCollaborationHandler((peer, operation, payload) =>
-      operation === 'execution-context' || operation === 'execution-outcome' ? workflowRuntime.handle(peer, operation, payload) :
+      operation.startsWith('execution-') ? workflowRuntime.handle(peer, operation, payload) :
       operation === 'resource-prepare' || operation === 'resource-chunk'
         ? resources!.files.handle(peer, operation, payload) : directory.handle(peer, operation, payload));
     directory.start();
@@ -753,7 +753,8 @@ app.post('/api/network/execution-concurrency', (req, res) => {
   res.json(saved);
 });
 installTaskFileAPI(app, nodeNetwork, who, tasks, changed, (local, fileID) => workflowRuntime.fileLocations(local, fileID),
-  (fileID) => historyFileIDs(workflowRuntime.store.list()).includes(fileID));
+  (fileID) => historyFileIDs(workflowRuntime.store.list()).includes(fileID),
+  { views: (id) => workflowRuntime.remoteFileViews(id), fetch: (id, fileID) => workflowRuntime.fetchResultFile(id, fileID) });
 const attachmentIDsSchema = z.array(z.string().uuid()).max(taskFileUploadCount).optional();
 const remoteTaskID = (req: Request) => z.string().uuid().parse(req.params.id);
 app.post('/api/network/tasks', async (req, res) => {

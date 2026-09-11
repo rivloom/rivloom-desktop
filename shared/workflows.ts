@@ -26,6 +26,7 @@ export type WorkflowAttempt = {
   createdAt: string; updatedAt: string; summary: string; outcome: ExecutionOutcome | PlanningOutcome | null;
   inputFiles: TaskFileDescriptor[]; outputFiles: TaskFileDescriptor[]; error: string | null;
   context: WorkflowExecutionContext; handled: boolean;
+  resultDelivery?: 'on-demand';
   clarifications?: { requestID: string; questions: string[]; answers: string[][] }[];
   localConfig?: { projectID: string; model: string };
 };
@@ -34,6 +35,7 @@ export type WorkflowStep = WorkflowStepPlan & {
   attempts: WorkflowAttempt[]; checkpoint: string; queryRounds: number; validationRounds?: number;
   materials: TaskFileDescriptor[]; evidence: string;
   continuation: { nodeID: string | null; reason: string; handoff: boolean } | null;
+  retries?: { requestID: string; attempt: number }[];
 };
 export type WorkflowEvent = { id: number; kind: 'plan' | 'query' | 'handoff' | 'state' | 'error'; text: string; stepID: string | null; at: string };
 export type WorkflowHandoff = {
@@ -76,6 +78,11 @@ export function canRetryWorkflowPlanning(value: Workflow): boolean {
   return value.state === 'failed' && value.planVersion === 0 && value.steps.length === 0 &&
     value.planner.state === 'failed' && !!last && last.handled && ['completed', 'failed'].includes(last.phase) &&
     value.planner.attempts.length < 16;
+}
+export function canRetryWorkflowStep(value: Workflow, step: WorkflowStep): boolean {
+  return value.state === 'failed' && value.planVersion > 0 && value.steps.includes(step) && step.state === 'failed' &&
+    step.attempts.length < 16 && (step.retries?.length || 0) < 16 && [value.planner, ...value.steps].every((s) => s.attempts.every((a) =>
+      a.handled && ['completed', 'failed', 'stopped'].includes(a.phase)));
 }
 const stepID = (value: unknown): value is string => text(value, 48) && /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(value);
 export function validHardwareRequirements(value: unknown): value is TaskHardwareRequirements {

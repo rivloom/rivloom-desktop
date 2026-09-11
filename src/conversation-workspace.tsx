@@ -592,6 +592,7 @@ export function ConversationWorkspace({
   const scrollPinned = useRef(true);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const settingsTrigger = useRef<HTMLButtonElement | null>(null);
   const composing = useRef(false);
   const all = useMemo(
     () => conversations(data),
@@ -876,6 +877,7 @@ export function ConversationWorkspace({
     selectedRef.current = item?.key || null;
     setSelected(item?.key || null);
     setMention(null);
+    setOptions(false);
     setView('chat');
     setError('');
     setNotice('');
@@ -1101,6 +1103,130 @@ export function ConversationWorkspace({
       model: string | null;
     }) => void perform(() => api('/network/execution-policy', { ...input, confirmed: true })),
   };
+
+  function closeComposerSettings() {
+    setOptions(false);
+    requestAnimationFrame(() => {
+      if (settingsTrigger.current?.isConnected) settingsTrigger.current.focus();
+      else inputRef.current?.focus();
+    });
+  }
+  const composerToolbar = (
+    <>
+      <div className="composer-choices">
+        {!current ? (
+          <>
+            {targetNodeID ? (
+              <button type="button" className="composer-directed-location" disabled={busy} aria-haspopup="dialog"
+                title={t('目标 Node：{{value1}}（{{value2}}）', { value1: targetName, value2: targetNodeID })}
+                onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}>
+                <AtSign size={15} />
+                <span>{targetMode === 'locked' ? t('锁定') : t('首选')} · {targetName}</span>
+              </button>
+            ) : (
+              <label className="composer-select">
+                <FolderOpen size={15} />
+                <select
+                  aria-label={t('工作文件夹')}
+                  disabled={busy}
+                  value={projectID}
+                  onChange={(event) => {
+                    if (event.target.value === '__add__') setModal('folder');
+                    else setProjectID(event.target.value);
+                  }}
+                >
+                  <option value="">
+                    {t('工作文件夹')}
+                  </option>
+                  {data.projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                  {data.user.owner && (
+                    <option value="__add__">{t('添加文件夹…')}</option>
+                  )}
+                </select>
+              </label>
+            )}
+            {(!targetNodeID || targetNodeID === local?.id) && (
+              <label className="composer-select model-select">
+                <Bot size={15} />
+                <select
+                  aria-label={t('执行模型')}
+                  disabled={busy}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                >
+                  {!data.engine.models.some((m) => m.id === model) && (
+                    <option value={model}>
+                      {data.engine.models.length ? t('选择模型') : t('尚未连接模型')}
+                    </option>
+                  )}
+                  {data.engine.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {data.user.owner && <button type="button" className="composer-options" disabled={busy}
+              aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
+              aria-expanded={!!mention} aria-controls={mention ? 'node-mention-options' : undefined}
+              onClick={() => mention ? setMention(null) : showMention('preferred')}>
+              <AtSign size={16} />
+            </button>}
+            <button
+              type="button"
+              className={`composer-options ${options ? 'active' : ''}`}
+              aria-label={t('会话设置')}
+              title={t('会话设置')}
+              aria-haspopup="dialog"
+              disabled={busy}
+              aria-expanded={options}
+              onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}
+            >
+              <Settings2 size={16} />
+            </button>
+          </>
+        ) : (
+          <span className="composer-context">
+            {task ? (
+              <>
+                <FolderOpen size={14} />
+                {data.projects.find((p) => p.id === task.projectID)?.name}
+              </>
+            ) : (
+              <>
+                <Network size={14} />
+                {conversationState(current)}
+              </>
+            )}
+          </span>
+        )}
+      </div>
+      <button
+        type="submit"
+        className="send-message"
+        aria-label={t('发送消息')}
+        title={t('Enter 发送 · Shift + Enter 换行')}
+        disabled={
+          busy ||
+          !draft.trim() ||
+          inputUsage.overLimit ||
+          ((!current || current.workflow) && !draftFilesReady(draftState.files)) ||
+          !canWrite ||
+          remote?.controlPending ||
+          (!current &&
+            conversationCreationNeedsModel(draftState) &&
+            !data.engine.models.some((m) => m.id === model))
+        }
+      >
+        {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
+      </button>
+    </>
+  );
 
   return (
     <ResizableWorkspace hasNetwork={rail} sidebarOpen={mobileSidebar}>
@@ -1574,34 +1700,10 @@ export function ConversationWorkspace({
                 className={`conversation-composer ${!canWrite ? 'read-only' : ''}`}
                 onSubmit={send}
               >
-                {(!current || current.workflow) && (
-                  <TaskFilePicker
-                    key={draftKey}
-                    files={draftState.files || []}
-                    disabled={busy || !canWrite}
-                    composer
-                    onChange={(update) =>
-                      setDrafts((previous) => {
-                        const saved = previous[draftKey] || emptyDraft.current;
-                        return {
-                          ...previous,
-                          [draftKey]: updateConversationDraft(saved, {
-                            files: update(saved.files || []),
-                          }),
-                        };
-                      })
-                    }
-                  />
-                )}
-                {!current && data.user.owner && <div className="composer-target-hints">
-                  <span>{t('先分析与规划，再自动执行')}</span>
-                  <button type="button" disabled={busy} onClick={() => showMention('preferred')}>@ {t('首选 Node')}</button>
-                  <button type="button" disabled={busy} onClick={() => showMention('locked')}>@@ {t('锁定 Node')}</button>
-                </div>}
                 <textarea
                   ref={inputRef}
                   aria-label={t('会话消息')}
-                  aria-describedby={canWrite ? 'conversation-input-usage' : undefined}
+                  aria-describedby={canWrite ? 'conversation-input-usage conversation-composer-hint' : undefined}
                   aria-invalid={(canWrite && inputUsage.overLimit) || undefined}
                   aria-controls={mention ? 'node-mention-options' : undefined}
                   aria-activedescendant={
@@ -1703,7 +1805,7 @@ export function ConversationWorkspace({
                 {canWrite && (
                   <div
                     id="conversation-input-usage"
-                    className={`composer-input-usage ${inputUsage.overLimit ? 'exceeded' : inputUsage.nearLimit ? 'near-limit' : ''}`}
+                    className={`composer-input-usage ${inputUsage.overLimit ? 'exceeded' : inputUsage.nearLimit ? 'near-limit' : 'composer-accessible-note'}`}
                   >
                     <span className="composer-input-warning" role="status" aria-live="polite">
                       {inputUsage.overLimit
@@ -1781,138 +1883,37 @@ export function ConversationWorkspace({
                     </div>
                   </div>
                 )}
-                {!current && targetNodeID && (
-                  <div
-                    className={`directed-node-chip ${!targetNode ? 'unavailable' : ''}`}
-                    title={t('目标 Node：{{value1}}（{{value2}}）', {
-                      value1: targetName,
-                      value2: targetNodeID,
-                    })}
-                  >
-                    <AtSign size={14} />
-                    <span>
-                      {targetMode === 'locked' ? '@@ ' + t('锁定') + ' ' : '@ ' + t('首选') + ' '}
-                      {targetName}
-                      {!targetNode && t(' · 目标暂未出现在已配对目录中，重试时会确认原投递')}
-                    </span>
-                    <button type="button" className="target-mode-toggle" disabled={busy} onClick={() => changeTargetMode(targetMode === 'locked' ? 'preferred' : 'locked')}>
-                      {targetMode === 'locked' ? t('改为首选') : t('改为锁定')}</button>
-                    <button
-                      type="button"
-                      aria-label={t('清除目标，自动选择 Node')}
-                      title={t('清除目标，自动选择 Node')}
-                      disabled={busy}
-                      onClick={() => changeTargetMode(null)}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                )}
-                <div className="composer-toolbar">
-                  <div className="composer-choices">
-                    {!current ? (
-                      <>
-                        {targetNodeID ? (
-                          <span className="composer-directed-location">
-                            <AtSign size={15} />
-                            {targetName}
-                          </span>
-                        ) : (
-                          <label className="composer-select">
-                            <FolderOpen size={15} />
-                            <select
-                              aria-label={t('工作文件夹')}
-                              disabled={busy}
-                              value={projectID}
-                              onChange={(event) => {
-                                if (event.target.value === '__add__') setModal('folder');
-                                else setProjectID(event.target.value);
-                              }}
-                            >
-                              <option value="">
-                                {t('本机规划工作目录')}
-                              </option>
-                              {data.projects.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name}
-                                </option>
-                              ))}
-                              {data.user.owner && (
-                                <option value="__add__">{t('添加文件夹…')}</option>
-                              )}
-                            </select>
-                          </label>
-                        )}
-                        {(!targetNodeID || targetNodeID === local?.id) && (
-                          <label className="composer-select model-select">
-                            <Bot size={15} />
-                            <select
-                              aria-label={t('执行模型')}
-                              disabled={busy}
-                              value={model}
-                              onChange={(e) => setModel(e.target.value)}
-                            >
-                              {!data.engine.models.some((m) => m.id === model) && (
-                                <option value={model}>
-                                  {data.engine.models.length ? t('选择模型') : t('尚未连接模型')}
-                                </option>
-                              )}
-                              {data.engine.models.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        )}
-                        <button
-                          type="button"
-                          className={`composer-options ${options ? 'active' : ''}`}
-                          aria-label={t('会话设置')}
-                          disabled={busy}
-                          aria-expanded={options}
-                          onClick={() => setOptions(!options)}
-                        >
-                          <Settings2 size={16} />
-                        </button>
-                      </>
-                    ) : (
-                      <span className="composer-context">
-                        {task ? (
-                          <>
-                            <FolderOpen size={14} />
-                            {data.projects.find((p) => p.id === task.projectID)?.name}
-                          </>
-                        ) : (
-                          <>
-                            <Network size={14} />
-                            {conversationState(current)}
-                          </>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="submit"
-                    className="send-message"
-                    aria-label={t('发送消息')}
-                    disabled={
-                      busy ||
-                      !draft.trim() ||
-                      inputUsage.overLimit ||
-                      ((!current || current.workflow) && !draftFilesReady(draftState.files)) ||
-                      !canWrite ||
-                      remote?.controlPending ||
-                      (!current &&
-                        conversationCreationNeedsModel(draftState) &&
-                        !data.engine.models.some((m) => m.id === model))
+                {(!current || current.workflow) ? (
+                  <TaskFilePicker
+                    key={draftKey}
+                    files={draftState.files || []}
+                    disabled={busy || !canWrite}
+                    composer
+                    onChange={(update) =>
+                      setDrafts((previous) => {
+                        const saved = previous[draftKey] || emptyDraft.current;
+                        return {
+                          ...previous,
+                          [draftKey]: updateConversationDraft(saved, {
+                            files: update(saved.files || []),
+                          }),
+                        };
+                      })
                     }
                   >
-                    {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
-                  </button>
-                </div>
-                {!current && options && (
-                  <div className="composer-expanded">
+                    {composerToolbar}
+                  </TaskFilePicker>
+                ) : <div className="composer-toolbar">{composerToolbar}</div>}
+              </form>
+              {!current && options && (
+                <Modal title={t('会话设置')} close={closeComposerSettings} className="composer-settings-modal">
+                  <div className="composer-settings-fields">
+                    <p className="composer-setting-hint">{targetNodeID
+                      ? targetMode === 'locked'
+                        ? t('先分析与规划，全部执行锁定在 {{node}}；仍可查询其他节点的材料。', { node: targetName })
+                        : t('先分析与规划，优先使用 {{node}}；必要时自动转交。', { node: targetName })
+                      : t('发送后先分析与规划，再按资源与依赖自动执行。')}</p>
+                    {targetNodeID && !targetNode && <p className="notice" role="status">{t(' · 目标暂未出现在已配对目录中，重试时会确认原投递')}</p>}
                     {targetNodeID ? (
                       <div className="directed-node-setting">
                         <AtSign size={16} />
@@ -1920,6 +1921,10 @@ export function ConversationWorkspace({
                           <small>{t('执行位置')}</small>
                           <strong>{targetName}</strong>
                         </span>
+                        <div className="directed-node-actions">
+                        <button type="button" disabled={busy} onClick={() => changeTargetMode(targetMode === 'locked' ? 'preferred' : 'locked')}>
+                          {targetMode === 'locked' ? t('改为首选') : t('改为锁定')}
+                        </button>
                         <button
                           type="button"
                           disabled={busy}
@@ -1927,6 +1932,7 @@ export function ConversationWorkspace({
                         >
                           {t('清除目标，自动选择 Node')}
                         </button>
+                        </div>
                       </div>
                     ) : (
                       <Field label={t('执行位置')}>
@@ -1980,23 +1986,19 @@ export function ConversationWorkspace({
                       />
                     </Field>
                   </div>
-                )}
-              </form>
+                  <div className="modal-actions"><Button onClick={closeComposerSettings}>{t('完成')}</Button></div>
+                </Modal>
+              )}
               {draftSaveError && <p className="file-error" role="alert">{t('草稿暂时无法保存，请保留此窗口。')}</p>}
-              <div className="composer-hint">
-                {current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : waitingForRemoteSession
+              <div className="composer-hint" id="conversation-composer-hint"
+                title={current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : undefined}>
+                {waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')
-                    : running
+                    : running && !current?.workflow
                       ? t('发送补充要求会先停止当前执行，再继续同一会话。')
-                      : current
-                        ? t('Enter 发送 · Shift + Enter 换行')
-                        : targetNodeID
-                          ? targetMode === 'locked'
-                            ? t('先分析与规划，全部执行锁定在 {{node}}；仍可查询其他节点的材料。', { node: targetName })
-                            : t('先分析与规划，优先使用 {{node}}；必要时自动转交。', { node: targetName })
-                          : t('发送后先分析与规划，再按资源与依赖自动执行。')}
+                      : t('Enter 发送 · Shift + Enter 换行')}
               </div>
             </div>
           </>

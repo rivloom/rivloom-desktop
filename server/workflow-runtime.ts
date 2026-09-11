@@ -1,13 +1,13 @@
-import { collaborationCapability, keys, record } from '../shared/collaboration.ts';
+import { collaborationCapability, keys, record, uuid } from '../shared/collaboration.ts';
 import { join, resolve } from 'node:path';
 import { nodeQueueBacklog } from '../shared/queue-backlog.ts';
-import { sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
-import { validWorkflowOutcomeReply, type WorkflowOutcomeReply } from '../shared/workflow-channel.ts';
-import { type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowStep } from '../shared/workflows.ts';
+import { sameTaskFile, type TaskFileDescriptor, type TaskFileView } from '../shared/task-files.ts';
+import { workflowControlsCapability, validWorkflowOutcomeReply, type WorkflowOutcomeReply } from '../shared/workflow-channel.ts';
+import { workflowAllSteps, type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowStep } from '../shared/workflows.ts';
 import { resourceFreshMilliseconds, type ResourceReference } from '../shared/resources.ts';
 import { activeStates, type Task } from '../shared/types.ts';
 import { db, user, projects, project, saveTask, patchTask, task, taskQueries, activity, now, exclusive } from './store.ts';
-import { changed, engineStatus, stopTask } from './task-service.ts';
+import { changed, engineStatus, stopTask, workflowRetryReady } from './task-service.ts';
 import { workerCanQueueTask, workerHardwareMatches, workerReportFresh } from './worker-resources.ts';
 import { WorkflowStore } from './workflows.ts';
 import { WorkflowContexts, workflowContextDigest } from './workflow-contexts.ts';
@@ -37,10 +37,12 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   private options: RuntimeOptions;
   private interval: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private fileRequests = new Map<string, number>();
   historyBusy(taskIDs: string[]) { return this.outputs.historyBusy(taskIDs); }
   constructor(options: RuntimeOptions) {
     this.options = options; this.store = new WorkflowStore(db); this.service = new WorkflowService(this.store, this, changed);
     this.contexts = new WorkflowContexts(db, () => options.network.snapshot().local?.id || null, (id) => options.network.remoteTask(id));
+    options.network.setDeferredWorkflowResults((id) => this.contexts.get(id)?.resultDelivery === 'on-demand');
     this.outputs = new WorkflowOutputs(db, options.network.files, () => { options.network.refreshTaskFiles(); changed(); });
   }
   start() {
@@ -82,7 +84,8 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       if (!node.online || !node.channelReady || !node.trusted || !node.capabilities.includes(collaborationCapability) || !node.worker ||
         !workerCanQueueTask(node.worker, { projectID: null, requirements: step.requirements }) || !hasSoftware(node.id) ||
         !network.brains.some((brain) => brain.state === 'established' && brain.online && node.brains.some((b) => b.id === brain.id))) continue;
-      result.push({ nodeID: node.id, kind: 'remote', waitingCount: nodeQueueBacklog(node) ?? node.worker.load.runningTasks });
+      result.push({ nodeID: node.id, kind: 'remote', waitingCount: nodeQueueBacklog(node) ?? node.worker.load.runningTasks,
+        ...(node.capabilities.includes(workflowControlsCapability) ? { resultDelivery: 'on-demand' as const } : {}) });
     }
     // Resource locality breaks equal queue scores, without turning a file reference into execution authority.
     return result.sort((a, b) => a.waitingCount - b.waitingCount ||
@@ -159,7 +162,8 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       if (!peer?.capabilities.includes(collaborationCapability) || !peer.online || !peer.channelReady || !peer.trusted)
         return { state: 'blocked', reason: 'workflow_target_unavailable' };
       const response = await network.collaborationRequest(attempt.nodeID, 'execution-context',
-        { executionID: attempt.executionID, context: attempt.context, inputFiles: attempt.inputFiles });
+        { executionID: attempt.executionID, context: attempt.context, inputFiles: attempt.inputFiles,
+          ...(attempt.resultDelivery ? { resultDelivery: attempt.resultDelivery } : {}) });
       const digest = workflowContextDigest(attempt.context, attempt.inputFiles);
       if (!record(response) || !keys(response, ['executionID', 'digest']) || response.executionID !== attempt.executionID || response.digest !== digest)
         throw new Error('workflow_metadata_ack_invalid');
@@ -186,11 +190,16 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       error: exported.error, outcome: exported.phase === 'complete' ? output.value : null, outputFiles: exported.files,
       safeToTransfer: output.quiescence.confirmed && exported.phase === 'complete' };
   }
-  handle(peer: string, operation: string, payload: unknown): unknown {
+  async handle(peer: string, operation: string, payload: unknown): Promise<unknown> {
     if (!this.options.network.isTrustedNode(peer)) throw new Error('workflow_untrusted_peer');
     if (operation === 'execution-context') return this.contexts.receive(peer, payload);
-    if (operation !== 'execution-outcome') throw new Error('workflow_unsupported_operation');
-    const context = this.contexts.owned(peer, payload); const remote = this.options.network.remoteTask(context.executionID);
+    if (!['execution-outcome', 'execution-files', 'execution-retry-check'].includes(operation)) throw new Error('workflow_unsupported_operation');
+    if (operation === 'execution-files' && (!record(payload) || !keys(payload, ['executionID', 'digest', 'fileID']) || !uuid(payload.fileID)))
+      throw new Error('workflow_invalid_file_request');
+    const context = this.contexts.owned(peer, operation === 'execution-files' && record(payload) ? { executionID: payload.executionID, digest: payload.digest } : payload);
+    const remote = this.options.network.remoteTask(context.executionID);
+    if (operation !== 'execution-outcome' && (!remote || remote.direction !== 'incoming' || remote.ownerNodeID !== peer || !remote.localTaskID))
+      throw new Error('workflow_execution_unconfirmed');
     if (!remote || remote.direction !== 'incoming' || remote.ownerNodeID !== peer) return {
       executionID: context.executionID, digest: context.digest, sessionID: null, attempt: context.context.attempt, runAfter: 0,
       phase: 'queued', summary: '', error: null, outcome: null, outputFiles: [], safeToTransfer: false,
@@ -201,6 +210,19 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       outcome: null, outputFiles: [], safeToTransfer: false } satisfies WorkflowOutcomeReply;
     if (context.localTaskID !== local.id || !local.collaboration ||
       workflowContextDigest(local.collaboration, local.inputFiles || []) !== context.digest) throw new Error('workflow_remote_binding_conflict');
+    if (operation === 'execution-retry-check') return { executionID: context.executionID, digest: context.digest, ready: await workflowRetryReady(local.id) };
+    if (operation === 'execution-files') {
+      if (context.resultDelivery !== 'on-demand' || remote.status !== 'accepted') throw new Error('workflow_file_not_available');
+      const snapshot = this.snapshot(local);
+      const file = snapshot.outputFiles.find((f) => f.id === (payload as { fileID: string }).fileID);
+      if (snapshot.phase !== 'completed' || !file) throw new Error('workflow_file_not_available');
+      const route = { scope: 'remote' as const, taskID: remote.id, purpose: 'result' as const };
+      this.options.network.files.bindExisting(route, [file]);
+      this.options.network.files.queueDelivery(route, file.id, peer);
+      this.options.network.files.retry(route, file.id);
+      this.options.network.refreshTaskFiles();
+      return { executionID: context.executionID, digest: context.digest, fileID: file.id };
+    }
     const result: WorkflowOutcomeReply = { ...this.snapshot(local), executionID: context.executionID, digest: context.digest,
       sessionID: local.sessionID, attempt: context.context.attempt, runAfter: local.runAfter };
     if (!validWorkflowOutcomeReply(result)) throw new Error('workflow_outcome_limit');
@@ -218,7 +240,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     const response = await network.collaborationRequest(attempt.nodeID, 'execution-outcome', { executionID: attempt.executionID, digest });
     if (!validWorkflowOutcomeReply(response) || response.executionID !== attempt.executionID || response.digest !== digest || response.attempt !== attempt.number)
       throw new Error('workflow_outcome_binding_conflict');
-    if (response.phase === 'completed') {
+    if (response.phase === 'completed' && attempt.resultDelivery !== 'on-demand') {
       // The authenticated manifest does not imply its bytes have arrived. The existing file protocol verifies them.
       const route = { scope: 'remote' as const, taskID: attempt.executionID, purpose: 'result' as const };
       if (!network.files.complete(route, response.outputFiles)) { network.refreshTaskFiles(); return { ...response, phase: 'waiting', outcome: null, outputFiles: [] }; }
@@ -226,6 +248,65 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       if (!response.outputFiles.every((f) => manifest.some((m) => sameTaskFile(f, m)))) throw new Error('workflow_result_manifest_conflict');
     }
     return response;
+  }
+  async retryReady(value: Workflow, attempt: WorkflowAttempt): Promise<boolean> {
+    if (attempt.kind === 'local') {
+      const local = this.localTask(attempt); if (!local) return false;
+      this.assertBinding(value, attempt, local); return workflowRetryReady(local.id);
+    }
+    const network = this.options.network;
+    if (!network.snapshot().paired?.find((n) => n.id === attempt.nodeID)?.capabilities.includes(workflowControlsCapability)) return false;
+    const digest = workflowContextDigest(attempt.context, attempt.inputFiles);
+    try {
+      const response = await network.collaborationRequest(attempt.nodeID, 'execution-retry-check', { executionID: attempt.executionID, digest });
+      return record(response) && keys(response, ['executionID', 'digest', 'ready']) && response.executionID === attempt.executionID &&
+        response.digest === digest && response.ready === true;
+    } catch { return false; }
+  }
+  private resultAttempt(executionID: string) {
+    return this.store.list().flatMap((w) => workflowAllSteps(w).flatMap((s) => s.attempts))
+      .find((a) => a.executionID === executionID && a.kind === 'remote' && a.resultDelivery === 'on-demand');
+  }
+  remoteFileViews(executionID: string): TaskFileView[] {
+    const attempt = this.resultAttempt(executionID); if (!attempt) return [];
+    const route = { scope: 'remote' as const, taskID: executionID, purpose: 'result' as const };
+    const received = this.options.network.files.views(route);
+    return attempt.outputFiles.map((file, index) => ({ ...file, state: 'remote' as const, receivedBytes: 0, error: null,
+      updatedAt: attempt.updatedAt, deliveries: [], ...received.find((f) => f.id === file.id && sameTaskFile(f, file)),
+      sourceNodeID: attempt.nodeID, sourcePath: attempt.outcome && 'files' in attempt.outcome ? attempt.outcome.files[index] : undefined }));
+  }
+  async fetchResultFile(executionID: string, fileID: string) {
+    const attempt = this.resultAttempt(executionID);
+    const file = attempt?.outputFiles.find((f) => f.id === fileID);
+    if (!attempt || !file) throw new Error('workflow_file_not_available');
+    const network = this.options.network;
+    const remote = network.remoteTask(executionID);
+    if (remote?.direction !== 'outgoing' || remote.targetNodeID !== attempt.nodeID || !network.isTrustedNode(attempt.nodeID))
+      throw new Error('workflow_remote_binding_conflict');
+    const route = { scope: 'remote' as const, taskID: executionID, purpose: 'result' as const };
+    if (network.files.complete(route, [file])) return;
+    network.files.expectIncoming(route, [file], attempt.nodeID);
+    network.files.retryIncoming(route, file, attempt.nodeID);
+    const digest = workflowContextDigest(attempt.context, attempt.inputFiles);
+    const response = await network.collaborationRequest(attempt.nodeID, 'execution-files', { executionID, digest, fileID });
+    if (!record(response) || !keys(response, ['executionID', 'digest', 'fileID']) || response.executionID !== executionID ||
+      response.digest !== digest || response.fileID !== fileID) throw new Error('workflow_file_request_unconfirmed');
+    network.refreshTaskFiles(); changed();
+  }
+  async prepareInputs(value: Workflow, files: TaskFileDescriptor[], role: WorkflowExecutionContext['role'], required: TaskFileDescriptor[]): Promise<TaskFileDescriptor[] | null> {
+    const attempts = workflowAllSteps(value).flatMap((s) => s.attempts);
+    const result: TaskFileDescriptor[] = []; let waiting = false;
+    for (const file of files) {
+      const source = attempts.find((a) => a.kind === 'remote' && a.resultDelivery === 'on-demand' && a.outputFiles.some((f) => sameTaskFile(f, file)));
+      if (!source || this.options.network.files.complete({ scope: 'remote', taskID: source.executionID, purpose: 'result' }, [file])) { result.push(file); continue; }
+      // Planning reads the transcript's remote file metadata; only business execution needs the bytes.
+      if (role === 'planner' || !required.some((f) => sameTaskFile(f, file))) continue;
+      waiting = true;
+      if (Date.now() - (this.fileRequests.get(file.id) || 0) < 10_000) continue;
+      this.fileRequests.set(file.id, Date.now());
+      try { await this.fetchResultFile(source.executionID, file.id); } catch { /* Retry after reconnect without dispatching incomplete inputs. */ }
+    }
+    return waiting ? null : result;
   }
   async stop(value: Workflow, attempt: WorkflowAttempt): Promise<'stopped' | 'unknown'> {
     if (attempt.kind === 'local') return exclusive(`workflow-stop:${attempt.executionID}`, async () => {

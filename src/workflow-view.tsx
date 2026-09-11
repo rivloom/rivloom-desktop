@@ -3,7 +3,7 @@ import { Bot, Check, ChevronDown, ChevronRight, FileText, GitBranch, LoaderCircl
 import { t } from '../shared/i18n.ts';
 import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types';
 import type { Workflow, WorkflowAttempt, WorkflowStep, WorkflowStepPlan } from '../shared/workflows';
-import { canRetryWorkflowPlanning, workflowPendingMessages } from '../shared/workflows';
+import { canRetryWorkflowPlanning, canRetryWorkflowStep, workflowPendingMessages } from '../shared/workflows';
 import { api } from './api';
 import { workflowError } from '../shared/workflow-errors.ts';
 import { Button, Field, Modal } from './ui';
@@ -84,6 +84,14 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
   const selectedAttempt = selectedStep?.attempts.find((a) => a.number === selection?.attempt) || selectedStep?.attempts.at(-1);
   const complete = value.state === 'completed'; const terminal = ['completed', 'failed', 'stopped'].includes(value.state);
   const results = workflowResults(value);
+  const deliveries = steps.flatMap((step) => {
+    const attempt = step.attempts.at(-1);
+    return attempt?.outputFiles.length ? [{ step, attempt }] : [];
+  });
+  const retry = (step: WorkflowStep) => perform(() => api(`/workflows/${value.id}/steps/retry`, {
+    version: value.version, roundRequestID: value.roundRequestID || value.requestID, stepID: step.id,
+    attempt: step.attempts.length, requestID: crypto.randomUUID(),
+  }));
   const records = (attempt?: WorkflowAttempt) => ({
     local: attempt ? data.tasks.find((task) => task.id === attempt.executionID) : undefined,
     remote: attempt ? data.network.remoteTasks.find((remote) => remote.id === attempt.executionID) : undefined,
@@ -107,19 +115,28 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
     </article>
     <section className={`workflow-overview ${value.state}`} aria-label={complete ? t('最终结果') : t('任务进展')}>
       <div className="workflow-overview-title">{complete ? <Check size={18} /> : terminal ? <GitBranch size={18} /> : <LoaderCircle className={value.state === 'paused' ? '' : 'spin'} size={18} />}
-        <h2>{complete ? t('最终结果') : t('任务进展')}</h2><span className="workflow-primary-status">{status}</span>
+        <h2>{complete ? t('最终结果') : t('任务进展')}</h2>{!complete && <span className="workflow-primary-status">{status}</span>}
       </div>
-      {complete ? <div className="workflow-results">
-        {results.map(({ step, attempt, summary }) => <article className="workflow-result" key={step.id}>
+      {(complete || results.length > 0) && <div className="workflow-results">
+        {!complete && <p className="workflow-partial-label">{t('已完成的部分')}</p>}
+        {results.map(({ step, summary }) => <article className="workflow-result" key={step.id}>
           {results.length > 1 && <h3>{step.title}</h3>}
           {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} /><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
-          <TaskFilesPanel key={attempt.executionID} scope={attempt.kind} taskID={attempt.executionID} resultsOnly />
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可展开执行过程查看记录。')}</p>}
-      </div> : <>
-        {terminal && <p>{t('任务未全部完成，可展开执行过程查看已完成的步骤和文件。')}</p>}
+      </div>}
+      {!!deliveries.length && <div className="workflow-deliveries" aria-label={t('交付成果')}>
+        {deliveries.map(({ step, attempt }) => <div key={attempt.executionID}>
+          {deliveries.length > 1 && <h3>{step.title}</h3>}
+          <TaskFilesPanel scope={attempt.kind} taskID={attempt.executionID} resultsOnly nodeName={nodeName} />
+        </div>)}
+      </div>}
+      {!complete && <>
         <div className="workflow-current-work">{steps.filter((step) => terminal ? step.state === 'failed' || step.state === 'blocked' : step.state === 'running').map((step) =>
-          <button type="button" key={step.id} onClick={() => showStep(step)}><small>{workflowStepLabel(step, step.attempts.at(-1))}</small><span>{step.title}</span><ChevronRight size={14} /></button>)}</div>
+          <div className="workflow-work-row" key={step.id}>
+            <button type="button" onClick={() => showStep(step)}><small>{workflowStepLabel(step, step.attempts.at(-1))}</small><span>{step.title}</span><ChevronRight size={14} /></button>
+            {!historical && canRetryWorkflowStep(value, step) && <Button disabled={busy} onClick={() => void retry(step)}><Play size={12} />{t('重试此步骤')}</Button>}
+          </div>)}</div>
       </>}
       {!terminal && <div className="workflow-controls">
         <Button disabled={busy || value.state === 'stopping'} onClick={() => void perform(() => api(`/workflows/${value.id}/control`, { action: value.state === 'paused' ? 'resume' : 'pause' }))}>
@@ -183,7 +200,7 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
         {!current.local && current.remote?.executionSummary && <pre>{current.remote.executionSummary}</pre>}
         {selectedAttempt && <small className="workflow-execution-id">{t('执行标识')}：{selectedAttempt.executionID}</small>}
       </details>
-      {(current.local || current.remote) && <TaskFilesPanel key={selectedAttempt!.executionID} scope={current.remote ? 'remote' : 'local'} taskID={selectedAttempt!.executionID} />}
+      {(current.local || current.remote) && <TaskFilesPanel key={selectedAttempt!.executionID} scope={current.remote ? 'remote' : 'local'} taskID={selectedAttempt!.executionID} nodeName={nodeName} />}
     </section>}
       </>}
       </div>

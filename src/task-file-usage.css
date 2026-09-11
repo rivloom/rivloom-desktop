@@ -31,3 +31,12 @@
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.task-file-fetch { flex-shrink: 0; font-size: 11px; padding: 5px 7px; }
+.task-file-links > li:has(.task-file-source) { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: 8px; row-gap: 0; align-items: center; }
+.task-file-links > li:has(.task-file-source) > .file-details { grid-row: 1; grid-column: 1; }
+.task-file-links > li:has(.task-file-source) > button { grid-row: 1; }
+.task-file-links > li:has(.task-file-source) > .context-more { grid-column: 3; }
+.task-file-source { grid-column: 1 / -1; grid-row: 2; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; line-height: 1.6; }
+@media (max-width: 600px) {
+  .task-file-fetch { min-height: 34px; }
+}

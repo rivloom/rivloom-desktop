@@ -1,7 +1,7 @@
-.message-markdown { line-height: 1.75; overflow-wrap: anywhere; min-width: 0; user-select: text; }
+.message-markdown { line-height: 1.65; white-space: normal; overflow-wrap: anywhere; min-width: 0; user-select: text; }
 .message-markdown > :first-child { margin-top: 0; }
 .message-markdown > :last-child { margin-bottom: 0; }
-.message-markdown p, .message-markdown ul, .message-markdown ol { margin: .6em 0; }
+.message-markdown p, .message-markdown ul, .message-markdown ol { margin: .5em 0; }
 .message-markdown ul, .message-markdown ol { padding-left: 1.5em; }
 .message-markdown h1, .message-markdown h2, .message-markdown h3 { line-height: 1.4; margin: 1.1em 0 .5em; font-size: 1.15em; }
 .message-markdown h1 { font-size: 1.4em; }
@@ -24,9 +24,10 @@
 .markdown-table th, .markdown-table td { border: 1px solid #dfe3e9; padding: 7px 11px; text-align: left; min-width: 80px; }
 .markdown-table th { background: #f2f4f6; font-weight: 600; }
 .markdown-image-label { color: #717985; font-size: .9em; }
-.workflow-round { margin-bottom: 32px; }
-.workflow-round-divider { display: block; color: #7a8290; font-size: 12px; margin: 22px 0 12px; }
-.workflow-message-queue { margin-top: 24px; padding-top: 15px; border-top: 1px solid #e2e6eb; }
+.workflow-round { margin-bottom: 16px; }
+.workflow-round-divider { display: flex; align-items: center; gap: 10px; color: #7a8290; font-size: 11px; margin: 12px 0 10px; }
+.workflow-round-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
+.workflow-message-queue { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e2e6eb; }
 .workflow-queue-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13px; }
 .workflow-queue-message { margin-bottom: 14px; }
 .workflow-queue-message footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: #747e8c; font-size: 12px; }

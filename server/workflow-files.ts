@@ -22,6 +22,8 @@ export function importConversationContext(files: TaskFileStore, value: Workflow)
   const transcript = rounds.map((round, i) => ({ round: i + 1, request: round.description, criteria: round.criteria, state: round.state,
     clarifications: [round.planner, ...round.steps].flatMap((s) => s.attempts.flatMap((a) => a.clarifications || [])),
     plan: round.summary, results: round.steps.map((s) => ({ title: s.title, state: s.state, summary: s.checkpoint,
+      nodeID: s.attempts.at(-1)?.nodeID, resultDelivery: s.attempts.at(-1)?.resultDelivery,
+      paths: s.attempts.at(-1)?.outcome && 'files' in s.attempts.at(-1)!.outcome! ? (s.attempts.at(-1)!.outcome as { files: string[] }).files : [],
       files: s.attempts.at(-1)?.outputFiles || [] })), inputs: round.inputFiles.filter((f) => !f.name.startsWith('rivloom-conversation-')) }));
   const bytes = Buffer.from(JSON.stringify(transcript, null, 2));
   const descriptor: TaskFileDescriptor = { id: fileID(`conversation:${value.id}:${value.roundRequestID || value.requestID}`),

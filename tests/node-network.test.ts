@@ -1337,10 +1337,11 @@ test(
       const peerID = receiver.snapshot().local!.id;
       assert.equal(receiver.snapshot().local!.capabilities.length, 12);
       let received = 0;
-      receiver.setCollaborationHandler((peer, operation, payload) => {
+      receiver.setCollaborationHandler(async (peer, operation, payload) => {
         assert.equal(peer, sender.snapshot().local!.id);
         assert.equal(operation, 'resource-query');
         received++;
+        await wait(5);
         if (payload === 'reject') throw new Error('rejected query');
         return { found: payload, ownerNodeID: peerID };
       });

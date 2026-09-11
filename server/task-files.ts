@@ -8,6 +8,7 @@ import {
   existsSync,
   fstatSync,
   fsyncSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -400,6 +401,19 @@ export class TaskFileStore {
       throw error;
     }
   }
+  /** Explicit retrieval retry may discard only a failed cache of the exact bound remote file. */
+  retryIncoming(route: TaskFileRoute, file: TaskFileDescriptor, peerNodeID: string) {
+    const value = this.record(file.id);
+    check(value && value.origin === `peer:${peerNodeID}` && sameTaskFile(value, file) &&
+      this.manifest(route).some((item) => sameTaskFile(item, file)), 403, '文件来源与任务绑定不一致。');
+    if (value.state !== 'failed') return;
+    const fd = openSync(this.ensureBlob(value), 'r+');
+    try {
+      const stat = fstatSync(fd); check(stat.isFile() && stat.nlink === 1, 409, '文件存储类型异常，已停止读取。');
+      ftruncateSync(fd, 0); fsyncSync(fd);
+    } finally { closeSync(fd); }
+    this.save({ ...value, state: 'receiving', receivedBytes: 0, error: null, updatedAt: new Date().toISOString() });
+  }
   receive(
     route: TaskFileRoute,
     peerNodeID: string,
@@ -496,12 +510,12 @@ export class TaskFileStore {
       )
       .run(state, bytes, error, route.scope, route.taskID, route.purpose, id, peer);
   }
-  retry(route: TaskFileRoute) {
+  retry(route: TaskFileRoute, fileID?: string) {
     this.database()
       .prepare(
-        "UPDATE deliveries SET state='waiting',error=NULL WHERE scope=? AND task_id=? AND purpose=? AND state='failed'",
+        "UPDATE deliveries SET state='waiting',error=NULL WHERE scope=? AND task_id=? AND purpose=? AND state='failed' AND (? IS NULL OR file_id=?)",
       )
-      .run(route.scope, route.taskID, route.purpose);
+      .run(route.scope, route.taskID, route.purpose, fileID ?? null, fileID ?? null);
   }
   readChunk(id: string, offset: number) {
     const value = this.record(id);

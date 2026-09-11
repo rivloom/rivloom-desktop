@@ -33,7 +33,7 @@ export function validCollaborationRequest(value: unknown): value is Collaboratio
   return record(value) && keys(value, ['type', 'requestID', 'operation', 'payload']) &&
     value.type === 'collaboration-request' && uuid(value.requestID) &&
     ['catalog-head', 'catalog-page', 'catalog-delta', 'resource-query', 'resource-prepare',
-      'resource-chunk', 'execution-context', 'execution-outcome'].includes(String(value.operation));
+      'resource-chunk', 'execution-context', 'execution-outcome', 'execution-files', 'execution-retry-check'].includes(String(value.operation));
 }
 export function validCollaborationResponse(value: unknown): value is CollaborationResponse {
   return record(value) && keys(value, ['type', 'requestID', 'ok', 'payload', 'error']) &&

@@ -55,6 +55,22 @@ function staged(store: TaskFileStore, body = 'abcdef') {
   return f;
 }
 
+test('explicit retrieval retry resets only a failed cache with the exact route, source and descriptor', () => {
+  const store = new TaskFileStore(root()), f = file('verified'), target = route('result'), peer = 'A'.repeat(32);
+  try {
+    store.expectIncoming(target, [f], peer);
+    assert.throws(() => store.receive(target, peer, f, 0, Buffer.from('corrupt!').toString('base64')));
+    assert.equal(store.view(f.id).state, 'failed');
+    assert.throws(() => store.retryIncoming(route('result'), f, peer), fail(403));
+    assert.throws(() => store.retryIncoming(target, f, 'B'.repeat(32)), fail(403));
+    assert.throws(() => store.retryIncoming(target, { ...f, sha256: '0'.repeat(64) }, peer), fail(403));
+    store.retryIncoming(target, f, peer); assert.equal(store.view(f.id).receivedBytes, 0);
+    store.receive(target, peer, f, 0, Buffer.from('verified').toString('base64'));
+    assert.equal(store.view(f.id).state, 'complete'); store.retryIncoming(target, f, peer);
+    assert.equal(store.content(f.id).toString(), 'verified');
+  } finally { store.close(); }
+});
+
 test('file links locate a verified original, persisted saved copy, or stable named received file', async () => {
   const folder = root();
   let store = new TaskFileStore(folder);
@@ -379,5 +395,12 @@ test('delivery progress belongs to each task route and survives restart without 
   assert.equal(store.views(a)[0].deliveries[0].state, 'complete');
   assert.equal(store.views(b)[0].deliveries[0].state, 'waiting');
   assert.equal(store.deliveries().length, 1);
+  const second = staged(store, 'second'); store.bindUploaded(b, 'u', [second.id]);
+  store.queueDelivery(b, second.id, 'peer');
+  store.deliveryState(b, f.id, 'peer', 'failed', 0, 'offline');
+  store.deliveryState(b, second.id, 'peer', 'failed', 0, 'offline');
+  store.retry(b, f.id);
+  assert.equal(store.views(b)[0].deliveries[0].state, 'waiting');
+  assert.equal(store.views(b)[1].deliveries[0].state, 'failed', 'A selected-file retry does not restart another failed download');
   store.close();
 });

@@ -2,6 +2,8 @@ import { t, systemText } from './i18n.ts';
 export function workflowError(value: string | null | undefined) {
   if (!value) return '';
   const messages: Record<string, string> = {
+    workflow_retry_changed: t('步骤状态已变化，请刷新后重试。'),
+    workflow_retry_unconfirmed: t('暂时无法确认上次执行已停止，请检查源 Node 在线且已更新后再重试。'),
     workflow_message_queue_full: t('最多同时排队 50 条消息，请等待部分消息完成。'),
     workflow_message_started: t('这条消息已经开始执行，无法从队列移除。'),
     workflow_context_failed: t('此前会话记录暂时无法准备，请重试继续消息队列。'),

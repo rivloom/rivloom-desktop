@@ -24,12 +24,14 @@ export function TaskFilePicker({
   disabled = false,
   label = t('添加附件'),
   composer = false,
+  children,
 }: {
   files: DraftTaskFile[];
   onChange: (update: (previous: DraftTaskFile[]) => DraftTaskFile[]) => void;
   disabled?: boolean;
   label?: string;
   composer?: boolean;
+  children?: ReactNode;
 }) {
   const input = useRef<HTMLInputElement>(null),
     running = useRef(new Set<string>());
@@ -116,8 +118,43 @@ export function TaskFilePicker({
       setError(e instanceof Error ? e.message : t('文件未能移除。'));
     }
   }
+  const controls = (
+    <>
+      <div className={composer ? 'composer-toolbar' : 'task-file-picker-controls'}>
+        <button
+          type="button"
+          className={composer ? 'composer-options composer-attach' : 'file-action'}
+          aria-label={label}
+          title={composer ? `${label} · ${t('也可粘贴或拖入文件')}\n${limits}` : undefined}
+          aria-describedby={files.length ? `${limitID} ${usageID}` : limitID}
+          disabled={
+            disabled ||
+            (!draftFilesReady(files) &&
+              files.some((f) => ['preparing', 'uploading'].includes(f.state)))
+          }
+          onClick={() => input.current?.click()}
+        >
+          <Paperclip size={15} />
+          {!composer && label}
+        </button>
+        <p
+          id={usageID}
+          className={composer ? 'composer-accessible-note' : 'task-file-usage'}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {usage}
+        </p>
+        {children}
+      </div>
+      <p className={composer ? 'composer-accessible-note' : 'task-file-limits'} id={limitID}>
+        {limits}
+      </p>
+    </>
+  );
   return (
-    <div className="task-file-picker">
+    <div className={`task-file-picker${composer ? ' composer-file-picker' : ''}`}>
       <input
         ref={input}
         type="file"
@@ -128,41 +165,14 @@ export function TaskFilePicker({
           e.target.value = '';
         }}
       />
-      <div className="task-file-picker-controls">
-        <button
-          type="button"
-          className="file-action"
-          aria-describedby={files.length ? `${limitID} ${usageID}` : limitID}
-          disabled={
-            disabled ||
-            (!draftFilesReady(files) &&
-              files.some((f) => ['preparing', 'uploading'].includes(f.state)))
-          }
-          onClick={() => input.current?.click()}
-        >
-          <Paperclip size={15} />
-          {label}
-        </button>
-        <p
-          id={usageID}
-          className="task-file-usage"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {usage}
-        </p>
-      </div>
-      <p className="task-file-limits" id={limitID}>
-        {limits}
-      </p>
+      {!composer && controls}
       {!!files.length && (
         <ul className="task-file-list" aria-label={t('已选文件')}>
           {files.map((item) => (
             <li key={item.id}>
               <FileText size={17} />
               <span className="file-details">
-                <strong>{item.file.name}</strong>
+                <strong title={item.file.name}>{item.file.name}</strong>
                 <small>
                   {taskFileBytesLabel(item.file.size)} ·{' '}
                   {item.state === 'complete'
@@ -211,6 +221,7 @@ export function TaskFilePicker({
           {systemText(error)}
         </p>
       )}
+      {composer && controls}
     </div>
   );
 }
@@ -233,7 +244,9 @@ function TaskFileRow({ file, ready, busy, action, children }: {
   </li>;
 }
 
-export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: TaskFileScope; taskID: string; resultsOnly?: boolean }) {
+export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = (id: string) => id }: {
+  scope: TaskFileScope; taskID: string; resultsOnly?: boolean; nodeName?: (id: string) => string;
+}) {
   const [value, setValue] = useState<TaskFileConversation | null>(null),
     [error, setError] = useState(''),
     [refreshError, setRefreshError] = useState(''),
@@ -341,6 +354,13 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
       operating.current = false; setBusy(false);
     }
   }
+  async function fetchRemote(file: TaskFileView) {
+    if (operating.current) return;
+    operating.current = true; setBusy(true); setError('');
+    try { await api(`${path}/fetch`, { fileID: file.id }); setValue(await api(path)); }
+    catch (e) { setError(e instanceof Error ? e.message : t('文件取回未确认，请重试。')); }
+    finally { operating.current = false; setBusy(false); }
+  }
   const list = (items: TaskFileView[]) => (
     <ul className="task-file-links">
       {items.map((file) => (
@@ -374,7 +394,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
             )}
             {file.state !== 'complete' && (
               <small>
-                {file.state === 'failed'
+                {file.state === 'remote' ? t('保留在远端') : file.state === 'failed'
                   ? t('接收失败')
                   : t('接收 {{value1}}%', {
                       value1: Math.round((file.receivedBytes / Math.max(file.bytes, 1)) * 100),
@@ -402,6 +422,13 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false }: { scope: 
               </small>
             )}
           </span>
+          {file.sourceNodeID && <small className="task-file-source" title={`${nodeName(file.sourceNodeID)} · ${file.sourcePath || file.name}`}>
+            {nodeName(file.sourceNodeID)} · {file.sourcePath || file.name} · {taskFileBytesLabel(file.bytes)}
+          </small>}
+          {file.sourceNodeID && file.state !== 'complete' && <button type="button" className="file-action task-file-fetch"
+            disabled={busy} onClick={() => void fetchRemote(file)}>
+            <Download size={14} />{file.state === 'remote' ? t('取回到本机') : t('重试取回')}
+          </button>}
           {value?.canSave && file.state === 'complete' && desktop && (
             <button
               type="button"

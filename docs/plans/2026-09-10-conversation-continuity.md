@@ -36,4 +36,6 @@ Choose embedded rounds over child workflows: this preserves one durable identity
 
 ## Implementation status
 
-Steps 1–4 implemented. FIFO, restart, idempotence, questions, cancellation, quotas, cleanup, notifications, draft recovery, safe preview and production Markdown rendering verified. Initial isolated browser checks covered Markdown, copy feedback, draft switching/reload, image paste, file picker and previews. The browser provider disconnected during final UI verification; subsequent restart/attachment/queue checks used the real isolated HTTP service. Native installation and public release checks follow the committed candidate pipeline.
+All five stages are complete. Version 0.1.12 was published from c039c7b8a3d43898d48ccedb469cbd79b68005ad after all three Windows CI workflows, native build and isolated install checks passed. Public installer bytes, update signatures and immutable/latest records were independently verified. Website 7daee76d1d560fcaafad1eb44557e373a01ec9c9 is deployed and verified on the public domain.
+
+The browser connection recovered after the earlier interruption. Follow-up checks covered draft restoration and sending, queued attachment preview/cancellation, Markdown highlighting, immediate language changes and narrow layouts. File drag/drop, all media codecs and exact native clipboard contents were not all verified through real UI. See [VERIFICATION](../VERIFICATION.md) for evidence and limits; [NEXT-SESSION](../NEXT-SESSION.md) is the current handoff entry. No further implementation remains for the four selected features.
