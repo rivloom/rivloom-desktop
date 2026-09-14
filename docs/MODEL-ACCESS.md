@@ -1,5 +1,9 @@
 # 模型选择与 Provider 接入
 
+**随包目录探测：** 官方 OpenCode 1.18.25 的隔离目录显示 7 家 OAuth 入口：OpenAI / ChatGPT、GitHub Copilot、GitLab Duo、xAI / SuperGrok、Poe、DigitalOcean、Snowflake Cortex。Anthropic / Claude 本轮提供 API Key，随包引擎没有 Claude OAuth。这里记录可显示的接入方式，没有宣称已登录这些真实账号；后续目录以实际引擎返回为准。
+
+**2026-09-14：已随 0.1.14 发布。** 发布与验证证据见 [VERIFICATION](VERIFICATION.md) 顶部；真实账号、真实业务结果仍由用户验收。以下是开发阶段记录。
+
 **发行归属：** 随 0.1.14 提交发布，实际发布结果以 [验证报告](VERIFICATION.md) 顶部为准；以下开发阶段状态保留为历史记录。
 
 2026-09-14：已完成本地开发，待用户验收，未提交、推送或发布。正式版本仍为 0.1.13。本轮保留会话搜索和此前 R2 文档改动。
