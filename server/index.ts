@@ -3,6 +3,7 @@ import { TaskFileError } from './task-files.ts';
 import { inputFileFields, taskFileUploadCount } from '../shared/task-files.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { listenHttp } from './http-ports.ts';
 import { readFile } from 'node:fs/promises';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -80,7 +81,9 @@ import {
   startConnectionCheck,
   cancelConnectionCheck,
   assertCanStartTask,
+  providerCatalog, saveProviderKey, saveCustomProvider, removeProvider, beginProviderOAuth, cancelProviderOAuth, providerOAuth,
 } from './model-settings.ts';
+import { apiKeySchema, providerIDSchema } from '../shared/model-providers.ts';
 import { NodeNetwork, NodeNetworkError } from './node-network.ts';
 import { ExecutionPolicyStore } from './execution-policy.ts';
 import { WorkerResourceSampler, workerMatchesTask } from './worker-resources.ts';
@@ -1788,6 +1791,48 @@ const remoteTaskProcessor = setInterval(() => {
 }, 2_000);
 remoteTaskProcessor.unref();
 const modelInput = z.object({ model: z.string().min(3).max(200) });
+app.use('/api/model-settings', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+app.get('/api/model-settings/providers', async (_req, res) => res.json(await providerCatalog()));
+const providerKeyInput = z.object({ providerID: providerIDSchema, key: apiKeySchema, shared: z.literal(true) });
+app.post('/api/model-settings/provider/key', async (req, res) => {
+  const { providerID, key } = providerKeyInput.parse(req.body);
+  res.json(await saveProviderKey(who(req), providerID, key));
+});
+app.post('/api/model-settings/provider/custom', async (req, res) => {
+  const body = z.object({ provider: z.unknown(), key: apiKeySchema.optional(), shared: z.literal(true) }).parse(req.body);
+  res.json(await saveCustomProvider(who(req), body.provider, body.key));
+});
+app.post('/api/model-settings/provider/remove', async (req, res) => {
+  const body = z.object({ providerID: providerIDSchema, confirmed: z.literal(true) }).parse(req.body);
+  res.json(await removeProvider(who(req), body.providerID));
+});
+app.get('/api/model-settings/oauth', (req, res) => {
+  requireThat(who(req).owner, 403, '只有工作区创建者可以管理模型及凭据');
+  res.json(providerOAuth.snapshot(who(req).id));
+});
+app.post('/api/model-settings/oauth/start', async (req, res) => {
+  const body = z.object({ providerID: providerIDSchema, method: z.number().int().min(0).max(30),
+    inputs: z.record(z.string().max(80), z.string().max(1000)).refine((v) => Object.keys(v).length <= 20).default({}), shared: z.literal(true) }).parse(req.body);
+  res.status(202).json(await beginProviderOAuth(who(req), body.providerID, body.method, body.inputs));
+});
+const attemptInput = z.object({ id: z.string().uuid() });
+app.post('/api/model-settings/oauth/complete', (req, res) => {
+  requireThat(who(req).owner, 403, '只有工作区创建者可以管理模型及凭据');
+  const body = attemptInput.extend({ code: z.string().trim().min(1).max(8192).optional() }).parse(req.body);
+  res.status(202).json(providerOAuth.complete(who(req).id, body.id, body.code));
+});
+app.post('/api/model-settings/oauth/cancel', async (req, res) => {
+  const { id } = attemptInput.parse(req.body);
+  res.json(await cancelProviderOAuth(who(req), id));
+});
+app.post('/api/model-settings/oauth/open', async (req, res) => {
+  requireThat(who(req).owner, 403, '只有工作区创建者可以管理模型及凭据');
+  const { id } = attemptInput.parse(req.body);
+  const url = providerOAuth.url(who(req).id, id);
+  // No shell command composition and no client-supplied URL: only the active official authorization URL.
+  await new Promise<void>((done, reject) => execFile('rundll32.exe', ['url.dll,FileProtocolHandler', url], { windowsHide: true, timeout: 15_000 }, (error) => error ? reject(new HttpError(503, 'Could not open the browser. Copy the authorization link instead.')) : done()));
+  res.json({ ok: true });
+});
 app.post('/api/model-settings/deepseek', async (req, res) => {
   const { key } = z
     .object({
@@ -2133,6 +2178,7 @@ export async function shutdown(update?: { lease: string; version: string }) {
   await resources?.directory.close();
   await resources?.catalog.close();
   await nodeNetwork.stop();
+  await providerOAuth.close();
   await shutdownEngine(!!update);
   if (update) {
     nodeNetwork.files.close();

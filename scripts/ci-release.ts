@@ -368,7 +368,7 @@ export async function prepareRelease(root: string, context: ReleaseContext) {
   const title = `Rivloom ${version} (${context.commit.slice(0, 12)} / ${context.artifactID})`;
   const body = [
     '<!-- rivloom-managed-release-v1 -->',
-    '这是 Rivloom 的 Windows x64 安装包。目前尚未签名，也没有应用内自动更新。',
+    '这是 Rivloom 的 Windows x64 安装包。Windows Authenticode 发布者签名：未签名。0.1.5 起支持应用内更新；本次签名更新与官网下载由后续发布步骤单独验证。',
     '',
     `源码：\`${context.commit}\``,
     `构建：[${context.runID}](https://github.com/${context.repository}/actions/runs/${context.runID})`,

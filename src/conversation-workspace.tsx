@@ -16,6 +16,8 @@ import { ContextMenu, useContextMenu } from './context-menu';
 import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
 import { MessageMarkdown } from './message-markdown';
+import { contentSearchMatch, indexConversations, searchConversations, searchExcerpt, searchTargetID, type SearchMatch } from './conversation-search';
+import { SearchNavigation, SearchText, searchMatchLabel } from './conversation-search-view';
 import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import type { Workflow } from '../shared/workflows';
@@ -29,6 +31,7 @@ import {
 import {
   memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -337,6 +340,8 @@ const HistoryRow = memo(function HistoryRow({
   rename,
   pin,
   busy,
+  matches,
+  searchQuery,
 }: {
   item: Conversation;
   selected: boolean;
@@ -349,14 +354,17 @@ const HistoryRow = memo(function HistoryRow({
   pin: (item: Conversation) => void;
   busy: boolean;
   locale: string;
+  matches?: SearchMatch[];
+  searchQuery?: string;
 }) {
   const menu = useContextMenu();
   const state = conversationState(item);
   const group = conversationStatusGroup(item);
   const origin = item.incoming ? source : t('自己发起');
   const label = [item.title, origin, state, item.pinned ? t('已置顶') : ''].filter(Boolean).join(' · ');
+  const excerpt = matches && contentSearchMatch(matches);
   return (
-    <div className="history-row" onContextMenu={menu.context} onKeyDown={menu.keyboard}>
+    <div className={`history-row ${excerpt ? 'has-search-result' : ''}`} onContextMenu={menu.context} onKeyDown={menu.keyboard}>
     <button
       aria-current={selected ? 'page' : undefined}
       aria-label={label}
@@ -367,7 +375,7 @@ const HistoryRow = memo(function HistoryRow({
       <span className="conversation-item-origin" aria-hidden="true">
         {item.incoming ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
       </span>
-      <strong>{item.title}</strong>
+      <strong><SearchText text={item.title} query={searchQuery} /></strong>
       {item.pinned && <Pin className="conversation-pinned" size={11} aria-label={t('已置顶')} />}
       {group !== 'completed' && (
         <span
@@ -383,6 +391,11 @@ const HistoryRow = memo(function HistoryRow({
       aria-label={t('删除会话：{{title}}', { title: item.title })}
       title={canRemove ? t('移入回收站') : t('请先停止会话并等待处理完成')}
       onClick={() => remove(item)}><Trash2 size={14} /></button>
+    {excerpt && <button type="button" className="history-search-excerpt" onClick={() => open(item)}
+      aria-label={t('查看 {{title}} 中的匹配内容', { title: item.title })}>
+      <small>{searchMatchLabel(excerpt)} · {t('{{count}} 个匹配片段', { count: matches!.length })}</small>
+      <span><SearchText text={searchExcerpt(excerpt)} query={searchQuery} /></span>
+    </button>}
     <ContextMenu menu={menu} label={t('会话操作')} actions={[
       { id: 'rename', label: t('重命名'), icon: <Pencil />, disabled: busy, select: () => rename(item) },
       { id: 'pin', label: item.pinned ? t('取消置顶') : t('置顶'), icon: item.pinned ? <PinOff /> : <Pin />, disabled: busy, select: () => pin(item) },
@@ -396,16 +409,18 @@ const HistoryRow = memo(function HistoryRow({
 const Transcript = memo(function Transcript({
   item,
   source,
+  searchQuery = '',
 }: {
   item: Conversation;
   source: string;
   locale: string;
+  searchQuery?: string;
 }) {
   const task = item.localTask;
   const messages = task?.messages || [];
   // The first engine prompt includes the task envelope. Show the user's requirement instead.
   const firstUser = messages.find((message) => message.role === 'user');
-  const displayed: Message[] = messages.length
+  const displayed: Message[] = firstUser
     ? messages
     : [
         {
@@ -414,6 +429,7 @@ const Transcript = memo(function Transcript({
           text: item.description,
           tools: [],
         },
+        ...messages,
       ];
   const summary = executionSummaryText(
     item.brainTask?.executionSummary || item.remote?.executionSummary,
@@ -423,15 +439,17 @@ const Transcript = memo(function Transcript({
     <>
       {displayed.map((message) => {
         const text =
-          message.id === firstUser?.id ? item.description.split('\n\n补充要求：')[0] : message.text;
+          message.id === firstUser?.id ? item.description : message.text;
         return (
-          <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}>
+          <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
+            tabIndex={-1} data-search-target={searchTargetID(message.id === firstUser?.id || message.id === 'requirement'
+              ? { kind: 'requirement' } : { kind: 'message', messageID: message.id })}>
             {message.role === 'assistant' ? <div className="chat-message-byline">
               <Bot size={17} />
               <strong>Rivloom</strong>
               {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
-            {message.text && (message.role === 'user' ? <div className="chat-message-text">{text}</div> : <MessageMarkdown text={text} />)}
+            {text && (message.role === 'user' ? <div className="chat-message-text"><SearchText text={text} query={searchQuery} /></div> : <MessageMarkdown text={text} searchQuery={searchQuery} />)}
             {message.tools.map((tool, index) => (
               <details className="chat-tool" key={index}>
                 <summary>
@@ -451,13 +469,13 @@ const Transcript = memo(function Transcript({
         );
       })}
       {!task && summary && (
-        <article className="chat-message assistant">
+        <article className="chat-message assistant" tabIndex={-1} data-search-target={searchTargetID({ kind: 'summary' })}>
           <div className="chat-message-byline">
             <Bot size={17} />
             <strong>{t('执行结果')}</strong>
             <CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" />
           </div>
-          <MessageMarkdown text={summary} />
+          <MessageMarkdown text={summary} searchQuery={searchQuery} />
         </article>
       )}
       {task && activeStates.includes(task.state) && (
@@ -491,6 +509,10 @@ export function ConversationWorkspace({
   const seenSelected = useRef<string | null>(null);
   selectedRef.current = selected;
   const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search.trim());
+  // Clearing is an explicit navigation action; do not retain stale results for a deferred render.
+  const searchQuery = search.trim() ? deferredSearch : '';
+  const [searchSelection, setSearchSelection] = useState<{ key: string; query: string; id: string; revision: number } | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [historyAction, setHistoryAction] = useState<{ action: 'trash' | 'purge' | 'empty'; key?: string; title?: string } | null>(null);
   const [aliasDirectory, setAliasDirectory] = useState<{ key: string; label: string; name: string } | null>(null);
@@ -680,18 +702,23 @@ export function ConversationWorkspace({
     [nodes, locale],
   );
   const sourceName = current?.incoming ? nodeName(current.sourceNodeID) : t('你');
+  const searching = !!searchQuery;
+  const searchIndex = useMemo(() => searching ? indexConversations(all, (item) => {
+    const directory = conversationDirectory(item, data);
+    return { device: nodeName(item.sourceNodeID), directory: `${directory.label}\n${directoryDisplayName(directory, data.directoryAliases)}` };
+  }) : [], [searching, all, nodeName, data.projects, data.directoryAliases]);
+  const searchResults = useMemo(() => searchConversations(searchIndex, searchQuery), [searchIndex, searchQuery]);
+  const currentMatches = current ? searchResults.get(current.key) || [] : [];
+  const currentMatch = searchSelection?.key === current?.key && searchSelection?.query === search.trim() && searchSelection.query === searchQuery
+    ? currentMatches.find((match) => match.id === searchSelection.id) : undefined;
   const visible = useMemo(
     () =>
       filterConversations(
         all,
         { status: statusFilter, source: sourceFilter, query: '' },
         nodeName,
-      ).filter((item) => {
-        const directory = conversationDirectory(item, data);
-        return !search.trim() || `${directory.label} ${directoryDisplayName(directory, data.directoryAliases)}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()) ||
-          filterConversations([item], { status: 'all', source: 'all', query: search }, nodeName).length > 0;
-      }),
-    [all, statusFilter, sourceFilter, search, nodeName, data.projects, data.network, data.directoryAliases],
+      ).filter((item) => !searchQuery || searchResults.has(item.key)),
+    [all, statusFilter, sourceFilter, searchQuery, searchResults, nodeName],
   );
   const historyGroups = groupConversationHistory(visible, data, data.directoryAliases);
   const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
@@ -700,6 +727,7 @@ export function ConversationWorkspace({
   const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all';
   function clearFilters() {
     setSearch('');
+    setSearchSelection(null);
     setStatusFilter('all');
     setSourceFilter('all');
   }
@@ -791,12 +819,12 @@ export function ConversationWorkspace({
     };
   }, [task?.id, task?.version]);
   useLayoutEffect(() => {
-    scrollPinned.current = true;
+    scrollPinned.current = !currentMatch;
     setAwayFromLatest(false);
   }, [selected, view]);
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
-    if (transcript.current && scrollPinned.current)
+    if (transcript.current && scrollPinned.current && !currentMatch)
       transcript.current.scrollTop = current?.workflow && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
@@ -838,12 +866,13 @@ export function ConversationWorkspace({
     const element = transcript.current;
     if (!element) return;
     const away = element.scrollHeight - element.scrollTop - element.clientHeight > 100;
-    scrollPinned.current = !away;
+    scrollPinned.current = !away && !currentMatch;
     setAwayFromLatest(away);
   }
   function scrollToLatest() {
     const element = transcript.current;
     if (!element) return;
+    setSearchSelection(null);
     scrollPinned.current = true;
     element.scrollTop = element.scrollHeight;
     setAwayFromLatest(false);
@@ -874,6 +903,7 @@ export function ConversationWorkspace({
     }
   }
   const open = useCallback((item: Conversation | null) => {
+    setSearchSelection(null);
     selectedRef.current = item?.key || null;
     setSelected(item?.key || null);
     setMention(null);
@@ -883,6 +913,35 @@ export function ConversationWorkspace({
     setNotice('');
     setMobileSidebar(false);
   }, []);
+  const openHistory = (item: Conversation) => {
+    open(item);
+    const first = contentSearchMatch(searchResults.get(item.key) || []);
+    if (first && searchQuery === search.trim()) setSearchSelection({ key: item.key, query: searchQuery, id: first.id, revision: Date.now() });
+  };
+  const selectSearchMatch = (match: SearchMatch) => {
+    if (current) setSearchSelection((previous) => ({ key: current.key, query: searchQuery, id: match.id, revision: (previous?.revision || 0) + 1 }));
+  };
+  useEffect(() => {
+    const element = transcript.current;
+    if (!element || view !== 'chat' || !currentMatch) return;
+    scrollPinned.current = false;
+    let frame = 0, remaining = 4, target: HTMLElement | undefined;
+    const locate = () => {
+      target = [...element.querySelectorAll<HTMLElement>('[data-search-target]')].find((node) => node.dataset.searchTarget === currentMatch.id);
+      if (!target && remaining-- > 0 && !['title', 'device', 'directory'].includes(currentMatch.target.kind)) {
+        frame = requestAnimationFrame(locate); return;
+      }
+      if (target) {
+        target.classList.add('search-current');
+        const bounds = (target.querySelector('mark.search-highlight') || target).getBoundingClientRect(), viewport = element.getBoundingClientRect();
+        element.scrollTop += bounds.top - viewport.top - 24;
+        target.focus({ preventScroll: true });
+      } else { element.scrollTop = 0; element.focus({ preventScroll: true }); }
+      setAwayFromLatest(element.scrollHeight - element.scrollTop - element.clientHeight > 100);
+    };
+    frame = requestAnimationFrame(locate);
+    return () => { cancelAnimationFrame(frame); target?.classList.remove('search-current'); };
+  }, [view, selected, currentMatch?.id, searchSelection?.revision]);
   useEffect(() => {
     if (current) seenSelected.current = current.key;
     else if (selected && seenSelected.current === selected) { seenSelected.current = null; open(null); }
@@ -1268,11 +1327,19 @@ export function ConversationWorkspace({
             <Search size={15} />
             <input
               aria-label={t('搜索会话')}
-              title={t('搜索标题、工作目录、设备名或需求正文')}
+              title={t('搜索标题、目录、设备、历轮需求与回答')}
               placeholder={t('搜索会话')}
               value={search}
+              maxLength={200}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (e.key === 'Escape') { e.preventDefault(); setSearch(''); setSearchSelection(null); }
+                if (e.key === 'Enter' && visible[0] && searchQuery === search.trim()) { e.preventDefault(); openHistory(visible[0]); }
+              }}
             />
+            {search && <button type="button" className="icon-button conversation-search-clear" aria-label={t('清空搜索')}
+              onClick={(e) => { setSearch(''); setSearchSelection(null); e.currentTarget.parentElement?.querySelector('input')?.focus(); }}><X size={13} /></button>}
           </label>
           <ConversationFilterButton
             status={statusFilter}
@@ -1283,6 +1350,9 @@ export function ConversationWorkspace({
             onClear={clearFilters}
           />
         </div>
+        {search.trim() && <p className="conversation-search-count" role="status" aria-busy={searchQuery !== search.trim()}>
+          {searchQuery !== search.trim() ? t('正在搜索…') : t('找到 {{count}} 条会话', { count: visible.length })}
+        </p>}
         {view === 'chat' && current && !visible.some((item) => item.key === current.key) && (
           <p className="history-selection-note">{t('当前打开的会话不在筛选结果中。')}</p>
         )}
@@ -1299,7 +1369,9 @@ export function ConversationWorkspace({
               selected={view === 'chat' && selected === item.key}
               source={item.incoming ? nodeName(item.sourceNodeID) : undefined}
               icon={item.incoming ? nodes.find((n) => n.id === item.sourceNodeID)?.icon : undefined}
-              open={open}
+              open={openHistory}
+              matches={searchResults.get(item.key)}
+              searchQuery={searchQuery}
               remove={removeHistory}
               rename={renameHistory}
               pin={pinHistory}
@@ -1424,6 +1496,8 @@ export function ConversationWorkspace({
         )}
         {view === 'chat' ? (
           <>
+            {currentMatch && <SearchNavigation query={searchQuery} matches={currentMatches} activeID={currentMatch.id}
+              select={selectSearchMatch} close={() => { setSearchSelection(null); transcript.current?.focus({ preventScroll: true }); }} />}
             <div className="conversation-transcript">
               <div
                 className={`conversation-body ${current ? '' : 'blank'}`}
@@ -1433,7 +1507,8 @@ export function ConversationWorkspace({
                 aria-label={t('会话消息')}
                 onScroll={updateScrollPosition}
               >
-                {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName} /></div> : current ? (
+                {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName}
+                  searchMatch={currentMatch} searchQuery={currentMatch ? searchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
                     {currentReceipt && (
                       <section
@@ -1470,7 +1545,7 @@ export function ConversationWorkspace({
                         )}
                       </section>
                     )}
-                    <Transcript item={current} source={sourceName} locale={locale} />
+                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? searchQuery : ''} />
                     {task?.error && <p className="error">{systemText(task.error)}</p>}
                     {approvals.map((approval) => (
                       <section className="chat-approval" key={approval.id}>

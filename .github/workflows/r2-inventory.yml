@@ -1,0 +1,44 @@
+name: Read-only R2 release inventory
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-rivloom-download
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: List download objects without changing storage
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RIVLOOM_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_PAGER: ''
+          R2_ACCOUNT: ${{ vars.RIVLOOM_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.RIVLOOM_R2_BUCKET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:R2_ACCOUNT -notmatch '^[0-9a-f]{32}$' -or $env:R2_BUCKET -notmatch '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$') { throw 'Invalid download storage configuration.' }
+          New-Item -ItemType Directory -Path inventory | Out-Null
+          aws --version
+          aws s3api list-objects-v2 --bucket $env:R2_BUCKET --endpoint-url "https://$($env:R2_ACCOUNT).r2.cloudflarestorage.com" --output json > inventory/objects.json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 object inventory failed.' }
+          $objects = Get-Content inventory/objects.json -Raw | ConvertFrom-Json
+          if ($objects.IsTruncated -eq $true -or $objects.NextToken) { throw 'Incomplete R2 inventory.' }
+          @{ checkedAt = [DateTime]::UtcNow.ToString('o'); sourceCommit = '${{ github.sha }}'; runID = '${{ github.run_id }}'; objectCount = @($objects.Contents).Count; readOnly = $true; deleted = 0 } | ConvertTo-Json | Set-Content inventory/result.json
+      - name: Preserve inventory for the release retention review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-r2-inventory-${{ github.run_id }}
+          path: inventory/*.json
+          if-no-files-found: error
+          retention-days: 90

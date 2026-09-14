@@ -2,7 +2,16 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { db, tasks, requireThat, exclusive, now, HttpError } from './store.ts';
-import { dataRoot } from './engine.ts';
+import { dataRoot, engineRoot } from './engine.ts';
+import { ProviderConfigStore } from './provider-config.ts';
+import { ProviderOAuth, isolatedOAuthDriver } from './provider-oauth.ts';
+import {
+  customProviderSchema,
+  apiKeySchema,
+  providerIDSchema,
+  promptVisible,
+  type ProviderAccess,
+} from '../shared/model-providers.ts';
 import { engineClient, engineStatus, refreshEngineConfiguration, changed } from './task-service.ts';
 import {
   activeStates,
@@ -67,6 +76,182 @@ let activeCheck: {
 } | null = null;
 const checkDirectory = join(dataRoot, 'model-check');
 mkdirSync(checkDirectory, { recursive: true });
+const customProviders = new ProviderConfigStore(engineRoot);
+export const providerOAuth = new ProviderOAuth(
+  isolatedOAuthDriver,
+  async (provider, auth, actorID, current, accepted) => {
+    await exclusive('engine-settings', async () => {
+      if (!current()) return;
+      requireIdle(true);
+      accepted();
+      await engineClient().auth.set({ providerID: provider, auth });
+      await providerChanged(actorID, provider, 'credential_saved');
+    });
+  },
+  changed,
+);
+
+export async function providerCatalog(): Promise<ProviderAccess[]> {
+  const client = engineClient();
+  const [list, auth] = await Promise.all([
+    client.provider.list({ directory: dataRoot }),
+    client.provider.auth({ directory: dataRoot }),
+  ]);
+  const custom = customProviders.list();
+  return list.data!.all.map((p) => {
+    const methods = auth.data?.[p.id];
+    return {
+      id: p.id,
+      name: p.name,
+      connected: list.data!.connected.includes(p.id),
+      modelCount: Object.keys(p.models).length,
+      apiKey: methods
+        ? methods.some((m) => m.type === 'api' && !m.prompts?.length)
+        : p.env.length === 1,
+      oauth: (methods || []).flatMap((m, index) =>
+        m.type === 'oauth' ? [{ index, label: m.label, prompts: m.prompts || [] }] : [],
+      ),
+      ...(custom.some((c) => c.id === p.id) ? { custom: custom.find((c) => c.id === p.id) } : {}),
+    };
+  });
+}
+
+async function providerChanged(actorID: string, provider: string, kind: ModelOperation['kind']) {
+  for (const model of Object.keys(preferences.checks))
+    if (model.startsWith(provider + '/')) delete preferences.checks[model];
+  if (provider === 'deepseek')
+    preferences.credentialUpdatedAt = kind === 'credential_removed' ? null : now();
+  save();
+  try {
+    await refreshEngineConfiguration();
+  } catch {
+    engineStatus.models = [];
+    engineStatus.connectedProviders = [];
+    changed();
+    operation(actorID, kind, provider, null, 'refresh_uncertain');
+    throw new HttpError(503, '凭据操作已提交，但模型列表刷新失败。请重启应用后确认状态。');
+  }
+  if (
+    preferences.defaultModel &&
+    !engineStatus.models.some((m) => m.id === preferences.defaultModel)
+  ) {
+    preferences.defaultModel = null;
+    save();
+  }
+  operation(actorID, kind, provider, null, 'ok');
+  changed();
+}
+
+export async function saveProviderKey(actor: User, providerID: string, key: string) {
+  requireOwner(actor);
+  providerIDSchema.parse(providerID);
+  apiKeySchema.parse(key);
+  return exclusive('engine-settings', async () => {
+    requireIdle();
+    const provider = (await providerCatalog()).find((p) => p.id === providerID);
+    requireThat(
+      provider?.apiKey && !provider.custom,
+      400,
+      'This provider requires a different connection method.',
+    );
+    await engineClient().auth.set({ providerID, auth: { type: 'api', key: key.trim() } });
+    await providerChanged(actor.id, providerID, 'credential_saved');
+    return modelSettings();
+  });
+}
+
+export async function saveCustomProvider(actor: User, input: unknown, key?: string) {
+  requireOwner(actor);
+  const provider = customProviderSchema.parse(input);
+  if (key !== undefined) key = apiKeySchema.parse(key);
+  return exclusive('engine-settings', async () => {
+    requireIdle();
+    const previous = customProviders.list();
+    const existing = previous.find((p) => p.id === provider.id);
+    const catalog = await providerCatalog();
+    requireThat(
+      existing || !catalog.some((p) => p.id === provider.id),
+      409,
+      'Provider ID is already used by a built-in provider.',
+    );
+    requireThat(
+      provider.keyless ||
+        key ||
+        (existing && !existing.keyless && engineStatus.connectedProviders.includes(provider.id)),
+      400,
+      'An API key is required for this provider.',
+    );
+    customProviders.write([...previous.filter((p) => p.id !== provider.id), provider]);
+    try {
+      if (provider.keyless) await engineClient().auth.remove({ providerID: provider.id });
+      else if (key)
+        await engineClient().auth.set({ providerID: provider.id, auth: { type: 'api', key } });
+    } catch {
+      customProviders.write(previous);
+      throw new HttpError(503, 'Could not save provider credentials. Refresh status and retry.');
+    }
+    await providerChanged(actor.id, provider.id, 'credential_saved');
+    return modelSettings();
+  });
+}
+
+export async function removeProvider(actor: User, providerID: string) {
+  requireOwner(actor);
+  providerIDSchema.parse(providerID);
+  return exclusive('engine-settings', async () => {
+    requireIdle();
+    const previous = customProviders.list();
+    requireThat(
+      (await providerCatalog()).some((p) => p.id === providerID),
+      404,
+      'Provider not found.',
+    );
+    if (previous.some((p) => p.id === providerID))
+      customProviders.write(previous.filter((p) => p.id !== providerID));
+    try {
+      await engineClient().auth.remove({ providerID });
+    } catch {
+      customProviders.write(previous);
+      throw new HttpError(503, 'Could not remove credentials. Refresh status and retry.');
+    }
+    await providerChanged(actor.id, providerID, 'credential_removed');
+    return modelSettings();
+  });
+}
+
+export async function beginProviderOAuth(
+  actor: User,
+  providerID: string,
+  method: number,
+  inputs: Record<string, string>,
+) {
+  requireOwner(actor);
+  return exclusive('engine-settings', async () => {
+    requireIdle();
+    const selected = (await providerCatalog())
+      .find((p) => p.id === providerID)
+      ?.oauth.find((m) => m.index === method);
+    requireThat(selected, 400, 'OAuth method is not available.');
+    const cleaned: Record<string, string> = {};
+    for (const prompt of selected.prompts) {
+      if (!promptVisible(prompt, inputs)) continue;
+      const value = inputs[prompt.key] || '';
+      if (prompt.type === 'select')
+        requireThat(
+          prompt.options?.some((o) => o.value === value),
+          400,
+          'Choose a valid sign-in option.',
+        );
+      cleaned[prompt.key] = value;
+    }
+    return providerOAuth.begin(actor.id, providerID, method, cleaned);
+  });
+}
+
+export async function cancelProviderOAuth(actor: User, attemptID: string) {
+  requireOwner(actor);
+  return exclusive('engine-settings', () => providerOAuth.cancel(actor.id, attemptID));
+}
 
 function operation(
   actorID: string | null,
@@ -92,6 +277,7 @@ function recentOperations(): ModelOperation[] {
 }
 
 function busyReason() {
+  if (providerOAuth.busy) return 'Provider sign-in is in progress.';
   if (activeCheck) return '模型连接测试正在运行';
   if (tasks().some((task) => activeStates.includes(task.state)))
     return '有任务正在执行或等待人工介入';
@@ -139,6 +325,7 @@ export function modelSettings(): ModelSettings {
 }
 
 export function assertCanStartTask() {
+  requireThat(!providerOAuth.busy, 409, 'Finish or cancel provider sign-in before starting tasks.');
   requireThat(!activeCheck, 409, '模型连接测试中，请等待结果或先停止测试');
 }
 
@@ -146,7 +333,8 @@ function requireOwner(actor: User) {
   requireThat(actor.owner, 403, '只有工作区创建者可以管理模型及凭据');
 }
 
-function requireIdle() {
+function requireIdle(allowOAuth = false) {
+  requireThat(allowOAuth || !providerOAuth.busy, 409, 'Finish or cancel provider sign-in first.');
   requireThat(engineStatus.ready, 503, '请等待引擎就绪');
   requireThat(!activeCheck, 409, '连接测试尚未结束，请先停止或等待');
   requireThat(

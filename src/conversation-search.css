@@ -1,0 +1,21 @@
+.search-highlight { color: inherit; background: #ffe4a0; border-radius: 2px; padding: 0; }
+.history-row.has-search-result { align-items: flex-start; flex-wrap: wrap; padding-bottom: 5px; }
+.history-search-excerpt { border: 0; background: transparent; color: var(--muted); text-align: left; width: 100%; padding: 0 8px 5px 27px; min-width: 0; }
+.history-search-excerpt small { display: block; font-size: 10px; margin-bottom: 3px; }
+.history-search-excerpt > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; }
+.history-search-excerpt:hover { color: var(--ink); }
+.history-search-excerpt:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-radius: 4px; }
+.conversation-search-count { margin: 0 7px 8px; color: var(--muted); font-size: 11px; }
+.conversation-search-clear { flex: 0 0 24px; width: 24px; height: 26px; }
+.conversation-search-navigation { display: flex; flex: 0 0 auto; gap: 12px; align-items: center; min-width: 0; padding: 10px 20px; border-bottom: 1px solid var(--line); background: #fffaf0; }
+.search-navigation-text { flex: 1; min-width: 0; }
+.search-navigation-text strong { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 12px; }
+.search-navigation-text strong span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.search-navigation-text p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.search-navigation-buttons { display: flex; flex: 0 0 auto; gap: 2px; }
+.search-navigation-buttons .icon-button { width: 28px; height: 30px; }
+[data-search-target].search-current { outline: 2px solid #d4a343; outline-offset: 5px; border-radius: 5px; scroll-margin-block: 24px; }
+@media (max-width: 640px) {
+  .conversation-search-navigation { padding: 9px 12px; gap: 6px; }
+  .search-navigation-buttons .icon-button { width: 26px; }
+}

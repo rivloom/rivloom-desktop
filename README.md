@@ -1,5 +1,9 @@
 # Rivloom MVP
 
+**2026-09-14 · 0.1.14 发布准备：** 用户已授权发布当前实现。本版包含会话内容搜索与定位、模型自由选择、厂商 OAuth/API Key、自定义 OpenAI 兼容 Provider（Chat Completions / Responses）。本地 403 项逻辑、3 项官方引擎、12 组模型服务、10 组模型 UI 和 14 组搜索回归通过。正式发布须完成目标提交完整 CI、隔离安装、公开下载与原密钥签名核验、官网实际部署和 R2 保留检查。真实 OAuth 登录与真实额度调用仍留待用户验收。下面“未提交/未发布/0.1.13”均为历史状态，以本页顶部为准。
+
+**2026-09-14 未发行开发：** 模型自由选择、厂商 OAuth/API Key、自定义 OpenAI 兼容 Provider 已实现，见[模型接入与验收](docs/MODEL-ACCESS.md)和[缓存与 Agent 的关系](docs/PROMPT-CACHING.md)。正式版仍为 0.1.13，当前工作区尚未发布。
+
 **0.1.13（2026-09-11，发布准备）：** 简洁输入框、失败步骤单独重试、回答/文件/过程分层、远端成果按需取回和更紧凑的对话已实现并完成本地验证。用户已授权提交推送与更新；正式可用状态以目标提交 CI、隔离安装及公开下载/签名核验为准。说明见 [输入区](docs/COMPOSER.md)、[恢复及成果](docs/WORKFLOW-RECOVERY-RESULTS.md) 和[验证报告](docs/VERIFICATION.md)。以下为历史版本记录。
 
 **0.1.12：** 工作流会话支持完成后继续提出要求，也可以在执行中排队，按轮次保留完整需求、回答、结果与文件。新增 Markdown 表格和代码高亮/复制、跨重启草稿、截图粘贴/文件拖入及图片、文本、音视频预览。见[连续会话说明](docs/CONVERSATION-CONTINUITY.md)。0.1.12 已通过最终 CI、隔离安装、公开下载与签名核验，官网已同步。新会话先读[接手清单](docs/NEXT-SESSION.md)，发布证据见[验证报告](docs/VERIFICATION.md)顶部。以下带日期的历史记录保留供追溯。
@@ -37,6 +41,8 @@ npm.cmd start
 `npm run dev` 与 `npm start` 都启动桌面开发版本。内部 Web 调试必须显式使用 `npm run server:dev`；不要和桌面端共用数据目录。同一数据目录有进程锁。关闭桌面窗口时会提示并停止执行，异常退出也由父子进程监控清理。
 
 M3.5 验证使用 `npm.cmd run test:node-p0` 创建本轮独立数据/多服务夹具；原生预览使用 `npm.cmd run preview:conversation:desktop`。普通 `npm start` 不代替数据隔离，不复用旧物理验收根。
+
+会话内容搜索的本地开发与验收说明见 [CONVERSATION-SEARCH](docs/CONVERSATION-SEARCH.md)。`npm run preview:search` 构建并打开合成浏览器预览，覆盖历史轮次、回答和步骤结果定位，不启动模型或读取安装版数据；该功能尚待验收，正式版仍为 0.1.13。
 
 新增的会话操作交接、云端配置盘点和本机临时验收材料保存在被 Git 忽略的 `.data/`，不纳入提交；仓库文档维护使用/开发说明、设计决策和简明项目状态。已有历史记录不因这项约定自动删除或改写。
 

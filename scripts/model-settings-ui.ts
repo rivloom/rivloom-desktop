@@ -23,19 +23,18 @@ try {
   page.setDefaultTimeout(15_000);
   await page.reload({ waitUntil: 'domcontentloaded' });
 
-  await page.getByRole('button', { name: /任务工作台/ }).waitFor();
-  await page.getByRole('button', { name: /模型与额度/ }).click();
-  await page.getByRole('heading', { name: '模型与额度.' }).waitFor();
+  await page.getByRole('button', { name: '设备与模型', exact: true }).click();
+  await page.getByRole('heading', { name: '模型接入', exact: true }).waitFor();
 
   const settings = (await page.evaluate(() =>
     fetch('/api/model-settings').then((result) => result.json()),
   )) as ModelSettings;
   assert.equal(settings.credentialState, 'unconfigured');
   assert(settings.models.some((model) => model.id === 'opencode/mimo-v2.5-free'));
-  assert.equal(await page.getByText('DeepSeek 官方 API').count(), 1);
+  assert.equal(await page.getByRole('heading', { name: '模型接入', exact: true }).count(), 1);
   assert.equal(await page.getByText('连接测试', { exact: true }).count(), 1);
   assert.equal(await page.getByText('未配置', { exact: true }).count(), 1);
-  assert.equal(await page.getByText('先保存 DeepSeek 凭据').count(), 1);
+  assert(await page.getByLabel('要测试的模型', { exact: true }).locator('option').count() > 0);
 
   const keyInput = page.locator('input[type="password"]');
   assert.equal(await keyInput.count(), 1);
@@ -59,10 +58,10 @@ try {
         url: runtime.url,
         assertions: [
           'Actual release Tauri WebView2 rendered the model settings page',
-          'No-key DeepSeek state and disabled connection-test state are explicit',
+          'Provider connection status is explicit and connection testing includes all configured models',
           'Credential field is password-only, empty, and cannot submit without quota confirmation',
           'Default model shown in the desktop UI matches the authenticated backend setting',
-          'Model operation audit UI is present without exposing credentials or model responses',
+          'Provider catalog and default model are shown without exposing credentials or model responses',
         ],
         limits: [
           'No real DeepSeek key was entered, so DeepSeek success is not claimed.',

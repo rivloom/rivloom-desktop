@@ -72,7 +72,7 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
   );
   return rules;
 }
-export function engineEnv(password?: string): NodeJS.ProcessEnv {
+export function engineEnv(password?: string, root = engineRoot): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
@@ -90,7 +90,7 @@ export function engineEnv(password?: string): NodeJS.ProcessEnv {
     TEMP: 'temp',
     TMP: 'temp',
   })) {
-    env[key] = join(engineRoot, folder);
+    env[key] = join(root, folder);
     mkdirSync(env[key]!, { recursive: true });
   }
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
@@ -100,6 +100,9 @@ export function engineEnv(password?: string): NodeJS.ProcessEnv {
     permission: permissions,
     agent: { build: { permission: permissions } },
   });
+  const providerConfig = join(root, 'rivloom-providers.json');
+  if (!existsSync(providerConfig)) writeFileSync(providerConfig, '{"provider":{}}', { mode: 0o600 });
+  env.OPENCODE_CONFIG = providerConfig;
   if (password) {
     env.OPENCODE_SERVER_PASSWORD = password;
     env.OPENCODE_SERVER_USERNAME = 'rivloom';
@@ -116,12 +119,12 @@ export function importAuth(source: string) {
   return Object.keys(auth);
 }
 
-export async function startEngine(cwd: string, port = 0) {
+export async function startEngine(cwd: string, port = 0, root = engineRoot) {
   const password = randomBytes(32).toString('hex');
   return withHttpPort(async (candidate) => {
     // The official CLI cannot inherit this socket. Probe, release, then validate its actual bind.
     await probeHttpPort(candidate);
-    return startEngineOnPort(cwd, candidate, password);
+    return startEngineOnPort(cwd, candidate, password, root);
   }, port);
 }
 
@@ -145,7 +148,7 @@ async function stopFailedEngine(child: ChildProcess | undefined, requireSuccessf
   });
 }
 
-async function startEngineOnPort(cwd: string, port: number, password: string) {
+async function startEngineOnPort(cwd: string, port: number, password: string, root: string) {
   let child: ChildProcess | undefined;
   let announced = false;
   try {
@@ -163,7 +166,7 @@ async function startEngineOnPort(cwd: string, port: number, password: string) {
         ],
         {
           cwd,
-          env: engineEnv(password),
+          env: engineEnv(password, root),
           stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
           windowsHide: true,
         },
@@ -206,9 +209,10 @@ async function startEngineOnPort(cwd: string, port: number, password: string) {
         const address = input instanceof Request ? input.url : String(input);
         if (new URL(address).pathname.endsWith('/event')) return fetch(input, init);
         const caller = init?.signal || (input instanceof Request ? input.signal : undefined);
+        const timeout = /\/provider\/[^/]+\/oauth\/callback$/.test(new URL(address).pathname) ? 10 * 60_000 : 20000;
         const signal = caller
-          ? AbortSignal.any([caller, AbortSignal.timeout(20000)])
-          : AbortSignal.timeout(20000);
+          ? AbortSignal.any([caller, AbortSignal.timeout(timeout)])
+          : AbortSignal.timeout(timeout);
         return fetch(input, { ...init, signal });
       },
     });

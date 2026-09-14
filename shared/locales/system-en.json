@@ -584,5 +584,21 @@
   "无法打开文件，请检查默认应用或另存后打开。": "Could not open the file. Check the default app or save a copy first.",
   "无法打开文件夹，请检查目录是否存在。": "Could not open the folder. Check that it still exists.",
   "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。\n": "This is a follow-up in the same conversation. Read input file {{value1}} first for all earlier requests, results and file records. Preserve applicable constraints and continue from existing work.\n",
-  "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n": "This is a follow-up in the same conversation. First read {{value1}}, which contains previous requests, results and file records. Preserve applicable constraints and continue from existing work. Remote outputs remain on the recorded Node; do not assume they are attached. If cross-Node access is needed, query the resource directory and request the file through resources. Otherwise use the result records only.\n"
+  "这是同一会话的后续请求。先读取输入文件 {{value1}}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n": "This is a follow-up in the same conversation. First read {{value1}}, which contains previous requests, results and file records. Preserve applicable constraints and continue from existing work. Remote outputs remain on the recorded Node; do not assume they are attached. If cross-Node access is needed, query the resource directory and request the file through resources. Otherwise use the result records only.\n",
+  "厂商登录正在进行": "Provider sign-in is in progress.",
+  "请完成或取消厂商登录后再启动任务。": "Finish or cancel provider sign-in before starting tasks.",
+  "请先完成或取消厂商登录。": "Finish or cancel provider sign-in first.",
+  "此厂商需要使用其他接入方式。": "This provider requires a different connection method.",
+  "Provider ID 已被内置厂商使用。": "Provider ID is already used by a built-in provider.",
+  "此 Provider 需要 API Key。": "An API key is required for this provider.",
+  "凭据保存未确认，请刷新状态后重试。": "Could not save provider credentials. Refresh status and retry.",
+  "凭据移除未确认，请刷新状态后重试。": "Could not remove credentials. Refresh status and retry.",
+  "未找到此 Provider。": "Provider not found.",
+  "该 OAuth 登录方式不可用。": "OAuth method is not available.",
+  "请选择有效的登录选项。": "Choose a valid sign-in option.",
+  "登录等待已超时，请重新登录。": "OAuth timed out. Start a new sign-in.",
+  "无法开始厂商登录，请重试。": "Could not start vendor sign-in. Please retry.",
+  "登录未完成，请先刷新厂商状态再重试。": "Sign-in did not complete. Refresh provider status before trying again.",
+  "登录清理未完成，请重启应用。": "Sign-in cleanup needs an application restart.",
+  "无法打开浏览器，请复制授权链接后打开。": "Could not open the browser. Copy the authorization link instead."
 }

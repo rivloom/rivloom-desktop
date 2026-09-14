@@ -1,0 +1,116 @@
+.provider-settings {
+  margin-bottom: 22px;
+}
+.provider-settings > header > button {
+  margin-left: auto;
+}
+.provider-connected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 20px;
+}
+.provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.provider-chip.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft, #eef5ee);
+}
+.provider-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-chip small {
+  opacity: 0.55;
+}
+.provider-form {
+  max-width: 800px;
+}
+.provider-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.provider-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.provider-meta small,
+.provider-form small,
+.provider-oauth small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.provider-oauth-method {
+  margin: 16px 0 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.provider-form details {
+  margin: 16px 0;
+}
+.provider-form summary {
+  cursor: pointer;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.provider-oauth {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.provider-oauth > button {
+  margin: 12px 10px 12px 0;
+}
+.provider-oauth > small {
+  display: block;
+}
+.oauth-instructions {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  background: var(--surface-alt, #f4f5f1);
+  border-radius: 8px;
+}
+.oauth-link {
+  margin: 14px 0;
+}
+.oauth-link .field {
+  margin-top: 12px;
+}
+.provider-remove {
+  margin-top: 18px;
+}
+.provider-settings .notice {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .provider-form-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .provider-settings > header {
+    flex-wrap: wrap;
+  }
+  .provider-settings > header > button {
+    margin-left: 0;
+  }
+  .provider-oauth {
+    padding: 12px;
+  }
+}

@@ -56,6 +56,11 @@ export function layoutWorkflowGraph(graph: ReturnType<typeof workflowGraph>, wid
     height: contentHeight + paddingY * 2 };
 }
 export function workflowStepLabel(step: WorkflowStep, attempt?: WorkflowAttempt | null) {
+  if (attempt && attempt !== step.attempts.at(-1)) {
+    if (attempt.phase === 'completed' && attempt.outcome?.kind === 'handoff') return t('已转交');
+    return { intent: t('正在投递'), queued: t('已入队'), waiting: t('等待处理'), unknown: t('状态待确认'),
+      running: t('执行中'), completed: t('已完成'), failed: t('执行失败'), stopped: t('已停止') }[attempt.phase];
+  }
   if (attempt && ['intent', 'queued', 'waiting', 'unknown'].includes(attempt.phase)) return {
     intent: t('正在投递'), queued: t('已入队'), waiting: t('等待处理'), unknown: t('状态待确认'),
   }[attempt.phase as 'intent' | 'queued' | 'waiting' | 'unknown'];

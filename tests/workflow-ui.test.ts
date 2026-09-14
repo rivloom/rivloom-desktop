@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Workflow, WorkflowStep, WorkflowAttempt } from '../shared/workflows.ts';
 import type { Bootstrap, Task } from '../shared/types.ts';
-import { workflowGraph, layoutWorkflowGraph } from '../src/workflow-graph-data.ts';
+import { workflowGraph, layoutWorkflowGraph, workflowStepLabel } from '../src/workflow-graph-data.ts';
 import { workflowResults } from '../src/workflow-results.ts';
 import { conversations } from '../src/conversations.ts';
 import { collectAttention } from '../shared/task-attention.ts';
@@ -18,6 +18,15 @@ const fixture = (): Workflow => ({ id: 'root', requestID: 'request', contentDige
   criteria: '', projectID: null, model: null, approvalMode: 'ask', target: { mode: 'automatic' }, state: 'running', version: 1, planVersion: 1, summary: '',
   planner: step('planner'), steps: [step('script'), step('video', ['script']), step('audio', ['script']), step('edit', ['video', 'audio'])],
   events: [], handoffs: [], inputFiles: [], confirmations: [], pendingConfirmation: null, createdAt: at, updatedAt: at, error: null });
+
+test('historical attempt labels describe that attempt independently of a later failure', () => {
+  const s = step('result'); s.state = 'failed'; const old = attempt(1), current = { ...attempt(2), phase: 'failed' as const };
+  s.attempts = [old, current];
+  assert.equal(workflowStepLabel(s, old), '已完成'); assert.equal(workflowStepLabel(s, current), '执行失败');
+  old.outcome = { kind: 'handoff', nodeID: null, reason: 'Continue elsewhere', checkpoint: 'Saved', files: [], processesStopped: true };
+  assert.equal(workflowStepLabel(s, old), '已转交');
+  old.phase = 'stopped'; assert.equal(workflowStepLabel(s, old), '已停止');
+});
 
 test('final response uses the latest terminal step outcome, never the plan or earlier checkpoints', () => {
   const value = fixture(); value.state = 'completed'; value.summary = 'This is the plan';

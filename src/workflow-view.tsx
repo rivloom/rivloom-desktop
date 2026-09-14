@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useId, useLayoutEffect, useState } from 'react';
 import { Bot, Check, ChevronDown, ChevronRight, FileText, GitBranch, LoaderCircle, Pause, Play, ShieldCheck, Square } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types';
@@ -13,6 +13,8 @@ import { FilePreviewButton } from './file-preview';
 import { TaskFilesPanel } from './task-files';
 import { WorkflowGraph, workflowStepLabel, type WorkflowGraphNode } from './workflow-graph';
 import { workflowResults } from './workflow-results';
+import { searchTargetID, workflowAttemptResponse, type SearchMatch } from './conversation-search';
+import { SearchText } from './conversation-search-view';
 import './workflow.css';
 
 function ExecutionActions({ local, remote, data, busy, perform }: {
@@ -45,6 +47,7 @@ function ExecutionActions({ local, remote, data, busy, perform }: {
 }
 type WorkflowViewProps = {
   value: Workflow; data: Bootstrap; busy: boolean; perform: (fn: () => Promise<unknown>) => Promise<boolean>; nodeName: (id: string | null) => string;
+  searchMatch?: SearchMatch; searchQuery?: string; searchRevision?: number;
 };
 export function WorkflowView(props: WorkflowViewProps) {
   const { value, busy, perform } = props;
@@ -62,23 +65,31 @@ export function WorkflowView(props: WorkflowViewProps) {
         <Button disabled={busy} onClick={() => void control(value.queuePaused ? 'resume' : 'pause')}>{value.queuePaused ? t('继续消息队列') : t('暂停消息队列')}</Button></div>
       <p className="muted">{value.queuePaused ? t('消息队列已暂停，继续后会依次执行。') : t('当前轮结束后，按发送顺序继续执行。')}</p>
       {value.queueError && <p className="workflow-error" role="alert">{workflowError(value.queueError)}</p>}
-      {queued.map((message, i) => <article className="chat-message user workflow-queue-message" key={message.requestID}>
+      {queued.map((message, i) => <article className="chat-message user workflow-queue-message" key={message.requestID}
+        tabIndex={-1} data-search-target={searchTargetID({ kind: 'queued', messageID: message.requestID })}>
         <CopyButton text={message.text} label={t('复制这条消息')} iconOnly className="message-copy" />
-        <div className="chat-message-text">{message.text}</div>
+        <div className="chat-message-text"><SearchText text={message.text} query={props.searchQuery} /></div>
         {message.inputFiles.map((file) => <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
         <footer><span>{t('排队第 {{count}} 条', { count: i + 1 })}</span><Button disabled={busy} onClick={() => void control('cancel', message.requestID)}>{t('取消排队')}</Button></footer>
       </article>)}
     </section>}
   </>;
 }
-function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = false }: WorkflowViewProps & { historical?: boolean }) {
+function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = false, searchMatch, searchQuery = '', searchRevision }: WorkflowViewProps & { historical?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const processID = useId();
   const [selection, setSelection] = useState<{ stepID: string; attempt: number } | null>(null);
   const [editing, setEditing] = useState<WorkflowStepPlan | null>(null);
   const [editingVersion, setEditingVersion] = useState(0);
   const complex = value.steps.length > 1 || value.handoffs.length > 0;
-  useEffect(() => { setExpanded(false); setSelection(null); }, [value.id]);
+  useLayoutEffect(() => { setExpanded(false); setSelection(null); }, [value.id]);
+  const roundID = value.roundRequestID || value.requestID;
+  useLayoutEffect(() => {
+    const target = searchMatch?.target;
+    if (target?.roundID !== roundID) return;
+    if (target.kind === 'plan') setExpanded(true);
+    if (target.kind === 'step') { setExpanded(true); setSelection({ stepID: target.stepID!, attempt: target.attempt! }); }
+  }, [roundID, searchMatch?.id, searchRevision]);
   const steps = value.planVersion ? value.steps : [value.planner];
   const selectedStep = steps.find((s) => s.id === selection?.stepID) || steps.find((s) => s.state === 'running' || s.state === 'failed' || s.state === 'blocked') || steps.at(-1);
   const selectedAttempt = selectedStep?.attempts.find((a) => a.number === selection?.attempt) || selectedStep?.attempts.at(-1);
@@ -97,10 +108,7 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
     remote: attempt ? data.network.remoteTasks.find((remote) => remote.id === attempt.executionID) : undefined,
   });
   const current = records(selectedAttempt);
-  const selectedOutcome = selectedAttempt?.outcome;
-  const checkpoint = selectedAttempt && selectedAttempt !== selectedStep?.attempts.at(-1)
-    ? selectedOutcome?.kind === 'completed' ? selectedOutcome.summary : selectedOutcome && 'checkpoint' in selectedOutcome ? selectedOutcome.checkpoint : selectedAttempt.summary
-    : selectedStep?.checkpoint;
+  const checkpoint = selectedAttempt && selectedStep ? workflowAttemptResponse(selectedStep, selectedAttempt) : selectedStep?.checkpoint;
   const status = { planning: t('正在分析与规划'), running: t('正在按计划执行'), paused: t('已暂停派发'), stopping: t('正在确认停止'),
     stopped: t('已停止'), completed: t('已完成'), failed: t('需要检查执行结果') }[value.state];
   const choose = (node: WorkflowGraphNode) => setSelection({ stepID: node.step.id, attempt: node.attempt?.number || 0 });
@@ -108,8 +116,8 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
   const edit = (step: WorkflowStep) => { setEditingVersion(value.version); setEditing({ id: step.id, title: step.title, instructions: step.instructions, dependsOn: [...step.dependsOn],
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements }); };
   return <div className="workflow-conversation">
-    <article className="chat-message user" aria-label={t('你')}><CopyButton text={value.description} label={t('复制这条消息')} iconOnly className="message-copy" />
-      <div className="chat-message-text">{value.description}</div>
+    <article className="chat-message user" aria-label={t('你')} tabIndex={-1} data-search-target={searchTargetID({ kind: 'requirement', roundID })}><CopyButton text={value.description} label={t('复制这条消息')} iconOnly className="message-copy" />
+      <div className="chat-message-text"><SearchText text={value.description} query={searchQuery} /></div>
       {(value.messages?.find((m) => m.requestID === value.roundRequestID)?.inputFiles || (!value.roundRequestID || value.roundRequestID === value.requestID ? value.inputFiles : [])).map((file) =>
         <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
     </article>
@@ -119,9 +127,10 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
       </div>
       {(complete || results.length > 0) && <div className="workflow-results">
         {!complete && <p className="workflow-partial-label">{t('已完成的部分')}</p>}
-        {results.map(({ step, summary }) => <article className="workflow-result" key={step.id}>
+        {results.map(({ step, attempt, summary }) => <article className="workflow-result" key={step.id} tabIndex={-1}
+          data-search-target={searchTargetID({ kind: 'response', roundID, stepID: step.id, attempt: attempt.number })}>
           {results.length > 1 && <h3>{step.title}</h3>}
-          {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} /><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
+          {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} searchQuery={searchQuery} /><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可展开执行过程查看记录。')}</p>}
       </div>}
@@ -170,7 +179,7 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
       </button>
       <div id={processID} hidden={!expanded}>
       {expanded && <>
-      {value.summary && <div className="workflow-plan-summary"><h3>{t('计划说明')}</h3><p>{value.summary}</p></div>}
+      {value.summary && <div className="workflow-plan-summary" tabIndex={-1} data-search-target={searchTargetID({ kind: 'plan', roundID })}><h3>{t('计划说明')}</h3><p><SearchText text={value.summary} query={searchQuery} /></p></div>}
       {value.events.some((e) => e.kind === 'query') && <details className="workflow-query-log"><summary><FileText size={14} />{t('资源查询记录')}<span>{value.events.filter((e) => e.kind === 'query').length}</span></summary>
         {value.events.filter((e) => e.kind === 'query').map((event) => <p key={event.id}>{event.text}</p>)}</details>}
       {complex && <WorkflowGraph value={value} nodeName={nodeName} select={choose} selected={selectedStep ? `${selectedStep.id}:${selectedAttempt?.number || 0}` : null} />}
@@ -181,8 +190,9 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
       </div>
       <p className="workflow-detail-meta">{workflowStepLabel(selectedStep, selectedAttempt)} · {selectedAttempt ? nodeName(selectedAttempt.nodeID) : t('待分配')}
         {selectedAttempt && ` · ${t('第 {{count}} 次执行', { count: selectedAttempt.number })}`}</p>
-      {checkpoint && <article className="chat-message assistant"><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} iconOnly className="message-copy" /></div>
-        <MessageMarkdown text={checkpoint} /></article>}
+      {checkpoint && <article className="chat-message assistant" tabIndex={-1}
+        data-search-target={searchTargetID({ kind: 'step', roundID, stepID: selectedStep.id, attempt: selectedAttempt?.number })}><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} iconOnly className="message-copy" /></div>
+        <MessageMarkdown text={checkpoint} searchQuery={searchQuery} /></article>}
       {selectedAttempt?.error && selectedAttempt.phase !== 'stopped' && <p className="workflow-error">{workflowError(selectedAttempt.error)}</p>}
       <details className="workflow-execution-detail"><summary>{t('查看步骤要求与执行记录')}<ChevronDown size={14} /></summary>
         {selectedAttempt?.error && selectedAttempt.phase === 'stopped' && <p className="muted">{t('执行记录')}：{workflowError(selectedAttempt.error)}</p>}

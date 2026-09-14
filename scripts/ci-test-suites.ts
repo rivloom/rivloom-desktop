@@ -5,6 +5,8 @@ import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/model-providers.test.ts',
+  'tests/conversation-search.test.ts',
   'tests/file-preview.test.ts',
   'tests/conversation-history.test.ts',
   'tests/desktop-update.test.ts',
@@ -55,7 +57,7 @@ export const logicFiles = [
   'tests/release-record.test.ts',
   'tests/ci-runtime.test.ts',
 ] as const;
-export const engineFiles = ['tests/engine-ports.test.ts'] as const;
+export const engineFiles = ['tests/engine-ports.test.ts', 'tests/provider-oauth-engine.test.ts'] as const;
 export const networkFile = 'tests/node-network.test.ts';
 
 // Exact names, not broad exclusions: the audit fails on unclassified/new/renamed tests.

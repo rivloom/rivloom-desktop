@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { CopyButton } from './copy-button';
 import { i18n, t } from '../shared/i18n.ts';
+import { rehypeSearch } from './markdown-search';
 import './message-markdown.css';
 
 function plainText(value: ReactNode): string {
@@ -13,9 +14,9 @@ function plainText(value: ReactNode): string {
   if (value && typeof value === 'object' && 'props' in value) return plainText((value.props as { children?: ReactNode }).children);
   return '';
 }
-export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: string }) {
+export const MessageMarkdown = memo(function MessageMarkdown({ text, searchQuery = '' }: { text: string; searchQuery?: string }) {
   useTranslation('ui', { i18n });
-  return <div className="message-markdown"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} skipHtml components={{
+  return <div className="message-markdown"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSearch, { query: searchQuery }]]} skipHtml components={{
     a: ({ href, children }) => href && /^https?:\/\//i.test(href)
       ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="markdown-image-label">{alt || t('图片')}</span>,
