@@ -6,7 +6,7 @@ Rivloom 是 Windows x64 上的人与 AI 任务工作区：在本机或已配对�
 
 ## 当前状态
 
-本次源码版本为 **0.1.15**，新增共享 Skills 与渐进式 Wiki 记忆，保留会话内容搜索、模型自由选择、厂商 OAuth / API Key、自定义 Provider，以及跨设备任务协作、审批、成果取回和签名更新。可下载版本以[官网下载页](https://rivloom.com/download/)为准。
+当前正式版为 **0.1.15**，新增共享 Skills 与渐进式 Wiki 记忆，保留会话内容搜索、模型自由选择、厂商 OAuth / API Key、自定义 Provider，以及跨设备任务协作、审批、成果取回和签名更新。可下载版本以[官网下载页](https://rivloom.com/download/)为准。
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)；发行进度与验证范围见 [验证记录](docs/VERIFICATION.md) 顶部。
 

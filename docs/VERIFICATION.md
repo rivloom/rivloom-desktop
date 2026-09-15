@@ -1,5 +1,31 @@
 # Rivloom 验证记录
 
+## 2026-09-15 · 0.1.15 发布完成
+
+**当前正式版本：0.1.15（2026-09-15，已发布并完成收尾）。** 共享 Skills 与渐进式 Wiki 记忆已发行。桌面安装包源码 `97ab7937b272278f876070de66ca3acc745dbe21`，官网源码 `29a8f27e1b6552976859346f0d522234b571f9f7`，构建 `v0.1.15-97ab7937b272-10387819109`。目标提交完整 CI、原生构建、隔离安装/启动/重启/卸载、Release、R2 与签名更新均通过；匿名完整下载、原更新公钥及官网实际部署核验通过。R2 41 个对象：保留 41、暂缓 0、删除 0，当前引用复核通过。下方“未提交/待重跑/发布准备/0.1.14”均为历史阶段，不覆盖本段。
+
+- [发布流水线](https://github.com/rivloom/rivloom-desktop/actions/runs/34946471004)；同源码基础 CI [34946263543](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263543)、官方引擎 [34946263566](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263566)、发现/传输 [34946263606](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263606) 全部成功。416 项逻辑、13 项协议、3 项官方引擎、mDNS/UDP 各 1 项及全部 10 组服务检查通过，知识库服务 6 组、模型服务 12 组、工作流服务 21 组。69 项 CI 自检、版本、覆盖、双语与生产构建通过。
+- 首次提交 `6e43f3b` 的失败已保留在下方记录；正式包使用修复后的 `97ab793`，隔离依赖定位与异步加密回执竞争已有回归覆盖。云端原生测试、NSIS、runtime 前后校验与隔离安装验收通过。取回原始 7 份候选报告后，使用既有严格 `prepareRelease` 验证器和匿名下载的安装包再次核验通过。
+- 公开安装包 **89,188,353 字节**，SHA-256 `e4ae1776123b0f80a19d6e7c0d48fd9bec8c0823211c5e994c764e66c9e1b9f5`。原 0.1.14 信任公钥继续有效；签名说明含本版功能，清单版本/URL/大小/哈希与安装器签名绑定，不可变清单与 latest 一致，SHA256SUMS 和 no-store 入口通过。未在用户设备执行安装器。
+- 官网共享 Skills、Wiki 使用指南、更新日志与隐私说明已中英文同步。41 项测试、18 页构建、12 组说明页与 4 组下载页桌面/手机检查通过；实际 Cloudflare 部署成功，23 项正式域检查通过，当前下载页与签名更新一致。官网源码 `29a8f27e1b6552976859346f0d522234b571f9f7`；[Pages 部署](https://dash.cloudflare.com/?to=/cd32cbd5ec257713adb47572ea24f771/pages/view/rivloom-website/49771e1a-0925-4ed6-b416-6768dbe1482f) 已成功执行其下载同步、测试和构建流程。[官网 GitHub Actions](https://github.com/rivloom/rivloom-website/actions/runs/34955080656) 因私有仓库账户计费未能启动，结果仍为失败，不记作 CI 通过；该限制没有阻止独立 Pages 部署和正式域验证。
+- R2 只读 inventory [34955483950](https://github.com/rivloom/rivloom-desktop/actions/runs/34955483950) 成功；最近三版 0.1.15、0.1.14、0.1.13 与近 30 天及当前引用取并集，逐项记录见 [本次 R2 审计](releases/0.1.15-r2-retention.md)。检查完成，删除 0 个，没有自动清理功能。
+
+本机证据：`.data/verification/release-0.1.15-20260915/`；官网布局证据：`C:/project/rivloom-website/.data/verification/knowledge-release-20260915/`。模型调用均使用合成的本机服务，未登录真实厂商账号或消耗真实额度；真实双物理机/业务结果及 Windows Authenticode 仍不属于本次通过范围。
+
+## 2026-09-15 · 0.1.15 云端安装通过，发布受 GitHub 账户计费阻塞
+
+实际发布源码为 `97ab7937b272278f876070de66ca3acc745dbe21`，已提交并推送。基础 CI [34946263543](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263543)、官方引擎 [34946263566](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263566)、发现传输 [34946263606](https://github.com/rivloom/rivloom-desktop/actions/runs/34946263606) 全部成功。原始 15 份报告逐一核对相同 commit 和 `cloudRun: true`：416 项逻辑、13 项协议、3 项引擎、mDNS/UDP 各 1 项，以及全部 10 组服务（知识库 6 组、模型 12 组、工作流 21 组），均通过且未跳过。
+
+[构建发行 34946471004](https://github.com/rivloom/rivloom-desktop/actions/runs/34946471004) 的候选 job `104306955472` 成功，包含同提交门禁、固定 Rust、69 项 CI 自检、runtime/许可核验、原生单元测试、NSIS、构建后 runtime 复核，以及隔离安装、启动、重启和卸载。候选 artifact `10387819109`，归档大小 89,246,475 字节，GitHub SHA-256 `1a103162d0432730137dcb6cd669c0f35afc589fd33bfcb3fa6c614422d3dcd1`。
+
+发布 job `104312104094` 没有执行任何步骤；GitHub 注释原文为：“The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings”。这属于账户计费阻塞，不是产品或发布脚本测试失败。没有重跑至成功、改门禁或绕过签名。用户需处理 [组织计费](https://github.com/organizations/rivloom/settings/billing/overview)，恢复后重跑失败任务及下游步骤，复用本次候选 artifact。
+
+2026-09-15T08:42:04Z 已复核公开下载与签名更新均为 0.1.14，原公钥验签有效且安装包引用/哈希一致。0.1.15 的 Release、R2 上传、签名更新、官网正式部署与 R2 保留检查尚未完成，删除 0 个；不能将“未执行”记为本版“检查完成”。官网本地 41 项测试、18 页构建和 12 组中英文桌面/手机说明页检查通过，配套改动未推送部署。
+
+原始证据在 `.data/verification/release-0.1.15-20260915/`：`ci-summary.json`、三组 CI 下载报告、`candidate-artifacts.json`、`candidate-jobs.json`、`github-billing-block.json`、`public-state-while-blocked.json`。保留本次发布授权，真实账户、模型额度和用户安装版未用于测试。
+
+候选完整 ZIP 下载超时后，改用认证的精确字节范围取回 7 份原始 JSON，解压大小及 CRC 全部通过；源码、锁文件、runtime 清单哈希、构建前后 runtime 与安装报告交叉核验通过，见 `candidate-metadata-verification.json`。报告中的安装包为 89,188,353 字节，SHA-256 `e4ae1776123b0f80a19d6e7c0d48fd9bec8c0823211c5e994c764e66c9e1b9f5`；尚未独立完整下载该安装器，不把小型报告核验写成公开安装包验签通过。
+
 ## 2026-09-15 · 0.1.15 首次 CI 失败诊断与修复
 
 首个发布提交 `6e43f3b9ad69bb7cd7354411992846778ab52105` 已推送。Windows CI [34943260538](https://github.com/rivloom/rivloom-desktop/actions/runs/34943260538) 与发现测试 [34943259858](https://github.com/rivloom/rivloom-desktop/actions/runs/34943259858) 通过；[官方引擎服务 CI](https://github.com/rivloom/rivloom-desktop/actions/runs/34943259780) 因隔离源码目录未包含依赖而失败，[候选构建](https://github.com/rivloom/rivloom-desktop/actions/runs/34943478939) 正确拒绝提升。本轮失败未发布 0.1.15，正式入口仍为 0.1.14。
