@@ -40,7 +40,7 @@ export function workflowOutputSchema(role: WorkflowExecutionContext['role']): Sc
 export function plannerPermissions(): PermissionRuleset {
   // Retain the same credential deny rules as ordinary execution, with no write/command permission.
   return [{ permission: '*', pattern: '*', action: 'deny' },
-    ...sessionPermissions('ask').filter((rule) => ['read', 'glob', 'grep', 'list', 'task', 'skill'].includes(rule.permission)),
+    ...sessionPermissions('ask').filter((rule) => ['read', 'glob', 'grep', 'list', 'task', 'skill', 'rivloom_knowledge_search', 'rivloom_knowledge_read'].includes(rule.permission)),
     { permission: 'StructuredOutput', pattern: '*', action: 'allow' }];
 }
 export function workflowPrompt(context: WorkflowExecutionContext): string {

@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { listenHttp } from './http-ports.ts';
 import { readFile } from 'node:fs/promises';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { z } from 'zod';
 import {
@@ -59,6 +59,7 @@ import {
   shutdownEngine,
   setTaskStartGuard,
   setTaskInputMaterializer,
+  setTaskKnowledgeContext,
 } from './task-service.ts';
 import { validateProject, redact } from './artifacts.ts';
 import { dataRoot } from './engine.ts';
@@ -85,6 +86,7 @@ import {
 } from './model-settings.ts';
 import { apiKeySchema, providerIDSchema } from '../shared/model-providers.ts';
 import { NodeNetwork, NodeNetworkError } from './node-network.ts';
+import { loadNodeIdentity } from './node-identity.ts';
 import { ExecutionPolicyStore } from './execution-policy.ts';
 import { WorkerResourceSampler, workerMatchesTask } from './worker-resources.ts';
 import { WorkerAdmissionGate, occupiesWorkerSlot, executionOccupancy, isRemoteExecution } from './worker-admission.ts';
@@ -109,6 +111,11 @@ import { probeResourceCapabilities, ResourceCapabilityCache } from './resource-c
 import { validResourceQuery } from '../shared/resources.ts';
 import { WorkflowRuntime } from './workflow-runtime.ts';
 import { installWorkflowAPI } from './workflow-api.ts';
+import { KnowledgeStore } from './knowledge-store.ts';
+import { KnowledgeNetwork } from './knowledge-network.ts';
+import { KnowledgeTools, type KnowledgeTask } from './knowledge-tools.ts';
+import { startKnowledgeBridge } from './knowledge-engine.ts';
+import { installKnowledgeAPI } from './knowledge-api.ts';
 import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-maintenance.ts';
 import { ConversationHistory, HistoryError, historyFileIDs } from './conversation-history.ts';
 import { conversations } from '../shared/conversations.ts';
@@ -140,6 +147,20 @@ try {
 }
 let workerSampler: WorkerResourceSampler | null = null;
 let resources: { catalog: ResourceCatalog; directory: ResourceNetwork; files: ResourceFiles } | null = null;
+let knowledge: { store: KnowledgeStore; network: KnowledgeNetwork; tools: KnowledgeTools } | null = null;
+let knowledgeBridge: Awaited<ReturnType<typeof startKnowledgeBridge>> | null = null;
+function knowledgeTask(value: Task, directory: string): KnowledgeTask {
+  const snapshot = nodeNetwork.snapshot();
+  const privateLocal = !!user(value.creatorID)?.owner && !value.remoteOrigin;
+  const origin = value.remoteOrigin ? snapshot.paired?.find((p) => p.id === value.remoteOrigin!.ownerNodeID) : null;
+  return { id: value.id, sessionID: value.sessionID || '', projectID: value.projectID, directory, privateLocal,
+    canWriteMemory: value.collaboration?.role !== 'planner',
+    brainIDs: snapshot.brains.filter((brain) => privateLocal || origin?.trusted && origin.brains.some((b) => b.id === brain.id && b.masterNodeID === brain.masterNodeID)).map((b) => b.id) };
+}
+setTaskKnowledgeContext((value, directory) => {
+  if (!knowledge) return '';
+  return `\nCurrent local project ID: ${value.projectID}. Node ID: ${knowledge.store.nodeID}.` + knowledge.tools.rules(knowledgeTask(value, directory));
+});
 const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQueue, policies: executionPolicies,
   resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()) });
 const conversationHistory = new ConversationHistory(db, {
@@ -185,12 +206,38 @@ function sweepConversationHistory() {
 const historyCleanup = setInterval(sweepConversationHistory, 60 * 60 * 1000);
 historyCleanup.unref();
 let resourceConfiguration = '';
+let knowledgeIdentityAttempted = false;
 const resourceCapabilities = new ResourceCapabilityCache();
 function configureResources() {
-  const ownNode = nodeNetwork.snapshot().local;
-  if (!ownNode) return;
+  const snapshot = nodeNetwork.snapshot(); const ownNode = snapshot.local;
+  let knowledgeNodeID = ownNode?.id;
+  if (!knowledge && !knowledgeNodeID && snapshot.status !== 'starting' && !knowledgeIdentityAttempted) {
+    knowledgeIdentityAttempted = true;
+    try {
+      const identityPath = join(dataRoot, 'node-identity.json');
+      // Local memory needs only the public identity. Existing memory remains available
+      // when discovery is disabled or Windows cannot currently decrypt the private key.
+      const stored = existsSync(identityPath) ? JSON.parse(readFileSync(identityPath, 'utf8')) : loadNodeIdentity(dataRoot);
+      if (typeof stored.nodeID === 'string' && /^[A-Za-z0-9_-]{32}$/.test(stored.nodeID)) knowledgeNodeID = stored.nodeID;
+    } catch { /* Keep ordinary local task execution available if Node identity is unavailable. */ }
+  }
   const policy = executionPolicies.snapshot();
   const selected = policy.projectID ? projects().find((candidate) => candidate.id === policy.projectID) || null : null;
+  if (!knowledge && knowledgeNodeID) {
+    const store = new KnowledgeStore(dataRoot, knowledgeNodeID, changed);
+    const network = new KnowledgeNetwork(store, { snapshot: () => nodeNetwork.snapshot(),
+      trusted: (id) => nodeNetwork.isTrustedNode(id), request: (id, op, payload) => nodeNetwork.collaborationRequest(id, op, payload) });
+    const tools = new KnowledgeTools(store, network, (sessionID, directory) => {
+      const row = db.prepare("SELECT body FROM tasks WHERE json_extract(body,'$.sessionID')=?").get(sessionID);
+      const value: Task | null = row ? JSON.parse(String(row.body)) : null;
+      if (!value || !['running', 'waiting_approval', 'waiting_input'].includes(value.state) ||
+        resolve(project(value.projectID).directory).toLowerCase() !== resolve(directory).toLowerCase() ||
+        updateMaintenance.active) throw new Error('knowledge_task_not_active');
+      return knowledgeTask(value, directory);
+    });
+    knowledge = { store, network, tools }; store.scheduleOrganization();
+  }
+  if (!ownNode) return;
   if (!resources) {
     const transport: ResourceTransport = {
       localName: () => nodeNetwork.snapshot().local?.name || 'Local',
@@ -211,6 +258,7 @@ function configureResources() {
     const directory = new ResourceNetwork(dataRoot, catalog, transport, changed);
     resources = { catalog, directory, files: new ResourceFiles(dataRoot, catalog, nodeNetwork.files, transport) };
     nodeNetwork.setCollaborationHandler((peer, operation, payload) =>
+      operation === 'knowledge' ? knowledge!.network.handle(peer, payload) :
       operation.startsWith('execution-') ? workflowRuntime.handle(peer, operation, payload) :
       operation === 'resource-prepare' || operation === 'resource-chunk'
         ? resources!.files.handle(peer, operation, payload) : directory.handle(peer, operation, payload));
@@ -404,6 +452,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use('/api/ui/drafts', express.json({ limit: '2mb' }));
+app.use('/api/knowledge', express.json({ limit: '512kb' }));
 app.use(express.json({ limit: '128kb' }));
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || ['GET', 'HEAD', 'OPTIONS'].includes(req.method) ||
@@ -538,6 +587,7 @@ app.use('/api', (req, _res, next) => {
   next();
 });
 installWorkflowAPI(app, workflowRuntime, nodeNetwork, who);
+installKnowledgeAPI(app, () => knowledge, who, projects);
 function visibleTask(req: Request) {
   const t = task(String(req.params.id));
   requireThat(participant(t, who(req)), 403, '你不是此任务的参与者');
@@ -2156,7 +2206,8 @@ try {
   console.log(desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
   if (!users().length && !desktop)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
-  void nodeNetwork.start().then(sweepConversationHistory);
+  knowledgeBridge = await startKnowledgeBridge(() => knowledge?.tools || null);
+  void nodeNetwork.start().then(() => { configureResources(); sweepConversationHistory(); });
   void initializeEngine();
   workflowRuntime.start();
 }
@@ -2180,6 +2231,10 @@ export async function shutdown(update?: { lease: string; version: string }) {
   await nodeNetwork.stop();
   await providerOAuth.close();
   await shutdownEngine(!!update);
+  await knowledgeBridge?.close();
+  knowledge?.network.close();
+  knowledge?.tools.close();
+  knowledge?.store.close();
   if (update) {
     nodeNetwork.files.close();
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');

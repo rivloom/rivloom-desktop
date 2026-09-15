@@ -438,6 +438,8 @@ export async function verifyRuntime(
 
   const notices = unique(manifest.notices, (row) => portablePath(row.path), 'notice');
   const fixedNotices = [
+    'LICENSE',
+    'NOTICE',
     'THIRD_PARTY_NOTICES.md',
     'Node-LICENSE.txt',
     'docs/dependency-licenses.json',

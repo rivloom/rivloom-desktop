@@ -17,6 +17,7 @@ import { parseWorkflowOutcome, plannerPermissions, workflowPrompt, workflowSyste
 import { checkWorkflowQuiescence } from './workflow-quiescence.ts';
 import { taskApprovalPrompt } from './task-prompts.ts';
 import { EnginePermissionEvents } from './engine-permissions.ts';
+import { knowledgePrompt } from '../shared/knowledge.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -37,6 +38,8 @@ const permissionEvents = new EnginePermissionEvents();
 let monitoring = false;
 let taskStartGuard: ((value: Task) => void) | null = null;
 let taskInputMaterializer: ((value: Task, directory: string) => string[]) | null = null;
+let taskKnowledgeContext: ((value: Task, directory: string) => string) | null = null;
+export function setTaskKnowledgeContext(provider: (value: Task, directory: string) => string) { taskKnowledgeContext = provider; }
 export function setTaskInputMaterializer(
   materializer: (value: Task, directory: string) => string[],
 ) {
@@ -403,6 +406,7 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       }
     }
     taskStartGuard?.(task(t.id));
+    const knowledgeContext = taskKnowledgeContext?.(t, directory) || '';
     const runAfter = Date.now();
     const instructions =
       (t.collaboration ? workflowPrompt(t.collaboration) + (addition ? `\n\n用户补充：\n${addition}` : '') : addition) ||
@@ -430,8 +434,9 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
         directory,
         sessionID: t.sessionID!,
         model: { providerID, modelID: rest.join('/') },
-        system: t.collaboration?.role === 'planner' ? workflowSystemPrompt :
-          (t.collaboration ? `${workflowSystemPrompt}\n\n` : '') + taskApprovalPrompt(t.approvalMode),
+        system: (t.collaboration?.role === 'planner' ? workflowSystemPrompt :
+          (t.collaboration ? `${workflowSystemPrompt}\n\n` : '') + taskApprovalPrompt(t.approvalMode)) +
+          (taskKnowledgeContext ? `\n\n${knowledgePrompt}${knowledgeContext}` : ''),
         // OpenCode 1.18.25 cannot re-encode stored message.info.format (upstream #40169).
         // Keep the official session readable: workflowPrompt supplies the schema and sync strictly
         // validates the final JSON in this exact session/run. Never send a formatted prompt here.

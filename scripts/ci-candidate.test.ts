@@ -29,6 +29,11 @@ const context: CandidateContext = {
 
 test('Rivloom candidate context rejects tag, source, dirty-tree and toolchain drift', () => {
   validateCandidateContext('0.1.3', context);
+  validateCandidateContext('0.1.3', { ...context, refType: 'branch', refName: 'main' });
+  assert.throws(
+    () => validateCandidateContext('0.1.3', { ...context, refType: 'branch', refName: 'feature' }),
+    /candidate branch must be main/,
+  );
   for (const change of [
     { expectedCommit: '2'.repeat(40) },
     { workingTree: 'dirty' as const },

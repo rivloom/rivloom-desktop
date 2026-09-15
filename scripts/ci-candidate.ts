@@ -167,6 +167,7 @@ export function validateCandidateContext(version: string, context: CandidateCont
       `ci-v${version}`,
       'Rivloom candidate tag must match the application version',
     );
+  else assert.equal(context.refName, 'main', 'Rivloom candidate branch must be main');
 }
 
 export function candidateConfig(version: string, context: CandidateContext) {

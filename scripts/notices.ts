@@ -38,11 +38,22 @@ function fallback(
   name: string,
   version: string,
 ): { files: UpstreamFile[]; versionSource: string } | undefined {
-  if ((name === '@opencode-ai/sdk' || name === 'opencode-windows-x64') && version === engineVersion)
+  if (name.startsWith('@msgpackr-extract/msgpackr-extract-') && version === '3.0.4')
+    return { files: [{ repository: 'kriszyp/msgpackr-extract', revision: 'v3.0.4', file: 'LICENSE', gitBlobSha1: '97f48aa82439758947d14d8ea6926a29df9ff678' }],
+      versionSource: `https://registry.npmjs.org/${name}/3.0.4` };
+  // This generated type package declares Apache-2.0 but omits LICENSE. Preserve both
+  // its exact published source declaration and the Kubernetes 1.30 source license.
+  if (name === 'kubernetes-types' && version === '1.30.0') return {
+    files: [
+      { repository: 'silverlyra/kubernetes-types', revision: 'a46eb94629404af98a6758cd843b31816237d7d0', file: 'package.json', gitBlobSha1: 'c49b333cd6b6260e2c8800792d62315cfc25a422' },
+      { repository: 'kubernetes/kubernetes', revision: 'v1.30.0', file: 'LICENSE', gitBlobSha1: 'd645695673349e3947e8e5ae42332d0ac3164cd7' },
+    ], versionSource: 'https://registry.npmjs.org/kubernetes-types/1.30.0',
+  };
+  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64'].includes(name) && version === engineVersion)
     return {
       files: [engineLicense],
       versionSource:
-        name === '@opencode-ai/sdk'
+        name === '@opencode-ai/plugin' ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/plugin/package.json' : name === '@opencode-ai/sdk'
           ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/sdk/js/package.json'
           : 'https://registry.npmjs.org/opencode-windows-x64/1.18.25',
     };

@@ -2,7 +2,7 @@
 
 Rivloom MVP uses unmodified official OpenCode **1.18.25** and the matching TypeScript SDK. OpenCode is Copyright (c) 2025 opencode and distributed under the MIT License. The full upstream release license is preserved in [docs/licenses/OpenCode-MIT.txt](docs/licenses/OpenCode-MIT.txt).
 
-The application is an independent integration, not an official OpenCode product. No OpenCode source fork is included or maintained. The Windows binary is installed from the official npm `opencode-windows-x64` package; distribution of a packaged desktop build must continue to include upstream copyright and license notices.
+The application is an independent integration, not an official OpenCode or OpenAI product. The current Windows binary is unmodified and installed from the official npm `opencode-windows-x64` package. Separate OpenCode and Codex forks are maintained for future runtime development; neither fork is a bundled dependency yet, and Codex is not integrated. Distribution of a packaged desktop build must continue to include upstream copyright and license notices.
 
 Runtime components also include React / React DOM (MIT), i18next / react-i18next (MIT), Express (MIT), Zod (MIT), Lucide React (ISC), and bonjour-service (MIT) for mDNS/DNS-SD node discovery. Their installed license texts and available transitive dependency license texts are retained in [docs/licenses](docs/licenses). Exact installed versions, licenses, development-only flags and integrity records are in [docs/dependency-licenses.json](docs/dependency-licenses.json); dependency resolution is locked in `package-lock.json`.
 
@@ -12,4 +12,4 @@ The Windows desktop distribution also includes unmodified Node.js 24.19.0 (MIT a
 
 Build tooling includes Vite, TypeScript, the official React Vite plugin and Prettier. The generated inventory also records development dependencies. Regenerate notices after changing dependencies with `node scripts/notices.ts`, and manually review missing or changed license information before distributing binaries. Native/runtime dependencies bundled inside the official OpenCode binary remain governed by the upstream distribution's notices; this inventory is not a complete binary SBOM.
 
-No license for the user's original application code is selected by this implementation (`private: true`); choose an application license separately if publishing it.
+Rivloom's original application code is Copyright 2026 Rivloom contributors and licensed under Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE), both included in the packaged runtime. Third-party code retains its original terms. The package's `private: true` flag prevents npm publication; it does not select a license or control GitHub visibility.

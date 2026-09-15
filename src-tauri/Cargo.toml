@@ -1,9 +1,11 @@
 [package]
 name = "rivloom-desktop"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 description = "Rivloom human and AI task collaboration desktop client"
 publish = false
+license = "Apache-2.0"
+repository = "https://github.com/rivloom/rivloom-desktop"
 
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }

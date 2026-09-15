@@ -7,6 +7,8 @@ import { createRequire } from 'node:module';
 import { isBindConflict, probeHttpPort, withHttpPort } from './http-ports.ts';
 import { createOpencodeClient, type Config, type PermissionRuleset } from '@opencode-ai/sdk/v2';
 import type { ApprovalMode } from '../shared/types.ts';
+import { knowledgeEngineConfig } from './knowledge-engine.ts';
+import { prepareEnginePluginDependencies } from './engine-plugin-dependencies.ts';
 
 export const ENGINE_VERSION = '1.18.25';
 export const dataRoot = resolve(process.env.RIVLOOM_DATA_DIR || '.data');
@@ -26,6 +28,9 @@ export const permissions: Config['permission'] = {
   question: 'allow',
   task: 'deny',
   skill: 'deny',
+  rivloom_knowledge_search: 'allow',
+  rivloom_knowledge_read: 'allow',
+  rivloom_memory_save: 'ask',
   external_directory: 'deny',
   webfetch: 'deny',
   websearch: 'deny',
@@ -39,6 +44,9 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
     { permission: 'grep', pattern: '*', action: 'allow' },
     { permission: 'list', pattern: '*', action: 'allow' },
     { permission: 'question', pattern: '*', action: 'allow' },
+    { permission: 'rivloom_knowledge_search', pattern: '*', action: 'allow' },
+    { permission: 'rivloom_knowledge_read', pattern: '*', action: 'allow' },
+    { permission: 'rivloom_memory_save', pattern: '*', action: mode === 'ask' ? 'ask' : 'allow' },
   ];
   if (mode === 'auto' || mode === 'full') {
     rules.push(
@@ -93,12 +101,19 @@ export function engineEnv(password?: string, root = engineRoot): NodeJS.ProcessE
     env[key] = join(root, folder);
     mkdirSync(env[key]!, { recursive: true });
   }
+  const knowledge = root === engineRoot ? knowledgeEngineConfig() : null;
+  if (knowledge) {
+    prepareEnginePluginDependencies(root);
+    env.RIVLOOM_KNOWLEDGE_BRIDGE_URL = knowledge.url;
+    env.RIVLOOM_KNOWLEDGE_BRIDGE_TOKEN = knowledge.token;
+  }
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     autoupdate: false,
     share: 'disabled',
     snapshot: false,
     permission: permissions,
     agent: { build: { permission: permissions } },
+    ...(knowledge ? { plugin: [knowledge.plugin] } : {}),
   });
   const providerConfig = join(root, 'rivloom-providers.json');
   if (!existsSync(providerConfig)) writeFileSync(providerConfig, '{"provider":{}}', { mode: 0o600 });

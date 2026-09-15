@@ -1,7 +1,12 @@
 {
   "name": "rivloom-opencode",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rivloom/rivloom-desktop.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -15,10 +20,10 @@
     "server:dev": "node server/index.ts --dev",
     "server:start": "node server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/execution-policy.test.ts tests/worker-admission.test.ts tests/engine-permissions.test.ts tests/i18n.test.ts tests/security.test.ts tests/node-network.test.ts tests/remote-task-clock.test.ts tests/http-ports.test.ts tests/engine-ports.test.ts tests/physical-resume.test.ts tests/physical-race.test.ts tests/conversations.test.ts tests/conversation-filters.test.ts tests/sidebar-layout.test.ts tests/app-version.test.ts tests/node-profile.test.ts tests/node-mentions.test.ts tests/machine-status.test.ts tests/conversation-drafts.test.ts tests/directed-node-tasks.test.ts tests/node-queue.test.ts tests/node-queue-recovery.test.ts tests/node-queue-controls.test.ts tests/node-health.test.ts tests/task-queue-receipts.test.ts tests/task-receipts.test.ts tests/task-completion.test.ts tests/api.test.ts tests/desktop-refresh.test.ts tests/task-queries.test.ts tests/worker-resources.test.ts tests/release-record.test.ts tests/ci-runtime.test.ts tests/task-attention.test.ts tests/node-diagnostics.test.ts tests/task-files.test.ts tests/task-file-flow.test.ts tests/resources.test.ts tests/workflows.test.ts tests/resource-catalog.test.ts tests/resource-network.test.ts tests/collaboration-channel.test.ts tests/resource-capabilities.test.ts tests/workflow-service.test.ts tests/workflow-planning.test.ts tests/workflow-contexts.test.ts tests/workflow-files.test.ts tests/workflow-ui.test.ts tests/desktop-update.test.ts tests/conversation-history.test.ts tests/file-preview.test.ts tests/conversation-search.test.ts tests/model-providers.test.ts tests/provider-oauth-engine.test.ts",
+    "test": "node --test tests/execution-policy.test.ts tests/worker-admission.test.ts tests/engine-permissions.test.ts tests/i18n.test.ts tests/security.test.ts tests/node-network.test.ts tests/remote-task-clock.test.ts tests/http-ports.test.ts tests/engine-ports.test.ts tests/physical-resume.test.ts tests/physical-race.test.ts tests/conversations.test.ts tests/conversation-filters.test.ts tests/sidebar-layout.test.ts tests/app-version.test.ts tests/node-profile.test.ts tests/node-mentions.test.ts tests/machine-status.test.ts tests/conversation-drafts.test.ts tests/directed-node-tasks.test.ts tests/node-queue.test.ts tests/node-queue-recovery.test.ts tests/node-queue-controls.test.ts tests/node-health.test.ts tests/task-queue-receipts.test.ts tests/task-receipts.test.ts tests/task-completion.test.ts tests/api.test.ts tests/desktop-refresh.test.ts tests/task-queries.test.ts tests/worker-resources.test.ts tests/release-record.test.ts tests/ci-runtime.test.ts tests/task-attention.test.ts tests/node-diagnostics.test.ts tests/task-files.test.ts tests/task-file-flow.test.ts tests/resources.test.ts tests/workflows.test.ts tests/resource-catalog.test.ts tests/resource-network.test.ts tests/collaboration-channel.test.ts tests/resource-capabilities.test.ts tests/workflow-service.test.ts tests/workflow-planning.test.ts tests/workflow-contexts.test.ts tests/workflow-files.test.ts tests/workflow-ui.test.ts tests/desktop-update.test.ts tests/conversation-history.test.ts tests/file-preview.test.ts tests/conversation-search.test.ts tests/model-providers.test.ts tests/provider-oauth-engine.test.ts tests/knowledge.test.ts tests/knowledge-network.test.ts tests/knowledge-tools.test.ts",
     "ci:versions": "node scripts/ci-version-check.ts",
     "ci:coverage": "node scripts/ci-tests.ts --list",
-    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/ci-desktop-install-smoke.test.ts scripts/ci-release.test.ts scripts/download-record.test.ts scripts/ci-r2-storage.test.ts scripts/ci-website-download.test.ts scripts/updater-manifest.test.ts scripts/ci-updater.test.ts",
+    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/ci-desktop-install-smoke.test.ts scripts/ci-release.test.ts scripts/download-record.test.ts scripts/ci-r2-storage.test.ts scripts/ci-website-download.test.ts scripts/updater-manifest.test.ts scripts/ci-updater.test.ts scripts/ci-workflow-policy.test.ts",
     "test:ci:logic": "node scripts/ci-tests.ts logic",
     "test:ci:protocol": "node scripts/ci-tests.ts protocol",
     "test:ci:engine": "node scripts/ci-tests.ts engine",
@@ -47,7 +52,9 @@
     "test:workflow": "node scripts/workflow-service-check.ts",
     "test:origin-concurrency": "node scripts/origin-concurrency-check.ts",
     "preview:search": "npm run build && node scripts/conversation-search-preview.ts --open",
-    "preview:models": "npm run build && node scripts/model-access-preview.ts --open"
+    "preview:models": "npm run build && node scripts/model-access-preview.ts --open",
+    "test:knowledge": "node scripts/knowledge-service-check.ts",
+    "preview:knowledge": "npm run build && node scripts/knowledge-ui-preview.ts"
   },
   "devDependencies": {
     "@babel/parser": "8.0.4",
@@ -59,9 +66,11 @@
     "@vitejs/plugin-react": "6.1.1",
     "prettier": "3.9.6",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "yaml": "2.9.1"
   },
   "dependencies": {
+    "@opencode-ai/plugin": "1.18.25",
     "@opencode-ai/sdk": "1.18.25",
     "@tauri-apps/api": "2.11.1",
     "bonjour-service": "1.4.4",

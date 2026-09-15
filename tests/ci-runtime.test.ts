@@ -98,6 +98,8 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
   await bundled('README.md', 'CI fixture desktop README\n');
   await both('SECURITY.md', 'CI fixture security boundaries\n');
   await both('THIRD_PARTY_NOTICES.md', 'CI fixture notices\n');
+  await both('LICENSE', 'CI fixture Apache-2.0 license\n');
+  await both('NOTICE', 'CI fixture Rivloom contributors\n');
   await source('.data/desktop-downloads/Node-LICENSE.txt', 'CI fixture Node original\n');
   await bundled('Node-LICENSE.txt', 'CI fixture Node original\n');
   const npmInventory = packageRows.map((row) => ({
@@ -173,6 +175,8 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
     encode({ version: '1.18.25', modified: false, binarySha256: sha(engine) }),
   );
   const noticePaths = [
+    'LICENSE',
+    'NOTICE',
     'THIRD_PARTY_NOTICES.md',
     'Node-LICENSE.txt',
     'docs/dependency-licenses.json',
@@ -282,6 +286,19 @@ test('runtime gate detects document drift even when the manifest hash is regener
   );
   await f.save();
   await assert.rejects(f.verify(), /Bundled document differs from source/);
+});
+
+test('runtime gate rejects missing or changed application notices before executing binaries', async (t) => {
+  for (const path of ['LICENSE', 'NOTICE']) {
+    const f = await fixture(t);
+    await rm(join(f.runtimeRoot, path));
+    await assert.rejects(f.verify(), /ENOENT/);
+    await f.bundled(path, 'Changed application license\n');
+    await assert.rejects(f.verify(), /Bundled notice hash drift/);
+    await f.refreshNotice(path);
+    await assert.rejects(f.verify(), /Bundled notice differs from source/);
+    assert.equal(f.calls.length, 0);
+  }
 });
 
 test('runtime gate rejects a missing Rust inventory and missing license original', async (t) => {

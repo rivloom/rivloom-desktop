@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   inventory:
+    if: github.repository == 'rivloom/rivloom-desktop' && github.ref == 'refs/heads/main'
     runs-on: windows-2022
     timeout-minutes: 10
     steps:

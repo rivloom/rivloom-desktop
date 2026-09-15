@@ -20,6 +20,7 @@ import { contentSearchMatch, indexConversations, searchConversations, searchExce
 import { SearchNavigation, SearchText, searchMatchLabel } from './conversation-search-view';
 import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
+import { KnowledgeLibrary } from './knowledge-library';
 import type { Workflow } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
 import {
@@ -47,6 +48,7 @@ import {
   Plus,
   Search,
   Settings2,
+  BookOpen,
   Network,
   ChevronDown,
   MessageSquare,
@@ -500,7 +502,7 @@ export function ConversationWorkspace({
   connectionError: string;
 }) {
   const rivloomVersion = useRivloomVersion();
-  const [view, setView] = useState<'chat' | 'network' | 'models' | 'attention' | 'diagnostics' | 'trash'>(
+  const [view, setView] = useState<'chat' | 'network' | 'models' | 'attention' | 'diagnostics' | 'trash' | 'knowledge'>(
     'chat',
   );
   const [diagnosticTarget, setDiagnosticTarget] = useState<string | null>(null);
@@ -1392,6 +1394,9 @@ export function ConversationWorkspace({
           )}
         </div>
         <nav className="conversation-settings" aria-label={t('设置')}>
+          {data.user.owner && <button className={view === 'knowledge' ? 'active' : ''} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
+            <BookOpen size={17} />{t('技能与记忆')}<ChevronRight size={14} />
+          </button>}
           {data.user.owner && <button className={view === 'trash' ? 'active' : ''} onClick={() => { setView('trash'); setMobileSidebar(false); setNotice(''); }}>
             <Trash2 size={17} />{t('回收站')}<span className="attention-count">{data.conversationTrash?.length || 0}</span>
           </button>}
@@ -1453,7 +1458,7 @@ export function ConversationWorkspace({
           )}
           <div>
             <span>
-              {view === 'trash' ? t('回收站') : view === 'network'
+              {view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站') : view === 'network'
                 ? t('设备与模型')
                 : view === 'models'
                   ? t('设备与模型')
@@ -2097,7 +2102,7 @@ export function ConversationWorkspace({
                 </button>
               </nav>
             )}
-            {view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
+            {view === 'knowledge' ? <KnowledgeLibrary projects={data.projects} /> : view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
               restore={(entry) => void perform(async () => { await api('/history/restore', { key: entry.key }); setNotice(t('会话已恢复到历史列表。')); })}
               purge={(entry) => setHistoryAction({ action: 'purge', key: entry.key, title: entry.title })}
               empty={() => setHistoryAction({ action: 'empty' })} /> : view === 'diagnostics' ? (

@@ -32,11 +32,14 @@ jobs:
   candidate:
     name: Build and verify Rivloom candidate
     if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
+      github.repository == 'rivloom/rivloom-desktop' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ci-v')) ||
+       (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+       github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: windows-2022
     timeout-minutes: 60
     outputs:

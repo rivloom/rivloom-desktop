@@ -247,7 +247,7 @@ M3.5 A–D 工程交付完成，用户及本轮双物理机验收仍待进行；
 
 ## 历史文档补充（2026-09-05，实施启动前）：官网分发与安全更新
 
-已读取用户分享的[《官网分发与更新方案》](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，对照当前 Tauri/NSIS、协议能力与数据持久化实现，核对 Tauri、Cloudflare 和 Microsoft 官方资料。新增 [RELEASING](RELEASING.md) 与建议状态的 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，并同步里程碑、长期计划、桌面说明和交接入口。
+已读取用户提供的《官网分发与更新方案》讨论，对照当前 Tauri/NSIS、协议能力与数据持久化实现，核对 Tauri、Cloudflare 和 Microsoft 官方资料。新增 [RELEASING](RELEASING.md) 与建议状态的 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)，并同步里程碑、长期计划、桌面说明和交接入口。
 
 该历史检查点将内容归入后续 M2/M5：保留静态分发、签名和不可变发布，修正通用更新 JSON、多平台同时发行及签名免提示的假设；补上 0.1.3 首次手动接入、安全退出/任务恢复、数据迁移、频道隔离和新旧节点验收矩阵。当时仅做文档检查，未实现或部署官网/更新源与发布 CI，也未运行产品测试或变更安装。之后用户已启动上方第一轮实施；本段只保留历史。
 

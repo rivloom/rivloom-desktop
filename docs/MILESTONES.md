@@ -75,7 +75,7 @@
 
 ## M2/M5：官网、CI 与发行接口第一轮实施中
 
-来源为用户提供的[《官网分发与更新方案》对话](https://chatgpt.com/share/6a9b8fce-808c-83ee-9aab-13b5c746e4ca)，随后用户要求开始第一轮实施。筛选与修正、技术依据、完整流程和验收矩阵统一见 [RELEASING](RELEASING.md)，架构取舍见 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)；各阶段验收仍按真实证据分别完成。
+来源为用户提供的《官网分发与更新方案》讨论，随后用户要求开始第一轮实施。筛选与修正、技术依据、完整流程和验收矩阵统一见 [RELEASING](RELEASING.md)，架构取舍见 [ADR-0006](adr/0006-website-distribution-and-safe-updates.md)；各阶段验收仍按真实证据分别完成。
 
 当前官网私有仓库 `rivloom/rivloom-website` 位于 `C:/project/rivloom-website`，首版 `f58049f` 已推送；Astro 9 页、234 项引用、发行目录测试 13/13 与本地 actionlint 通过。用户已授权 Cloudflare 仅访问官网仓库、推送/部署/绑定全球（含中国大陆）的 `rivloom.com`，并完成 GitHub 2FA。官网首轮云 CI 的锁文件问题已修复，推送和云验证重试、Cloudflare 连接及域名绑定正在推进；尚未确认线上站点成功，无公开下载。最新过程见 [官网交接](WEBSITE-HANDOFF.md)。
 

@@ -1,6 +1,6 @@
 # Rivloom 使用说明
 
-Rivloom 是 Windows x64 上的人与 AI 任务工作区。安装包已携带 Node.js 和官方 OpenCode，无需另外安装这两项；项目自身需要的工具链和模型提供方网络仍需准备。0.1.5 新增应用内更新，签名频道上线后生效。Windows Authenticode 代码签名尚未配置。
+Rivloom 是 Windows x64 上的人与 AI 任务工作区。本包版本为 0.1.15，已携带 Node.js 和官方 OpenCode，无需另外安装这两项；项目自身需要的工具链和模型提供方网络仍需准备。应用内签名更新频道已上线。Windows Authenticode 代码签名尚未配置。
 
 从 0.1.4 起，对外安装包和 Release 统一使用 Rivloom 名称，应用身份为 `com.rivloom.desktop`。此前 Rivloom UI Preview 使用独立身份，安装新版不会自动导入它的会话或设置；旧 Preview 安装和数据继续保留。请先在新版确认所需配置，勿把改名视为旧数据迁移或升级兼容性已经验收。
 
@@ -45,7 +45,7 @@ Rivloom 是 Windows x64 上的人与 AI 任务工作区。安装包已携带 Nod
 | 帮我批准 | 自动批准项目内修改和命令；联网仍需批准。 |
 | 允许任何操作 | 在支持的工具范围内，还自动批准联网和项目外目录操作。 |
 
-三种模式仍保留敏感凭据文件、子代理和技能等工具限制。模式名称不代表操作系统级隔离，详细范围见同目录的 [SECURITY.md](SECURITY.md)。
+三种模式仍保留敏感凭据文件、子代理和上游原生 Skill 等工具限制。Rivloom 管理的共享 Skills/Wiki 属于尚未发布的开发功能，使用独立的任务权限与手动分享机制。模式名称不代表操作系统级隔离，详细范围见同目录的 [SECURITY.md](SECURITY.md)。
 
 ## 队列与停止
 

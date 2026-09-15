@@ -75,6 +75,9 @@ for (const directory of ['server', 'shared', 'dist']) {
 await cp(cachedNode, join(destination, 'node.exe'));
 await cp(nodeLicense, join(destination, 'Node-LICENSE.txt'));
 await cp(join(root, 'THIRD_PARTY_NOTICES.md'), join(destination, 'THIRD_PARTY_NOTICES.md'));
+for (const notice of ['LICENSE', 'NOTICE']) {
+  await cp(join(root, notice), join(destination, notice));
+}
 const documents: { path: string; sha256: string }[] = [];
 for (const [source, path] of [
   [join(root, 'DESKTOP-README.md'), 'README.md'],
@@ -117,6 +120,7 @@ await writeFile(
       name: 'rivloom-desktop-runtime',
       version: manifest.version,
       private: true,
+      license: manifest.license,
       type: 'module',
       dependencies: manifest.dependencies,
     },
@@ -134,6 +138,8 @@ async function noticeFiles(path: string): Promise<string[]> {
   ).flat();
 }
 const noticePaths = [
+  'LICENSE',
+  'NOTICE',
   'THIRD_PARTY_NOTICES.md',
   'Node-LICENSE.txt',
   'docs/dependency-licenses.json',
