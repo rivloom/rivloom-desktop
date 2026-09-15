@@ -1,6 +1,6 @@
 # 参与 Rivloom
 
-欢迎提交可复现的问题和范围清晰的改进。请先阅读 [README](README.md) 的当前版本说明，以及 [SECURITY](SECURITY.md) 的执行和共享边界。未发布的 Skills/记忆状态见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)。
+欢迎提交可复现的问题和范围清晰的改进。请先阅读 [README](README.md) 的当前版本说明，以及 [SECURITY](SECURITY.md) 的执行和共享边界。共享 Skills 与渐进式 Wiki 记忆已随 0.1.15 发布，使用方式与实现边界见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)。
 
 ## 开发与验证
 
@@ -17,7 +17,7 @@
 - 不提交 `.data`、数据库、原始引擎日志、真实会话、凭据、签名私钥或部署 Hook。可疑漏洞请使用 SECURITY 中的私下报告方式。
 - 第三方代码注明来源并保留原有许可。你提交的自有代码应为你有权提供的内容，并按本仓库 Apache-2.0 许可证贡献。
 
-外部 PR 进入无发布凭据的只读测试工作流。正式发布由维护者按 [RELEASING](docs/RELEASING.md) 完成同一提交的 CI、安装、公开下载和签名验证，并记录 [R2 保留检查](docs/R2-RETENTION.md)。CODEOWNERS 只标记负责审查的人，是否强制审批取决于 GitHub 保护规则。
+外部 PR 的工作流须经维护者批准后运行，测试 token 为只读，不提供发布凭据。main 已启用 PR、CODEOWNER 审核和必要 CI 检查规则，组织管理员保留既有维护权限；真实外部 fork PR 的完整流程尚待验收。正式发布由维护者按 [RELEASING](docs/RELEASING.md) 完成同一提交的 CI、安装、公开下载和签名验证，并记录 [R2 保留检查](docs/R2-RETENTION.md)。
 
 ## 自行分发
 

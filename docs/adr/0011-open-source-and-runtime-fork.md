@@ -1,6 +1,6 @@
 # ADR 0011：开源边界与独立 runtime fork
 
-日期：2026-09-14。状态：用户已确认仓库分工与 Apache-2.0 授权；桌面公开和 fork runtime 接入尚未执行。当前实查、修复及未覆盖项见 [开源准备记录](../OPEN-SOURCE-READINESS.md)。
+决定日期：2026-09-14；状态更新：2026-09-15。桌面仓库已采用 Apache-2.0 公开，0.1.15 已正式发布；两个 runtime fork 已建立，发行物尚未接入桌面。当前实查、修复及未覆盖项见 [开源准备记录](../OPEN-SOURCE-READINESS.md)。
 
 ## 决定与仓库分工
 
@@ -8,18 +8,20 @@
 
 | 仓库 | 当前状态 | 上游 / 职责 |
 | --- | --- | --- |
-| rivloom/rivloom-desktop | 私有，准备公开 | 桌面 UI、Brain / Node、工作流、共享 Skills、记忆、权限适配、安装与更新 |
+| rivloom/rivloom-desktop | 已公开，Apache-2.0 | 桌面 UI、Brain / Node、工作流、共享 Skills、记忆、权限适配、安装与更新 |
 | rivloom/rivloom-website | 继续私有 | 官网、使用指南与下载入口 |
 | rivloom/rivloom-opencode-runtime | 已公开，默认 dev | anomalyco/opencode 的 fork；引擎改动、上游同步、SDK/插件兼容与发行 |
 | rivloom/rivloom-codex-runtime | 已公开，默认 main | openai/codex 的 fork；后续 Codex 源码维护、适配与发行 |
 
-本轮两个 fork 仅检查配置，没有修改引擎源码、分支、Actions 或权限。Codex fork 已有历史开发分支和 Actions 运行记录，不能当作空白新仓库覆盖。
+两个 fork 保留各自上游历史、许可和默认分支。Codex fork 已有历史开发分支和 Actions 运行记录，不能当作空白新仓库覆盖。
+
+2026-09-15 已按用户授权，为两个公开 fork 开启密钥扫描（secret scanning）和推送保护（push protection），GitHub API 回读均为 enabled；默认分支源码和 Actions token 权限与变更前一致。这两项用于发现或拦截误提交的凭据，不是构建上游代码的前置条件，也不代表已完成两个 fork 的全量历史审计。
 
 桌面自有代码沿用 Apache-2.0，版权为 Copyright 2026 Rivloom contributors。上游代码、字体和依赖继续保留原有版权与许可；npm 的 private 标志仅防止包发布。
 
 ## 当前实现边界
 
-正式版仍为 **0.1.14**。共享 Skills/Wiki 为尚未发布的工作区改动，默认本机、手动分享给 Brain。源码公开和发行新安装包分别验收，不因准备开源而提前发布新功能。
+当前正式版为 **0.1.15**。共享 Skills 与渐进式 Wiki 记忆已发布，默认保留本机、手动分享给 Brain，其他节点经 Brain 发现并按需读取。任务首次读取时固定版本，新任务获取来源最新版；整理当前生成分类索引并标记完全重复正文，独立 AI 后台语义重写尚未实现。源码公开与安装包发行已分别核验，见 [验证记录](../VERIFICATION.md) 顶部。
 
 现行产品仍使用未修改的官方 OpenCode **1.18.25**，二进制、SDK、插件与来源哈希固定；两个 fork 的发行物尚未接入。Codex runtime 也未集成。此前“不 fork”属于旧阶段策略；之前“仅在必要时 fork Codex”的建议已由用户确认的长期源码修改方向替代。
 
@@ -44,10 +46,10 @@
 
 本机此前只验证过 Codex 的版本与帮助入口，没有运行 Agent 任务、登录或调用真实模型。桌面随附的 alpha 版本不是 Rivloom 已选定的发行依赖。Fork 已存在不代表接入、兼容测试或发行流水线已完成。
 
-## 开源与发布条件
+## 开源状态与后续发布
 
-当前桌面源代码和 Git 历史、标签、Release、Actions 日志及 artifacts 均属于公开前检查范围。敏感内容发现只做脱敏记录；历史重写、凭据轮换、远端配置和公开操作需以具体结果向用户确认。
+桌面公开前已检查源代码、Git 历史、标签、Release、Actions 日志及 artifacts；覆盖范围和限制见 [开源准备记录](../OPEN-SOURCE-READINESS.md)。自有许可、随包 NOTICE、贡献入口与安全说明已同步，私密漏洞报告、密钥扫描、推送保护以及 main 和发布标签保护已实际启用并核验。
 
-公开前统一许可、随包 NOTICE、贡献入口和安全说明；检查外部 PR 不接触发布凭据，正式发行绑定同仓库 main 的同一提交 CI 证据。GitHub 保护规则和私密漏洞报告须在可用时实际启用并验证，不能只凭文档认定生效。
+外部 PR 工作流须经维护者批准，使用只读 token 且不接触发布凭据；真实外部 fork PR 的完整流程尚待验收。正式发行继续绑定同仓库 main 的同一提交 CI 证据。
 
-正式发行继续执行 [CI](../CI.md)、[RELEASING](../RELEASING.md) 和 [R2-RETENTION](../R2-RETENTION.md)，保留原更新公钥与验证流程。官网保持独立私有，本轮不部署官网、不发布安装包、不执行存储清理。
+正式发行继续执行 [CI](../CI.md)、[RELEASING](../RELEASING.md) 和 [R2-RETENTION](../R2-RETENTION.md)，保留原更新公钥与验证流程。官网保持独立私有，由 Cloudflare Pages 执行测试、构建与部署，重复的官网 GitHub Actions 已停用。本次文档维护不改变 0.1.15 安装包或执行 R2 清理。

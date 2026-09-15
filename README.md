@@ -56,7 +56,6 @@ npm.cmd run test:knowledge
 | [rivloom-desktop](https://github.com/rivloom/rivloom-desktop) | 桌面、Brain / Node、工作流、Skills、记忆与 runtime 适配 |
 | [rivloom-opencode-runtime](https://github.com/rivloom/rivloom-opencode-runtime) | OpenCode fork，后续引擎源码维护与固定版本发行 |
 | [rivloom-codex-runtime](https://github.com/rivloom/rivloom-codex-runtime) | Codex fork，后续引擎源码维护与接入 |
-| rivloom-website | 官网与下载指南，独立私有仓库 |
 
 两个 runtime fork 已建立，当前桌面尚未消费它们的发行物。后续维护方式见 [ADR 0011](docs/adr/0011-open-source-and-runtime-fork.md)。
 
@@ -65,3 +64,13 @@ npm.cmd run test:knowledge
 Rivloom 面向可信参与者和项目，**不提供操作系统安全沙箱**。AI 工具以执行主机的用户权限运行；配对、审批和项目目录校验不能代替系统隔离。共享内容可能影响 Agent 行为，使用前应审查来源与内容。请勿将真实会话、个人资料、数据目录、凭据或原始日志提交到仓库或公开 Issue。漏洞报告方式见 [SECURITY.md](SECURITY.md)。
 
 自有代码采用 **Apache-2.0**，Copyright 2026 Rivloom contributors。见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [第三方声明](THIRD_PARTY_NOTICES.md)。上游代码、字体和依赖保留各自许可。Rivloom 是独立项目，并非 OpenCode 或 OpenAI 官方产品。`private: true` 仅阻止 npm 发布，与 GitHub 可见性无关。
+
+## Star 历史
+
+<a href="https://www.star-history.com/?repos=rivloom%2Frivloom-desktop&amp;type=date&amp;legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=rivloom/rivloom-desktop&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=rivloom/rivloom-desktop&amp;type=date&amp;legend=top-left" />
+    <img alt="Rivloom GitHub Star 数量随时间变化的统计图" src="https://api.star-history.com/chart?repos=rivloom/rivloom-desktop&amp;type=date&amp;legend=top-left" width="800" />
+  </picture>
+</a>
