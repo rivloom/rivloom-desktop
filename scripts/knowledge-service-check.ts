@@ -61,6 +61,17 @@ try {
   await Promise.all([source, reader].map((c, i) => c.start({ discovery, logPath: join(root, `${i}.log`) })));
   await pairServices(master, source); await pairServices(master, reader);
   for (const client of [source, reader]) await until(() => client.network(), (n) => n.brains.some((b) => b.id === brainID), 'shared Brain');
+  // Pairing establishes a channel before the next signed hello advertises Brain
+  // membership in both directions. Wait for the actual relay prerequisites.
+  const masterID = (await master.network()).local!.id;
+  for (const client of [source, reader]) {
+    const memberID = (await client.network()).local!.id;
+    for (const [observer, peerID] of [[master, memberID], [client, masterID]] as const) {
+      await until(() => observer.network(), (n) => !!n.paired?.some((peer) => peer.id === peerID &&
+        peer.trusted && peer.online && peer.channelReady && peer.brains.some((brain) => brain.id === brainID && brain.masterNodeID === masterID)),
+      'authenticated Brain relay membership');
+    }
+  }
   const sourceID = (await source.network()).local!.id;
   assert(!(await reader.network()).paired?.some((p) => p.id === sourceID));
   const directory = join(source.root, 'proof-skill'); mkdirSync(join(directory, 'scripts'), { recursive: true });
@@ -72,7 +83,11 @@ try {
   assert.equal((await reader.call('/knowledge/search', { brainID })).entries.length, 0);
   await source.call('/knowledge/share-many', { entries: [skill, memory].map(({ id, revision, updatedAt }) => ({ id, revision, updatedAt })), brains: [brainID] });
   const catalog = await reader.call('/knowledge/search', { brainID });
-  assert.equal(catalog.entries.length, 2); assert(!JSON.stringify(catalog).includes('MEMORY_BODY'));
+  assert.equal(catalog.entries.length, 2, JSON.stringify({ catalog, topology: await Promise.all(clients.map(async (client) => {
+    const network = await client.network();
+    return { local: network.local?.id, brains: network.brains,
+      paired: network.paired?.map(({ id, trusted, online, channelReady, brains }) => ({ id, trusted, online, channelReady, brains })) };
+  })) })); assert(!JSON.stringify(catalog).includes('MEMORY_BODY'));
   assert((await master.call('/knowledge/search', { brainID })).entries.some((e: any) => e.id === skill.id));
   pass('Three real Nodes: A discovers B through Brain without A/B pairing; private entries and bodies stay out of catalogs');
   skillRef = { brainID, nodeID: sourceID, id: skill.id }; memoryRef = { brainID, nodeID: sourceID, id: memory.id };

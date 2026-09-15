@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { auditCoverage, auditNetworkCases, exactPattern, networkCases } from './ci-test-suites.ts';
 import { checkVersions } from './ci-version-check.ts';
-import { ciRoot, testEnvironment } from './ci-workspace.ts';
+import { ciRoot, isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
 import { auditServiceMatrix, runServiceScript, serviceChecks } from './ci-services.ts';
 
 const base = join(ciRoot, 'test-results');
@@ -148,6 +148,21 @@ process.exitCode = result.passed ? 0 : 1;
     });
     assert.equal(result.status, status, `${name}: ${result.stdout}\n${result.stderr}`);
   }
+});
+
+test('isolated service workspaces prepare a usable locked knowledge plugin from parent dependencies', async () => {
+  const directory = await isolatedWorkspace('plugin-dependencies');
+  const module = await import(pathToFileURL(join(directory, 'server/engine-plugin-dependencies.ts')).href);
+  const engine = join(directory, '.data', 'engine');
+  module.prepareEnginePluginDependencies(engine);
+  const config = join(engine, 'config', 'opencode');
+  const manifest = JSON.parse(readFileSync(join(config, 'package.json'), 'utf8'));
+  const expected = JSON.parse(readFileSync(join(ciRoot, 'package.json'), 'utf8')).dependencies['@opencode-ai/plugin'];
+  assert.equal(manifest.dependencies['@opencode-ai/plugin'], expected);
+  const plugin = await import(pathToFileURL(join(config, 'node_modules/@opencode-ai/plugin/dist/tool.js')).href);
+  assert.equal(typeof plugin.tool, 'function');
+  const schema = plugin.tool.schema.object({ value: plugin.tool.schema.string() });
+  assert.deepEqual(schema.parse({ value: 'isolated fixture' }), { value: 'isolated fixture' });
 });
 
 test('CI environment preserves PowerShell module paths without restoring secrets', () => {

@@ -67,7 +67,7 @@ import {
   channelSessionLifetimeMilliseconds,
   decryptChannelPayload,
   decryptChannelDataReply,
-  encryptChannelDataReply,
+  prepareChannelDataReply,
   encryptChannelPayload,
   encryptChannelEventAck,
   verifyChannelEventAck,
@@ -1351,6 +1351,7 @@ export class NodeNetwork extends EventEmitter {
     if (validCollaborationRequest(message)) {
       if (!node.capabilities.includes(collaborationCapability) || !this.collaborationHandler)
         throw new NodeNetworkError(409, '尚未协商协作查询能力。');
+      const reply = prepareChannelDataReply(channel, value);
       return (async () => {
         let response: CollaborationResponse;
         try {
@@ -1361,7 +1362,7 @@ export class NodeNetwork extends EventEmitter {
         } catch {
           response = { type: 'collaboration-response', requestID: message.requestID, ok: false, payload: null, error: '协作数据无效、已变更或当前不可用。' };
         }
-        return encryptChannelDataReply(channel, value, response);
+        return reply(response);
       })();
     }
     if (validTaskFileMessage(message)) {

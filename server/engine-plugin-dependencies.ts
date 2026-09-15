@@ -8,7 +8,15 @@ import { safeKnowledgeDirectory } from './knowledge-store.ts';
 // Seed its managed global config from our locked desktop dependencies, without npm/network.
 export function prepareEnginePluginDependencies(engineRoot: string) {
   const runtime = fileURLToPath(new URL('..', import.meta.url));
-  const modules = join(runtime, 'node_modules');
+  // Isolated service checkouts use their containing repository's dependencies,
+  // just as Node resolves imports. Keep every copied package inside that tree.
+  let dependencyRoot = runtime;
+  while (!existsSync(join(dependencyRoot, 'node_modules', '@opencode-ai', 'plugin', 'package.json'))) {
+    const parent = dirname(dependencyRoot);
+    if (parent === dependencyRoot) throw new Error('knowledge_plugin_dependency_missing');
+    dependencyRoot = parent;
+  }
+  const modules = join(dependencyRoot, 'node_modules');
   const packages = new Map<string, any>();
   function collect(name: string, from: string) {
     let cursor = from; let source = '';

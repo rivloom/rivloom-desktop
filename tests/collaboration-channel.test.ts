@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { encryptChannelPayload, decryptChannelPayload, encryptChannelDataReply, decryptChannelDataReply,
+import { encryptChannelPayload, decryptChannelPayload, encryptChannelDataReply, decryptChannelDataReply, prepareChannelDataReply,
   type SecureChannelSession } from '../server/node-channel.ts';
 
 function channels() {
@@ -42,4 +42,41 @@ test('data reply authentication fences request replay, wrong owners, modified ci
   assert.throws(() => decryptChannelDataReply({ ...left, expiresAt: 0 }, request, reply));
   assert.throws(() => encryptChannelDataReply(right, later, {}), /authenticated/);
   assert.throws(() => encryptChannelDataReply(right, request, '汉'.repeat(30_000)), /large/);
+});
+
+test('a delayed collaboration handler can reply after an opposite request response advances the receive stream', async () => {
+  const { left, right } = channels();
+  const request = encryptChannelPayload(left, { query: 'shared-skill' });
+  decryptChannelPayload(right, request);
+  let finish!: (payload: unknown) => void;
+  const work = new Promise<unknown>((resolve) => { finish = resolve; });
+  const replyToRequest = prepareChannelDataReply(right, request);
+  const pendingReply = work.then(replyToRequest);
+  const directoryRequest = encryptChannelPayload(right, { query: 'brain-directory' });
+  decryptChannelPayload(left, directoryRequest);
+  const directoryResponse = encryptChannelPayload(left, { brains: [] });
+  decryptChannelPayload(right, directoryResponse);
+  finish({ file: 'verified shared skill bytes' });
+  const reply = await pendingReply;
+  assert.deepEqual(decryptChannelDataReply(left, request, reply), { file: 'verified shared skill bytes' });
+  assert.equal(right.receiveSequence, 2);
+  assert.throws(() => decryptChannelPayload(right, request), /顺序/);
+  assert.throws(() => decryptChannelDataReply(left, directoryResponse, reply));
+  assert.throws(() => prepareChannelDataReply(right, request), /authenticated/);
+});
+
+test('a prepared reply retains its original request binding and still rejects expiry and oversized data', () => {
+  const { left, right } = channels();
+  const request = encryptChannelPayload(left, { query: 'original' });
+  assert.throws(() => prepareChannelDataReply(right, request), /authenticated/);
+  decryptChannelPayload(right, request);
+  const original = { ...request };
+  const replyToRequest = prepareChannelDataReply(right, request);
+  request.ciphertext = randomBytes(32).toString('base64url');
+  const reply = replyToRequest({ ok: true });
+  assert.deepEqual(decryptChannelDataReply(left, original, reply), { ok: true });
+  assert.throws(() => decryptChannelDataReply(left, request, reply));
+  assert.throws(() => replyToRequest('汉'.repeat(30_000)), /large/);
+  right.expiresAt = 0;
+  assert.throws(() => replyToRequest({ ok: true }), /expired/);
 });
