@@ -1,3 +1,5 @@
+> PR 仅供维护者内部开发使用。Rivloom 不接受外部 PR；问题和建议请通过 Issue 反馈，详见 [维护与反馈](https://github.com/rivloom/rivloom-desktop/blob/main/CONTRIBUTING.md)。
+
 ## 变化
 
 说明具体问题以及用户能观察到的变化。

@@ -2,7 +2,9 @@
 
 Rivloom 是 Windows x64 上的人与 AI 任务工作区：在本机或已配对的设备上安排任务，查看审批、执行过程和成果。
 
-[下载与使用指南](https://rivloom.com/download/) · [随包使用说明](DESKTOP-README.md) · [贡献指南](CONTRIBUTING.md) · [安全边界](SECURITY.md)
+[下载与使用指南](https://rivloom.com/download/) · [随包使用说明](DESKTOP-README.md) · [维护与反馈](CONTRIBUTING.md) · [安全边界](SECURITY.md)
+
+Rivloom 由维护者独立开发和维护，**不接受外部 Pull Request（PR）**。欢迎通过 [Issue](https://github.com/rivloom/rivloom-desktop/issues/new/choose) 报告问题或提出建议；你仍可按 Apache-2.0 许可证使用、修改和分发源码。
 
 ## 当前状态
 

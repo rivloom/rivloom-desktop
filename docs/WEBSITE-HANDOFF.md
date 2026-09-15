@@ -1,5 +1,9 @@
 # Rivloom 官网项目交接
 
+**2026-09-15 · 独立维护政策：** Rivloom 由维护者自行开发，不接受外部 PR；源码继续采用 Apache-2.0，桌面 Issue 与私密漏洞报告继续开放。三个公开仓库已限制仅协作者创建 PR。官网须使用“维护与反馈”口径，不再邀请外部代码贡献；中英文同步说明这一政策。外部 PR 验收从当前待办移除，后续源码使用及自行 fork 的权利依许可证保持。
+
+官网提交 `f5d5f540eb64ea17fdf6a9d800571746890f9f4f` 已推送，Cloudflare Pages 部署 `3cee9b80-1224-49a3-8923-ce3cb4d95ff4` 成功，GitHub Actions 没有新增运行。41 项测试、18 页构建及本地 16 组双语桌面/手机布局、4 组导航交互通过；正式域 23 项检查通过，16 条业务路由和 3 份资源与构建一致，下载仍指向已发布的 0.1.15。新一轮线上布局及具体内容记录在官网 `.data/verification/maintainer-only-20260915/`。
+
 **2026-09-15 · 官网 Actions 已按用户决定停用。** 官网提交 `c4b5b07391d34afd8dd507218ce1076d699b8b30` 已推送；工作流 `Website checks`（350740724）为 `disabled_manually`，源码移除 push/PR 自动触发。本提交没有产生 Actions 运行，唯一 Cloudflare Pages 检查成功（部署 `13f3dffe-9bce-44c0-ba57-c69c611e8f74`）。官网测试/构建/部署继续由 Pages 完成，不再把私有官网 Actions 的计费阻塞作为待办；桌面发布工作流保持原配置。本地 41 项测试与 18 页构建通过，详情见官网 IMPLEMENTATION 顶部和 `.data/verification/disable-website-actions-20260915/`。
 
 ## 2026-09-15 · 开源后的官网介绍已更新
