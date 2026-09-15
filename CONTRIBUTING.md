@@ -1,6 +1,6 @@
 # Rivloom 维护与反馈
 
-Rivloom 由维护者独立开发和维护，**不接受外部 Pull Request（PR）**。欢迎通过 [Issue](https://github.com/rivloom/rivloom-desktop/issues/new/choose) 提交可复现的问题和功能建议。是否实施以及实施方式由维护者决定，不承诺固定响应或交付时限。
+Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（PR）**。计划在后续开发阶段开放外部 PR，具体时间与参与方式另行公布。欢迎通过 [Issue](https://github.com/rivloom/rivloom-desktop/issues/new/choose) 提交可复现的问题和功能建议。是否实施以及实施方式由维护者决定，不承诺固定响应或交付时限。
 
 源码继续采用 Apache-2.0。你可以按许可证使用、fork、修改和分发；本项目的 PR 接收政策不改变许可证授予的权利。请先阅读 [README](README.md) 的当前版本说明，以及 [SECURITY](SECURITY.md) 的执行和共享边界。共享 Skills 与渐进式 Wiki 记忆已随 0.1.15 发布，使用方式与实现边界见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)。
 
@@ -19,7 +19,7 @@ Rivloom 由维护者独立开发和维护，**不接受外部 Pull Request（PR�
 - 不提交 `.data`、数据库、原始引擎日志、真实会话、凭据、签名私钥或部署 Hook。可疑漏洞请使用 SECURITY 中的私下报告方式。
 - 安全漏洞使用 [私密报告入口](https://github.com/rivloom/rivloom-desktop/security/advisories/new)，不要在公开 Issue 披露漏洞利用细节。
 
-PR 仅供有写入权限的维护者使用。main 现有保护规则与维护权限保留，正式发布仍由维护者按 [RELEASING](docs/RELEASING.md) 完成同一提交的 CI、安装、公开下载和签名验证，并记录 [R2 保留检查](docs/R2-RETENTION.md)。
+当前 PR 仅供有写入权限的维护者使用，重新开放外部 PR 时会更新本说明。main 现有保护规则与维护权限保留，正式发布仍由维护者按 [RELEASING](docs/RELEASING.md) 完成同一提交的 CI、安装、公开下载和签名验证，并记录 [R2 保留检查](docs/R2-RETENTION.md)。
 
 ## 自行分发
 

@@ -1,4 +1,4 @@
-> PR 仅供维护者内部开发使用。Rivloom 不接受外部 PR；问题和建议请通过 Issue 反馈，详见 [维护与反馈](https://github.com/rivloom/rivloom-desktop/blob/main/CONTRIBUTING.md)。
+> 当前 PR 仅供维护者内部开发使用。Rivloom 暂不接受外部 PR，计划在后续开发阶段开放；问题和建议请通过 Issue 反馈，详见 [维护与反馈](https://github.com/rivloom/rivloom-desktop/blob/main/CONTRIBUTING.md)。
 
 ## 变化
 
