@@ -22,4 +22,4 @@
 
 原生 `open_task_file` 与 `open_project_directory` 分开限定文件/目录类型，沿用主窗口和精确自有回环来源认证；拒绝相对路径、URL、设备/网络路径、数据流及重解析点。Windows 打开使用固定 `open` 动词，无参数或 shell 字符串拼接。实现依据：[Windows 文件关联接口](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew)、[WAI 菜单键盘模式](https://www.w3.org/WAI/ARIA/apg/patterns/menubar/)。
 
-验证见 [VERIFICATION](VERIFICATION.md)；真实模型和用户安装版测试仍由用户安排。
+验证见维护者本地验证记录；真实模型和用户安装版测试仍由用户安排。

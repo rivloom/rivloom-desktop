@@ -4,7 +4,7 @@
 
 已接受，M3.4 按本文实施。产品负责人于 2026-09-02 逐项确认本文的 Brain、Node、Project、Task、模型和算力边界。
 
-2026-09-03实施结项：0.1.3在真实5.20/5.33完成自动接入、双独立Brain共享Worker、资源/通道稳定、跨机文字任务、指定Project和正常Master离线/同身份恢复，以及单槽竞争、review占槽、原Task排队续跑和各自验收。最终两Brain任务completed、5accepted业务Task/5官方session/7Execution/夹具2次/0工具/槽1，原记录保留。用户收到该结果及mDNS专项限制后回复“好，下一步吧”，据此按本文当前MVP范围结项。架构决策和非目标不变；纯mDNS92/93专项仍待查，不宣称全量绿色、异常断网/HA通过或新真实AI编程验收。详见 [里程碑](../MILESTONES.md) 和 [验证记录](../VERIFICATION.md)。
+2026-09-03实施结项：0.1.3在真实5.20/5.33完成自动接入、双独立Brain共享Worker、资源/通道稳定、跨机文字任务、指定Project和正常Master离线/同身份恢复，以及单槽竞争、review占槽、原Task排队续跑和各自验收。最终两Brain任务completed、5accepted业务Task/5官方session/7Execution/夹具2次/0工具/槽1，原记录保留。用户收到该结果及mDNS专项限制后回复“好，下一步吧”，据此按本文当前MVP范围结项。架构决策和非目标不变；纯mDNS92/93专项仍待查，不宣称全量绿色、异常断网/HA通过或新真实AI编程验收。详见维护者本地里程碑记录 和维护者本地验证记录。
 
 2026-09-02历史实现记录：独立 Brain 拓扑、旧 Brain 迁移、临时 Brain 收敛/撤回、共享 Worker 加密目录、真实硬件/动态负载、两跳 Task、独立 Execution 历史、最终准入、Portable 普通目录和桌面界面已完成。安全重调度仅处理能证明未启动的尝试，当前 Execution ID 隔离旧状态，迟到接受确认不能启动旧任务。32 项自动回归与 7 项完整业务服务检查通过，两个 Brain 竞争只产生一个业务 Task 和官方 OpenCode 会话；网络故障注入及最终 Release WebView2 表单到远端 Master/共享 Worker/结果回传的闭环也已通过。服务和 Release 均完成 90 秒通道/资源稳定性检查；模型仅为本机确定性夹具。当时物理核心拓扑验收未完成，现已按上段补齐。
 
@@ -217,9 +217,9 @@ M3.4 不实现 Brain A 向 Brain B 委派任务，也不实现多个 Brain 共�
 
 ## 参考
 
-- [里程碑基线](../MILESTONES.md)
-- [实施进度](../PROGRESS.md)
-- [验证报告](../VERIFICATION.md)
+-维护者本地里程碑记录
+-维护者本地进度记录
+-维护者本地验证记录
 - [ADR-0001](0001-self-discovering-brain-network.md)
 - [ADR-0002](0002-configurable-node-invocation-policy.md)
 - [ADR-0003](0003-trust-and-ai-approval.md)

@@ -2,9 +2,9 @@
 
 产品交付形态是 Tauri 桌面客户端。React 只负责窗口内界面；浏览器入口保留作内部调试，不是给客户的启动方式。
 
-用户已启动 M2/M5 官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据为 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和 [官网交接](WEBSITE-HANDOFF.md)。
+用户已启动 M2/M5 官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据为 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和维护者本地官网交接记录。
 
-当前可供检查的 M3.5 交付预览仍为 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装。已有构建、手动升级与文档修订包证据不代表接入了 updater，也不代替本轮新候选的验收；精确产物和版本状态以 [UI-HANDOFF](UI-HANDOFF.md)、[MILESTONES](MILESTONES.md) 和 [VERIFICATION](VERIFICATION.md) 为准。
+当前可供检查的 M3.5 交付预览仍为 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装。已有构建、手动升级与文档修订包证据不代表接入了 updater，也不代替本轮新候选的验收；精确产物和版本状态以维护者本地界面交接记录、维护者本地里程碑记录 和维护者本地验证记录 为准。
 
 ## 当前实现
 
@@ -26,7 +26,7 @@
 
 ## 启动和构建
 
-**历史 0.1.0 构建记录：** 普通文件夹、设备信任、AI 审批和远端结果闭环曾编译到 `src-tauri/target/release/Rivloom.exe`（当时 10,264,576 字节，SHA-256：`9da6c7b764f4cef3a33a02508ff4fbb414fba84c3721a47295d31bdf1f5c24cd`）。对应 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 为 71,070,646 字节，SHA-256：`d688e2d9a2f978fc7bde08fa09c88ffc17ab3bc86f607e3947bd9e92b281ef01`；当时未重新执行隔离安装/启动/卸载烟雾测试。这些数值只描述该历史构建，不代表当前同名 EXE 的内容。后续 0.1.3 与独立 UI Preview 的状态和证据见 [README](../README.md) 与 [VERIFICATION](VERIFICATION.md)，不能混用为新版本发行验收。
+**历史 0.1.0 构建记录：** 普通文件夹、设备信任、AI 审批和远端结果闭环曾编译到 `src-tauri/target/release/Rivloom.exe`（当时 10,264,576 字节，SHA-256：`9da6c7b764f4cef3a33a02508ff4fbb414fba84c3721a47295d31bdf1f5c24cd`）。对应 `src-tauri/target/release/bundle/nsis/Rivloom_0.1.0_x64-setup.exe` 为 71,070,646 字节，SHA-256：`d688e2d9a2f978fc7bde08fa09c88ffc17ab3bc86f607e3947bd9e92b281ef01`；当时未重新执行隔离安装/启动/卸载烟雾测试。这些数值只描述该历史构建，不代表当前同名 EXE 的内容。后续 0.1.3 与独立 UI Preview 的状态和证据见 [README](../README.md) 与维护者本地验证记录，不能混用为新版本发行验收。
 
 开发者使用：
 

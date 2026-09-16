@@ -34,4 +34,4 @@
 
 统一真机验收应覆盖 Windows 系统通知显示与点击、原生保存选择器、真实模型读取文字及图片、两台物理机文件往返、忙碌排队中的附件等待、断网与重启续传、撤信，以及正式数据升级保留。已有纯 mDNS 问题继续单列，隔离服务成功不替代这些检查。
 
-实现决定见 [ADR-0007](adr/0007-attention-diagnostics-and-task-files.md)，工程检查状态见 [验证记录](VERIFICATION.md)。
+实现决定见 [ADR-0007](adr/0007-attention-diagnostics-and-task-files.md)，工程检查状态见维护者本地验证记录。

@@ -10,7 +10,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 当前正式版为 **0.1.15**，新增共享 Skills 与渐进式 Wiki 记忆，保留会话内容搜索、模型自由选择、厂商 OAuth / API Key、自定义 Provider，以及跨设备任务协作、审批、成果取回和签名更新。可下载版本以[官网下载页](https://rivloom.com/download/)为准。
 
-**共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)；发行进度与验证范围见 [验证记录](docs/VERIFICATION.md) 顶部。
+**共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
 目前支持 Windows x64。macOS、Linux 和 Codex runtime 尚未接入；当前产品使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
 
@@ -49,7 +49,9 @@ npm.cmd run test:knowledge
 
 这些检查使用隔离目录和合成数据；引擎检查运行官方二进制，知识库服务使用本机模拟模型。它们不代表真实模型、两台物理机或安装升级已验收。`engine:probe`、`test:integration` 和界面中的模型连接测试可能调用真实模型，按需自行授权运行。
 
-[CI 说明](docs/CI.md) · [正式发布流程](docs/RELEASING.md) · [开源准备记录](docs/OPEN-SOURCE-READINESS.md)
+[文档目录](docs/README.md) · [CI 说明](docs/CI.md) · [正式发布流程](docs/RELEASING.md)
+
+仓库保留使用说明、架构决策、构建与发布流程以及依赖许可。维护者的交接、开发计划和原始验证记录仅在本地维护，不随源码分发；从源码构建不需要这些内部文档。
 
 ## 仓库分工
 

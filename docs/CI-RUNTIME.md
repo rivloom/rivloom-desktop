@@ -10,7 +10,7 @@
 
 相邻候选流程已另外确认完整 runtime 树在构建前后相同：6,682 文件、735 目录、325,954,687 字节，树摘要 `45710db57e91f85af8aee7b156b36cad9e11f6b81fa6ea2bd2397bfa7223b3c7`，manifest 摘要 `f9b66d75089bc627f80afa46dec6509c93666c1b70d05dab7207fca8837a08be`。最终 NSIS 为 71,115,790 字节、SHA256 `c776fd351d4ae7f3150cb2a4f47ff13af16402b4b549f92ecb099ac9ba6782e2`，见 `test-results/candidate/candidate-build.json` 与 `local-validation.json`。
 
-该文件使用 `com.rivloom.conversationpreview`，Authenticode 为 NotSigned，未安装、未发布；独立 NSIS runtime 解包已通过，全部 runtime 文件与 prepared/manifest/候选树摘要一致，报告为 `test-results/candidate-extraction-1788592034424/verification.json`。外层 Rivloom.exe 与安装脚本语义不在该核对范围；SECURITY 与 Git blob 存在一个 CR 换行差异，规范化文本相同，未声称该文档与 Git blob 逐字节相等。本地 gate/构建不代表桌面云 CI、安装、更新或双物理机验收；M3.5 用户交付最新版仍为 `docs1`。详细证据及后续核对见 [实际验证记录](VERIFICATION.md)。
+该文件使用 `com.rivloom.conversationpreview`，Authenticode 为 NotSigned，未安装、未发布；独立 NSIS runtime 解包已通过，全部 runtime 文件与 prepared/manifest/候选树摘要一致，报告为 `test-results/candidate-extraction-1788592034424/verification.json`。外层 Rivloom.exe 与安装脚本语义不在该核对范围；SECURITY 与 Git blob 存在一个 CR 换行差异，规范化文本相同，未声称该文档与 Git blob 逐字节相等。本地 gate/构建不代表桌面云 CI、安装、更新或双物理机验收；M3.5 用户交付最新版仍为 `docs1`。详细证据及后续核对见维护者本地验证记录。
 
 ## 调用与输出
 
