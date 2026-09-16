@@ -10,9 +10,19 @@ import {
   apiKeySchema,
   providerIDSchema,
   promptVisible,
+  accountTargetSchema,
+  accountNameSchema,
+  type AccountTarget,
   type ProviderAccess,
 } from '../shared/model-providers.ts';
-import { engineClient, engineStatus, refreshEngineConfiguration, changed } from './task-service.ts';
+import {
+  engineClient,
+  engineStatus,
+  refreshEngineConfiguration,
+  changed,
+  accountCatalog,
+} from './task-service.ts';
+import { accountEngines, providerAccounts } from './account-engines.ts';
 import {
   activeStates,
   type ModelCheck,
@@ -79,13 +89,15 @@ mkdirSync(checkDirectory, { recursive: true });
 const customProviders = new ProviderConfigStore(engineRoot);
 export const providerOAuth = new ProviderOAuth(
   isolatedOAuthDriver,
-  async (provider, auth, actorID, current, accepted) => {
+  async (provider, auth, actorID, current, accepted, accountID) => {
     await exclusive('engine-settings', async () => {
       if (!current()) return;
       requireIdle(true);
       accepted();
-      await engineClient().auth.set({ providerID: provider, auth });
-      await providerChanged(actorID, provider, 'credential_saved');
+      await accountEngines.run(accountID || '', async () => {
+        await engineClient().auth.set({ providerID: provider, auth });
+      });
+      await providerChanged(actorID, accountID || provider, 'credential_saved');
     });
   },
   changed,
@@ -98,13 +110,14 @@ export async function providerCatalog(): Promise<ProviderAccess[]> {
     client.provider.auth({ directory: dataRoot }),
   ]);
   const custom = customProviders.list();
-  return list.data!.all.map((p) => {
+  const result: ProviderAccess[] = list.data!.all.map((p) => {
     const methods = auth.data?.[p.id];
     return {
       id: p.id,
       name: p.name,
       connected: list.data!.connected.includes(p.id),
       modelCount: Object.keys(p.models).length,
+      accountName: providerAccounts.alias(p.id),
       apiKey: methods
         ? methods.some((m) => m.type === 'api' && !m.prompts?.length)
         : p.env.length === 1,
@@ -113,6 +126,48 @@ export async function providerCatalog(): Promise<ProviderAccess[]> {
       ),
       ...(custom.some((c) => c.id === p.id) ? { custom: custom.find((c) => c.id === p.id) } : {}),
     };
+  });
+  for (const account of providerAccounts.list()) {
+    const source = result.find((p) => p.id === account.providerID);
+    result.push({
+      ...source,
+      id: account.id,
+      name: source?.name || account.providerID,
+      connected: false,
+      modelCount: 0,
+      ...accountCatalog.get(account.id),
+      apiKey: source?.apiKey || false,
+      oauth: source?.oauth || [],
+      account: { providerID: account.providerID, name: account.name },
+    });
+  }
+  return result;
+}
+
+function targetAccount(providerID: string, target: AccountTarget) {
+  target = accountTargetSchema.parse(target);
+  if (!target.id) return providerAccounts.create(providerID, target.name).id;
+  if (target.id !== providerID)
+    requireThat(
+      providerAccounts.get(target.id)?.providerID === providerID,
+      400,
+      'Account does not belong to this provider.',
+    );
+  providerAccounts.rename(target.id, target.name, providerID);
+  return target.id === providerID ? '' : target.id;
+}
+export async function renameProviderAccount(actor: User, id: string, name: string) {
+  requireOwner(actor);
+  providerIDSchema.parse(id);
+  accountNameSchema.parse(name);
+  return exclusive('engine-settings', async () => {
+    requireIdle();
+    const provider = (await providerCatalog()).find((p) => p.id === id);
+    requireThat(provider && !provider.custom, 404, 'Account not found.');
+    providerAccounts.rename(id, name, provider.account?.providerID || id);
+    await refreshEngineConfiguration();
+    changed();
+    return modelSettings();
   });
 }
 
@@ -142,7 +197,12 @@ async function providerChanged(actorID: string, provider: string, kind: ModelOpe
   changed();
 }
 
-export async function saveProviderKey(actor: User, providerID: string, key: string) {
+export async function saveProviderKey(
+  actor: User,
+  providerID: string,
+  key: string,
+  target?: AccountTarget,
+) {
   requireOwner(actor);
   providerIDSchema.parse(providerID);
   apiKeySchema.parse(key);
@@ -150,12 +210,15 @@ export async function saveProviderKey(actor: User, providerID: string, key: stri
     requireIdle();
     const provider = (await providerCatalog()).find((p) => p.id === providerID);
     requireThat(
-      provider?.apiKey && !provider.custom,
+      provider?.apiKey && !provider.custom && !provider.account,
       400,
       'This provider requires a different connection method.',
     );
-    await engineClient().auth.set({ providerID, auth: { type: 'api', key: key.trim() } });
-    await providerChanged(actor.id, providerID, 'credential_saved');
+    const id = target ? targetAccount(providerID, target) : '';
+    await accountEngines.run(id, async () => {
+      await engineClient().auth.set({ providerID, auth: { type: 'api', key: key.trim() } });
+    });
+    await providerChanged(actor.id, id || providerID, 'credential_saved');
     return modelSettings();
   });
 }
@@ -200,6 +263,23 @@ export async function removeProvider(actor: User, providerID: string) {
   providerIDSchema.parse(providerID);
   return exclusive('engine-settings', async () => {
     requireIdle();
+    const account = providerAccounts.get(providerID);
+    if (account) {
+      await accountEngines.run(account.id, async () => {
+        await engineClient().auth.remove({ providerID: account.providerID });
+      });
+      try {
+        await accountEngines.remove(account.id);
+      } catch {
+        throw new HttpError(
+          503,
+          'Account credentials were removed, but engine shutdown was not confirmed. Restart the application before retrying.',
+        );
+      }
+      providerAccounts.remove(account.id);
+      await providerChanged(actor.id, account.id, 'credential_removed');
+      return modelSettings();
+    }
     const previous = customProviders.list();
     requireThat(
       (await providerCatalog()).some((p) => p.id === providerID),
@@ -224,12 +304,13 @@ export async function beginProviderOAuth(
   providerID: string,
   method: number,
   inputs: Record<string, string>,
+  target?: AccountTarget,
 ) {
   requireOwner(actor);
   return exclusive('engine-settings', async () => {
     requireIdle();
     const selected = (await providerCatalog())
-      .find((p) => p.id === providerID)
+      .find((p) => p.id === providerID && !p.account && !p.custom)
       ?.oauth.find((m) => m.index === method);
     requireThat(selected, 400, 'OAuth method is not available.');
     const cleaned: Record<string, string> = {};
@@ -244,7 +325,8 @@ export async function beginProviderOAuth(
         );
       cleaned[prompt.key] = value;
     }
-    return providerOAuth.begin(actor.id, providerID, method, cleaned);
+    const id = target ? targetAccount(providerID, target) : '';
+    return providerOAuth.begin(actor.id, providerID, method, cleaned, id || undefined);
   });
 }
 
@@ -433,8 +515,12 @@ export async function startConnectionCheck(actor: User, model: string) {
       400,
       '请选择当前已配置的模型',
     );
+    const scoped = await accountEngines.run(
+      providerAccounts.resolveModel(model).accountID,
+      async () => engineClient(),
+    );
     const created = (
-      await engineClient().session.create({
+      await scoped.session.create({
         directory: checkDirectory,
         title: 'Rivloom 模型连接测试',
         permission: [{ permission: '*', pattern: '*', action: 'deny' }],
@@ -455,7 +541,9 @@ export async function startConnectionCheck(actor: User, model: string) {
     save();
     operation(actor.id, 'test_started', model.split('/')[0] || 'unknown', model, 'started');
     changed();
-    void executeCheck(check);
+    void accountEngines.run(providerAccounts.resolveModel(model).accountID, () =>
+      executeCheck(check),
+    );
     return modelSettings();
   });
 }
@@ -463,13 +551,13 @@ export async function startConnectionCheck(actor: User, model: string) {
 async function executeCheck(check: NonNullable<typeof activeCheck>) {
   const params = { directory: checkDirectory, sessionID: check.sessionID };
   const signal = AbortSignal.any([check.abort.signal, AbortSignal.timeout(60_000)]);
-  const [providerID, ...parts] = check.model.split('/');
+  const { providerID, modelID } = providerAccounts.resolveModel(check.model);
   let result: ModelCheck = { status: 'failed', at: now(), message: '未收到有效结果。' };
   try {
     await engineClient().session.promptAsync(
       {
         ...params,
-        model: { providerID, modelID: parts.join('/') },
+        model: { providerID, modelID },
         parts: [
           {
             type: 'text',

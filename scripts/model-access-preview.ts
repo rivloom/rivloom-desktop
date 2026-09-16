@@ -15,6 +15,14 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
   const providers: ProviderAccess[] = [
     { id: 'deepseek', name: 'DeepSeek', connected: false, apiKey: true, modelCount: 2, oauth: [] },
     {
+      id: 'opencode-go',
+      name: 'OpenCode Go',
+      connected: false,
+      apiKey: true,
+      modelCount: 3,
+      oauth: [],
+    },
+    {
       id: 'openai',
       name: 'OpenAI',
       connected: false,
@@ -77,7 +85,15 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
         .flatMap((p) =>
           (p.custom?.models || [{ id: 'demo-model', name: 'Demo model' }]).map((m) => ({
             id: `${p.id}/${m.id}`,
-            name: `${m.name} · ${p.name}`,
+            name: `${m.name} · ${p.name}${p.account ? ' / ' + p.account.name : ''}`,
+            modelName: m.name,
+            providerID: p.id,
+            providerName: p.name,
+            ...(p.account
+              ? { accountName: p.account.name, sourceProviderID: p.account.providerID }
+              : p.accountName
+                ? { accountName: p.accountName }
+                : {}),
           })),
         ),
     ];
@@ -102,6 +118,24 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
       if (raw.length > 30000) return json({ error: 'Preview input too large' }, 413);
     }
     const body = JSON.parse(raw || '{}');
+    const accountTarget = () => {
+      const source = providers.find((p) => p.id === body.providerID)!;
+      if (!body.account) return source;
+      if (body.account.id) {
+        const entry = providers.find((p) => p.id === body.account.id)!;
+        if (entry.account) entry.account.name = body.account.name;
+        else entry.accountName = body.account.name;
+        return entry;
+      }
+      const entry: ProviderAccess = {
+        ...source,
+        id: `rivloom-account-${randomUUID()}`,
+        connected: false,
+        account: { providerID: source.id, name: body.account.name },
+      };
+      providers.push(entry);
+      return entry;
+    };
     if (path.endsWith('/provider/custom')) {
       const checked = customProviderSchema.safeParse(body.provider);
       if (!checked.success)
@@ -123,13 +157,18 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
       else providers[index] = entry;
       updateModels();
     } else if (path.endsWith('/provider/key')) {
-      const p = providers.find((p) => p.id === body.providerID);
+      const p = accountTarget();
       if (p) p.connected = true;
+      updateModels();
+    } else if (path.endsWith('/provider/rename')) {
+      const entry = providers.find((p) => p.id === body.id)!;
+      if (entry.account) entry.account.name = body.name;
+      else entry.accountName = body.name;
       updateModels();
     } else if (path.endsWith('/provider/remove')) {
       const index = providers.findIndex((p) => p.id === body.providerID);
       if (index !== -1) {
-        if (providers[index].custom) providers.splice(index, 1);
+        if (providers[index].custom || providers[index].account) providers.splice(index, 1);
         else providers[index].connected = false;
       }
       updateModels();
@@ -137,9 +176,11 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
         settings.defaultModel = settings.models[0].id;
     } else if (path.endsWith('/default')) settings.defaultModel = body.model;
     else if (path.endsWith('/oauth/start')) {
+      const target = accountTarget();
       oauth = {
         id: randomUUID(),
         providerID: body.providerID,
+        ...(target.account ? { accountID: target.id } : {}),
         status: 'waiting',
         url: 'https://example.invalid/oauth-preview',
         instructions: '演示授权码：RIVLOOM-DEMO。请勿输入真实账号或凭据。',
@@ -154,7 +195,7 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
         oauth.status = 'connected';
         delete oauth.url;
         delete oauth.instructions;
-        const p = providers.find((p) => p.id === oauth!.providerID);
+        const p = providers.find((p) => p.id === (oauth!.accountID || oauth!.providerID));
         if (p) p.connected = true;
       }
       updateModels();

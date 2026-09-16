@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,166 @@ import { ProviderConfigStore } from '../server/provider-config.ts';
 import { ProviderOAuth, type OAuthDriver } from '../server/provider-oauth.ts';
 import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
 import { formatContextWindow, groupModels, modelDetails } from '../src/model-options.ts';
+import { ProviderAccountStore } from '../server/provider-accounts.ts';
+import { AccountEnginePool } from '../server/account-engines.ts';
+import { EventEmitter } from 'node:events';
+import { resolve, sep } from 'node:path';
+
+const accountFixture = (context: TestContext) => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-account-check-'));
+  context.after(() => {
+    assert(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    rmSync(root, { recursive: true, force: true });
+  });
+  return new ProviderAccountStore(root);
+};
+
+test('account aliases have stable routing IDs, independent names, bounded paths and no credential storage', (t) => {
+  const store = accountFixture(t);
+  const a = store.create('opencode-go', 'Work'),
+    b = store.create('opencode-go', 'Personal');
+  assert.notEqual(a.id, b.id);
+  assert.throws(() => store.create('opencode-go', ' WORK '), /already exists/);
+  assert.throws(() => store.create('deepseek', '\n'));
+  assert.throws(() => store.directory('../elsewhere'));
+  assert.throws(() => store.rename('missing', 'Alias'));
+  store.rename(a.id, 'Go A');
+  assert.equal(new ProviderAccountStore(store.root).get(a.id)?.name, 'Go A');
+  assert.deepEqual(store.resolveModel(`${a.id}/org/model`), {
+    accountID: a.id,
+    providerID: 'opencode-go',
+    modelID: 'org/model',
+  });
+  assert.equal(store.resolveModel('deepseek/org/model').accountID, '');
+  store.rename('opencode-go', 'Original', 'opencode-go');
+  assert.equal(store.alias('opencode-go'), 'Original');
+  assert.throws(() => store.rename(b.id, 'original'), /already exists/);
+  store.remove(a.id);
+  assert.equal(store.get(b.id)?.name, 'Personal');
+  assert.throws(() => store.resolveModel(`${a.id}/org/model`), /no longer connected/);
+  assert.deepEqual(
+    Object.keys(JSON.parse(readFileSync(join(store.root, 'rivloom-accounts.json'), 'utf8'))).sort(),
+    ['accounts', 'aliases'],
+  );
+});
+
+test('account names group and search independently even when both accounts offer the same model', () => {
+  const models = ['Work', 'Personal'].map((name, i) => ({
+    id: `account-${i}/same`,
+    providerID: `account-${i}`,
+    providerName: 'OpenCode Go',
+    sourceProviderID: 'opencode-go',
+    accountName: name,
+    modelName: 'Same model',
+    name: `Same model · ${name}`,
+  }));
+  const groups = groupModels(models, '', 'en');
+  assert.deepEqual(
+    groups.map((g) => g.accountName),
+    ['Personal', 'Work'],
+  );
+  assert.equal(
+    groupModels(models, 'OPENCODE-GO work same', 'en')[0].models[0].id,
+    'account-0/same',
+  );
+});
+
+test('account engine context stays isolated across concurrent requests, nested scopes and process exit', async (t) => {
+  const store = accountFixture(t),
+    a = store.create('opencode-go', 'A'),
+    b = store.create('opencode-go', 'B');
+  const launches: {
+    root: string;
+    scope: unknown;
+    child: EventEmitter & { exitCode: number | null; signalCode: string | null };
+  }[] = [];
+  const fakeStart = async (_cwd: string, _port: number, root: string, scope: unknown) => {
+    const child = Object.assign(new EventEmitter(), {
+      exitCode: null as number | null,
+      signalCode: null as string | null,
+    });
+    launches.push({ root, scope, child });
+    return {
+      child,
+      client: { name: root },
+      close: () => {
+        child.exitCode = 0;
+        child.emit('exit', 0);
+      },
+      waitForExit: async () => {},
+    };
+  };
+  const pool = new AccountEnginePool(
+    store,
+    fakeStart as unknown as ConstructorParameters<typeof AccountEnginePool>[1],
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
+  const first = pool.run(a.id, async () => {
+    await gate;
+    return { current: pool.current(), client: pool.client() };
+  });
+  const second = pool.run(b.id, async () => {
+    await gate;
+    return { current: pool.current(), client: pool.client() };
+  });
+  await pool.get(a.id);
+  await pool.get(a.id);
+  release();
+  const results = await Promise.all([first, second]);
+  assert.equal(results[0].current, a.id);
+  assert.equal(results[1].current, b.id);
+  assert.notEqual(results[0].client, results[1].client);
+  assert.equal(pool.current(), '');
+  assert.equal(launches.length, 2);
+  assert.deepEqual(launches[0].scope, { workspace: true, providerID: 'opencode-go' });
+  await pool.run(a.id, async () => {
+    await pool.run('', async () => assert.equal(pool.current(), ''));
+    assert.equal(pool.current(), a.id);
+  });
+  launches[0].child.exitCode = 1;
+  launches[0].child.emit('exit', 1);
+  await assert.rejects(pool.get(a.id), /exited/);
+  assert.equal(launches.length, 2);
+  await pool.close(true);
+  await assert.rejects(pool.get(b.id), /shutting down/);
+});
+
+test('OAuth retains canonical provider handling and commits only to the selected account', async () => {
+  let commitTarget = '';
+  const driver: OAuthDriver = {
+    authorize: async (provider) => {
+      assert.equal(provider, 'openai');
+      return { url: 'https://example.com/auth', instructions: '', method: 'auto' };
+    },
+    complete: async (provider) => {
+      assert.equal(provider, 'openai');
+      return { type: 'api', key: 'synthetic-token' };
+    },
+    close: async () => {},
+  };
+  const oauth = new ProviderOAuth(
+    async () => driver,
+    async (provider, _auth, _actor, current, accepted, accountID) => {
+      assert.equal(provider, 'openai');
+      assert(current());
+      accepted();
+      commitTarget = accountID!;
+    },
+    () => {},
+  );
+  const view = oauth.begin('owner', 'openai', 0, {}, 'account-b');
+  for (let i = 0; i < 30 && oauth.snapshot('owner')?.status !== 'waiting'; i++)
+    await new Promise((done) => setTimeout(done, 2));
+  oauth.complete('owner', view.id);
+  for (let i = 0; i < 30 && oauth.snapshot('owner')?.status !== 'connected'; i++)
+    await new Promise((done) => setTimeout(done, 2));
+  assert.equal(commitTarget, 'account-b');
+  assert.equal(oauth.snapshot('owner')?.accountID, 'account-b');
+  await oauth.close();
+});
 
 test('model catalog exposes only connected display metadata and preserves exact provider/model identity', () => {
   const provider = (id: string, context: number, image: boolean) => ({
@@ -347,11 +507,21 @@ test('OAuth cancellation during engine startup closes the eventual child without
 });
 
 test('OAuth refuses a second attempt when owned process cleanup cannot be confirmed', async () => {
-  const oauth = new ProviderOAuth(async () => ({
-    async authorize() { return { url: 'https://vendor.example/signin', instructions: '', method: 'auto' as const }; },
-    async complete() { return { type: 'api' as const, key: 'synthetic' }; },
-    async close() { throw Error('Unconfirmed child exit'); },
-  }), async () => {}, () => {});
+  const oauth = new ProviderOAuth(
+    async () => ({
+      async authorize() {
+        return { url: 'https://vendor.example/signin', instructions: '', method: 'auto' as const };
+      },
+      async complete() {
+        return { type: 'api' as const, key: 'synthetic' };
+      },
+      async close() {
+        throw Error('Unconfirmed child exit');
+      },
+    }),
+    async () => {},
+    () => {},
+  );
   const attempt = oauth.begin('owner', 'test', 0, {});
   await until(() => oauth.snapshot('owner')?.status === 'waiting');
   await oauth.cancel('owner', attempt.id);

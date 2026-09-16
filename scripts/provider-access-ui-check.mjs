@@ -59,19 +59,26 @@ try {
     'true',
   );
   await box.getByLabel('API Key', { exact: true }).fill('synthetic-unsaved-key');
-  await box.getByRole('checkbox').check();
+  assert(await box.getByRole('button', { name: '保存凭据', exact: true }).isEnabled());
   await box.locator('.provider-choice[title="openai"]').click();
   assert.equal(await box.getByLabel('API Key', { exact: true }).inputValue(), '');
-  assert(!(await box.getByRole('checkbox').isChecked()));
+  assert.equal(await box.getByRole('checkbox').count(), 0);
+  assert(await box.getByRole('button', { name: '保存凭据', exact: true }).isDisabled());
+  await box.getByLabel('API Key', { exact: true }).fill('synthetic-saved-key');
+  await box.getByRole('button', { name: '保存凭据', exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector('.provider-meta')?.textContent.includes('已接入'),
+  );
+  assert.equal(await box.getByLabel('API Key', { exact: true }).inputValue(), '');
   assert.equal(await box.getByRole('button', { name: /^登录 / }).count(), 0);
   await page.screenshot({ path: resolve(output, 'api-key-entry.png') });
   await box.getByRole('tab', { name: /账号登录/ }).click();
   check(
-    'Search includes ChatGPT, empty results hide stale actions, keyboard tabs work and provider switching clears unsubmitted secrets and consent',
+    'Search and keyboard tabs work; provider switching clears unsubmitted keys and valid API credentials save directly without quota confirmation',
   );
   await box.locator('.provider-choice[title="openai"]').click();
-  assert(await box.getByRole('button', { name: '登录 OpenAI' }).isDisabled());
-  await box.getByRole('checkbox').check();
+  assert(await box.getByRole('button', { name: '登录 OpenAI' }).isEnabled());
+  assert.equal(await box.getByRole('checkbox').count(), 0);
   await box.getByRole('button', { name: '登录 OpenAI' }).click();
   await box
     .getByText('演示授权码：RIVLOOM-DEMO。请勿输入真实账号或凭据。', { exact: true })
@@ -82,9 +89,15 @@ try {
   await page.screenshot({ path: resolve(output, 'oauth-desktop.png') });
   await box.getByRole('button', { name: '已完成授权，连接' }).click();
   await box.getByText('账号已接入，可选择模型。', { exact: true }).waitFor();
-  await page.getByLabel('要测试的模型', { exact: true }).selectOption('openai/demo-model');
+  const oauthAccount = preview.providers
+    .filter((p) => p.account?.providerID === 'openai' && p.connected)
+    .at(-1);
+  assert(oauthAccount);
+  await page
+    .getByLabel('要测试的模型', { exact: true })
+    .selectOption(`${oauthAccount.id}/demo-model`);
   check(
-    'Official OAuth entry has explicit quota acknowledgment; browser instructions, completion and model availability render',
+    'Official OAuth starts directly without quota confirmation; browser instructions, completion and model availability render',
   );
   await box.locator('.provider-choice[title="github-copilot"]').click();
   await box.getByLabel('Select GitHub deployment type').selectOption('enterprise');
@@ -94,13 +107,37 @@ try {
   check('Conditional vendor login fields follow the selected deployment');
   await box.locator('.provider-choice[title="openai"]').click();
   await box.getByLabel('厂商 OAuth 登录').selectOption('1');
-  await box.getByRole('checkbox').check();
   await box.getByRole('button', { name: '登录 OpenAI' }).click();
   await box.getByLabel('厂商返回的授权码').waitFor();
   assert(await box.getByRole('button', { name: '已完成授权，连接' }).isDisabled());
   await box.getByRole('button', { name: '取消登录' }).click();
   await box.getByText('登录已取消。', { exact: true }).waitFor();
   check('Authorization code flow requires a code and can be cancelled');
+  await box.getByRole('tab', { name: /API Key/ }).click();
+  await box.locator('.provider-choice[title="opencode-go"]').click();
+  await box.getByLabel('账号别名', { exact: true }).fill('Go Work');
+  await box.getByLabel('API Key', { exact: true }).fill('synthetic-go-work');
+  await box.getByRole('button', { name: '保存凭据', exact: true }).click();
+  await box.getByRole('button', { name: 'OpenCode Go · Go Work 3', exact: true }).waitFor();
+  await box.getByRole('button', { name: '添加账号', exact: true }).click();
+  assert.equal(await box.getByLabel('API Key', { exact: true }).inputValue(), '');
+  await box.getByLabel('账号别名', { exact: true }).fill('Go Personal');
+  await box.getByLabel('API Key', { exact: true }).fill('synthetic-go-personal');
+  await box.getByRole('button', { name: '保存凭据', exact: true }).click();
+  await box.getByRole('button', { name: 'OpenCode Go · Go Personal 3', exact: true }).waitFor();
+  const goAccounts = preview.providers.filter((p) => p.account?.providerID === 'opencode-go');
+  assert.equal(goAccounts.length, 2);
+  assert.notEqual(goAccounts[0].id, goAccounts[1].id);
+  await box.getByLabel('账号别名', { exact: true }).fill('Go Backup');
+  await box.getByRole('button', { name: '保存别名', exact: true }).click();
+  await box.getByRole('button', { name: 'OpenCode Go · Go Backup 3', exact: true }).waitFor();
+  assert.equal(preview.providers.filter((p) => p.account?.providerID === 'opencode-go').length, 2);
+  await box.getByRole('button', { name: 'OpenCode Go · Go Work 3', exact: true }).click();
+  assert.equal(await box.getByLabel('账号别名', { exact: true }).inputValue(), 'Go Work');
+  await box.screenshot({ path: resolve(output, 'multiple-go-accounts.png') });
+  check(
+    'Two Go accounts can be added independently, switched and renamed without changing their stable IDs or exposing keys',
+  );
   await box.getByRole('tab', { name: /自定义服务/ }).click();
   await box.getByLabel('显示名称', { exact: true }).fill('My local provider');
   await box.getByLabel('Provider ID', { exact: true }).fill('local-check');
@@ -110,7 +147,6 @@ try {
     .fill('org/model | Local model\nsecond-model');
   await box.getByLabel('API Key', { exact: true }).fill('synthetic-ui-secret');
   await box.getByText('上下文容量（可选）', { exact: true }).click();
-  await box.getByRole('checkbox', { name: /我确认工作区任务会向此服务/ }).check();
   await page.screenshot({ path: resolve(output, 'custom-desktop.png') });
   await overflow();
   await box.getByRole('button', { name: '保存 Provider', exact: true }).click();
@@ -131,7 +167,6 @@ try {
   assert.equal(await box.getByLabel('API Key', { exact: true }).inputValue(), '');
   await box.getByLabel('接口协议').selectOption('responses');
   await box.getByLabel('模型 ID（每行一个）', { exact: true }).fill('third-model | Updated model');
-  await box.getByRole('checkbox', { name: /我确认工作区任务会向此服务/ }).check();
   await box.getByRole('button', { name: '保存 Provider', exact: true }).click();
   await box.getByRole('button', { name: 'My local provider 1', exact: true }).waitFor();
   await page.getByLabel('要测试的模型', { exact: true }).selectOption('local-check/third-model');
@@ -145,7 +180,6 @@ try {
   await box.getByLabel('模型 ID（每行一个）', { exact: true }).fill('local-model');
   await box.getByRole('checkbox', { name: '此服务不需要 API Key', exact: true }).check();
   assert.equal(await box.getByLabel('API Key', { exact: true }).count(), 0);
-  await box.getByRole('checkbox', { name: /我确认工作区任务会向此服务/ }).check();
   await box.getByRole('button', { name: '保存 Provider', exact: true }).click();
   await box.getByRole('button', { name: 'Second local service 1', exact: true }).waitFor();
   await box.getByRole('button', { name: 'My local provider 1', exact: true }).click();
@@ -160,10 +194,29 @@ try {
   );
   await page.getByRole('button', { name: '新会话', exact: false }).click();
   await page.getByRole('button', { name: '执行模型', exact: true }).click();
+  await page.getByRole('combobox', { name: '搜索模型', exact: true }).fill('OpenCode Go');
+  assert.equal(await page.locator('.model-picker-section').count(), 2);
+  assert.equal(
+    await page
+      .locator('.model-picker-group-label small')
+      .allTextContents()
+      .then((names) => names.sort().join('|')),
+    'Go Backup|Go Work',
+  );
+  await page
+    .locator('.model-picker-panel')
+    .screenshot({ path: resolve(output, 'go-account-groups.png') });
+  await page.getByRole('combobox', { name: '搜索模型', exact: true }).fill('Go Backup');
+  assert.equal(await page.locator('[data-model-id]').count(), 1);
+  assert(
+    (await page.locator('[data-model-id]').getAttribute('title')).startsWith(
+      goAccounts[1].id + '/',
+    ),
+  );
   await page
     .getByRole('combobox', { name: '搜索模型', exact: true })
     .fill('local-check/third-model');
-  await page.locator('[role=option][title="local-check/third-model"]').click();
+  await page.locator('[data-model-id][title="local-check/third-model"]').click();
   assert(
     (
       await page.getByRole('button', { name: '执行模型', exact: true }).getAttribute('title')
@@ -261,7 +314,7 @@ try {
   await page.getByRole('button', { name: 'Devices & models', exact: true }).click();
   await box.getByRole('button', { name: 'Sign in to OpenAI' }).waitFor();
   assert(await box.getByRole('button', { name: 'Sign in to OpenAI' }).isDisabled());
-  assert(await box.getByRole('checkbox').isDisabled());
+  assert(await box.getByLabel('Vendor OAuth sign-in').isDisabled());
   await box.getByRole('tab', { name: /API Key/ }).click();
   assert(await box.getByLabel('API Key', { exact: true }).isDisabled());
   await box.getByRole('tab', { name: /Custom service/ }).click();

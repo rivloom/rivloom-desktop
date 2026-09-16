@@ -55,7 +55,8 @@ export function ProviderSettings({
   const modeID = useId();
   const [filter, setFilter] = useState('');
   const [key, setKey] = useState('');
-  const [shared, setShared] = useState(false);
+  const [accountID, setAccountID] = useState('');
+  const [accountName, setAccountName] = useState('');
   const [custom, setCustom] = useState<CustomProvider | null>(null);
   const [modelLines, setModelLines] = useState('');
   const [editing, setEditing] = useState(false);
@@ -73,6 +74,7 @@ export function ProviderSettings({
         .filter(
           (p) =>
             !p.custom &&
+            !p.account &&
             (connectionMode === 'oauth'
               ? p.oauth.length > 0
               : connectionMode === 'api' && p.apiKey) &&
@@ -101,12 +103,20 @@ export function ProviderSettings({
       : choices.find((p) => p.id === selected);
   const oauthMethod = provider?.oauth.find((m) => m.index === method) || provider?.oauth[0];
   const active = oauthActive(oauth);
+  const accounts = providers.filter(
+    (p) => p.account?.providerID === selected || (p.id === selected && p.connected && !p.custom),
+  );
+  const account = accounts.find((p) => p.id === accountID);
+  const accountTarget = { ...(accountID ? { id: accountID } : {}), name: accountName.trim() };
+  const connection = custom ? provider : account;
   const disabled = !owner || !engineReady || locked || busy || active;
   const catalog = async () => {
     setLoading(true);
     try {
-      setProviders(await api<ProviderAccess[]>('/model-settings/providers'));
+      const next = await api<ProviderAccess[]>('/model-settings/providers');
+      setProviders(next);
       setError('');
+      return next;
     } finally {
       setLoading(false);
     }
@@ -129,6 +139,7 @@ export function ProviderSettings({
       void api<OAuthStatus | null>('/model-settings/oauth')
         .then((next) => {
           setOAuth(next);
+          if (next?.status === 'connected') setAccountID(next.accountID || next.providerID);
           if (!oauthActive(next)) {
             void catalog().catch((e) => setError(e.message));
             onChanged();
@@ -140,15 +151,38 @@ export function ProviderSettings({
   }, [active]);
 
   function select(id: string) {
-    setSelected(id);
+    const entry = providers.find((p) => p.id === id);
+    const source = entry?.account?.providerID || id;
+    setSelected(source);
+    setAccountID(entry?.account || entry?.connected ? id : '');
+    setAccountName(
+      entry?.account?.name ||
+        entry?.accountName ||
+        (entry?.connected
+          ? t('默认账号')
+          : t('账号 {{number}}', {
+              number: providers.filter((p) => p.account?.providerID === source).length + 1,
+            })),
+    );
     setKey('');
-    setShared(false);
     setRemove(false);
     setInputs({});
     setMethod(0);
     setError('');
     setCustom(null);
     setEditing(false);
+  }
+  function chooseAccount(entry?: ProviderAccess) {
+    setAccountID(entry?.id || '');
+    setAccountName(
+      entry?.account?.name ||
+        entry?.accountName ||
+        (entry ? t('默认账号') : t('账号 {{number}}', { number: accounts.length + 1 })),
+    );
+    setKey('');
+    setError('');
+    setRemove(false);
+    setInputs({});
   }
   function edit(value?: CustomProvider) {
     setConnectionMode('custom');
@@ -158,7 +192,6 @@ export function ProviderSettings({
       value?.models.map((m) => (m.name === m.id ? m.id : `${m.id} | ${m.name}`)).join('\n') || '',
     );
     setKey('');
-    setShared(false);
     setError('');
     setRemove(false);
   }
@@ -181,11 +214,26 @@ export function ProviderSettings({
       const result = await api<OAuthStatus>('/model-settings/' + path, body);
       if (kind === 'oauth') {
         setOAuth(result);
+        if (result.accountID || result.status === 'connected')
+          setAccountID(result.accountID || result.providerID);
         setCode('');
         if (!oauthActive(result)) await catalog();
       }
       if (kind === 'settings') {
-        await catalog();
+        const refreshed = await catalog();
+        if (path === 'provider/key') {
+          const input = body as { providerID: string; account?: { id?: string; name: string } };
+          if (input.account)
+            setAccountID(
+              input.account.id ||
+                refreshed.find(
+                  (p) =>
+                    p.account?.providerID === input.providerID &&
+                    p.account.name === input.account!.name,
+                )?.id ||
+                '',
+            );
+        }
         if (path === 'provider/custom') {
           setSelected((body as { provider: CustomProvider }).provider.id);
           setFilter('');
@@ -202,10 +250,9 @@ export function ProviderSettings({
     } finally {
       setBusy(false);
       setKey('');
-      if (kind === 'settings') setShared(false);
     }
   }
-  const connected = providers.filter((p) => p.connected || p.custom);
+  const connected = providers.filter((p) => p.connected || p.custom || p.account);
   const authorizationInputs = {
     ...Object.fromEntries(
       (oauthMethod?.prompts || [])
@@ -244,7 +291,7 @@ export function ProviderSettings({
           {connected.map((p) => (
             <button
               key={p.id}
-              className={`provider-chip ${selected === p.id ? 'selected' : ''}`}
+              className={`provider-chip ${(custom ? selected : accountID) === p.id ? 'selected' : ''}`}
               onClick={() => {
                 select(p.id);
                 if (p.custom) edit(p.custom);
@@ -256,7 +303,10 @@ export function ProviderSettings({
               disabled={active || busy}
             >
               {p.connected && <Check size={13} />}
-              <span>{p.name}</span>
+              <span>
+                {p.name}
+                {!p.custom && ` · ${p.account?.name || p.accountName || t('默认账号')}`}
+              </span>
               <small>{p.modelCount}</small>
             </button>
           ))}
@@ -585,17 +635,8 @@ export function ProviderSettings({
                   </div>
                   <small>{t('默认使用保守容量；较小的本地模型请按实际容量调整。')}</small>
                 </details>
-                <label className="checkbox settings-confirm">
-                  <input
-                    type="checkbox"
-                    checked={shared}
-                    disabled={disabled}
-                    onChange={(e) => setShared(e.target.checked)}
-                  />
-                  <span>{t('我确认工作区任务会向此服务发送内容并使用该账号额度。')}</span>
-                </label>
                 <div className="settings-actions">
-                  <button className="button primary" disabled={disabled || !shared}>
+                  <button className="button primary" disabled={disabled}>
                     {t('保存 Provider')}
                   </button>
                   <button
@@ -679,20 +720,82 @@ export function ProviderSettings({
                   <>
                     <div className="provider-meta">
                       <strong>{provider.name}</strong>
-                      <span>{provider.connected ? t('已接入') : t('未配置')}</span>
-                      <small>{t('模型数量：{{count}}', { count: provider.modelCount })}</small>
+                      <span>{account?.connected ? t('已接入') : t('未配置')}</span>
+                      <small>
+                        {t('模型数量：{{count}}', {
+                          count: account?.modelCount || provider.modelCount,
+                        })}
+                      </small>
                     </div>
-                    <label className="checkbox settings-confirm provider-consent">
-                      <input
-                        type="checkbox"
-                        checked={shared}
-                        onChange={(e) => setShared(e.target.checked)}
-                        disabled={disabled}
-                      />
-                      <span>
-                        {t('我确认工作区任务会使用这个账号的额度，连接测试也可能产生费用。')}
-                      </span>
-                    </label>
+                    <div className="provider-accounts">
+                      <div className="provider-accounts-heading">
+                        <strong>{t('此厂商的账号')}</strong>
+                        <button
+                          className="button"
+                          disabled={disabled}
+                          onClick={() => chooseAccount()}
+                        >
+                          <Plus size={14} />
+                          {t('添加账号')}
+                        </button>
+                      </div>
+                      {!!accounts.length && (
+                        <div className="provider-account-choices" aria-label={t('选择账号')}>
+                          {accounts.map((entry) => (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              aria-pressed={accountID === entry.id}
+                              disabled={disabled}
+                              onClick={() => chooseAccount(entry)}
+                            >
+                              <span>
+                                {entry.account?.name || entry.accountName || t('默认账号')}
+                              </span>
+                              {accountID === entry.id && <Check size={14} />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="provider-account-name">
+                        <label className="field">
+                          <span>{accountID ? t('账号别名') : t('新账号别名')}</span>
+                          <input
+                            aria-label={t('账号别名')}
+                            value={accountName}
+                            maxLength={40}
+                            disabled={disabled}
+                            onChange={(e) => setAccountName(e.target.value)}
+                            placeholder={t('例如：工作、个人、Go 套餐 B')}
+                          />
+                        </label>
+                        {account && (
+                          <button
+                            className="button"
+                            disabled={
+                              disabled ||
+                              !accountName.trim() ||
+                              accountName.trim() ===
+                                (account.account?.name || account.accountName || t('默认账号'))
+                            }
+                            onClick={() =>
+                              void act('provider/rename', {
+                                id: accountID,
+                                name: accountName.trim(),
+                              })
+                            }
+                          >
+                            {t('保存别名')}
+                          </button>
+                        )}
+                      </div>
+                      <small>{t('每个账号独立保存凭据，可在模型菜单中按别名选择。')}</small>
+                      {account?.accountError && (
+                        <p className="error" role="alert">
+                          {systemText(account.accountError)}
+                        </p>
+                      )}
+                    </div>
                     {connectionMode === 'oauth' && !!provider.oauth.length && (
                       <div className="provider-oauth-method">
                         <label className="field">
@@ -749,7 +852,7 @@ export function ProviderSettings({
                           ))}
                         <button
                           className="button primary"
-                          disabled={disabled || !shared}
+                          disabled={disabled || !accountName.trim()}
                           onClick={() =>
                             void act(
                               'oauth/start',
@@ -758,6 +861,7 @@ export function ProviderSettings({
                                 method: oauthMethod!.index,
                                 inputs: authorizationInputs,
                                 shared: true,
+                                account: accountTarget,
                               },
                               'oauth',
                             )
@@ -776,11 +880,12 @@ export function ProviderSettings({
                             providerID: selected,
                             key: key.trim(),
                             shared: true,
+                            account: accountTarget,
                           });
                         }}
                       >
                         <label className="field">
-                          <span>{provider.connected ? t('替换 API Key') : 'API Key'}</span>
+                          <span>{account?.connected ? t('替换 API Key') : 'API Key'}</span>
                           <input
                             aria-label="API Key"
                             type="password"
@@ -793,7 +898,10 @@ export function ProviderSettings({
                           />
                           <small>{t('Key 只交给本机官方引擎保存，不会在页面回显。')}</small>
                         </label>
-                        <button className="button" disabled={disabled || !key.trim() || !shared}>
+                        <button
+                          className="button"
+                          disabled={disabled || !key.trim() || !accountName.trim()}
+                        >
                           <KeyRound size={15} />
                           {t('保存凭据')}
                         </button>
@@ -803,37 +911,42 @@ export function ProviderSettings({
                 )}
               </div>
             )}
-            {provider && (!custom || editing) && (provider.connected || provider.custom) && (
-              <div className="settings-actions provider-remove">
-                {remove ? (
-                  <>
-                    <span className="danger-copy">{t('确认移除此 Provider 的连接？')}</span>
+            {connection &&
+              (!custom || editing) &&
+              (connection.connected || connection.custom || connection.account) && (
+                <div className="settings-actions provider-remove">
+                  {remove ? (
+                    <>
+                      <span className="danger-copy">{t('确认移除此 Provider 的连接？')}</span>
+                      <button
+                        className="button danger"
+                        disabled={disabled}
+                        onClick={() => {
+                          setRemove(false);
+                          void act('provider/remove', {
+                            providerID: connection.id,
+                            confirmed: true,
+                          });
+                        }}
+                      >
+                        {t('确认移除')}
+                      </button>
+                      <button className="button" onClick={() => setRemove(false)}>
+                        {t('取消')}
+                      </button>
+                    </>
+                  ) : (
                     <button
                       className="button danger"
                       disabled={disabled}
-                      onClick={() => {
-                        setRemove(false);
-                        void act('provider/remove', { providerID: selected, confirmed: true });
-                      }}
+                      onClick={() => setRemove(true)}
                     >
-                      {t('确认移除')}
+                      <Trash2 size={15} />
+                      {t('移除连接')}
                     </button>
-                    <button className="button" onClick={() => setRemove(false)}>
-                      {t('取消')}
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="button danger"
-                    disabled={disabled}
-                    onClick={() => setRemove(true)}
-                  >
-                    <Trash2 size={15} />
-                    {t('移除连接')}
-                  </button>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
           </>
         )}
       </div>

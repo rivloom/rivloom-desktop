@@ -9,6 +9,8 @@ export type AvailableModel = {
   modelName?: string;
   contextWindow?: number;
   supportsImages?: boolean;
+  accountName?: string;
+  sourceProviderID?: string;
 };
 
 export function availableModels(

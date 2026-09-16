@@ -19,6 +19,8 @@ import { taskApprovalPrompt } from './task-prompts.ts';
 import { EnginePermissionEvents } from './engine-permissions.ts';
 import { knowledgePrompt } from '../shared/knowledge.ts';
 import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
+import { accountEngines, providerAccounts } from './account-engines.ts';
+import type { ProviderAccess } from '../shared/model-providers.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -33,6 +35,26 @@ export const engineStatus = {
   error: null as string | null,
 };
 let engine: Awaited<ReturnType<typeof startEngine>> | null = null;
+export const accountCatalog = new Map<string, ProviderAccess>();
+db.exec('CREATE TABLE IF NOT EXISTS task_engine_routes (task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, account_id TEXT NOT NULL)');
+function taskAccount(value: Task) {
+  const route = db.prepare('SELECT account_id FROM task_engine_routes WHERE task_id=?').get(value.id);
+  // Every old session belongs to the original engine, even if a model was later edited.
+  return route ? String(route.account_id) : value.sessionID ? '' : providerAccounts.resolveModel(value.model).accountID;
+}
+function taskExclusive<T>(taskID: string, work: () => Promise<T>) {
+  return exclusive(taskID, () => accountEngines.run(taskAccount(task(taskID)), work));
+}
+function feedKey(directory: string) { return `${accountEngines.current()}\0${directory}`; }
+accountEngines.onExit = (id) => {
+  engineStatus.models = engineStatus.models.filter(m => m.providerID !== id);
+  engineStatus.connectedProviders = engineStatus.connectedProviders.filter(p => p !== id);
+  const info = accountCatalog.get(id);
+  if (info) accountCatalog.set(id, { ...info, connected: false, accountError: 'Account engine exited. Restart the application.' });
+  for (const t of taskQueries.inStates(activeStates)) if (taskAccount(t) === id)
+    patchTask(t.id, { state: 'interrupted', error: 'Account engine exited. Restart the application.', approvals: [], questions: [] });
+  changed();
+};
 let shuttingDown = false;
 const streams = new Map<string, AbortController>();
 const permissionEvents = new EnginePermissionEvents();
@@ -104,11 +126,35 @@ export async function refreshEngineModels() {
   requireThat(engine, 503, '引擎尚未启动');
   const providers = (await engine.client.provider.list({ directory: dataRoot })).data!;
   engineStatus.connectedProviders = providers.connected;
-  engineStatus.models = availableModels(providers.all, providers.connected);
+  engineStatus.models = availableModels(providers.all, providers.connected).map(m => {
+    const alias = providerAccounts.alias(m.providerID!);
+    return alias ? { ...m, accountName: alias, name: `${m.name} / ${alias}` } : m;
+  });
+  accountCatalog.clear();
+  for (const account of providerAccounts.list()) {
+    const source = providers.all.find(p => p.id === account.providerID);
+    let entry: ProviderAccess = { id: account.id, name: source?.name || account.providerID, connected: false,
+      modelCount: 0, apiKey: false, oauth: [], account: { providerID: account.providerID, name: account.name } };
+    try {
+      const runtime = await accountEngines.get(account.id);
+      const scoped = (await runtime.client.provider.list({ directory: dataRoot })).data!;
+      const provider = scoped.all.find(p => p.id === account.providerID);
+      const connected = scoped.connected.includes(account.providerID);
+      entry = { ...entry, name: provider?.name || entry.name, connected, modelCount: provider ? Object.keys(provider.models).length : 0 };
+      if (connected && provider) {
+        engineStatus.connectedProviders.push(account.id);
+        engineStatus.models.push(...availableModels([provider], [provider.id]).map(m => ({ ...m,
+          id: `${account.id}/${m.id.slice(provider.id.length + 1)}`, providerID: account.id,
+          sourceProviderID: provider.id, accountName: account.name, name: `${m.name} / ${account.name}`,
+        })));
+      }
+    } catch { entry.accountError = 'Account engine is unavailable. Restart the application or reconnect this account.'; }
+    accountCatalog.set(account.id, entry);
+  }
 }
 export function engineClient() {
   requireThat(engineStatus.ready && engine, 503, engineStatus.error || '引擎正在启动');
-  return engine.client;
+  return accountEngines.current() ? accountEngines.client() : engine.client;
 }
 const client = engineClient;
 
@@ -129,23 +175,25 @@ export async function refreshEngineConfiguration() {
   for (const abort of streams.values()) abort.abort();
   streams.clear();
   permissionEvents.clear();
-  await client().global.dispose();
+  await engine!.client.global.dispose();
+  await accountEngines.dispose();
   await refreshEngineModels();
   changed();
 }
 async function subscribe(directory: string) {
-  if (streams.has(directory)) return;
+  const key = feedKey(directory);
+  if (streams.has(key)) return;
   const abort = new AbortController();
-  streams.set(directory, abort);
-  const permissionFeed = permissionEvents.open(directory);
+  streams.set(key, abort);
+  const permissionFeed = permissionEvents.open(key);
   try {
     const feed = await client().event.subscribe({ directory }, { signal: abort.signal });
     const partKinds = new Map<string, string>();
     void (async () => {
       try {
         for await (const event of feed.stream) {
-          if (event.type === 'permission.asked') permissionEvents.asked(directory, event.properties, permissionFeed);
-          if (event.type === 'permission.replied') permissionEvents.replied(directory, event.properties.requestID, permissionFeed);
+          if (event.type === 'permission.asked') permissionEvents.asked(key, event.properties, permissionFeed);
+          if (event.type === 'permission.replied') permissionEvents.replied(key, event.properties.requestID, permissionFeed);
           if (event.type === 'message.part.updated') {
             partKinds.set(event.properties.part.id, event.properties.part.type);
           }
@@ -155,7 +203,7 @@ async function subscribe(directory: string) {
             (props.part as { sessionID?: string } | undefined)?.sessionID ||
             (props.info as { sessionID?: string } | undefined)?.sessionID;
           const current = taskQueries.routeForSession(sessionID);
-          if (!current || !activeStates.includes(current.state)) continue;
+          if (!current || taskAccount(task(current.id)) !== accountEngines.current() || !activeStates.includes(current.state)) continue;
           if (
             event.type === 'message.part.delta' &&
             event.properties.field === 'text' &&
@@ -174,17 +222,17 @@ async function subscribe(directory: string) {
       } catch {
         /* Polling below reconciles state and reopens the feed. */
       } finally {
-        permissionEvents.close(directory, permissionFeed);
-        if (streams.get(directory) === abort) streams.delete(directory);
+        permissionEvents.close(key, permissionFeed);
+        if (streams.get(key) === abort) streams.delete(key);
       }
     })();
   } catch (error) {
-    permissionEvents.close(directory, permissionFeed);
-    if (streams.get(directory) === abort) streams.delete(directory);
+    permissionEvents.close(key, permissionFeed);
+    if (streams.get(key) === abort) streams.delete(key);
     throw error;
   }
 }
-const readPermissions = (directory: string, sessionID: string) => permissionEvents.read(directory, sessionID,
+const readPermissions = (directory: string, sessionID: string) => permissionEvents.read(feedKey(directory), sessionID,
   async () => (await client().permission.list({ directory })).data || []);
 function normalizeMessages(
   messages: Awaited<ReturnType<ReturnType<typeof client>['session']['messages']>>['data'],
@@ -215,7 +263,7 @@ function normalizeMessages(
 }
 export async function sync(taskID: string) {
   if (shuttingDown || isLocked(taskID)) return;
-  return exclusive(taskID, async () => {
+  return taskExclusive(taskID, async () => {
     const t = task(taskID);
     if (shuttingDown || !t.sessionID || !engineStatus.ready || t.state === 'stopping') return;
     const directory = project(t.projectID).directory;
@@ -306,7 +354,7 @@ const timer = setInterval(async () => {
   monitoring = true;
   try {
     for (const t of taskQueries.inStates(activeStates)) {
-      await subscribe(project(t.projectID).directory).catch(() => {});
+      await accountEngines.run(taskAccount(t), () => subscribe(project(t.projectID).directory)).catch(() => {});
       await sync(t.id).catch(() => {});
     }
   } finally {
@@ -323,8 +371,8 @@ export async function workflowRetryReady(taskID: string): Promise<boolean> {
   if (!engineStatus.ready || isLocked(taskID)) return false;
   try {
     const directory = project(value.projectID).directory;
-    const [statuses, messages] = await Promise.all([client().session.status({ directory }),
-      client().session.messages({ directory, sessionID: value.sessionID })]);
+    const [statuses, messages] = await accountEngines.run(taskAccount(value), () => Promise.all([client().session.status({ directory }),
+      client().session.messages({ directory, sessionID: value.sessionID! })]));
     if (!statuses.data || !messages.data || statuses.data[value.sessionID]?.type && statuses.data[value.sessionID].type !== 'idle') return false;
     const assistants = messages.data.filter((m) => m.info.role === 'assistant' && m.info.time.created >= value.runAfter);
     const last = assistants.at(-1)?.info;
@@ -335,7 +383,7 @@ export async function workflowRetryReady(taskID: string): Promise<boolean> {
   } catch { return false; }
 }
 export async function runTask(taskID: string, actor: User, addition?: string) {
-  return exclusive(taskID, async () => {
+  return taskExclusive(taskID, async () => {
     let t = task(taskID);
     taskStartGuard?.(t);
     requireThat(actor.id === t.assigneeID, 403, '只有接受人可以开始或继续执行');
@@ -350,6 +398,8 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       '所选模型当前不可用，请检查引擎登录配置',
     );
     const projectInfo = project(t.projectID);
+    const selectedModel = providerAccounts.resolveModel(t.model);
+    requireThat(selectedModel.accountID === accountEngines.current(), 409, 'This conversation is bound to another account. Start a new conversation to switch accounts.');
     const directory = projectInfo.directory;
     if (t.sessionID) {
       const statuses = (await client().session.status({ directory })).data;
@@ -366,6 +416,7 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
         409,
         '已有未确认的引擎会话创建记录；请先检查执行现场，不能重复创建。',
       );
+      db.prepare('INSERT INTO task_engine_routes VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET account_id=excluded.account_id').run(t.id, accountEngines.current());
       db.prepare("INSERT INTO task_engine_intents VALUES(?,'creating',NULL,?)").run(
         t.id,
         new Date().toISOString(),
@@ -422,12 +473,11 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       addition ? 'continue' : 'start',
       addition ? `继续执行：${redact(addition)}` : '确认测试环境风险并启动 AI 执行。',
     );
-    const [providerID, ...rest] = t.model.split('/');
     try {
       await client().session.promptAsync({
         directory,
         sessionID: t.sessionID!,
-        model: { providerID, modelID: rest.join('/') },
+        model: { providerID: selectedModel.providerID, modelID: selectedModel.modelID },
         system: (t.collaboration?.role === 'planner' ? workflowSystemPrompt :
           (t.collaboration ? `${workflowSystemPrompt}\n\n` : '') + taskApprovalPrompt(t.approvalMode)) +
           (taskKnowledgeContext ? `\n\n${knowledgePrompt}${knowledgeContext}` : ''),
@@ -457,7 +507,7 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
   });
 }
 export async function stopTask(taskID: string, actor: User) {
-  return exclusive(taskID, async () => {
+  return taskExclusive(taskID, async () => {
     const t = task(taskID);
     requireThat(
       activeStates.includes(t.state) || t.state === 'interrupted',
@@ -477,7 +527,7 @@ export async function stopTask(taskID: string, actor: User) {
       const pending = await readPermissions(directory, t.sessionID);
       for (const p of pending) {
         await client().permission.reply({ directory, requestID: p.id, reply: 'reject' });
-        permissionEvents.replied(directory, p.id);
+        permissionEvents.replied(feedKey(directory), p.id);
       }
       const questions = (await client().question.list({ directory })).data || [];
       for (const q of questions.filter((q) => q.sessionID === t.sessionID))
@@ -547,7 +597,7 @@ export async function replyPermission(
   requestID: string,
   reply: 'once' | 'reject',
 ) {
-  return exclusive(taskID, async () => {
+  return taskExclusive(taskID, async () => {
     const t = task(taskID);
     requireThat(actor.id === t.approverID, 403, '只有指定审批人可以回复权限请求');
     requireThat(
@@ -560,7 +610,7 @@ export async function replyPermission(
       requestID,
       reply,
     });
-    permissionEvents.replied(project(t.projectID).directory, requestID);
+    permissionEvents.replied(feedKey(project(t.projectID).directory), requestID);
     patchTask(t.id, { approvals: t.approvals.filter((p) => p.id !== requestID) });
     activity(
       t.id,
@@ -578,7 +628,7 @@ export async function replyQuestion(
   requestID: string,
   answers: string[][],
 ) {
-  return exclusive(taskID, async () => {
+  return taskExclusive(taskID, async () => {
     const t = task(taskID);
     requireThat(
       [t.creatorID, t.assigneeID].includes(actor.id),
@@ -642,14 +692,17 @@ export async function shutdownEngine(waitForExit = false) {
       taskQueries
         .inStates(activeStates)
         .filter((t) => t.sessionID)
-        .map((t) =>
-          engine!.client.session.abort(
+        .map((t) => accountEngines.run(taskAccount(t), () =>
+          client().session.abort(
             { directory: project(t.projectID).directory, sessionID: t.sessionID! },
             { signal: AbortSignal.timeout(3000) },
-          ),
+          )),
         ),
     );
     engine.close();
-    if (waitForExit) await engine.waitForExit();
+    try { if (waitForExit) await engine.waitForExit(); }
+    finally { await accountEngines.close(waitForExit); }
+  } else {
+    await accountEngines.close(waitForExit);
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "rivloom-opencode",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
@@ -37,6 +37,7 @@
     "preview:conversation:installer": "tauri build --config src-tauri/tauri.preview.conf.json",
     "test:integration": "node scripts/integration.ts",
     "test:model-settings": "node scripts/model-settings-check.ts",
+    "test:provider-accounts": "node scripts/provider-accounts-check.ts",
     "test:model-settings-ui": "node scripts/model-settings-ui.ts",
     "test:permission-policy": "node scripts/permission-policy-check.ts",
     "test:node-network-ui": "node scripts/node-network-ui.ts",

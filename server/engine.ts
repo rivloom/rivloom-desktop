@@ -80,7 +80,8 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
   );
   return rules;
 }
-export function engineEnv(password?: string, root = engineRoot): NodeJS.ProcessEnv {
+type EngineScope = { workspace?: boolean; providerID?: string };
+export function engineEnv(password?: string, root = engineRoot, scope: EngineScope = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
@@ -101,7 +102,7 @@ export function engineEnv(password?: string, root = engineRoot): NodeJS.ProcessE
     env[key] = join(root, folder);
     mkdirSync(env[key]!, { recursive: true });
   }
-  const knowledge = root === engineRoot ? knowledgeEngineConfig() : null;
+  const knowledge = root === engineRoot || scope.workspace ? knowledgeEngineConfig() : null;
   if (knowledge) {
     prepareEnginePluginDependencies(root);
     env.RIVLOOM_KNOWLEDGE_BRIDGE_URL = knowledge.url;
@@ -113,6 +114,7 @@ export function engineEnv(password?: string, root = engineRoot): NodeJS.ProcessE
     snapshot: false,
     permission: permissions,
     agent: { build: { permission: permissions } },
+    ...(scope.providerID ? { enabled_providers: [scope.providerID] } : {}),
     ...(knowledge ? { plugin: [knowledge.plugin] } : {}),
   });
   const providerConfig = join(root, 'rivloom-providers.json');
@@ -134,12 +136,12 @@ export function importAuth(source: string) {
   return Object.keys(auth);
 }
 
-export async function startEngine(cwd: string, port = 0, root = engineRoot) {
+export async function startEngine(cwd: string, port = 0, root = engineRoot, scope: EngineScope = {}) {
   const password = randomBytes(32).toString('hex');
   return withHttpPort(async (candidate) => {
     // The official CLI cannot inherit this socket. Probe, release, then validate its actual bind.
     await probeHttpPort(candidate);
-    return startEngineOnPort(cwd, candidate, password, root);
+    return startEngineOnPort(cwd, candidate, password, root, scope);
   }, port);
 }
 
@@ -163,7 +165,7 @@ async function stopFailedEngine(child: ChildProcess | undefined, requireSuccessf
   });
 }
 
-async function startEngineOnPort(cwd: string, port: number, password: string, root: string) {
+async function startEngineOnPort(cwd: string, port: number, password: string, root: string, scope: EngineScope) {
   let child: ChildProcess | undefined;
   let announced = false;
   try {
@@ -181,7 +183,7 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
         ],
         {
           cwd,
-          env: engineEnv(password, root),
+          env: engineEnv(password, root, scope),
           stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
           windowsHide: true,
         },

@@ -42,7 +42,7 @@ test('engine completion persists results and releases capacity automatically whi
   const fixtureModule =
     'data:text/javascript,' +
     encodeURIComponent(
-      `export const dataRoot=${JSON.stringify(root)}; export const ENGINE_VERSION='test';
+      `export const dataRoot=${JSON.stringify(root)}; export const engineRoot=${JSON.stringify(join(root, 'engine'))}; export const ENGINE_VERSION='test';
     export const sessionPermissions=()=>[]; export const startEngine=async()=>globalThis[${JSON.stringify(key)}];`,
     );
   const hook = registerHooks({

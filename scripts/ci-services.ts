@@ -16,6 +16,7 @@ export const serviceChecks = {
   'origin-concurrency': 'scripts/origin-concurrency-check.ts',
   workflow: 'scripts/workflow-service-check.ts',
   'model-settings': 'scripts/model-settings-check.ts',
+  'provider-accounts': 'scripts/provider-accounts-check.ts',
   permissions: 'scripts/permission-policy-check.ts',
   'node-p0': 'scripts/node-p0-check.ts',
   'collaboration-files': 'scripts/collaboration-files-check.ts',

@@ -87,6 +87,7 @@ export class ProviderOAuth {
     actorID: string,
     current: () => boolean,
     accepted: () => void,
+    accountID?: string,
   ) => Promise<void>;
   private readonly notify: () => void;
   private readonly lifetime: number;
@@ -98,6 +99,7 @@ export class ProviderOAuth {
       actorID: string,
       current: () => boolean,
       accepted: () => void,
+      accountID?: string,
     ) => Promise<void>,
     notify: () => void,
     lifetime = 10 * 60_000,
@@ -123,12 +125,13 @@ export class ProviderOAuth {
       ['starting', 'waiting', 'connecting', 'saving'].includes(attempt.view.status)
     );
   }
-  begin(actorID: string, providerID: string, method: number, inputs: Record<string, string>) {
+  begin(actorID: string, providerID: string, method: number, inputs: Record<string, string>, accountID?: string) {
     if (this.busy) throw new Error('OAuth already running');
     const attempt: Attempt = {
       view: {
         id: randomUUID(),
         providerID,
+        ...(accountID ? { accountID } : {}),
         status: 'starting',
         expiresAt: new Date(Date.now() + this.lifetime).toISOString(),
       },
@@ -189,6 +192,7 @@ export class ProviderOAuth {
           clearTimeout(attempt.timer);
           this.notify();
         },
+        attempt.view.accountID,
       );
       if (this.active(attempt)) await this.finish(attempt, 'connected');
     } catch {

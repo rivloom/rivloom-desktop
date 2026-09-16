@@ -82,9 +82,10 @@ import {
   startConnectionCheck,
   cancelConnectionCheck,
   assertCanStartTask,
-  providerCatalog, saveProviderKey, saveCustomProvider, removeProvider, beginProviderOAuth, cancelProviderOAuth, providerOAuth,
+  providerCatalog, saveProviderKey, saveCustomProvider, removeProvider, renameProviderAccount, beginProviderOAuth, cancelProviderOAuth, providerOAuth,
 } from './model-settings.ts';
-import { apiKeySchema, providerIDSchema } from '../shared/model-providers.ts';
+import { apiKeySchema, providerIDSchema, accountTargetSchema, accountNameSchema } from '../shared/model-providers.ts';
+import { ProviderAccountError } from './provider-accounts.ts';
 import { NodeNetwork, NodeNetworkError } from './node-network.ts';
 import { loadNodeIdentity } from './node-identity.ts';
 import { ExecutionPolicyStore } from './execution-policy.ts';
@@ -1843,10 +1844,14 @@ remoteTaskProcessor.unref();
 const modelInput = z.object({ model: z.string().min(3).max(200) });
 app.use('/api/model-settings', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 app.get('/api/model-settings/providers', async (_req, res) => res.json(await providerCatalog()));
-const providerKeyInput = z.object({ providerID: providerIDSchema, key: apiKeySchema, shared: z.literal(true) });
+const providerKeyInput = z.object({ providerID: providerIDSchema, key: apiKeySchema, shared: z.literal(true), account: accountTargetSchema.optional() });
 app.post('/api/model-settings/provider/key', async (req, res) => {
-  const { providerID, key } = providerKeyInput.parse(req.body);
-  res.json(await saveProviderKey(who(req), providerID, key));
+  const { providerID, key, account } = providerKeyInput.parse(req.body);
+  res.json(await saveProviderKey(who(req), providerID, key, account));
+});
+app.post('/api/model-settings/provider/rename', async (req, res) => {
+  const body = z.object({ id: providerIDSchema, name: accountNameSchema }).parse(req.body);
+  res.json(await renameProviderAccount(who(req), body.id, body.name));
 });
 app.post('/api/model-settings/provider/custom', async (req, res) => {
   const body = z.object({ provider: z.unknown(), key: apiKeySchema.optional(), shared: z.literal(true) }).parse(req.body);
@@ -1862,8 +1867,8 @@ app.get('/api/model-settings/oauth', (req, res) => {
 });
 app.post('/api/model-settings/oauth/start', async (req, res) => {
   const body = z.object({ providerID: providerIDSchema, method: z.number().int().min(0).max(30),
-    inputs: z.record(z.string().max(80), z.string().max(1000)).refine((v) => Object.keys(v).length <= 20).default({}), shared: z.literal(true) }).parse(req.body);
-  res.status(202).json(await beginProviderOAuth(who(req), body.providerID, body.method, body.inputs));
+    inputs: z.record(z.string().max(80), z.string().max(1000)).refine((v) => Object.keys(v).length <= 20).default({}), shared: z.literal(true), account: accountTargetSchema.optional() }).parse(req.body);
+  res.status(202).json(await beginProviderOAuth(who(req), body.providerID, body.method, body.inputs, body.account));
 });
 const attemptInput = z.object({ id: z.string().uuid() });
 app.post('/api/model-settings/oauth/complete', (req, res) => {
@@ -2164,6 +2169,7 @@ if (dev) {
   app.get('/{*path}', (_req, res) => res.sendFile(resolve('dist/index.html')));
 }
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof ProviderAccountError) return void res.status(400).json({ error: error.message });
   if (error instanceof QueueConfirmationRequired)
     return void res
       .status(error.status)

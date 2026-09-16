@@ -1,5 +1,15 @@
 # Rivloom 客户端品牌资源
 
+## 界面字体与许可
+
+**2026-09-16 · 0.1.17 源码，发行准备中：** 主界面使用 `Segoe UI → Microsoft YaHei UI → Microsoft YaHei → system-ui → sans-serif` 系统字体栈。会话标题为 13px、中等字重，选中项加粗；输入区占位文字为 14px，目录与模型控件为 12px，快捷键提示为 11px。文字与次要文字色分别为 `#35445b`、`#53627a`，提高小字号阅读对比度。保留浏览器原生字形渲染，不强制灰度抗锯齿、描边或文本阴影。
+
+品牌小标签继续使用随包 Manrope Latin 可变字体，来源为 `@fontsource-variable/manrope` **5.3.0**。该版本采用 **SIL OFL 1.1**，允许免费商用和随软件分发，须保留版权与许可，不得单独售卖字体；许可不改变应用自身的许可证。具体以随该字体文件附带的 [Manrope 许可原文](licenses/fonts/Manrope-OFL.txt) 为准，不能用同名字体其他版本的授权替代。
+
+微软雅黑、Segoe UI 等仅引用用户设备已安装的系统资源，软件包不复制这些字体文件。微软允许应用使用 Windows 系统字体渲染界面，也允许 CSS 指定字体名称；这不等于取得字体文件的再分发许可。[微软字体使用与分发说明](https://learn.microsoft.com/en-us/typography/fonts/font-faq)
+
+## 图形与字标
+
 客户端沿用用户提供的 Rivloom 图形和字标，原始 PNG 保存在 `src/assets/brand/`。React 的 `Wordmark` 组件按原图透明留白取景，展示于侧栏、登录、加载和空会话；图形比例、品牌文字与蓝青渐变保持原样。暗色登录区域使用浅色底板承载原字标。
 
 Windows 程序、快捷方式和安装器使用同一组 `src-tauri/icons/` 资源。图标以原始渐变符号为主体，按比例置于浅色圆角方形上，让深蓝主体在深浅任务栏背景中均可辨认；保留透明外角。PNG、ICO 和现有其他平台尺寸由已锁定的官方 Tauri CLI 导出。

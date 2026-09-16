@@ -48,14 +48,26 @@ try {
   assert(await search().evaluate((element: HTMLElement) => element === document.activeElement));
   assert.deepEqual(
     await panel()
-      .locator('[role="group"]')
+      .locator('.model-picker-section')
       .evaluateAll((elements: HTMLElement[]) =>
-        elements.map((el) => el.querySelector('.model-picker-group')!.textContent),
+        elements.map((el) => el.querySelector('.model-picker-group-label strong')!.textContent),
       ),
     ['DeepSeek 官方', 'Local', 'opencode-go', 'opencode-go-anthropic'],
   );
+  assert.equal(await panel().locator('.model-picker-section[aria-expanded="true"]').count(), 1);
+  await search().press('ArrowLeft');
+  await search().press('ArrowLeft');
+  assert.equal(await panel().locator('[data-model-id]').count(), 0);
+  assert.equal(await panel().getByText('没有匹配的模型', { exact: true }).count(), 0);
+  await search().press('Enter');
+  assert.equal(await panel().locator('.model-picker-section[aria-expanded="true"]').count(), 1);
+  await search().press('Escape');
+  assert((await trigger().getAttribute('title')).includes('opencode-go/deepseek-v4-flash'));
+  await trigger().click();
+  await panel().screenshot({ path: resolve(output, 'grouped-collapsed-menu.png') });
+  await panel().getByRole('button', { name: '展开全部', exact: true }).click();
   assert.equal(
-    await panel().getByRole('option', { selected: true }).getAttribute('title'),
+    await panel().getByRole('treeitem', { selected: true }).getAttribute('title'),
     'opencode-go/deepseek-v4-flash',
   );
   assert.equal(
@@ -75,20 +87,20 @@ try {
 
   await search().fill('deepseek-v4-flash');
   assert.equal(await panel().getByRole('group').count(), 2);
-  await panel().locator('[role="option"][title="deepseek/deepseek-v4-flash"]').click();
+  await panel().locator('[data-model-id][title="deepseek/deepseek-v4-flash"]').click();
   assert.equal(await panel().count(), 0);
   assert((await trigger().getAttribute('title')).includes('deepseek/deepseek-v4-flash'));
   assert(await trigger().evaluate((element: HTMLElement) => element === document.activeElement));
   await trigger().press('ArrowDown');
   assert.equal(await search().inputValue(), '');
   assert.equal(
-    await panel().getByRole('option', { selected: true }).getAttribute('title'),
+    await panel().getByRole('treeitem', { selected: true }).getAttribute('title'),
     'deepseek/deepseek-v4-flash',
   );
   check('Duplicate model names choose and retain the exact provider and restore trigger focus');
 
   await search().fill('OPENCODE-GO   kimi');
-  assert.equal(await panel().getByRole('option').count(), 2);
+  assert.equal(await panel().locator('[data-model-id]').count(), 2);
   await search().press('ArrowDown');
   await search().press('Enter');
   assert((await trigger().getAttribute('title')).includes('opencode-go/kimi-k3'));
@@ -114,7 +126,7 @@ try {
 
   await trigger().click();
   await search().fill('org/model');
-  assert.equal(await panel().getByRole('option').count(), 1);
+  assert.equal(await panel().locator('[data-model-id]').count(), 1);
   await search().press('Enter');
   await page.reload();
   await trigger().waitFor();
@@ -133,8 +145,8 @@ try {
   await trigger().click();
   preview.data.engine.models = [{ id: 'legacy/org/model', name: 'Legacy model · Legacy provider' }];
   preview.flush();
-  await panel().locator('[role="option"][title="legacy/org/model"]').waitFor();
-  assert.equal(await panel().getByRole('option').count(), 1);
+  await panel().locator('[data-model-id][title="legacy/org/model"]').waitFor();
+  assert.equal(await panel().locator('[data-model-id]').count(), 1);
   await search().fill('legacy');
   await search().press('Enter');
   assert((await trigger().getAttribute('title')).includes('legacy/org/model'));
@@ -144,7 +156,7 @@ try {
     document.querySelector('.model-picker-trigger')?.textContent?.includes('尚未连接模型'),
   );
   await trigger().click();
-  assert.equal(await panel().getByRole('option').count(), 0);
+  assert.equal(await panel().locator('[data-model-id]').count(), 0);
   await search().press('Enter');
   assert(await panel().isVisible());
   await search().press('Escape');
@@ -164,8 +176,8 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger().click();
   await search().fill('very-long');
-  await panel().locator('[role="option"][title="long/org/very-long-model"]').waitFor();
-  assert.equal(await panel().getByRole('option').count(), 1);
+  await panel().locator('[data-model-id][title="long/org/very-long-model"]').waitFor();
+  assert.equal(await panel().locator('[data-model-id]').count(), 1);
   await inBounds();
   await page.screenshot({ path: resolve(output, 'grouped-mobile.png') });
   await search().press('Escape');
@@ -179,7 +191,7 @@ try {
   await page.locator('.language-control select').selectOption('en');
   await page.getByRole('button', { name: 'Execution model', exact: true }).click();
   await page.getByRole('combobox', { name: 'Search models', exact: true }).fill('kimi');
-  assert.equal(await panel().getByRole('option').count(), 2);
+  assert.equal(await panel().locator('[data-model-id]').count(), 2);
   assert.equal(await panel().getByText('Images', { exact: true }).count(), 2);
   await inBounds();
   await page.screenshot({ path: resolve(output, 'grouped-english.png') });
@@ -211,7 +223,7 @@ try {
   await page
     .getByRole('combobox', { name: 'Search models', exact: true })
     .fill('opencode-go deepseek-v4-flash');
-  await panel().getByRole('option').click();
+  await panel().locator('[data-model-id]').click();
   await page.locator('.conversation-composer textarea').fill('Synthetic model routing check');
   await Promise.all([
     page.waitForRequest('**/api/workflows'),

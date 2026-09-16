@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Check, ChevronDown, Network, Search } from 'lucide-react';
+import { Bot, Check, ChevronDown, ChevronRight, Network, Search } from 'lucide-react';
 import type { AvailableModel } from '../shared/model-catalog.ts';
 import { language, t } from '../shared/i18n.ts';
 import { formatContextWindow, groupModels, modelDetails } from './model-options.ts';
@@ -20,16 +20,21 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(value);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const id = useId();
   const locale = language();
   const groups = useMemo(() => groupModels(models, query, locale), [models, query, locale]);
-  const options = groups.flatMap((group) => group.models);
+  const isExpanded = (groupID: string) => !!query.trim() || expanded.has(groupID);
+  const rows = groups.flatMap((group) => [
+    { key: `@${group.id}`, group, model: undefined as AvailableModel | undefined },
+    ...(isExpanded(group.id) ? group.models.map((model) => ({ key: model.id, group, model })) : []),
+  ]);
   const activeIndex = Math.max(
     0,
-    options.findIndex((model) => model.id === active),
+    active ? rows.findIndex((row) => row.key === active) : rows.findIndex((row) => row.model),
   );
   const selected = models.find((model) => model.id === value);
   const showing = open && !disabled;
@@ -42,16 +47,40 @@ export function ModelPicker({
     document.dispatchEvent(new Event('rivloom-menu-open'));
     setQuery('');
     setActive(value);
+    setExpanded(
+      new Set([
+        modelDetails(models.find((m) => m.id === value) || models[0] || { id: '', name: '' })
+          .providerID,
+      ]),
+    );
     setOpen(true);
   }
   function choose(model: AvailableModel) {
     onChange(model.id);
     close(true);
   }
+  function toggle(groupID: string) {
+    if (query.trim()) return;
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(groupID)) next.delete(groupID);
+      else next.add(groupID);
+      return next;
+    });
+    setActive(`@${groupID}`);
+  }
 
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+  useEffect(() => {
+    if (!showing || !models.length) return;
+    setExpanded((previous) =>
+      previous.size && !models.some((m) => previous.has(modelDetails(m).providerID))
+        ? new Set([modelDetails(models.find((m) => m.id === value) || models[0]).providerID])
+        : previous,
+    );
+  }, [models, showing, value]);
   useLayoutEffect(() => {
     if (!showing || !panel.current || !trigger.current) return;
     const rect = trigger.current.getBoundingClientRect();
@@ -63,14 +92,14 @@ export function ModelPicker({
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8))}px`;
     element.style.top = `${Math.max(8, upwards ? rect.top - bounds.height - 6 : rect.bottom + 6)}px`;
-  }, [showing, groups]);
+  }, [showing, groups, expanded]);
   useLayoutEffect(() => {
     if (showing) search.current?.focus({ preventScroll: true });
   }, [showing]);
   useLayoutEffect(() => {
     if (showing)
-      document.getElementById(`${id}-option-${activeIndex}`)?.scrollIntoView({ block: 'nearest' });
-  }, [showing, activeIndex, id, query]);
+      document.getElementById(`${id}-row-${activeIndex}`)?.scrollIntoView({ block: 'nearest' });
+  }, [showing, activeIndex, id, query, expanded]);
   useEffect(() => {
     if (!showing) return;
     const outside = (event: Event) => {
@@ -94,7 +123,7 @@ export function ModelPicker({
     };
   }, [showing]);
 
-  let optionIndex = 0;
+  let rowIndex = 0;
   return (
     <>
       <button
@@ -102,7 +131,7 @@ export function ModelPicker({
         type="button"
         className="composer-select model-picker-trigger"
         aria-label={t('执行模型')}
-        aria-haspopup="listbox"
+        aria-haspopup="tree"
         aria-expanded={showing}
         aria-controls={showing ? `${id}-list` : undefined}
         disabled={disabled}
@@ -130,17 +159,29 @@ export function ModelPicker({
                 event.preventDefault();
                 event.stopPropagation();
                 close(true);
-              } else if (event.key === 'Tab') close(true);
+              } else if (event.target !== search.current) return;
               else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 const next =
-                  (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) %
-                  options.length;
-                if (options[next]) setActive(options[next].id);
+                  (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
+                if (rows[next]) setActive(rows[next].key);
+              } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                if (query.trim() || !rows[activeIndex]) return;
+                event.preventDefault();
+                const row = rows[activeIndex];
+                if (event.key === 'ArrowLeft') {
+                  if (row.model) setActive(`@${row.group.id}`);
+                  else if (isExpanded(row.group.id)) toggle(row.group.id);
+                } else if (!row.model) {
+                  if (!isExpanded(row.group.id)) toggle(row.group.id);
+                  else if (row.group.models[0]) setActive(row.group.models[0].id);
+                }
               } else if (event.key === 'Enter') {
                 event.preventDefault();
                 event.stopPropagation();
-                if (options[activeIndex]) choose(options[activeIndex]);
+                const row = rows[activeIndex];
+                if (row?.model) choose(row.model);
+                else if (row) toggle(row.group.id);
               }
             }}
           >
@@ -151,11 +192,12 @@ export function ModelPicker({
                 role="combobox"
                 aria-label={t('搜索模型')}
                 aria-autocomplete="list"
+                aria-haspopup="tree"
                 aria-expanded="true"
                 aria-controls={`${id}-list`}
-                aria-activedescendant={options.length ? `${id}-option-${activeIndex}` : undefined}
+                aria-activedescendant={rows.length ? `${id}-row-${activeIndex}` : undefined}
                 value={query}
-                placeholder={t('搜索模型或厂商…')}
+                placeholder={t('搜索模型、厂商或账号…')}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(event) => {
@@ -164,65 +206,124 @@ export function ModelPicker({
                 }}
               />
             </div>
+            <div className="model-picker-toolbar">
+              <span>{t('按服务商和账号分组')}</span>
+              <button
+                type="button"
+                disabled={!groups.length || !!query.trim()}
+                onClick={() => {
+                  const all = groups.every((g) => expanded.has(g.id));
+                  setExpanded(all ? new Set() : new Set(groups.map((g) => g.id)));
+                  setActive(`@${groups[0]?.id}`);
+                  search.current?.focus({ preventScroll: true });
+                }}
+              >
+                {groups.length && groups.every((g) => expanded.has(g.id))
+                  ? t('收起全部')
+                  : t('展开全部')}
+              </button>
+            </div>
             <div
               id={`${id}-list`}
-              role="listbox"
+              role="tree"
               aria-label={t('执行模型')}
               className="model-picker-list"
             >
-              {groups.map((group, groupIndex) => (
-                <div key={group.id} role="group" aria-labelledby={`${id}-group-${groupIndex}`}>
+              {groups.map((group, groupIndex) => {
+                const headerIndex = rowIndex++;
+                const expandedGroup = isExpanded(group.id);
+                return (
                   <div
-                    className="model-picker-group"
-                    id={`${id}-group-${groupIndex}`}
-                    title={group.id}
+                    key={group.id}
+                    role="treeitem"
+                    aria-expanded={expandedGroup}
+                    aria-level={1}
+                    className="model-picker-section"
+                    id={`${id}-row-${headerIndex}`}
+                    aria-labelledby={`${id}-group-${groupIndex}`}
                   >
-                    <Network size={12} aria-hidden="true" />
-                    <span>{group.name || t('其他模型')}</span>
-                  </div>
-                  {group.models.map((model) => {
-                    const index = optionIndex++;
-                    const context = formatContextWindow(model.contextWindow);
-                    return (
-                      <div
-                        key={model.id}
-                        id={`${id}-option-${index}`}
-                        role="option"
-                        aria-selected={model.id === value}
-                        className={`model-picker-option${index === activeIndex ? ' active' : ''}`}
-                        title={model.id}
-                        onPointerMove={() => setActive(model.id)}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => choose(model)}
+                    <div
+                      className={`model-picker-group${headerIndex === activeIndex ? ' active' : ''}`}
+                      title={group.id}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => toggle(group.id)}
+                    >
+                      {expandedGroup ? (
+                        <ChevronDown size={14} aria-hidden="true" />
+                      ) : (
+                        <ChevronRight size={14} aria-hidden="true" />
+                      )}
+                      <Network size={14} aria-hidden="true" />
+                      <span className="model-picker-group-label" id={`${id}-group-${groupIndex}`}>
+                        <strong>{group.name || t('其他模型')}</strong>
+                        {group.accountName && <small>{group.accountName}</small>}
+                      </span>
+                      {group.models.some((model) => model.id === value) && (
+                        <Check
+                          size={13}
+                          className="model-picker-group-selected"
+                          aria-label={t('当前选择')}
+                        />
+                      )}
+                      <span
+                        className="model-picker-group-count"
+                        aria-label={t('{{count}} 个模型', { count: group.models.length })}
                       >
-                        <span className="model-picker-name">{modelDetails(model).modelName}</span>
-                        <span className="model-picker-badges">
-                          {context && (
-                            <span
-                              className="model-picker-badge"
-                              title={t('上下文：{{count}} Token', {
-                                count: model.contextWindow!.toLocaleString(locale),
-                              })}
+                        {group.models.length}
+                      </span>
+                    </div>
+                    {expandedGroup && (
+                      <div role="group" className="model-picker-group-models">
+                        {group.models.map((model) => {
+                          const index = rowIndex++;
+                          const context = formatContextWindow(model.contextWindow);
+                          return (
+                            <div
+                              key={model.id}
+                              id={`${id}-row-${index}`}
+                              role="treeitem"
+                              aria-level={2}
+                              data-model-id={model.id}
+                              aria-selected={model.id === value}
+                              className={`model-picker-option${index === activeIndex ? ' active' : ''}`}
+                              title={model.id}
+                              onPointerMove={() => setActive(model.id)}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => choose(model)}
                             >
-                              {context}
-                            </span>
-                          )}
-                          {model.supportsImages === true && (
-                            <span className="model-picker-badge" title={t('支持图片输入')}>
-                              {t('图片')}
-                            </span>
-                          )}
-                        </span>
-                        <span className="model-picker-check">
-                          {model.id === value && <Check size={14} aria-hidden="true" />}
-                        </span>
+                              <span className="model-picker-name">
+                                {modelDetails(model).modelName}
+                              </span>
+                              <span className="model-picker-badges">
+                                {context && (
+                                  <span
+                                    className="model-picker-badge"
+                                    title={t('上下文：{{count}} Token', {
+                                      count: model.contextWindow!.toLocaleString(locale),
+                                    })}
+                                  >
+                                    {context}
+                                  </span>
+                                )}
+                                {model.supportsImages === true && (
+                                  <span className="model-picker-badge" title={t('支持图片输入')}>
+                                    {t('图片')}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="model-picker-check">
+                                {model.id === value && <Check size={14} aria-hidden="true" />}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {!options.length && (
+            {!groups.length && (
               <p className="model-picker-empty" role="status">
                 {models.length ? t('没有匹配的模型') : t('尚未连接模型')}
               </p>

@@ -600,5 +600,15 @@
   "无法开始厂商登录，请重试。": "Could not start vendor sign-in. Please retry.",
   "登录未完成，请先刷新厂商状态再重试。": "Sign-in did not complete. Refresh provider status before trying again.",
   "登录清理未完成，请重启应用。": "Sign-in cleanup needs an application restart.",
-  "无法打开浏览器，请复制授权链接后打开。": "Could not open the browser. Copy the authorization link instead."
+  "无法打开浏览器，请复制授权链接后打开。": "Could not open the browser. Copy the authorization link instead.",
+  "该厂商已有同名账号，请使用其他别名。": "An account with this name already exists for this provider.",
+  "账号不存在。": "Account not found.",
+  "账号不属于此厂商。": "Account does not belong to this provider.",
+  "此模型的账号已移除，请重新接入。": "Model account is no longer connected.",
+  "账号引擎已退出，请重启应用。": "Account engine exited. Restart the application.",
+  "账号引擎不可用，请重启应用或重新接入此账号。": "Account engine is unavailable. Restart the application or reconnect this account.",
+  "该会话已绑定其他账号，请新建会话切换账号。": "This conversation is bound to another account. Start a new conversation to switch accounts.",
+  "账号引擎不可用，请重新接入此账号。": "Account engine is not available. Reconnect this account.",
+  "凭据已移除，但未确认账号引擎退出。请重启应用后重试。": "Account credentials were removed, but engine shutdown was not confirmed. Restart the application before retrying.",
+  "账号数量已达上限，请移除不用的账号后再添加。": "Account limit reached. Remove an unused account before adding another."
 }

@@ -14,6 +14,12 @@ export const providerIDSchema = z
   .string()
   .regex(/^[a-z][a-z0-9-]{0,59}$/)
   .refine((v) => !['constructor', 'prototype'].includes(v), 'Reserved provider ID');
+export const accountNameSchema = safeText(40);
+export const accountTargetSchema = z.object({
+  id: providerIDSchema.optional(),
+  name: accountNameSchema,
+});
+export type AccountTarget = z.infer<typeof accountTargetSchema>;
 export const apiKeySchema = z
   .string()
   .trim()
@@ -39,7 +45,7 @@ export const baseURLSchema = safeText(1000)
   .transform((v) => v.replace(/\/+$/, ''));
 export const customProviderSchema = z
   .object({
-    id: providerIDSchema,
+    id: providerIDSchema.refine(v => !v.startsWith('rivloom-account-'), 'Reserved account namespace'),
     name: safeText(80),
     baseURL: baseURLSchema,
     protocol: z.enum(['chat', 'responses']),
@@ -78,10 +84,14 @@ export type ProviderAccess = {
   apiKey: boolean;
   oauth: { index: number; label: string; prompts: AuthPrompt[] }[];
   custom?: CustomProvider;
+  account?: { providerID: string; name: string };
+  accountName?: string;
+  accountError?: string;
 };
 export type OAuthStatus = {
   id: string;
   providerID: string;
+  accountID?: string;
   status: 'starting' | 'waiting' | 'connecting' | 'saving' | 'connected' | 'cancelled' | 'failed';
   url?: string;
   instructions?: string;

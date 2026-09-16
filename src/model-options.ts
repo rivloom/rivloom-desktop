@@ -8,6 +8,7 @@ export function modelDetails(model: AvailableModel) {
     providerID,
     providerName: model.providerName || (suffix > 0 ? model.name.slice(suffix + 3) : providerID),
     modelName: model.modelName || (suffix > 0 ? model.name.slice(0, suffix) : model.name),
+    ...(model.accountName ? { accountName: model.accountName } : {}),
   };
 }
 
@@ -15,19 +16,33 @@ export function groupModels(models: AvailableModel[], query = '', locale = 'zh-C
   const terms = query.trim().toLocaleLowerCase(locale).split(/\s+/).filter(Boolean);
   const compare = new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }).compare;
   const stableCompare = (a: string, b: string) => compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
-  const groups = new Map<string, { id: string; name: string; models: AvailableModel[] }>();
+  const groups = new Map<
+    string,
+    { id: string; name: string; accountName?: string; models: AvailableModel[] }
+  >();
   for (const model of models) {
-    const { providerID, providerName, modelName } = modelDetails(model);
-    const haystack = `${model.id} ${modelName} ${providerID} ${providerName}`.toLocaleLowerCase(
-      locale,
-    );
+    const { providerID, providerName, modelName, accountName } = modelDetails(model);
+    const haystack =
+      `${model.id} ${modelName} ${providerID} ${providerName} ${accountName || ''} ${model.sourceProviderID || ''}`.toLocaleLowerCase(
+        locale,
+      );
     if (!terms.every((term) => haystack.includes(term))) continue;
-    const group = groups.get(providerID) || { id: providerID, name: providerName, models: [] };
+    const group = groups.get(providerID) || {
+      id: providerID,
+      name: providerName,
+      ...(accountName ? { accountName } : {}),
+      models: [],
+    };
     group.models.push(model);
     groups.set(providerID, group);
   }
   return [...groups.values()]
-    .sort((a, b) => stableCompare(a.name, b.name) || stableCompare(a.id, b.id))
+    .sort(
+      (a, b) =>
+        stableCompare(a.name, b.name) ||
+        stableCompare(a.accountName || '', b.accountName || '') ||
+        stableCompare(a.id, b.id),
+    )
     .map((group) => ({
       ...group,
       models: group.models.sort(
