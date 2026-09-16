@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
-import type { ModelSettings, User } from '../shared/types.ts';
+import type { Bootstrap, ModelSettings, User } from '../shared/types.ts';
 import type { ProviderAccess } from '../shared/model-providers.ts';
 import { createServer } from 'node:http';
 
@@ -280,6 +280,15 @@ try {
   const custom = await owner.call<ModelSettings>('/model-settings/provider/custom', customBody);
   const localModel = `${definition.id}/org/check-model`;
   assert(custom.models.some((m) => m.id === localModel));
+  const displayModel = custom.models.find((m) => m.id === localModel)!;
+  assert.equal(displayModel.providerID, definition.id);
+  assert.equal(displayModel.providerName, definition.name);
+  assert.equal(displayModel.modelName, definition.models[0].name);
+  assert.equal(displayModel.contextWindow, 32768);
+  assert.equal(displayModel.supportsImages, false);
+  const bootstrap = await owner.call<Bootstrap>('/bootstrap');
+  assert.deepEqual(bootstrap.engine.models.find((m) => m.id === localModel), displayModel);
+  pass('Provider identity, context and image input metadata reach settings and the development bootstrap without credentials');
   assert.equal(requests.length, 0);
   assert(!JSON.stringify(await owner.call('/model-settings/providers')).includes(fakeKey));
   assert(!readFileSync(join(directory, 'engine', 'rivloom-providers.json')).includes(fakeKey));

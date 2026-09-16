@@ -6,6 +6,124 @@ import { join } from 'node:path';
 import { customProviderSchema, safeOAuthURL, promptVisible } from '../shared/model-providers.ts';
 import { ProviderConfigStore } from '../server/provider-config.ts';
 import { ProviderOAuth, type OAuthDriver } from '../server/provider-oauth.ts';
+import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
+import { formatContextWindow, groupModels, modelDetails } from '../src/model-options.ts';
+
+test('model catalog exposes only connected display metadata and preserves exact provider/model identity', () => {
+  const provider = (id: string, context: number, image: boolean) => ({
+    id,
+    name: id.toUpperCase(),
+    key: 'PRIVATE_KEY',
+    options: { token: 'PRIVATE_TOKEN' },
+    models: {
+      'org/model': {
+        id: 'org/model',
+        name: 'A model',
+        limit: { context },
+        capabilities: { input: { image } },
+        headers: { authorization: 'PRIVATE_HEADER' },
+      },
+    },
+  });
+  // A structurally minimal engine response keeps the privacy boundary visible in the assertion.
+  const catalog = availableModels(
+    [
+      provider('a', 1_000_000, true),
+      provider('b', 0, false),
+      provider('offline', 128000, true),
+    ] as unknown as Parameters<typeof availableModels>[0],
+    ['a', 'b'],
+  );
+  assert.deepEqual(catalog, [
+    {
+      id: 'a/org/model',
+      name: 'A model · A',
+      providerID: 'a',
+      providerName: 'A',
+      modelName: 'A model',
+      contextWindow: 1_000_000,
+      supportsImages: true,
+    },
+    {
+      id: 'b/org/model',
+      name: 'A model · B',
+      providerID: 'b',
+      providerName: 'B',
+      modelName: 'A model',
+      supportsImages: false,
+    },
+  ]);
+  assert(!JSON.stringify(catalog).includes('PRIVATE'));
+});
+
+const pickerModels: AvailableModel[] = [
+  { id: 'z/model10', name: 'Model 10 · Zeta' },
+  {
+    id: 'a/org/model',
+    name: 'Same · Alpha',
+    providerName: 'Alpha',
+    providerID: 'a',
+    modelName: 'Same',
+  },
+  { id: 'z/org/model', name: 'Same · Zeta' },
+  { id: 'z/model2', name: 'Model 2 · Zeta' },
+  { id: 'b/same', name: 'Same · Alpha' },
+];
+
+test('model groups sort naturally and remain distinct for identical provider names and model names', () => {
+  const sorted = groupModels(pickerModels, '', 'en');
+  assert.deepEqual(
+    sorted.map((group) => group.id),
+    ['a', 'b', 'z'],
+  );
+  assert.deepEqual(
+    sorted[2].models.map((model) => model.id),
+    ['z/model2', 'z/model10', 'z/org/model'],
+  );
+  assert.deepEqual(groupModels([...pickerModels].reverse(), '', 'en'), sorted);
+  assert.equal(pickerModels[0].id, 'z/model10');
+});
+
+test('model search combines provider and model terms, handles slashes, and omits empty groups', () => {
+  assert.deepEqual(
+    groupModels(pickerModels, ' ZETA  same ', 'en').flatMap((g) => g.models.map((m) => m.id)),
+    ['z/org/model'],
+  );
+  assert.equal(groupModels(pickerModels, 'org/model').length, 2);
+  assert.equal(groupModels(pickerModels, 'unavailable').length, 0);
+  assert.equal(groupModels([], '').length, 0);
+});
+
+test('legacy model snapshots retain slash IDs and explicit metadata takes precedence over display punctuation', () => {
+  assert.deepEqual(modelDetails({ id: 'local/org/model', name: 'Model' }), {
+    providerID: 'local',
+    providerName: 'local',
+    modelName: 'Model',
+  });
+  assert.deepEqual(modelDetails({ id: 'plain', name: 'Unscoped' }), {
+    providerID: '',
+    providerName: '',
+    modelName: 'Unscoped',
+  });
+  assert.equal(
+    modelDetails({
+      id: 'a/b',
+      name: 'Name · Version · Brand',
+      providerName: 'Brand · Official',
+      modelName: 'Name · Version',
+    }).providerName,
+    'Brand · Official',
+  );
+});
+
+test('context labels use decimal token units and never invent unknown capacities', () => {
+  assert.equal(formatContextWindow(1_000_000), '1M');
+  assert.equal(formatContextWindow(262_144), '262.1K');
+  assert.equal(formatContextWindow(128_000), '128K');
+  assert.equal(formatContextWindow(512), '512');
+  for (const value of [undefined, 0, -1, NaN, Infinity])
+    assert.equal(formatContextWindow(value), null);
+});
 
 const definition = {
   id: 'custom-test',

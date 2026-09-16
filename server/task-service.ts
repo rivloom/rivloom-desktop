@@ -18,6 +18,7 @@ import { checkWorkflowQuiescence } from './workflow-quiescence.ts';
 import { taskApprovalPrompt } from './task-prompts.ts';
 import { EnginePermissionEvents } from './engine-permissions.ts';
 import { knowledgePrompt } from '../shared/knowledge.ts';
+import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -27,7 +28,7 @@ export function changed(taskID?: string) {
 export const engineStatus = {
   ready: false,
   version: ENGINE_VERSION,
-  models: [] as { id: string; name: string }[],
+  models: [] as AvailableModel[],
   connectedProviders: [] as string[],
   error: null as string | null,
 };
@@ -103,14 +104,7 @@ export async function refreshEngineModels() {
   requireThat(engine, 503, '引擎尚未启动');
   const providers = (await engine.client.provider.list({ directory: dataRoot })).data!;
   engineStatus.connectedProviders = providers.connected;
-  engineStatus.models = providers.all
-    .filter((p) => providers.connected.includes(p.id))
-    .flatMap((p) =>
-      Object.values(p.models).map((m) => ({
-        id: `${p.id}/${m.id}`,
-        name: `${m.name} · ${p.name}`,
-      })),
-    );
+  engineStatus.models = availableModels(providers.all, providers.connected);
 }
 export function engineClient() {
   requireThat(engineStatus.ready && engine, 503, engineStatus.error || '引擎正在启动');

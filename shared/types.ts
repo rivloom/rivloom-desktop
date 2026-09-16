@@ -111,7 +111,7 @@ export type Bootstrap = {
   engine: {
     ready: boolean;
     version: string;
-    models: { id: string; name: string }[];
+    models: import('./model-catalog.ts').AvailableModel[];
     error: string | null;
   };
   defaultModel: string;
@@ -344,7 +344,7 @@ export type ModelOperation = {
 };
 export type ModelSettings = {
   defaultModel: string;
-  models: { id: string; name: string }[];
+  models: import('./model-catalog.ts').AvailableModel[];
   deepseekConfigured: boolean;
   credentialUpdatedAt: string | null;
   credentialState: 'unconfigured' | 'configured_unverified' | 'verified' | 'needs_review';

@@ -4,6 +4,7 @@ import { TaskFilePicker, TaskFilesPanel } from './task-files';
 import { LanguageSwitcher } from './language-switcher';
 import { draftFilesReady } from './task-file-upload';
 import { CopyButton } from './copy-button';
+import { ModelPicker } from './model-picker';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
 import { ConversationFilterButton } from './conversation-filter-button';
 import { ConversationTrash } from './conversation-trash';
@@ -1211,26 +1212,7 @@ export function ConversationWorkspace({
               </label>
             )}
             {(!targetNodeID || targetNodeID === local?.id) && (
-              <label className="composer-select model-select">
-                <Bot size={15} />
-                <select
-                  aria-label={t('执行模型')}
-                  disabled={busy}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                >
-                  {!data.engine.models.some((m) => m.id === model) && (
-                    <option value={model}>
-                      {data.engine.models.length ? t('选择模型') : t('尚未连接模型')}
-                    </option>
-                  )}
-                  {data.engine.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ModelPicker models={data.engine.models} value={model} onChange={setModel} disabled={busy} />
             )}
             {data.user.owner && <button type="button" className="composer-options" disabled={busy}
               aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
