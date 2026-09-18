@@ -12,7 +12,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.18 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.18.md)；[官网下载页](https://rivloom.com/download/) 的配套更新仍在部署，尚未完成官网收尾。Windows 下载及签名更新保持不变。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；当前产品使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
+**Linux x86_64 命令行执行节点 0.1.18 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.18.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线，提供下载、校验值和 curl / wget 命令。Windows 下载及签名更新保持不变。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；当前产品使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
 
 ## 从源码运行
 

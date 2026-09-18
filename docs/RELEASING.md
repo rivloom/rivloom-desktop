@@ -1,6 +1,6 @@
 # 官网分发与安全更新方案
 
-**2026-09-18 · Linux x64 0.1.18 已发布，官网部署待完成。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 的 [原生 CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)、公开完整下载与 Linux curl / wget 原生命令验收通过。Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 的配套更新仍在 Pages Building，尚不能记为官网部署或完整收尾完成。发行 tag、文件和验证范围见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
+**2026-09-18 · Linux x64 0.1.18 已发布，官网已实际上线。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 的 [原生 CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)、公开完整下载与 Linux curl / wget 原生命令验收通过。Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际部署；包地址、校验值、curl / wget 命令及 x64 下载跳转均已复核，ARM64 下载入口保持未发布。发行 tag、文件和验证范围见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
 
 **Linux 独立发布规则：** 无 GUI 执行节点使用独立 tar.gz、SHA256SUMS 和 `releases/linux/latest.json`。公开记录要求 x64，ARM64 为可选项，平台与 artifact 来源必须完全对应，校验文件只列实际发行的平台。使用只读 `linux-ci.yml` 完成原生构建与验收，再手动触发 `linux-release.yml`，提供同一 main 提交已经成功结束的构建 run ID 与 x64 artifact ID。流程复核来源、解包启动/停止、身份保持、认证边界及摘要后才创建独立 Linux Release，并在公开完整下载核对成功后推进 Linux 记录。未通过的架构不得写成可用。
 

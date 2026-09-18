@@ -2,7 +2,7 @@
 
 ## Linux 执行节点构建与手动发布
 
-**2026-09-18 · Linux x64 0.1.18 已发布，官网部署待完成。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 已通过 [原生 Linux CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026) 与 [手动发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)，发行 tag 为 `linux-v0.1.18-509294bbf0fd-35357963026`。公开完整下载和 Linux curl / wget 原生命令验收通过；Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 的配套 Pages 更新仍在 Building，不能据此记为官网已部署或完整收尾。详情见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
+**2026-09-18 · Linux x64 0.1.18 已发布，官网已实际上线。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 已通过 [原生 Linux CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026) 与 [手动发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)，发行 tag 为 `linux-v0.1.18-509294bbf0fd-35357963026`。公开完整下载和 Linux curl / wget 原生命令验收通过；Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 及配套中英文指南已由 Pages 实际部署，包地址、校验值、curl / wget 命令、x64 302 下载入口及 ARM64 未发布入口均已复核。详情见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
 
 `.github/workflows/linux-ci.yml` 当前只在原生 Ubuntu x64 runner 上按锁文件安装依赖，运行平台与 CLI 检查、12 项 Linux 协议、CLI 服务集成与两节点合成任务，再构建自包含 tar.gz、解包核对全部文件、启动/重启/停止并检查权限、认证边界与身份保持，最后保存 x64 Actions artifact。构建工作流只有只读仓库权限，不创建 Release 或上传 R2。ARM64 打包代码保留，但不参加本次首发，不能将 x64 结果写成 ARM64 已通过。
 

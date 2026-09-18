@@ -2,7 +2,7 @@
 
 ## 状态
 
-Linux x64 0.1.18 已发布，同提交原生 CI、公开完整下载与 curl / wget 原生命令验收通过；见 [Linux 0.1.18 发行说明](../releases/linux-0.1.18.md)。[官网下载页](https://rivloom.com/download/) 的配套更新仍在部署，尚未完成官网收尾。ARM64 保留实现，等待原生架构验收后单独发布；Windows 安装包与签名更新指针保持不变。
+Linux x64 0.1.18 已发布，同提交原生 CI、公开完整下载与 curl / wget 原生命令验收通过；见 [Linux 0.1.18 发行说明](../releases/linux-0.1.18.md)。[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线并复核。ARM64 保留实现，等待原生架构验收后单独发布；Windows 安装包与签名更新指针保持不变。
 
 ## 背景
 

@@ -2,11 +2,11 @@
 
 Linux 端用于局域网内没有图形界面的服务器和迷你主机。通过 SSH 初始化和管理，让 Rivloom 桌面端发现、配对并派发任务；Linux 端在本机已授权的项目目录内执行，不需要桌面环境。
 
-**Linux x86_64（包名 `x64`）0.1.18 已发布。** 同提交 GitHub 原生 CI、公开完整下载及 Linux curl / wget 命令验收通过，见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。[官网下载页](https://rivloom.com/download/) 的配套更新仍在部署，尚未完成官网收尾。ARM64 的源码和构建适配保留，等待原生架构验收后再单独开放，目前不发布 ARM64 下载。Windows 安装包及签名更新指针保持不变。
+**Linux x86_64（包名 `x64`）0.1.18 已发布。** 同提交 GitHub 原生 CI、公开完整下载及 Linux curl / wget 命令验收通过，见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线并复核，提供 x64 下载、校验值和 curl / wget 命令。ARM64 的源码和构建适配保留，等待原生架构验收后再单独开放，目前不发布 ARM64 下载。Windows 安装包及签名更新指针保持不变。
 
 ## 下载与解压
 
-官网更新部署完成后，可从 [官网下载页](https://rivloom.com/download/) 选择 Linux x86_64，并复制页面给出的完整 curl / wget 命令。当前发行文件也可从 [GitHub Linux 0.1.18](https://github.com/rivloom/rivloom-desktop/releases/tag/linux-v0.1.18-509294bbf0fd-35357963026) 获取，固定公开下载地址和 SHA-256 见 [发行说明](releases/linux-0.1.18.md)。校验通过后解压，无需 `sudo`，也不执行下载下来的安装脚本。
+从 [官网下载页](https://rivloom.com/download/) 选择 Linux x86_64，并复制页面给出的完整 curl / wget 命令。当前发行文件也可从 [GitHub Linux 0.1.18](https://github.com/rivloom/rivloom-desktop/releases/tag/linux-v0.1.18-509294bbf0fd-35357963026) 获取，固定公开下载地址和 SHA-256 见 [发行说明](releases/linux-0.1.18.md)。校验通过后解压，无需 `sudo`，也不执行下载下来的安装脚本。
 
 首发文件名为 `Rivloom_<版本>_linux_x64.tar.gz`。解压后的顶层目录是 `rivloom/`，包含启动入口 `bin/rivloom`、固定 Node.js、官方 OpenCode 引擎、应用和依赖许可。包内带运行时，不要求额外安装 Node.js 或 npm。
 
