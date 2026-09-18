@@ -15,6 +15,7 @@ export const serviceChecks = {
   'desktop-update': 'scripts/desktop-update-service-check.ts',
   'origin-concurrency': 'scripts/origin-concurrency-check.ts',
   workflow: 'scripts/workflow-service-check.ts',
+  'workflow-diagnostics': 'scripts/workflow-diagnostics-check.ts',
   'model-settings': 'scripts/model-settings-check.ts',
   'provider-accounts': 'scripts/provider-accounts-check.ts',
   permissions: 'scripts/permission-policy-check.ts',

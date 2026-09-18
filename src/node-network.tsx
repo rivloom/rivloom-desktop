@@ -35,6 +35,7 @@ import { nodeDisplayName } from './node-mentions';
 import { useDisplayClock } from './use-display-clock';
 import { queueReminderThreshold } from '../shared/queue-backlog.ts';
 import { machineStatus } from './machine-status';
+import { LanConnection } from './lan-connection';
 
 const shortFingerprint = (value: string) => {
   const groups = value.split(':');
@@ -1133,6 +1134,7 @@ export function NodeNetworkView({
       </div>
 
       {network.error && <div className="error network-error">{systemText(network.error)}</div>}
+      <LanConnection network={network} owner={owner} />
 
       <div className="network-overview">
         <div>

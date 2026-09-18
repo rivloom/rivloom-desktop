@@ -105,3 +105,23 @@
   .workflow-controls .button, .node-mention-mode button { min-height: 38px; }
 }
 @media (prefers-reduced-motion: reduce) { .workflow-conversation .spin { animation: none; } }
+.workflow-diagnostics { margin: 14px 0; border-top: 1px solid var(--line); }
+.workflow-diagnostics-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 4px; font-size: 13px; }
+.workflow-diagnostics-refresh, .workflow-diagnostics-more { border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; cursor: pointer; font: inherit; font-size: 12px; }
+.workflow-diagnostic-step { padding: 12px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.workflow-diagnostic-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; }
+.workflow-diagnostic-title button { border: 0; background: transparent; padding: 0; text-align: left; font: inherit; font-size: 13px; font-weight: 600; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.workflow-diagnostic-title > span { color: var(--muted); font-size: 12px; }
+.workflow-diagnostic-step.unknown .workflow-diagnostic-title > span, .workflow-diagnostic-step.failed .workflow-diagnostic-title > span { color: #996321; }
+.workflow-diagnostic-step p { margin: 6px 0; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.workflow-diagnostic-step small, .workflow-diagnostic-device, .workflow-diagnostics-sampled { color: var(--muted); font-size: 11px; }
+.workflow-diagnostic-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.workflow-diagnostic-actions .button, .workflow-diagnostic-evidence .button { font-size: 11px; min-height: 28px; padding: 4px 8px; }
+.workflow-diagnostic-evidence { margin-top: 8px; font-size: 12px; }
+.workflow-diagnostic-evidence summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+.workflow-diagnostic-evidence > div { margin: 10px 0; padding-left: 10px; border-left: 2px solid var(--line); }
+.workflow-diagnostics-sampled { display: block; margin-top: 8px; }
+.workflow-diagnostic-summary { margin-top: 10px; font-size: 12px; }
+.workflow-diagnostic-summary summary { color: var(--muted); cursor: pointer; }
+.workflow-diagnostic-summary pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; }
+.workflow-diagnostic-step.held .workflow-diagnostic-title > span, .workflow-diagnostic-step.rejected .workflow-diagnostic-title > span { color: #996321; }

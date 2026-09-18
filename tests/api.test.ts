@@ -7,6 +7,16 @@ import {
   updateConversationDraft,
 } from '../src/conversation-drafts.ts';
 
+test('caller cancellation aborts the request without reporting a delivery timeout', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+    init.signal!.addEventListener('abort', () => reject(new DOMException('cancelled by caller', 'AbortError')), { once: true });
+  }));
+  const controller = new AbortController();
+  const request = api('/workflows/example/diagnostics', undefined, { signal: controller.signal, timeoutMilliseconds: 1000 });
+  controller.abort();
+  await assert.rejects(request, (error: unknown) => error instanceof DOMException && error.name === 'AbortError');
+});
+
 test('creation timeout aborts waiting and preserves the original request for retry', async (t) => {
   const bodies: string[] = [];
   t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {

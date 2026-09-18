@@ -2490,6 +2490,31 @@ html[lang='en'] .conversation-settings > button {
   margin: 0 auto;
   padding: 12px 0 40px;
 }
+.lan-connection {
+  margin: 16px 0 24px;
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.lan-connection-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.lan-connection-heading h2 { display: flex; align-items: center; gap: 8px; font-size: 15px; margin: 0; }
+.lan-connection-heading p, .lan-scope { color: var(--muted); }
+.lan-profile-list { display: grid; gap: 10px; margin: 14px 0; }
+.lan-profile { display: grid; gap: 4px; border-left: 3px solid var(--line-strong); padding-left: 12px; }
+.lan-public-consent { display: flex; align-items: start; gap: 10px; margin: 16px 0; }
+.lan-public-consent input { width: 16px; height: 16px; padding: 0; margin-top: 5px; flex-shrink: 0; }
+.lan-public-consent span { flex: 1; min-width: 0; }
+.lan-connection details { margin: 12px 0; color: var(--muted); }
+.lan-connection summary { cursor: pointer; }
+@media (max-width: 650px) {
+  .lan-connection { padding: 14px; }
+  .lan-connection-heading { flex-direction: column; }
+  .lan-connection .button { white-space: normal; }
+}
 .diagnostic-target {
   display: flex;
   justify-content: space-between;

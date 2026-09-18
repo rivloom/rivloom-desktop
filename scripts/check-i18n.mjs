@@ -91,10 +91,12 @@ for (const file of [...sourceFiles('src'), ...sourceFiles('shared'), ...sourceFi
 }
 // These two pre-window diagnostics occur before a locale can be loaded.
 const nativeDiagnostics = new Set(['RIVLOOM_DATA_DIR 必须是绝对路径', 'Rivloom 桌面初始化失败']);
-for (const match of read('src-tauri/src/main.rs').matchAll(/"((?:\\.|[^"\\])*)"/g)) {
-  const source = match[1];
-  if (han.test(source) && !nativeDiagnostics.has(source) && !Object.hasOwn(en, source))
-    failures.push(`Native translation missing: ${source}`);
+for (const file of ['src-tauri/src/main.rs', 'src-tauri/src/desktop_tray.rs']) {
+  for (const match of read(file).matchAll(/"((?:\\.|[^"\\])*)"/g)) {
+    const source = match[1];
+    if (han.test(source) && !nativeDiagnostics.has(source) && !Object.hasOwn(en, source))
+      failures.push(`${file}: Native translation missing: ${source}`);
+  }
 }
 assert.equal(failures.length, 0, failures.join('\n'));
 console.log(

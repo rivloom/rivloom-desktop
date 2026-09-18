@@ -21,12 +21,15 @@ export class ApiError extends Error {
 export async function api<T>(
   path: string,
   body?: unknown,
-  options: { timeoutMilliseconds?: number } = {},
+  options: { timeoutMilliseconds?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   const timeoutMilliseconds =
     options.timeoutMilliseconds ?? (body === undefined ? 15_000 : undefined);
-  const controller = timeoutMilliseconds ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), timeoutMilliseconds) : null;
+  const controller = timeoutMilliseconds || options.signal ? new AbortController() : null;
+  const abort = () => controller?.abort();
+  if (options.signal?.aborted) abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  const timer = timeoutMilliseconds ? setTimeout(abort, timeoutMilliseconds) : null;
   try {
     const response = await fetch(`/api${path}`, {
       method: body === undefined ? 'GET' : 'POST',
@@ -46,10 +49,11 @@ export async function api<T>(
       );
     return data;
   } catch (error) {
-    if (controller?.signal.aborted)
+    if (controller?.signal.aborted && !options.signal?.aborted)
       throw new Error(t('请求超时，结果尚未确认。请重试确认同一次请求。'));
     throw error;
   } finally {
     if (timer !== null) clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
   }
 }

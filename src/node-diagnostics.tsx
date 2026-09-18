@@ -10,6 +10,8 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { api } from './api';
+import { LanConnection } from './lan-connection';
+import { firewallSummary, type LanFirewallReport } from '../shared/lan-firewall.ts';
 import {
   diagnoseLocal,
   diagnosePeer,
@@ -65,6 +67,7 @@ export function NodeDiagnosticsView({
     ).values(),
   ];
   const node = nodes.find((n) => n.id === selection);
+  const [firewall, setFirewall] = useState<{ report: LanFirewallReport | null; stale: boolean } | null>(null);
   const diagnostic =
     selection === 'local' ? diagnoseLocal(data, connected) : node ? diagnosePeer(node) : null;
   const checkedAt = new Date().toISOString();
@@ -131,7 +134,7 @@ export function NodeDiagnosticsView({
           <button
             className="button"
             onClick={() => {
-              const summary = diagnosticSummary(diagnostic, checkedAt);
+              const summary = diagnosticSummary(diagnostic, checkedAt) + (diagnostic.local && firewall ? '\n' + firewallSummary(firewall.report, firewall.stale) : '');
               setCopyText(summary);
               setMessage(t('诊断摘要已准备；也可选中下方文字手动复制。'));
               void navigator.clipboard
@@ -165,6 +168,7 @@ export function NodeDiagnosticsView({
           onFocus={(event) => event.target.select()}
         />
       )}
+      {selection === 'local' && <LanConnection network={data.network} owner={data.user.owner} onReport={(report, stale) => setFirewall({ report, stale })} />}
       {diagnostic ? (
         <>
           {!diagnostic.local && (

@@ -82,3 +82,15 @@ test('copied diagnostic summary excludes identity, network paths and task conten
   for (const secret of ['secret-node', 'private-name', '192.168.1.9', 'private-fingerprint'])
     assert(!text.includes(secret));
 });
+test('discovery probe stages distinguish transport from identity and expire without claiming firewall cause', () => {
+  const data = { network: {status:'online',local:null,diagnostics:{mdnsActive:true,udpActive:true,lastProbe:null}},
+    engine:{ready:true,models:[]},executionPolicy:{enabled:false,model:null,projectID:null},projects:[] } as unknown as Bootstrap;
+  for (const stage of ['transport_failed','identity_failed','verified'] as const) {
+    data.network.diagnostics!.lastProbe = {at:new Date().toISOString(),stage};
+    const check = diagnoseLocal(data).checks.find((c) => c.code === 'peer_probe')!;
+    assert.equal(check.state,stage==='verified'?'ok':'warning');
+    if(stage==='transport_failed') assert.match(check.detail,/尚不能确定为防火墙/);
+  }
+  data.network.diagnostics!.lastProbe!.at = new Date(Date.now()-61_000).toISOString();
+  assert(!diagnoseLocal(data).checks.some((c)=>c.code==='peer_probe'));
+});

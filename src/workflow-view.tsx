@@ -15,6 +15,7 @@ import { WorkflowGraph, workflowStepLabel, type WorkflowGraphNode } from './work
 import { workflowResults } from './workflow-results';
 import { searchTargetID, workflowAttemptResponse, type SearchMatch } from './conversation-search';
 import { SearchText } from './conversation-search-view';
+import { WorkflowDiagnostics, type WorkflowDiagnosticNavigation } from './workflow-diagnostics';
 import './workflow.css';
 
 function ExecutionActions({ local, remote, data, busy, perform }: {
@@ -48,6 +49,7 @@ function ExecutionActions({ local, remote, data, busy, perform }: {
 type WorkflowViewProps = {
   value: Workflow; data: Bootstrap; busy: boolean; perform: (fn: () => Promise<unknown>) => Promise<boolean>; nodeName: (id: string | null) => string;
   searchMatch?: SearchMatch; searchQuery?: string; searchRevision?: number;
+  navigateDiagnostics?: WorkflowDiagnosticNavigation;
 };
 export function WorkflowView(props: WorkflowViewProps) {
   const { value, busy, perform } = props;
@@ -75,7 +77,7 @@ export function WorkflowView(props: WorkflowViewProps) {
     </section>}
   </>;
 }
-function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = false, searchMatch, searchQuery = '', searchRevision }: WorkflowViewProps & { historical?: boolean }) {
+function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagnostics, historical = false, searchMatch, searchQuery = '', searchRevision }: WorkflowViewProps & { historical?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const processID = useId();
   const [selection, setSelection] = useState<{ stepID: string; attempt: number } | null>(null);
@@ -109,7 +111,7 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
   });
   const current = records(selectedAttempt);
   const checkpoint = selectedAttempt && selectedStep ? workflowAttemptResponse(selectedStep, selectedAttempt) : selectedStep?.checkpoint;
-  const status = { planning: t('正在分析与规划'), running: t('正在按计划执行'), paused: t('已暂停派发'), stopping: t('正在确认停止'),
+  const status = { planning: t('正在分析与规划'), running: t('任务进行中'), paused: t('已暂停派发'), stopping: t('正在确认停止'),
     stopped: t('已停止'), completed: t('已完成'), failed: t('需要检查执行结果') }[value.state];
   const choose = (node: WorkflowGraphNode) => setSelection({ stepID: node.step.id, attempt: node.attempt?.number || 0 });
   const showStep = (step: WorkflowStep) => { setSelection({ stepID: step.id, attempt: step.attempts.at(-1)?.number || 0 }); setExpanded(true); };
@@ -140,7 +142,9 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
           <TaskFilesPanel scope={attempt.kind} taskID={attempt.executionID} resultsOnly nodeName={nodeName} />
         </div>)}
       </div>}
-      {!complete && <>
+      {!complete && !historical && <WorkflowDiagnostics value={value} data={data} busy={busy} nodeName={nodeName}
+        showStep={showStep} editStep={edit} retry={(step) => void retry(step)} navigate={navigateDiagnostics} />}
+      {!complete && historical && <>
         <div className="workflow-current-work">{steps.filter((step) => terminal ? step.state === 'failed' || step.state === 'blocked' : step.state === 'running').map((step) =>
           <div className="workflow-work-row" key={step.id}>
             <button type="button" onClick={() => showStep(step)}><small>{workflowStepLabel(step, step.attempts.at(-1))}</small><span>{step.title}</span><ChevronRight size={14} /></button>
@@ -158,8 +162,6 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, historical = 
       {!historical && canRetryWorkflowPlanning(value) && <div className="workflow-controls"><Button disabled={busy}
         onClick={() => void perform(() => api(`/workflows/${value.id}/control`, { action: 'retry_planning' }))}><Play size={13} />{t('重新规划')}</Button>
         <small>{t('保留原规划记录，重新分析这条需求。')}</small></div>}
-      {!terminal && steps.some((s) => s.state === 'ready') && !steps.some((s) => s.state === 'running') && !value.pendingConfirmation &&
-        <p className="muted">{t('正在等待合适的 Node、模型、工具或队列条件。条件恢复后会自动继续。')}</p>}
     </section>
     {value.pendingConfirmation && <section className="chat-approval workflow-confirmation" role="status">
       <h3>{t('确认目标 Node 的队列')}</h3><p>{t('{{node}} 当前已有 {{count}} 项排队或执行中的工作。是否继续提交到这台设备？', { node: nodeName(value.pendingConfirmation.nodeID), count: value.pendingConfirmation.waitingCount })}</p>

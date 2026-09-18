@@ -9,18 +9,20 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
         mpsc, Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, Instant},
 };
 use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::DialogExt;
 
 mod native_async;
+mod lan_firewall;
 mod task_file_location;
 mod desktop_update;
+mod desktop_tray;
 mod update_backup;
 #[cfg(windows)]
 mod windows_taskbar_icon;
@@ -81,6 +83,7 @@ impl Drop for RuntimeProcess {
 
 struct DesktopState {
     runtime: Mutex<RuntimeProcess>,
+    runtime_program: PathBuf,
     origin: String,
     data_dir: PathBuf,
     closing: AtomicBool,
@@ -130,6 +133,8 @@ fn set_desktop_language(window: WebviewWindow, state: tauri::State<DesktopState>
     authorize(&window, &state)?;
     save_locale(&state.data_dir, &locale)?;
     let _ = window.set_title("Rivloom");
+    desktop_tray::update_language(window.app_handle())
+        .map_err(|_| native_text(&state.data_dir, "无法更新托盘菜单，请重试。"))?;
     Ok(())
 }
 
@@ -383,13 +388,14 @@ fn start_runtime(
 }
 
 fn main() {
+    if let Some(code) = lan_firewall::lifecycle() { std::process::exit(code); }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") { let _ = window.unminimize(); let _ = window.set_focus(); }
+            desktop_tray::show_workspace(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, take_notification_target,
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
             desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
             desktop_update::confirm_desktop_startup])
@@ -419,13 +425,12 @@ fn main() {
                     let callback_app = app.handle().clone();
                     windows_notifications::NotificationService::start(windows_notifications::APP_ID, windows_notifications::ACTIVATOR_ID, move |target| {
                         if let Ok(mut pending) = pending.lock() { *pending = Some(target); }
-                        if let Some(window) = callback_app.get_webview_window("main") {
-                            let _ = window.unminimize(); let _ = window.show(); let _ = window.set_focus();
-                        }
+                        desktop_tray::show_workspace(&callback_app);
                     })
                 } else { Err("Notification activation is not registered for this installed executable".into()) }
             };
-            app.manage(DesktopState { runtime: Mutex::new(runtime), origin: url.clone(), data_dir: data_dir.clone(), closing: AtomicBool::new(false), notification_target, last_notification: Mutex::new(None), #[cfg(windows)] notifications });
+            app.manage(DesktopState { runtime: Mutex::new(runtime), runtime_program: root.join("node.exe"), origin: url.clone(), data_dir: data_dir.clone(), closing: AtomicBool::new(false), notification_target, last_notification: Mutex::new(None), #[cfg(windows)] notifications });
+            app.manage(lan_firewall::FirewallState::default());
             app.manage(desktop_update::UpdateState::new(&data_dir, !preview));
             desktop_update::start_background(app.handle().clone());
             let allowed_origin = url.clone();
@@ -438,25 +443,15 @@ fn main() {
                 .build()?;
             #[cfg(windows)]
             windows_taskbar_icon::apply(&window)?;
+            desktop_tray::setup(app.handle())?;
             window.show()?;
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() != "main" { return; }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let state = window.state::<DesktopState>();
-                if state.closing.swap(true, Ordering::SeqCst) { return; }
-                let app = window.app_handle().clone();
-                window.app_handle().dialog().message(native_text(&state.data_dir, "退出后，执行中的 AI 任务会停止，已产生的文件不会撤销。下次启动需手动检查并继续任务。")).title(native_text(&state.data_dir, "退出 Rivloom？"))
-                    .buttons(MessageDialogButtons::OkCancelCustom(native_text(&state.data_dir, "退出并停止执行"), native_text(&state.data_dir, "留在工作区")))
-                    .show(move |confirmed| {
-                        if confirmed {
-                            thread::spawn(move || {
-                                if let Ok(mut runtime) = app.state::<DesktopState>().runtime.lock() { runtime.stop(); }
-                                app.exit(0);
-                            });
-                        } else { app.state::<DesktopState>().closing.store(false, Ordering::SeqCst); }
-                    });
+                desktop_tray::request_hide(window.app_handle());
             }
         })
         .build(tauri::generate_context!())
@@ -494,8 +489,8 @@ mod tests {
         assert!(save_locale(&root, "../fr").is_err());
         assert_eq!(read_locale(&root), "en");
         assert_eq!(std::fs::read_to_string(&identity).unwrap(), "keep-existing-identity");
-        assert_eq!(native_translation("en", "退出 Rivloom？"), "Quit Rivloom?");
-        assert_eq!(native_translation("zh-CN", "退出 Rivloom？"), "退出 Rivloom？");
+        assert_eq!(native_translation("en", "退出 Rivloom"), "Quit Rivloom");
+        assert_eq!(native_translation("zh-CN", "退出 Rivloom"), "退出 Rivloom");
         assert_eq!(native_translation("en", "unknown external error"), "unknown external error");
         std::fs::remove_file(identity).unwrap();
         std::fs::remove_file(root.join("ui-language.txt")).unwrap();

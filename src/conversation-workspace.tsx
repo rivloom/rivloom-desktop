@@ -1495,6 +1495,10 @@ export function ConversationWorkspace({
                 onScroll={updateScrollPosition}
               >
                 {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName}
+                  navigateDiagnostics={(target, nodeID) => {
+                    if (target === 'queue') setModal('queue');
+                    else { if (target === 'diagnostics') setDiagnosticTarget(nodeID || null); setView(target); }
+                  }}
                   searchMatch={currentMatch} searchQuery={currentMatch ? searchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
                     {currentReceipt && (

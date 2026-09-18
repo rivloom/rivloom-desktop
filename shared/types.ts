@@ -301,6 +301,7 @@ export type NodeNetwork = {
     udpActive: boolean;
     lastRetryAt: string | null;
     incompatibleAnnouncementAt: string | null;
+    lastProbe?: { at: string; stage: 'transport_failed' | 'identity_failed' | 'verified' } | null;
   };
   status: 'starting' | 'online' | 'degraded' | 'disabled';
   serviceType: string;

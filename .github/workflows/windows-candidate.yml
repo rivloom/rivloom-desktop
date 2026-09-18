@@ -81,6 +81,8 @@ jobs:
         run: >-
           cargo test --release --locked --manifest-path src-tauri/Cargo.toml
           --target x86_64-pc-windows-msvc
+      - name: Verify LAN firewall rules with isolated Windows command mocks
+        run: powershell -NoProfile -NonInteractive -File scripts/lan-firewall-check.ps1
       - name: Build NSIS without re-running preparation or signing
         run: >-
           node node_modules/@tauri-apps/cli/tauri.js build

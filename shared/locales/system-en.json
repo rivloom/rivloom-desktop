@@ -610,5 +610,7 @@
   "该会话已绑定其他账号，请新建会话切换账号。": "This conversation is bound to another account. Start a new conversation to switch accounts.",
   "账号引擎不可用，请重新接入此账号。": "Account engine is not available. Reconnect this account.",
   "凭据已移除，但未确认账号引擎退出。请重启应用后重试。": "Account credentials were removed, but engine shutdown was not confirmed. Restart the application before retrying.",
-  "账号数量已达上限，请移除不用的账号后再添加。": "Account limit reached. Remove an unused account before adding another."
+  "账号数量已达上限，请移除不用的账号后再添加。": "Account limit reached. Remove an unused account before adding another.",
+  "对方尚未发现并验证本机，请在两台电脑检查局域网连接权限后重新发现。": "The other device has not discovered and verified this computer. Check LAN access on both computers and rediscover.",
+  "尚未发现并验证请求配对的设备，请先检查双向连接。": "The requesting device has not been discovered and verified. Check communication in both directions first."
 }

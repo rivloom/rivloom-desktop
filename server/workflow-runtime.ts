@@ -4,11 +4,12 @@ import { nodeQueueBacklog } from '../shared/queue-backlog.ts';
 import { sameTaskFile, type TaskFileDescriptor, type TaskFileView } from '../shared/task-files.ts';
 import { workflowControlsCapability, validWorkflowOutcomeReply, type WorkflowOutcomeReply } from '../shared/workflow-channel.ts';
 import { workflowAllSteps, type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowStep } from '../shared/workflows.ts';
-import { resourceFreshMilliseconds, type ResourceReference } from '../shared/resources.ts';
+import { type ResourceReference } from '../shared/resources.ts';
 import { activeStates, type Task } from '../shared/types.ts';
 import { db, user, projects, project, saveTask, patchTask, task, taskQueries, activity, now, exclusive } from './store.ts';
 import { changed, engineStatus, stopTask, workflowRetryReady } from './task-service.ts';
-import { workerCanQueueTask, workerHardwareMatches, workerReportFresh } from './worker-resources.ts';
+import { evaluateWorkflowPlacement, type WorkflowPlacementInput } from './workflow-placement.ts';
+import { workflowDiagnostics, type WorkflowExecutionDiagnostic } from './workflow-diagnostics.ts';
 import { WorkflowStore } from './workflows.ts';
 import { WorkflowContexts, workflowContextDigest } from './workflow-contexts.ts';
 import { WorkflowOutputs, relayWorkflowInputs, importConversationContext } from './workflow-files.ts';
@@ -64,32 +65,49 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     void this.service.tick().finally(() => { this.running = false; });
   }
   candidates(value: Workflow, step: WorkflowStep, _role: WorkflowExecutionContext['role']): WorkflowCandidate[] {
-    const network = this.options.network.snapshot(); const own = network.local; const owner = user(value.creatorID)?.owner;
-    const catalog = this.options.resources()?.directory.nodes() || [];
-    const hasSoftware = (nodeID: string) => !step.software.length || step.software.every((name) => {
-      const head = catalog.find((node) => node.nodeID === nodeID)?.head;
-      return !!head?.capabilities.some((entry) => entry.status === 'available' && entry.kind === 'software' &&
-        (entry.id.toLowerCase() === name.toLowerCase() || entry.name.toLowerCase() === name.toLowerCase()) &&
-        Date.now() - Date.parse(entry.checkedAt) < resourceFreshMilliseconds);
-    });
-    const result: WorkflowCandidate[] = [];
+    return evaluateWorkflowPlacement(step, this.placementInput(value)).candidates;
+  }
+  private placementInput(value: Workflow, network = this.options.network.snapshot()): WorkflowPlacementInput {
     const ownProject = value.projectID || this.options.policies.snapshot().projectID;
     const ownModel = value.model || this.options.policies.snapshot().model;
-    if (own && ownProject && projects().some((p) => p.id === ownProject) && engineStatus.ready &&
-      engineStatus.models.some((m) => m.id === ownModel) && hasSoftware(own.id) && this.options.queueHealth().accepting &&
-      (!Object.keys(step.requirements).length || own.worker && workerReportFresh(own.worker) && workerHardwareMatches(own.worker.hardware, step.requirements)))
-      result.push({ nodeID: own.id, kind: 'local', waitingCount: this.options.queueHealth().waitingCount + this.options.occupiedSlots(),
-        localConfig: { projectID: ownProject, model: ownModel! } });
-    if (owner) for (const node of network.paired || []) {
-      if (!node.online || !node.channelReady || !node.trusted || !node.capabilities.includes(collaborationCapability) || !node.worker ||
-        !workerCanQueueTask(node.worker, { projectID: null, requirements: step.requirements }) || !hasSoftware(node.id) ||
-        !network.brains.some((brain) => brain.state === 'established' && brain.online && node.brains.some((b) => b.id === brain.id))) continue;
-      result.push({ nodeID: node.id, kind: 'remote', waitingCount: nodeQueueBacklog(node) ?? node.worker.load.runningTasks,
-        ...(node.capabilities.includes(workflowControlsCapability) ? { resultDelivery: 'on-demand' as const } : {}) });
-    }
-    // Resource locality breaks equal queue scores, without turning a file reference into execution authority.
-    return result.sort((a, b) => a.waitingCount - b.waitingCount ||
-      Number(step.resources.some((r) => r.nodeID === b.nodeID)) - Number(step.resources.some((r) => r.nodeID === a.nodeID)) || a.nodeID.localeCompare(b.nodeID));
+    const queue = this.options.queueHealth();
+    return { network, owner: !!user(value.creatorID)?.owner,
+      catalog: this.options.resources()?.directory.nodes() || [], local: { projectID: ownProject, model: ownModel,
+        projectExists: projects().some((p) => p.id === ownProject), engineReady: engineStatus.ready,
+        modelAvailable: engineStatus.models.some((m) => m.id === ownModel), accepting: queue.accepting,
+        waitingCount: queue.waitingCount + this.options.occupiedSlots() } };
+  }
+  diagnostics(value: Workflow) {
+    const network = this.options.network.snapshot();
+    const input = this.placementInput(value, network), at = Date.now();
+    const queue = this.options.queue.snapshot();
+    return workflowDiagnostics(value, {
+      placement: (step) => evaluateWorkflowPlacement(step, input, at),
+      preparation: (step) => this.service.preparation(value, step),
+      execution: (attempt): WorkflowExecutionDiagnostic => {
+        const empty: WorkflowExecutionDiagnostic = { connected: false, observedAt: null, attention: false, queue: null };
+        if (attempt.kind === 'local') {
+          const local = this.localTask(attempt);
+          if (!local) return { ...empty, connected: attempt.phase === 'intent' };
+          try { this.assertBinding(value, attempt, local); } catch { return empty; }
+          const entry = queue.entries.find((e) => e.source.kind === 'local' && e.source.taskID === local.id && e.state !== 'ended');
+          return { connected: true, observedAt: local.updatedAt, attention: !!(local.approvals.length || local.questions.length),
+            queue: entry ? { state: entry.state === 'waiting' ? 'queued' : entry.state === 'held' ? 'held' : 'admitted',
+              position: entry.position, reason: null, code: entry.state === 'waiting' && queue.paused ? 'queue_paused' : entry.blockReason?.code || null,
+              observedAt: entry.state === 'waiting' && queue.paused ? queue.updatedAt : entry.updatedAt, local: true } : null };
+        }
+        if (!input.owner) return empty;
+        const peer = input.network.paired?.find((n) => n.id === attempt.nodeID);
+        // The network snapshot joins authenticated queue receipts from their separate store.
+        const remote = network.remoteTasks.find((task) => task.id === attempt.executionID);
+        if (!remote || remote.direction !== 'outgoing' || remote.targetNodeID !== attempt.nodeID) return empty;
+        const receipt = remote.queueReceipt;
+        return { connected: !!(peer?.online && peer.trusted && peer.channelReady), observedAt: attempt.updatedAt,
+          attention: !!(remote.remoteApprovals.length || remote.remoteQuestions.length),
+          queue: receipt && receipt.remoteTaskID === attempt.executionID && receipt.targetNodeID === attempt.nodeID
+            ? { state: receipt.state, position: receipt.position, reason: receipt.reason, code: null, observedAt: receipt.updatedAt, local: false } : null };
+      },
+    }, at);
   }
   evidence(value: Workflow): string {
     const resources = this.options.resources(); const network = this.options.network.snapshot();

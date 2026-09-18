@@ -4,6 +4,7 @@ import { taskFileBatchBytes, taskFileMaximumCount, taskFileUploadCount, validTas
 import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError, workflowPendingMessages, workflowAllSteps,
   type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
+import { workflowCandidateAllowed } from '../shared/workflow-diagnostics.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
 
 export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string } };
@@ -59,10 +60,16 @@ export class WorkflowService {
   private onChange: () => void;
   private advancing = new Map<string, Promise<void>>();
   private preparing = new Map<symbol, string>();
+  private preparationDetails = new Map<string, { stepID: string; plan: string; round: string; nodeID: string; observedAt: string; active: boolean }>();
   private assignedByWorkflow = new Map<string, string[]>();
   private assigned = new Map<string, number>();
   private closed = false;
   isAdvancing(id: string) { return this.advancing.has(id); }
+  preparation(value: Workflow, step: WorkflowStep) {
+    const detail = this.preparationDetails.get(`${value.id}:${step.id}`);
+    return step.state === 'ready' && detail?.plan === JSON.stringify(planFields(step)) && detail.round === (value.roundRequestID || value.requestID) &&
+      (detail.active || Date.now() - Date.parse(detail.observedAt) < 15_000) ? { nodeID: detail.nodeID, observedAt: detail.observedAt } : null;
+  }
   constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}) {
     this.store = store; this.adapter = adapter; this.onChange = onChange;
     for (const value of store.list()) this.trackAssignments(value);
@@ -71,7 +78,13 @@ export class WorkflowService {
     const result = this.store.update(id, (value) => {
       const before = value.state; change(value);
       if (value.state !== before && ['failed', 'stopped'].includes(value.state)) value.queuePaused = true;
-    }, version); this.trackAssignments(result); this.onChange(); return result;
+    }, version);
+    for (const [key, detail] of this.preparationDetails) if (key.startsWith(`${id}:`)) {
+      const step = getStep(result, detail.stepID);
+      if (!step || step.state !== 'ready' || JSON.stringify(planFields(step)) !== detail.plan ||
+        detail.round !== (result.roundRequestID || result.requestID)) this.preparationDetails.delete(key);
+    }
+    this.trackAssignments(result); this.onChange(); return result;
   }
   /** Durable intents remain load until their execution is known to have ended, including after restart. */
   private trackAssignments(value: Workflow) {
@@ -84,11 +97,8 @@ export class WorkflowService {
     for (const nodeID of nodes) this.assigned.set(nodeID, (this.assigned.get(nodeID) || 0) + 1);
   }
   private candidates(value: Workflow, step: WorkflowStep) {
-    let candidates = this.adapter.candidates(value, step, step.id === 'planner' ? 'planner' : 'executor');
-    if (value.target.mode === 'locked') { const target = value.target.nodeID; candidates = candidates.filter((c) => c.nodeID === target); }
-    if (step.continuation?.nodeID) candidates = candidates.filter((c) => c.nodeID === step.continuation!.nodeID);
-    if (step.continuation?.handoff) candidates = candidates.filter((c) => !step.attempts.some((a) => a.nodeID === c.nodeID));
-    return candidates;
+    return this.adapter.candidates(value, step, step.id === 'planner' ? 'planner' : 'executor')
+      .filter((candidate) => workflowCandidateAllowed(value, step, candidate.nodeID));
   }
   private selectCandidate(value: Workflow, step: WorkflowStep, reservation: symbol) {
     const preparing = new Map<string, number>();
@@ -211,7 +221,7 @@ export class WorkflowService {
     for (let start = 0; start < ids.length && !this.closed; start += 4)
       await Promise.allSettled(ids.slice(start, start + 4).map((id) => this.advance(id)));
   }
-  async close() { this.closed = true; await Promise.allSettled([...this.advancing.values()]); }
+  async close() { this.closed = true; await Promise.allSettled([...this.advancing.values()]); this.preparationDetails.clear(); }
   private mayStart(id: string, stepID: string, executionID?: string) {
     if (this.closed) return false;
     const value = this.store.get(id);
@@ -310,6 +320,12 @@ export class WorkflowService {
   }
   private async prepare(value: Workflow, step: WorkflowStep) {
     const reservation = Symbol(step.id);
+    const preparationKey = `${value.id}:${step.id}`;
+    let waitingForInputs = false;
+    this.preparationDetails.delete(preparationKey);
+    const observe = (current: Workflow, nodeID: string) => this.preparationDetails.set(preparationKey,
+      { stepID: step.id, plan: JSON.stringify(planFields(step)), round: current.roundRequestID || current.requestID,
+        nodeID, observedAt: new Date().toISOString(), active: true });
     try {
       const role = step.id === 'planner' ? 'planner' : 'executor';
       const continuation = step.continuation;
@@ -320,6 +336,7 @@ export class WorkflowService {
       }
       // Synchronous reservation covers input I/O; a persisted intent takes over before remote admission awaits its ACK.
       this.preparing.set(reservation, candidate.nodeID);
+      observe(value, candidate.nodeID);
       const resources = step.resources.length ? await this.adapter.materialize(value, step.resources) : [];
       if (!this.mayStart(value.id, step.id)) return;
       // An unstarted step can be edited while material retrieval is awaiting I/O.
@@ -333,12 +350,13 @@ export class WorkflowService {
         this.confirmation(value.id, step.id, candidate.nodeID, candidate.waitingCount); return;
       }
       this.preparing.set(reservation, candidate.nodeID);
+      observe(prepared, candidate.nodeID);
       const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
       let originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
       if (this.adapter.prepareInputs) {
         const ready = await this.adapter.prepareInputs(value, originalFiles, role,
           [...step.materials, ...resources, ...parents.flatMap((p) => p.attempts.at(-1)?.outputFiles || [])]);
-        if (!ready) return;
+        if (!ready) { waitingForInputs = true; return; }
         originalFiles = ready;
       }
       const inputFiles = candidate.kind === 'remote' && originalFiles.length
@@ -393,7 +411,14 @@ export class WorkflowService {
         current.error = errorCode(error); workflowEvent(current, 'error', current.error, step.id);
         getStep(current, step.id)!.state = 'failed'; if (step.id === 'planner') current.state = 'failed';
       });
-    } finally { this.preparing.delete(reservation); }
+    } finally {
+      this.preparing.delete(reservation);
+      if (!waitingForInputs) this.preparationDetails.delete(preparationKey);
+      else {
+        const detail = this.preparationDetails.get(preparationKey);
+        if (detail) { detail.active = false; detail.observedAt = new Date().toISOString(); }
+      }
+    }
   }
   private confirmation(id: string, stepID: string, nodeID: string, waitingCount: number) {
     this.update(id, (value) => {

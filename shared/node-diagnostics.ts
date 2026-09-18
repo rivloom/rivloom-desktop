@@ -73,6 +73,16 @@ export function diagnoseLocal(data: Bootstrap, connected = true): NodeDiagnostic
     action: 'retry',
   });
   if (network.diagnostics) {
+    const probe = network.diagnostics.lastProbe;
+    if (probe && Number.isFinite(Date.parse(probe.at)) && Date.now() - Date.parse(probe.at) < 60_000)
+      checks.push({
+        code: 'peer_probe', state: probe.stage === 'verified' ? 'ok' : 'warning',
+        title: probe.stage === 'verified' ? t('已完成一次对端身份探测') : probe.stage === 'transport_failed' ? t('收到发现信息，但未连通对端') : t('对端响应未通过身份验证'),
+        detail: probe.stage === 'verified' ? t('该次探测已验证签名；配对与加密通道状态见具体设备。')
+          : probe.stage === 'transport_failed' ? t('请在对端检查 Rivloom 是否仍运行及局域网通信权限。超时也可能由网络隔离或地址变化引起，尚不能确定为防火墙。')
+            : t('请核对两端时间和版本。响应尚不可信，不会据此建立配对。'),
+        action: 'retry',
+      });
     checks.push({
       code: 'transport',
       state: network.diagnostics.mdnsActive || network.diagnostics.udpActive ? 'ok' : 'unknown',

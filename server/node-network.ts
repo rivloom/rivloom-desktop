@@ -208,10 +208,12 @@ type BrainDirectoryResponse = {
 
 export class NodeNetworkError extends Error {
   readonly status: number;
+  readonly code?: 'peer_not_discovered';
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: 'peer_not_discovered') {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -702,6 +704,7 @@ export class NodeNetwork extends EventEmitter {
   private readonly root: string;
   private readonly enabled: boolean;
   private lastDiagnosticRetry = 0;
+  private lastProbe: { at: string; stage: 'transport_failed' | 'identity_failed' | 'verified' } | null = null;
   private incompatibleAnnouncementAt: string | null = null;
   readonly files: TaskFileStore;
   private fileTimer: NodeJS.Timeout | null = null;
@@ -767,6 +770,7 @@ export class NodeNetwork extends EventEmitter {
           Date.now() - Date.parse(this.incompatibleAnnouncementAt) < 60_000
             ? this.incompatibleAnnouncementAt
             : null,
+        lastProbe: this.lastProbe && Date.now() - Date.parse(this.lastProbe.at) < 60_000 ? this.lastProbe : null,
       },
       serviceType: `_${serviceType}._tcp.local · LAN UDP ${this.discoveryPort || defaultDiscoveryPort}`,
       local: this.identity
@@ -2325,6 +2329,8 @@ export class NodeNetwork extends EventEmitter {
           ? await limitedJson(response)
           : null;
         if (response.ok) return body;
+        if (path === '/v1/pairing/request' && response.status === 403 && body && typeof body === 'object' && 'code' in body && body.code === 'peer_not_discovered')
+          throw new NodeNetworkError(403, '对方尚未发现并验证本机，请在两台电脑检查局域网连接权限后重新发现。', 'peer_not_discovered');
         throw new NodeNetworkError(
           response.status >= 400 && response.status < 500 ? response.status : 502,
           response.status === 409
@@ -2371,8 +2377,9 @@ export class NodeNetwork extends EventEmitter {
     if (!this.identity || message.responderNodeID !== this.identity.nodeID)
       throw new NodeNetworkError(403, '配对目标不匹配。');
     const node = this.nodeForRemote(message.requesterNodeID, remote);
+    if (!node)
+      throw new NodeNetworkError(403, '尚未发现并验证请求配对的设备，请先检查双向连接。', 'peer_not_discovered');
     if (
-      !node ||
       message.actorNodeID !== message.requesterNodeID ||
       !this.validPairingFrom(message, node, 'request')
     )
@@ -2582,6 +2589,7 @@ export class NodeNetwork extends EventEmitter {
         const status = error instanceof NodeNetworkError ? error.status : 400;
         jsonResponse(response, status, {
           error: error instanceof NodeNetworkError ? error.message : '节点请求未完成。',
+          ...(error instanceof NodeNetworkError && error.code ? { code: error.code } : {}),
         });
       }).finally(() => { this.updatePeerRequests--; });
     });
@@ -3264,6 +3272,7 @@ export class NodeNetwork extends EventEmitter {
     const probeKey = `${advertised.nodeID}:${service.port}`;
     if (this.probing.has(probeKey)) return;
     this.probing.add(probeKey);
+    let stage: 'transport_failed' | 'identity_failed' | 'verified' = 'transport_failed';
     try {
       const addresses = discoveryProbeAddresses(service);
       for (const address of addresses) {
@@ -3275,6 +3284,7 @@ export class NodeNetwork extends EventEmitter {
           );
           if (!response.ok || !response.headers.get('content-type')?.startsWith('application/json'))
             continue;
+          stage = 'identity_failed';
           const value = await limitedJson(response);
           if (!validHello(value)) continue;
           const publicBytes = Buffer.from(value.publicKey, 'base64');
@@ -3339,6 +3349,7 @@ export class NodeNetwork extends EventEmitter {
               icon: node.icon || 'monitor',
             });
           this.nodes.set(value.nodeID, node);
+          stage = 'verified';
           this.update();
           if (this.trustStore.revocation(node.id, node.fingerprint))
             void this.sendRevocation(node).catch(() => undefined);
@@ -3350,6 +3361,8 @@ export class NodeNetwork extends EventEmitter {
       }
     } finally {
       this.probing.delete(probeKey);
+      this.lastProbe = { at: new Date().toISOString(), stage };
+      this.update();
     }
   }
 

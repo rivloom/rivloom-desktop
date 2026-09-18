@@ -2509,6 +2509,16 @@ test(
       };
       const target = first.nearby[0];
       const requestUrl = `http://${target.addresses[0]}:${target.port}/v1/pairing/request`;
+      const unknownID = randomBytes(24).toString('base64url');
+      const undiscovered = await fetch(requestUrl, {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...request,requesterNodeID:unknownID,actorNodeID:unknownID})});
+      assert.equal(undiscovered.status,403);
+      assert.equal((await undiscovered.json()).code,'peer_not_discovered');
+      const invalidSignature = await fetch(requestUrl, {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...request,signature:randomBytes(64).toString('base64url')})});
+      assert.equal(invalidSignature.status,403);
+      assert.equal((await invalidSignature.json()).code,undefined);
+      assert(networks.every((network)=>network.snapshot().pairings.length===0));
       const accepted = await fetch(requestUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

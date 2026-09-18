@@ -31,6 +31,7 @@ export function installWorkflowAPI(app: Express, runtime: WorkflowRuntime, netwo
     } catch (value) { error(value); }
   });
   app.get('/api/workflows/:id', (req, res) => res.json(visible(req)));
+  app.get('/api/workflows/:id/diagnostics', (req, res) => res.json(runtime.diagnostics(visible(req))));
   app.post('/api/workflows/:id/messages', (req, res) => {
     try {
       const value = visible(req); const body = z.object({ requestID: z.string().uuid(), text: z.string().trim().min(1).max(12_000),

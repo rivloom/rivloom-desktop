@@ -126,9 +126,14 @@ test('material preparation waits without dispatch and retains negotiated output 
     f.adapter.prepareInputs = async (_w, files, role) => role === 'planner' || ready ? files : null;
     const id = await f.planned({ summary: 'Remote files', steps: [step('consume')] });
     assert.equal(f.starts.length, 1); assert.equal(f.store.get(id)!.steps[0].state, 'ready');
+    const waiting = f.store.get(id)!;
+    assert.equal(f.service.preparation(waiting, waiting.steps[0])?.nodeID, B);
+    assert.deepEqual(f.store.get(id), waiting, 'Reading preparation does not mutate workflow state');
     f.restart(); await f.service.advance(id); assert.equal(f.starts.length, 1);
     ready = true; await f.service.advance(id);
     assert.equal(f.starts[1].resultDelivery, 'on-demand'); assert.equal(f.store.get(id)!.steps[0].attempts[0].resultDelivery, 'on-demand');
+    const started = f.store.get(id)!;
+    assert.equal(f.service.preparation(started, started.steps[0]), null);
   } finally { await f.service.close(); f.db.close(); }
 });
 

@@ -69,6 +69,13 @@ Function .onGUIEnd
 FunctionEnd
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Stable installation-scoped rules survive upgrades. Never grant new access
+  ; or request elevation during installation; the application owns that UI.
+  nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --lan-firewall-maintain --silent'
+  Pop $0
+  ${If} $0 != 0
+    DetailPrint "Rivloom: LAN rule check incomplete. Open Connection diagnostics in Rivloom."
+  ${EndIf}
   !insertmacro RivloomRegisterNotificationActivation
   StrCpy $RivloomShellIcon "$INSTDIR\${RIVLOOM_SHELL_ICON_RELATIVE}"
   StrCpy $RivloomShortcutTarget "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -85,4 +92,28 @@ FunctionEnd
 
 !macro NSIS_HOOK_POSTUNINSTALL
   !insertmacro RivloomUnregisterNotificationActivation
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ${If} $UpdateMode = 1
+    Goto rivloom_lan_done
+  ${EndIf}
+  ; Run while the executable/runtime still exist, before any deletion. Silent
+  ; uninstalls never open UAC; a nonzero exit keeps the installed helper available.
+  IfSilent rivloom_lan_silent rivloom_lan_interactive
+  rivloom_lan_interactive:
+    nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --lan-firewall-remove'
+    Goto rivloom_lan_result
+  rivloom_lan_silent:
+    nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --lan-firewall-remove --silent'
+  rivloom_lan_result:
+    Pop $0
+    ${If} $0 != 0
+      IfSilent rivloom_lan_abort
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Rivloom LAN rule cleanup was not completed. Uninstall was stopped; allow Windows authorization and try again.$\r$\nRivloom 局域网规则未完成清理，卸载已停止。请允许 Windows 授权后重试。"
+      rivloom_lan_abort:
+      SetErrorLevel 20
+      Abort
+    ${EndIf}
+  rivloom_lan_done:
 !macroend

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-repair-lan-firewall"
+description = "Enables the repair_lan_firewall command without any pre-configured scope."
+commands.allow = ["repair_lan_firewall"]
+
+[[permission]]
+identifier = "deny-repair-lan-firewall"
+description = "Denies the repair_lan_firewall command without any pre-configured scope."
+commands.deny = ["repair_lan_firewall"]

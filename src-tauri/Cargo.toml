@@ -1,6 +1,6 @@
 [package]
 name = "rivloom-desktop"
-version = "0.1.17"
+version = "0.1.18"
 edition = "2021"
 description = "Rivloom human and AI task collaboration desktop client"
 publish = false
@@ -11,7 +11,7 @@ repository = "https://github.com/rivloom/rivloom-desktop"
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.11.5", features = ["tray-icon"] }
 tauri-plugin-dialog = "=2.7.2"
 tauri-plugin-single-instance = "=2.4.3"
 serde = { version = "1", features = ["derive"] }
@@ -25,7 +25,7 @@ minisign-verify = "=0.2.5"
 sha2 = "=0.10.9"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "=0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Notifications", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "=0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Notifications", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 windows-core = "=0.62.2"
 
 [profile.release]

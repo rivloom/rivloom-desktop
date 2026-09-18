@@ -1,6 +1,7 @@
 import { t } from '../shared/i18n.ts';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
+import type { LanFirewallReport } from '../shared/lan-firewall.ts';
 
 export const desktop = isTauri();
 export type DesktopInfo = {
@@ -10,6 +11,8 @@ export type DesktopInfo = {
   locale: 'zh-CN' | 'en';
 };
 export const desktopInfo = () => invoke<DesktopInfo>('desktop_info');
+export const inspectLanFirewall = (port: number) => invoke<LanFirewallReport>('inspect_lan_firewall', { port });
+export const repairLanFirewall = (allowPublic: boolean) => invoke<void>('repair_lan_firewall', { allowPublic });
 export async function authenticateDesktop() {
   const { desktopToken } = await desktopInfo();
   if (!desktopToken) throw new Error(t('桌面认证信息不可用，请重启客户端。'));
