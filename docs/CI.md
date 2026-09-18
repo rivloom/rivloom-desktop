@@ -1,6 +1,8 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
-## Linux 执行节点构建与手动发布（x64 首发准备）
+## Linux 执行节点构建与手动发布
+
+**2026-09-18 · Linux x64 0.1.18 已发布，官网部署待完成。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 已通过 [原生 Linux CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026) 与 [手动发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)，发行 tag 为 `linux-v0.1.18-509294bbf0fd-35357963026`。公开完整下载和 Linux curl / wget 原生命令验收通过；Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 的配套 Pages 更新仍在 Building，不能据此记为官网已部署或完整收尾。详情见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
 
 `.github/workflows/linux-ci.yml` 当前只在原生 Ubuntu x64 runner 上按锁文件安装依赖，运行平台与 CLI 检查、12 项 Linux 协议、CLI 服务集成与两节点合成任务，再构建自包含 tar.gz、解包核对全部文件、启动/重启/停止并检查权限、认证边界与身份保持，最后保存 x64 Actions artifact。构建工作流只有只读仓库权限，不创建 Release 或上传 R2。ARM64 打包代码保留，但不参加本次首发，不能将 x64 结果写成 ARM64 已通过。
 
@@ -8,7 +10,7 @@
 
 `.github/workflows/linux-release.yml` 只接受手动触发，输入成功构建的 `build_run_id` 和 `x64_artifact_id`。在官方仓库 main 上，先以只读权限核对该 run 已成功结束、源码等于当前 checkout、工作流与 artifact 来源吻合，再下载指定 artifact。独立 publish job 复核完整原生验收与文件摘要后创建不可变 GitHub Linux Release；官网 job 完整匿名下载校验通过后，以 ETag 条件更新 `releases/linux/latest.json` 并触发 Pages Hook。R2 凭据仅提供给同步步骤，沿用 `public-rivloom-download` 互斥组；失败记录仅包含安全的阶段信息。公开清单必须含 x64；未来 ARM64 只有具备独立成功产物与验收时才能进入同一记录。
 
-手动流程不会调用 Windows 构建或修改 Windows `releases/latest.json`、`updates/stable/latest.json`。只发布 Linux 的源码提交使用 `[skip ci]` 避免触发现有 main 自动 Windows 发行，再手动运行 Linux CI，成功后运行 Linux 发布；已有 Windows 流程不变。Pages Hook 成功不代表官网实际部署成功，仍须独立核对页面、公开完整下载和 R2 保留检查。源码中的新流程不等于云端已运行或发行完成，结果以目标提交的实际证据为准。
+手动流程不会调用 Windows 构建或修改 Windows `releases/latest.json`、`updates/stable/latest.json`。只发布 Linux 的源码提交使用 `[skip ci]` 避免触发现有 main 自动 Windows 发行，再手动运行 Linux CI，成功后运行 Linux 发布；已有 Windows 流程不变。Pages Hook 成功不代表官网实际部署成功，每次发行仍须独立核对页面、公开完整下载和 R2 保留检查，结果以目标提交的实际证据为准。
 
 以下 0.1.18 及更早记录仅描述已完成的 Windows 发行。
 

@@ -1,6 +1,8 @@
 # 官网分发与安全更新方案
 
-**Linux x64 首发准备：** 无 GUI 执行节点使用独立 tar.gz、SHA256SUMS 和 `releases/linux/latest.json`；本次只发行 x64，ARM64 暂不发布。公开记录要求 x64，ARM64 为可选项，平台与 artifact 来源必须完全对应，校验文件只列实际发行的平台。使用只读 `linux-ci.yml` 完成原生构建与验收，再手动触发 `linux-release.yml`，提供同一 main 提交已经成功结束的构建 run ID 与 x64 artifact ID。流程复核来源、解包启动/停止、身份保持、认证边界及摘要后才创建独立 Linux Release，并在公开完整下载核对成功后推进 Linux 记录。未通过的架构不得写成可用。
+**2026-09-18 · Linux x64 0.1.18 已发布，官网部署待完成。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 的 [原生 CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)、公开完整下载与 Linux curl / wget 原生命令验收通过。Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 的配套更新仍在 Pages Building，尚不能记为官网部署或完整收尾完成。发行 tag、文件和验证范围见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。
+
+**Linux 独立发布规则：** 无 GUI 执行节点使用独立 tar.gz、SHA256SUMS 和 `releases/linux/latest.json`。公开记录要求 x64，ARM64 为可选项，平台与 artifact 来源必须完全对应，校验文件只列实际发行的平台。使用只读 `linux-ci.yml` 完成原生构建与验收，再手动触发 `linux-release.yml`，提供同一 main 提交已经成功结束的构建 run ID 与 x64 artifact ID。流程复核来源、解包启动/停止、身份保持、认证边界及摘要后才创建独立 Linux Release，并在公开完整下载核对成功后推进 Linux 记录。未通过的架构不得写成可用。
 
 只发行 Linux 时以 `[skip ci]` 提交避免现有 main Windows 自动发行，随后手动执行 Linux 两阶段流程。不可变路径为 `releases/linux/linux-v<version>-<commit12>-<buildRunID>/`；手动 Linux 流程不触发 Windows 发行，也不更改 Windows latest/updater。Linux 当前为手动停止节点、更换程序、保留数据目录的升级方式，校验和不等于数字签名。流程源码及 Hook 返回成功不等于正式发行收尾完成；官网实际部署、公开完整下载和 [R2 保留检查](R2-RETENTION.md) 仍须核对并如实记录。使用说明见 [Linux CLI](LINUX.md)。
 

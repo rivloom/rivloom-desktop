@@ -5,7 +5,7 @@
 ## 使用与功能
 
 - [随包使用说明](../DESKTOP-README.md)、[安全边界](../SECURITY.md)
-- [Linux 命令行执行节点（x64 首发准备；ARM64 待验收）](LINUX.md)
+- [Linux 命令行执行节点（x64 0.1.18 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与官网部署进度](releases/linux-0.1.18.md)
 - [模型接入与选择](MODEL-ACCESS.md)、[输入区](COMPOSER.md)
 - [连续会话](CONVERSATION-CONTINUITY.md)、[历史管理](CONVERSATION-HISTORY.md)、[内容搜索](CONVERSATION-SEARCH.md)
 - [右键菜单](CONTEXT-MENUS.md)、[消息复制](MESSAGE-COPY.md)
