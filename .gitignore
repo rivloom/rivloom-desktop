@@ -27,6 +27,7 @@ src-tauri/gen/
 !/docs/DESKTOP.md
 !/docs/ENGINE.md
 !/docs/KNOWLEDGE-LIBRARY.md
+!/docs/LINUX.md
 !/docs/MESSAGE-COPY.md
 !/docs/MODEL-ACCESS.md
 !/docs/PROMPT-CACHING.md

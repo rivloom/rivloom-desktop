@@ -1,5 +1,17 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+## Linux 执行节点构建与手动发布（x64 首发准备）
+
+`.github/workflows/linux-ci.yml` 当前只在原生 Ubuntu x64 runner 上按锁文件安装依赖，运行平台与 CLI 检查、12 项 Linux 协议、CLI 服务集成与两节点合成任务，再构建自包含 tar.gz、解包核对全部文件、启动/重启/停止并检查权限、认证边界与身份保持，最后保存 x64 Actions artifact。构建工作流只有只读仓库权限，不创建 Release 或上传 R2。ARM64 打包代码保留，但不参加本次首发，不能将 x64 结果写成 ARM64 已通过。
+
+构建命令为 `npm run linux:build`，包内验收为 `npm run linux:smoke`；必须在对应架构 Linux、Node 24.19.0 上运行，不能把交叉下载当作原生验收。构建记录保留源码提交及工作树是否有改动，未提交本地包不能通过正式发布检查。架构、固定来源、系统要求与 SSH 使用见 [Linux CLI](LINUX.md)。
+
+`.github/workflows/linux-release.yml` 只接受手动触发，输入成功构建的 `build_run_id` 和 `x64_artifact_id`。在官方仓库 main 上，先以只读权限核对该 run 已成功结束、源码等于当前 checkout、工作流与 artifact 来源吻合，再下载指定 artifact。独立 publish job 复核完整原生验收与文件摘要后创建不可变 GitHub Linux Release；官网 job 完整匿名下载校验通过后，以 ETag 条件更新 `releases/linux/latest.json` 并触发 Pages Hook。R2 凭据仅提供给同步步骤，沿用 `public-rivloom-download` 互斥组；失败记录仅包含安全的阶段信息。公开清单必须含 x64；未来 ARM64 只有具备独立成功产物与验收时才能进入同一记录。
+
+手动流程不会调用 Windows 构建或修改 Windows `releases/latest.json`、`updates/stable/latest.json`。只发布 Linux 的源码提交使用 `[skip ci]` 避免触发现有 main 自动 Windows 发行，再手动运行 Linux CI，成功后运行 Linux 发布；已有 Windows 流程不变。Pages Hook 成功不代表官网实际部署成功，仍须独立核对页面、公开完整下载和 R2 保留检查。源码中的新流程不等于云端已运行或发行完成，结果以目标提交的实际证据为准。
+
+以下 0.1.18 及更早记录仅描述已完成的 Windows 发行。
+
 **2026-09-18 · 0.1.18 正式发布与收尾完成。** 托盘关闭/直接退出、步骤等待和队列诊断、Windows 局域网检测及定向修复已发行。源码 1aa920d14ad9382b4c339334db0a470b1914d9f9，发行 v0.1.18-1aa920d14ad9-10534808566；[构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35313869617)。同提交三份 CI、原生测试、NSIS 构建、隔离安装/启动/重启/卸载及原公钥签名核验通过。匿名完整下载 89318474 字节，SHA256 fc84ec9672dd5d1507aa816c714e5685ea50955ea0b48f1cc0e60dade5bd2c9d。官网中英文指南、更新日志、连接 FAQ 和下载页已实际部署并复核，Actions 继续停用。R2 保留 50、暂缓 0、删除 0；检查完成，删除 0 个，见[本次审计](releases/0.1.18-r2-retention.md)。
 
 **2026-09-18 · 0.1.18 发行准备中。** 按用户本轮推送意图，整理当前已验收的 desktop 改动并沿用 main 自动发行链。包含托盘关闭/直接退出、步骤等待与队列诊断、Windows 局域网检测和定向修复；官方 OpenCode 1.18.25 / Node 24.19.0 不变。此前实机验收及遗留边界保留，不要求重做已通过的基础远程任务。版本已递增，当前尚未提交或推送；云端同提交 CI、隔离安装、公开下载、签名更新、官网部署与 R2 保留检查须按实际结果收尾。

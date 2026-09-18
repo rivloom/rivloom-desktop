@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 
 export type WorkflowToolRecord = { tool: string; state: { status: string; input?: Record<string, unknown> } };
@@ -27,7 +27,25 @@ function mediaBinary(command: string): string | null {
   const match = /^(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s"']+))(?:\s|$)/.exec(invocation);
   return match ? match[1] || match[2] || match[3] : null;
 }
+export async function linuxMediaProcessCount(): Promise<number> {
+  const entries = (await readdir('/proc')).filter(name => /^[1-9]\d*$/.test(name));
+  if (entries.length > 50_000) throw new Error('workflow_process_audit_unavailable');
+  let count = 0;
+  for (const pid of entries) {
+    try {
+      const name = (await readFile(`/proc/${pid}/comm`, 'utf8')).trim();
+      if (name === 'ffmpeg' || name === 'ffprobe') count++;
+    } catch (error) {
+      // A process can exit between enumeration and read. Permission/IO failures
+      // cannot prove that media work has stopped, so keep the transfer blocked.
+      if (!['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code || ''))
+        throw new Error('workflow_process_audit_unavailable');
+    }
+  }
+  return count;
+}
 async function mediaProcessCount(): Promise<number> {
+  if (process.platform === 'linux') return linuxMediaProcessCount();
   if (process.platform !== 'win32') throw new Error('workflow_process_audit_unavailable');
   const system = process.env.SystemRoot || 'C:\\Windows';
   const program = resolve(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');

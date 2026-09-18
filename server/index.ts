@@ -121,6 +121,7 @@ import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-ma
 import { ConversationHistory, HistoryError, historyFileIDs } from './conversation-history.ts';
 import { conversations } from '../shared/conversations.ts';
 import { isLocked } from './store.ts';
+import { publishHeadlessControl } from './headless-control.ts';
 
 try {
   acquireDataLock();
@@ -418,6 +419,11 @@ setTaskStartGuard((value) => {
 const port = Number(process.env.PORT || 4310);
 const dev = process.argv.includes('--dev');
 const desktop = process.env.RIVLOOM_DESKTOP === '1';
+const headless = process.env.RIVLOOM_HEADLESS === '1';
+if (desktop && headless) throw new Error('Desktop and headless modes cannot run together.');
+if (headless && dev) throw new Error('Headless mode cannot serve the development UI.');
+const headlessToken = headless ? token() : null;
+let removeHeadlessControl = () => {};
 const desktopToken = desktop ? token() : null;
 const desktopTokenPath = join(dataRoot, 'desktop-auth-token.txt');
 if (desktopToken)
@@ -556,6 +562,21 @@ app.post('/api/auth/desktop', rateLimit, (req, res) => {
   );
   let local = users().find((candidate) => candidate.owner) || users()[0];
   if (!local) {
+    local = createUser('local_owner', '本机操作者', token(), true);
+    finishSetup();
+  }
+  login(res, local.id);
+  res.json(local);
+});
+// The 256-bit local capability is not a password. Repeated valid CLI logins must
+// not consume the shared password-attempt budget used by the browser endpoints.
+app.post('/api/auth/headless', (req, res) => {
+  requireThat(headless && headlessToken, 404, '接口不存在');
+  const provided = req.headers['x-rivloom-headless-token'];
+  requireThat(typeof provided === 'string' && sameToken(provided, headlessToken!), 403, '本机命令行身份校验失败');
+  let local = users().find((candidate) => candidate.owner);
+  if (!local) {
+    requireThat(!users().length, 409, '找不到本机所有者，请检查数据目录。');
     local = createUser('local_owner', '本机操作者', token(), true);
     finishSetup();
   }
@@ -2150,7 +2171,9 @@ app.get('/api/events', (req, res) => {
   });
 });
 app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
-if (dev) {
+if (headless) {
+  app.use((_req, res) => res.status(404).json({ error: 'This is a Rivloom headless node. Use the rivloom CLI.' }));
+} else if (dev) {
   const { createServer } = await import('vite');
   const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
   app.use(vite.middlewares);
@@ -2209,8 +2232,9 @@ try {
     origins.add(`http://${host}`);
   }
   const url = `http://127.0.0.1:${address.port}`;
-  console.log(desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
-  if (!users().length && !desktop)
+  if (headlessToken) removeHeadlessControl = publishHeadlessControl(dataRoot, url, headlessToken);
+  console.log(headless ? `RIVLOOM_HEADLESS_READY ${url}` : desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
+  if (!users().length && !desktop && !headless)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
   knowledgeBridge = await startKnowledgeBridge(() => knowledge?.tools || null);
   void nodeNetwork.start().then(() => { configureResources(); sweepConversationHistory(); });
@@ -2226,9 +2250,10 @@ export async function shutdown(update?: { lease: string; version: string }) {
   clearInterval(remoteTaskProcessor);
   updates.off('update', onTaskUpdateForNetwork);
   nodeNetwork.off('trust-revoked', onTrustRevoked);
-  const deadline = setTimeout(() => process.exit(1), update ? 25_000 : 6000);
+  const deadline = setTimeout(() => process.exit(1), update ? 25_000 : headless ? 20_000 : 6000);
   deadline.unref();
   removeDesktopToken();
+  removeHeadlessControl();
   nodeNetwork.off('update', configureResources);
   await workflowRuntime.close();
   await resources?.files.close();
@@ -2236,7 +2261,7 @@ export async function shutdown(update?: { lease: string; version: string }) {
   await resources?.catalog.close();
   await nodeNetwork.stop();
   await providerOAuth.close();
-  await shutdownEngine(!!update);
+  await shutdownEngine(!!update || headless);
   await knowledgeBridge?.close();
   knowledge?.network.close();
   knowledge?.tools.close();

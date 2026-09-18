@@ -9,14 +9,24 @@ import { createOpencodeClient, type Config, type PermissionRuleset } from '@open
 import type { ApprovalMode } from '../shared/types.ts';
 import { knowledgeEngineConfig } from './knowledge-engine.ts';
 import { prepareEnginePluginDependencies } from './engine-plugin-dependencies.ts';
+import { privateDirectory } from './private-storage.ts';
 
 export const ENGINE_VERSION = '1.18.25';
 export const dataRoot = resolve(process.env.RIVLOOM_DATA_DIR || '.data');
+if (process.env.RIVLOOM_HEADLESS === '1') {
+  process.umask(0o077);
+  privateDirectory(dataRoot);
+}
 export const engineRoot = join(dataRoot, 'engine');
 const require = createRequire(import.meta.url);
+export function enginePackage(platform: NodeJS.Platform = process.platform, arch: string = process.arch) {
+  if (platform === 'win32' && arch === 'x64') return 'opencode-windows-x64';
+  if (platform === 'linux' && arch === 'x64') return 'opencode-linux-x64-baseline';
+  if (platform === 'linux' && arch === 'arm64') return 'opencode-linux-arm64';
+  throw new Error(`Unsupported Rivloom engine platform: ${platform}/${arch}.`);
+}
 export function engineBinary() {
-  if (process.platform !== 'win32') throw new Error('此 MVP 当前只验证 Windows x64。');
-  return join(require.resolve('opencode-windows-x64/package.json'), '..', 'bin', 'opencode.exe');
+  return join(require.resolve(`${enginePackage()}/package.json`), '..', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
 }
 export const permissions: Config['permission'] = {
   '*': 'ask',
@@ -85,7 +95,7 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
-      /^(path|systemroot|windir|comspec|pathext|userprofile|appdata|localappdata|programdata|programfiles|programfiles\(x86\)|systemdrive|https?_proxy|no_proxy)$/i.test(
+      /^(path|home|shell|lang|lc_all|lc_ctype|term|systemroot|windir|comspec|pathext|userprofile|appdata|localappdata|programdata|programfiles|programfiles\(x86\)|systemdrive|https?_proxy|no_proxy)$/i.test(
         key,
       )
     )
@@ -98,6 +108,7 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     XDG_STATE_HOME: 'state',
     TEMP: 'temp',
     TMP: 'temp',
+    TMPDIR: 'temp',
   })) {
     env[key] = join(root, folder);
     mkdirSync(env[key]!, { recursive: true });

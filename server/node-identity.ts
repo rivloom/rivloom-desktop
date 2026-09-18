@@ -11,6 +11,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -18,6 +19,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { privateDirectory, readPrivateFile } from './private-storage.ts';
 
 export const nodeProtocolVersion = 1;
 
@@ -28,7 +30,7 @@ type StoredIdentity = {
   createdAt: string;
   publicKey: string;
   protectedPrivateKey: string;
-  protection: 'windows-dpapi-current-user';
+  protection: 'windows-dpapi-current-user' | 'linux-user-file';
 };
 
 export type NodeIdentity = {
@@ -113,24 +115,27 @@ function validateStored(value: unknown): StoredIdentity {
     !Number.isFinite(Date.parse(item.createdAt)) ||
     typeof item.publicKey !== 'string' ||
     typeof item.protectedPrivateKey !== 'string' ||
-    item.protection !== 'windows-dpapi-current-user'
+    !['windows-dpapi-current-user', 'linux-user-file'].includes(String(item.protection))
   )
     throw new Error('节点身份文件字段无效。');
   return item as StoredIdentity;
 }
 
 function materialize(stored: StoredIdentity): NodeIdentity {
+  const expected = process.platform === 'win32' ? 'windows-dpapi-current-user' : process.platform === 'linux' ? 'linux-user-file' : null;
+  if (!expected || stored.protection !== expected)
+    throw new Error('节点身份保护方式与当前平台不匹配；不会自动替换设备身份。');
   let secret: KeyObject;
   let publicBytes: Buffer;
   try {
     secret = createPrivateKey({
-      key: privateKey(stored.protectedPrivateKey),
+      key: stored.protection === 'linux-user-file' ? Buffer.from(stored.protectedPrivateKey, 'base64') : privateKey(stored.protectedPrivateKey),
       format: 'der',
       type: 'pkcs8',
     });
     publicBytes = publicKeyBytes(createPublicKey(secret));
   } catch {
-    throw new Error('节点私钥无法由当前 Windows 用户解密；不会自动替换设备身份。');
+    throw new Error('节点私钥无法由当前系统用户读取；不会自动替换设备身份。');
   }
   if (
     stored.publicKey !== publicBytes.toString('base64') ||
@@ -148,9 +153,17 @@ function materialize(stored: StoredIdentity): NodeIdentity {
 }
 
 export function loadNodeIdentity(root: string): NodeIdentity {
-  mkdirSync(root, { recursive: true });
+  if (!['win32', 'linux'].includes(process.platform)) throw new Error('节点身份只支持 Windows 与 Linux。');
+  if (process.platform === 'linux') privateDirectory(root);
+  else mkdirSync(root, { recursive: true });
   const path = join(root, 'node-identity.json');
-  if (existsSync(path)) return materialize(validateStored(JSON.parse(readFileSync(path, 'utf8'))));
+  if (process.platform === 'linux') {
+    // existsSync follows links, including dangling links. Such an existing identity
+    // must be rejected rather than silently replaced with a different device key.
+    try { if (lstatSync(path).isSymbolicLink()) throw new Error('Node identity must not be a symbolic link.'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+  if (existsSync(path)) return materialize(validateStored(JSON.parse(process.platform === 'linux' ? readPrivateFile(path) : readFileSync(path, 'utf8'))));
 
   const pair = generateKeyPairSync('ed25519');
   const publicBytes = publicKeyBytes(pair.publicKey);
@@ -160,10 +173,10 @@ export function loadNodeIdentity(root: string): NodeIdentity {
     brainID: randomUUID(),
     createdAt: new Date().toISOString(),
     publicKey: publicBytes.toString('base64'),
-    protectedPrivateKey: protectedPrivateKey(
-      pair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer,
-    ),
-    protection: 'windows-dpapi-current-user',
+    protectedPrivateKey: process.platform === 'linux'
+      ? (pair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).toString('base64')
+      : protectedPrivateKey(pair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer),
+    protection: process.platform === 'linux' ? 'linux-user-file' : 'windows-dpapi-current-user',
   };
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {

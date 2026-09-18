@@ -3638,7 +3638,7 @@ export class NodeNetwork extends EventEmitter {
             cap: capabilities.join(','),
           },
         });
-        this.service.on('error', () => this.fail('无法发布 Rivloom 节点，请检查 Windows 防火墙。'));
+        this.service.on('error', () => this.fail('无法发布 Rivloom 节点，请检查本机网络与防火墙。'));
         this.browser = this.bonjour.find({ type: serviceType, protocol: 'tcp' }, (found) => {
           void this.probe(found as MdnsService);
         });

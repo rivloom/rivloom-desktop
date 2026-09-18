@@ -49,13 +49,13 @@ function fallback(
       { repository: 'kubernetes/kubernetes', revision: 'v1.30.0', file: 'LICENSE', gitBlobSha1: 'd645695673349e3947e8e5ae42332d0ac3164cd7' },
     ], versionSource: 'https://registry.npmjs.org/kubernetes-types/1.30.0',
   };
-  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64'].includes(name) && version === engineVersion)
+  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64', 'opencode-linux-x64-baseline', 'opencode-linux-arm64'].includes(name) && version === engineVersion)
     return {
       files: [engineLicense],
       versionSource:
         name === '@opencode-ai/plugin' ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/plugin/package.json' : name === '@opencode-ai/sdk'
           ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/sdk/js/package.json'
-          : 'https://registry.npmjs.org/opencode-windows-x64/1.18.25',
+          : `https://registry.npmjs.org/${name}/1.18.25`,
     };
   const tauriApi = name === '@tauri-apps/api' && version === '2.11.1';
   const tauriCli =
@@ -198,7 +198,7 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
       license:
         info.license ||
         installed.license ||
-        (name === 'opencode-windows-x64' ? 'MIT (upstream)' : ''),
+        (name.startsWith('opencode-') ? 'MIT (upstream)' : ''),
       developmentOnly: !!info.dev,
       integrity: info.integrity,
       packagePaths: [path],

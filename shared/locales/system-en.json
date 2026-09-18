@@ -1,4 +1,12 @@
 {
+  "项目目录不存在或当前系统用户无法访问": "The project directory does not exist or the current system user cannot access it",
+  "OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。": "OpenCode failed to start. Check the system architecture and pinned engine installation, then restart the application.",
+  "无法发布 Rivloom 节点，请检查本机网络与防火墙。": "Could not advertise this Rivloom node. Check the local network and firewall.",
+  "本机命令行身份校验失败": "Local command-line authentication failed",
+  "找不到本机所有者，请检查数据目录。": "The local owner is missing. Check the data directory.",
+  "节点身份保护方式与当前平台不匹配；不会自动替换设备身份。": "The node identity protection does not match this platform. The device identity will not be replaced automatically.",
+  "节点私钥无法由当前系统用户读取；不会自动替换设备身份。": "The current system user cannot read the node private key. The device identity will not be replaced automatically.",
+  "节点身份只支持 Windows 与 Linux。": "Node identities are supported on Windows and Linux only.",
   "任务：{{value1}}\n\n要求：\n{{value2}}\n\n验收标准：\n{{value3}}\n\n在当前项目文件夹完成编程任务并运行必要测试。遵守当前任务审批模式。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。": "Task: {{value1}}\n\nRequirements:\n{{value2}}\n\nAcceptance criteria:\n{{value3}}\n\nComplete the coding task in the current project folder and run necessary tests. Follow the current task's approval mode. Do not commit, push, deploy or access credentials. Summarize completed changes, test results and limitations. Do not invoke subagents.",
   "项目目录不存在或当前 Windows 用户无法访问": "The project directory does not exist or the current Windows user cannot access it",
   "需要选择一个文件夹": "Choose a folder",

@@ -747,7 +747,7 @@ test('automatic brain formation deterministically keeps the lower provisional ma
 
 test(
   'brain task placement rejects remote Master-only capacity and resumes the original queue on a third Worker',
-  { skip: process.platform !== 'win32', timeout: 90_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 90_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -890,7 +890,7 @@ test(
 
 test(
   'shared workers register with two Brains and a declined Execution is reassigned safely',
-  { skip: process.platform !== 'win32', timeout: 90_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 90_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1105,7 +1105,7 @@ test(
 
 test(
   'offline pending Execution retries, late acceptance is fenced, accepted unknown waits',
-  { skip: process.platform !== 'win32', timeout: 90_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 90_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1260,7 +1260,7 @@ test('queue receipt authenticated ACK binds the exact request without consuming 
 
 test(
   'queue receipt network does not treat an unauthenticated success response as delivery',
-  { skip: process.platform !== 'win32', timeout: 45_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 45_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1318,7 +1318,7 @@ test(
 
 test(
   'collaboration extensions serialize authenticated queries without creating task executions',
-  { skip: process.platform !== 'win32', timeout: 45_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 45_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1373,7 +1373,7 @@ test(
 
 test(
   'queue receipt network preserves fresh authenticated statistics across signed hello refresh',
-  { skip: process.platform !== 'win32', timeout: 45_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 45_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1443,7 +1443,7 @@ test(
 
 test(
   'workload statistics negotiate with the real previous queue-v1 decoder',
-  { skip: process.platform !== 'win32', timeout: 45_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 45_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1543,7 +1543,7 @@ test(
 
 test(
   'queue receipt network keeps legacy capability peers usable without sending new queue fields',
-  { skip: process.platform !== 'win32', timeout: 60_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 60_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1695,7 +1695,7 @@ test(
 
 test(
   'queue receipt network fences wrong routes and reordering and replays after lost ACK and reconnect',
-  { skip: process.platform !== 'win32', timeout: 75_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 75_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -1961,7 +1961,7 @@ test(
 
 test(
   'node trust storage rejects conflicting trusted and revoked records',
-  { skip: process.platform !== 'win32' },
+  { skip: !['win32', 'linux'].includes(process.platform) },
   () => {
     const root = mkdtempSync(join(tmpdir(), 'rivloom-trust-test-'));
     try {
@@ -1991,7 +1991,7 @@ test(
 
 test(
   'secure node channel derives directional keys and rejects tamper, replay and expiry',
-  { skip: process.platform !== 'win32' },
+  { skip: !['win32', 'linux'].includes(process.platform) },
   () => {
     const roots = [
       mkdtempSync(join(tmpdir(), 'rivloom-channel-a-')),
@@ -2383,7 +2383,7 @@ test('execution policy trusts paired senders and persists the local AI approval 
 
 test(
   'two isolated Rivloom instances discover and cryptographically verify each other',
-  { skip: process.platform !== 'win32', timeout: 30_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 30_000 },
   async () => {
     const previous = process.env.RIVLOOM_DISCOVERY_FALLBACK;
     process.env.RIVLOOM_DISCOVERY_FALLBACK = 'disabled';
@@ -2428,7 +2428,7 @@ test(
 
 test(
   'UDP broadcast fallback discovers and verifies two nodes without mDNS',
-  { skip: process.platform !== 'win32', timeout: 30_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 30_000 },
   async () => {
     const previous = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;
@@ -2473,7 +2473,7 @@ test(
 
 test(
   'two nodes require bilateral confirmation, persist trust, reject replay and revoke both sides',
-  { skip: process.platform !== 'win32', timeout: 60_000 },
+  { skip: !['win32', 'linux'].includes(process.platform), timeout: 60_000 },
   async () => {
     const previousMdns = process.env.RIVLOOM_MDNS_NETWORK;
     const previousPort = process.env.RIVLOOM_DISCOVERY_PORT;

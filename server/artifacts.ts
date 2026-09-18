@@ -8,7 +8,7 @@ export async function validateProject(directory: string) {
   try {
     canonical = await realpath(resolve(directory));
   } catch {
-    throw new HttpError(400, '项目目录不存在或当前 Windows 用户无法访问');
+    throw new HttpError(400, '项目目录不存在或当前系统用户无法访问');
   }
   requireThat((await lstat(canonical)).isDirectory(), 400, '需要选择一个文件夹');
   return canonical;

@@ -118,7 +118,7 @@ export async function initializeEngine() {
     await refreshEngineModels();
     engineStatus.ready = true;
   } catch {
-    engineStatus.error = 'OpenCode 启动失败。检查 Windows x64 和已锁定的引擎安装；重启应用后再试。';
+    engineStatus.error = 'OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。';
   }
   changed();
 }

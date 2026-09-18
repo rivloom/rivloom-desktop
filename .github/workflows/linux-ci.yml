@@ -1,0 +1,63 @@
+name: Linux headless CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-rivloom-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: ${{ matrix.arch }}
+          package-manager-cache: false
+      - name: Require a supported native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: node -e 'require("node:assert/strict").ok(["x64", "arm64"].includes(process.env.EXPECTED_ARCH) && process.arch === process.env.EXPECTED_ARCH && process.platform === "linux")'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:linux
+      - name: Test headless permissions, lifecycle and command interface
+        run: node --test tests/headless-cli.test.ts tests/headless-runtime.test.ts
+      - name: Test Linux node protocol with the platform-specific identity implementation
+        run: node scripts/linux-protocol.ts
+      - name: Verify real CLI commands against an isolated local service without model calls
+        run: node scripts/headless-service-check.ts
+      - name: Verify two-node pairing, approved task execution and encrypted results with a local synthetic model
+        run: node scripts/headless-task-check.ts
+      - name: Assemble self-contained archive with verified Node, OpenCode and license originals
+        run: npm run linux:build
+      - name: Verify extracted archive startup, restart, identity, authentication and SIGTERM
+        run: npm run linux:smoke
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-linux-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/linux/${{ matrix.arch }}/*.tar.gz
+            test-results/linux/${{ matrix.arch }}/build.json
+            test-results/linux/${{ matrix.arch }}/smoke.json
+          if-no-files-found: error
+          retention-days: 14

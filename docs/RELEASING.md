@@ -1,5 +1,9 @@
 # 官网分发与安全更新方案
 
+**Linux x64 首发准备：** 无 GUI 执行节点使用独立 tar.gz、SHA256SUMS 和 `releases/linux/latest.json`；本次只发行 x64，ARM64 暂不发布。公开记录要求 x64，ARM64 为可选项，平台与 artifact 来源必须完全对应，校验文件只列实际发行的平台。使用只读 `linux-ci.yml` 完成原生构建与验收，再手动触发 `linux-release.yml`，提供同一 main 提交已经成功结束的构建 run ID 与 x64 artifact ID。流程复核来源、解包启动/停止、身份保持、认证边界及摘要后才创建独立 Linux Release，并在公开完整下载核对成功后推进 Linux 记录。未通过的架构不得写成可用。
+
+只发行 Linux 时以 `[skip ci]` 提交避免现有 main Windows 自动发行，随后手动执行 Linux 两阶段流程。不可变路径为 `releases/linux/linux-v<version>-<commit12>-<buildRunID>/`；手动 Linux 流程不触发 Windows 发行，也不更改 Windows latest/updater。Linux 当前为手动停止节点、更换程序、保留数据目录的升级方式，校验和不等于数字签名。流程源码及 Hook 返回成功不等于正式发行收尾完成；官网实际部署、公开完整下载和 [R2 保留检查](R2-RETENTION.md) 仍须核对并如实记录。使用说明见 [Linux CLI](LINUX.md)。
+
 **2026-09-18 · 0.1.18 正式发布与收尾完成。** 托盘关闭/直接退出、步骤等待和队列诊断、Windows 局域网检测及定向修复已发行。源码 1aa920d14ad9382b4c339334db0a470b1914d9f9，发行 v0.1.18-1aa920d14ad9-10534808566；[构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35313869617)。同提交三份 CI、原生测试、NSIS 构建、隔离安装/启动/重启/卸载及原公钥签名核验通过。匿名完整下载 89318474 字节，SHA256 fc84ec9672dd5d1507aa816c714e5685ea50955ea0b48f1cc0e60dade5bd2c9d。官网中英文指南、更新日志、连接 FAQ 和下载页已实际部署并复核，Actions 继续停用。R2 保留 50、暂缓 0、删除 0；检查完成，删除 0 个，见[本次审计](releases/0.1.18-r2-retention.md)。
 
 **2026-09-18 · 0.1.18 发行准备中。** 按用户本轮推送意图，整理当前已验收的 desktop 改动并沿用 main 自动发行链。包含托盘关闭/直接退出、步骤等待与队列诊断、Windows 局域网检测和定向修复；官方 OpenCode 1.18.25 / Node 24.19.0 不变。此前实机验收及遗留边界保留，不要求重做已通过的基础远程任务。版本已递增，当前尚未提交或推送；云端同提交 CI、隔离安装、公开下载、签名更新、官网部署与 R2 保留检查须按实际结果收尾。

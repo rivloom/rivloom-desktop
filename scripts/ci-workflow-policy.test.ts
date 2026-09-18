@@ -26,6 +26,7 @@ function audit(name: string, workflow: any) {
   assert(Object.values(workflow.permissions).every((value) => value === 'read'));
   assert(!JSON.stringify(workflow.env ?? {}).includes('secrets.'), 'Workflow-level secret');
   const release = name === 'windows-candidate.yml';
+  const linuxRelease = name === 'linux-release.yml';
   const inventory = name === 'r2-inventory.yml';
   if (release) {
     assert.deepEqual(Object.keys(workflow.on).sort(), [
@@ -48,6 +49,15 @@ function audit(name: string, workflow: any) {
         !/always\s*\(|!\s*cancelled\s*\(/.test(workflow.jobs[job].if ?? ''),
         'Cannot bypass failed prerequisites',
       );
+  } else if (linuxRelease) {
+    assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
+    assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs).sort(), ['build_run_id', 'x64_artifact_id']);
+    assert.deepEqual(Object.keys(workflow.jobs).sort(), ['publish', 'verify', 'website-download']);
+    assert.equal(workflow.jobs.verify.if, "github.repository == 'rivloom/rivloom-desktop' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'");
+    assert.equal(workflow.jobs.publish.needs, 'verify');
+    assert.deepEqual(workflow.jobs['website-download'].needs, ['verify', 'publish']);
+    assert.equal(workflow.jobs['website-download'].concurrency.group, 'public-rivloom-download');
+    for (const job of ['publish', 'website-download']) assert(!/always\s*\(|!\s*cancelled\s*\(/.test(workflow.jobs[job].if ?? ''), 'Cannot bypass Linux provenance');
   } else if (inventory) {
     assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
     assert.deepEqual(Object.keys(workflow.jobs), ['inventory']);
@@ -57,7 +67,7 @@ function audit(name: string, workflow: any) {
     );
   } else {
     assert(
-      ['ci.yml', 'windows-services.yml', 'lan-regression.yml'].includes(name),
+      ['ci.yml', 'windows-services.yml', 'lan-regression.yml', 'linux-ci.yml'].includes(name),
       'Unreviewed workflow',
     );
     assert.deepEqual(Object.keys(workflow.on).sort(), [
@@ -73,7 +83,7 @@ function audit(name: string, workflow: any) {
       assert(
         value === 'read' ||
           value === 'none' ||
-          (release && id === 'publish' && scope === 'contents' && value === 'write'),
+          ((release || linuxRelease) && id === 'publish' && scope === 'contents' && value === 'write'),
         'Unexpected write permission',
       );
     assert(!JSON.stringify(job.env ?? {}).includes('secrets.'), 'Job-level secret');
@@ -82,7 +92,14 @@ function audit(name: string, workflow: any) {
         !JSON.stringify(job).includes('secrets.'),
         'Build/publication cannot access deployment secrets',
       );
-    assert.equal(job['runs-on'], 'windows-2022', 'Use disposable hosted runners');
+    if (linuxRelease && id !== 'website-download') assert(!JSON.stringify(job).includes('secrets.'), 'Linux verification/publication cannot access deployment secrets');
+    if (name === 'linux-ci.yml') {
+      assert.equal(job['runs-on'], '${{ matrix.runner }}');
+      assert.deepEqual(job.strategy.matrix.include, [
+        { arch: 'x64', runner: 'ubuntu-22.04' },
+      ], 'First Linux release is native x64 only');
+      assert.equal(job.strategy['fail-fast'], false);
+    } else assert.equal(job['runs-on'], linuxRelease ? 'ubuntu-22.04' : 'windows-2022', 'Use disposable hosted runners');
     for (const step of job.steps ?? []) {
       if (!step.uses) continue;
       assert(
@@ -93,17 +110,25 @@ function audit(name: string, workflow: any) {
       if (step.uses.startsWith('actions/checkout@')) {
         assert.equal(step.with['persist-credentials'], false);
         if (release) assert.equal(step.with.ref, '${{ env.RIVLOOM_CANDIDATE_SHA }}');
+        if (linuxRelease) assert.equal(step.with.ref, '${{ github.sha }}');
       }
       if (step.uses.startsWith('actions/download-artifact@')) {
-        assert(release, 'Unreviewed artifact execution');
-        assert(
+        assert(release || linuxRelease, 'Unreviewed artifact execution');
+        if (linuxRelease && step.with['artifact-ids'] === '${{ inputs.x64_artifact_id }}') {
+          assert.equal(step.with['run-id'], '${{ inputs.build_run_id }}');
+          assert.equal(step.with['github-token'], '${{ github.token }}');
+          assert.equal(step.with.path, 'test-results/linux/x64');
+          assert(!('repository' in step.with) && !('name' in step.with));
+        } else {
+          assert(
           /^\$\{\{ needs\.(candidate|publish)\.outputs\.artifact-id \}\}$/.test(
             step.with['artifact-ids'],
           ),
           'Artifact must come from this run',
         );
+          assert(!('run-id' in step.with) && !('repository' in step.with) && !('name' in step.with));
+        }
         assert.equal(step.with['digest-mismatch'], 'error');
-        assert(!('run-id' in step.with) && !('repository' in step.with) && !('name' in step.with));
       }
     }
   }
@@ -159,4 +184,13 @@ test('workflow policy rejects bypassed release gates and artifacts from another 
   mutate((w) => {
     w.jobs.candidate.steps[0].with.ref = 'main';
   });
+});
+
+test('Linux publication stays manually gated and binds cross-run artifacts to the verified source run', () => {
+  const mutate = (change: (workflow: any) => void) => { const workflow = load('linux-release.yml'); change(workflow); assert.throws(() => audit('linux-release.yml', workflow)); };
+  mutate(w => { w.on.push = { branches: ['main'] }; });
+  mutate(w => { w.jobs.verify.if = 'true'; });
+  mutate(w => { w.jobs.publish.needs = []; });
+  mutate(w => { w.jobs['website-download'].if = 'always()'; });
+  mutate(w => { w.jobs.publish.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with['run-id'] = '123'; });
 });
