@@ -8,6 +8,7 @@ import { execFile } from 'node:child_process';
 import type { Bootstrap, Task } from '../shared/types.ts';
 import type { Workflow, WorkflowAttempt, WorkflowRound } from '../shared/workflows.ts';
 import { workflowStep } from '../server/workflows.ts';
+import { listenHttp } from '../server/http-ports.ts';
 
 export function searchPreviewData(): Bootstrap {
   const when = new Date().toISOString(), user = { id: 'search-preview-owner', username: 'preview', name: '搜索验收', owner: true };
@@ -108,7 +109,7 @@ export async function startSearchPreview(dist = resolve('dist'), extension?: (re
       res.end(bytes);
     } catch { if (!res.headersSent) json(res, { error: 'Preview content unavailable' }, 404); else res.end(); }
   });
-  await new Promise<void>((ok, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', () => { server.off('error', fail); ok(); }); });
+  await listenHttp(server, '127.0.0.1');
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const close = async () => { for (const res of feeds) res.end(); server.closeAllConnections(); await new Promise<void>((ok) => server.close(() => ok())); };
   return { data, requests, origin, flush, close };

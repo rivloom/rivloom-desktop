@@ -3,11 +3,41 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { dataDirectory, parseArguments, peerPort, runCommand, systemdUnit, type API } from '../cli/commands.ts';
+import { dataDirectory, help, parseArguments, peerPort, runCommand, systemdUnit, type API } from '../cli/commands.ts';
+import { cliHelp, cliText, prepareCliArguments } from '../cli/localization.ts';
+import { spawnSync } from 'node:child_process';
 import { HeadlessClient, parseControl, readControl } from '../cli/control.ts';
 import { initializeDataDirectory } from '../cli/index.ts';
 
 const command = (...args: string[]) => parseArguments(args);
+
+test('CLI language follows locale precedence, explicit language and preserves literal command arguments', () => {
+  assert.equal(prepareCliArguments(['status'], { LANG: 'zh_CN.UTF-8' }).locale, 'zh-CN');
+  assert.equal(prepareCliArguments(['status'], { LANG: 'zh_CN.UTF-8', LC_ALL: 'C' }).locale, 'en');
+  assert.equal(prepareCliArguments(['status'], { LC_MESSAGES: 'zh_CN.UTF-8', LANG: 'en_US.UTF-8' }).locale, 'zh-CN');
+  assert.deepEqual(prepareCliArguments(['--lang', 'en', '--data-dir', '/tmp/node', 'status'], { LANG: 'zh_CN.UTF-8' }), { locale: 'en', args: ['--data-dir', '/tmp/node', 'status'] });
+  assert.deepEqual(prepareCliArguments(['name', '--', '--lang', 'zh-CN'], {}).args, ['name', '--', '--lang', 'zh-CN']);
+  assert.throws(() => prepareCliArguments(['--lang', 'en', '--lang', 'zh-CN'], {}), /Duplicate/);
+  assert.throws(() => prepareCliArguments(['--lang', 'fr'], {}), /en or zh-CN/);
+  assert.match(cliHelp(help, 'zh-CN'), /初始化仅当前用户可访问的本地数据/);
+  assert.match(cliHelp(help, 'zh-CN'), /pair confirm PAIRING_ID --code CODE/);
+  assert.equal(cliHelp(help, 'en'), help);
+  assert.equal(cliText("'providers key' requires --stdin", 'zh-CN'), "命令 'providers key' 需要 --stdin");
+  assert.equal(cliText('Unknown external error from a tool', 'zh-CN'), 'Unknown external error from a tool');
+  prepareCliArguments([], { LANG: 'en' });
+});
+
+test('actual CLI help and error output support Chinese and English without a node or model', () => {
+  const execute = (locale: string, ...args: string[]) => spawnSync(process.execPath, ['cli/index.ts', '--lang', locale, ...args], { cwd: resolve(import.meta.dirname, '..'), encoding: 'utf8', windowsHide: true, env: { ...process.env, LANG: 'en_US.UTF-8' } });
+  for (const locale of ['zh-CN', 'en']) {
+    const result = execute(locale, '--help'); assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, locale === 'en' ? /Initialize private local data/ : /初始化仅当前用户可访问的本地数据/);
+    const error = execute(locale, 'not-a-command'); assert.equal(error.status, 1);
+    assert.match(error.stderr, locale === 'en' ? /Unknown command/ : /未知命令/);
+    const version = execute(locale, '--version', '--json'); assert.equal(version.status, 0);
+    assert.equal(typeof JSON.parse(version.stdout).version, 'string');
+  }
+});
 const io = (input = '') => ({ dataDir: '/tmp/rivloom-test', stdin: async () => input });
 function fakeAPI(values: Record<string, unknown> = {}) {
   const calls: { path: string; body?: unknown }[] = [];
@@ -69,7 +99,14 @@ test('headless execution requires explicit project, model, approval mode and con
   for (const argv of [ ['execution', 'enable'], ['execution', 'enable', '--confirm'], ['execution', 'enable', '--project', 'p', '--model', 'a/b', '--approval', 'invalid', '--confirm'] ]) await assert.rejects(runCommand(parseArguments(argv), api, io()));
   assert.equal(calls.length, 0);
   await runCommand(command('execution', 'enable', '--project', 'p', '--model', 'a/b', '--approval', 'ask', '--confirm'), api, io());
-  assert.deepEqual(calls[0], { path: '/api/network/execution-policy', body: { enabled: true, projectID: 'p', model: 'a/b', approvalMode: 'ask', confirmed: true } });
+  assert.deepEqual(calls[0], { path: '/api/network/execution-policy', body: { enabled: true, reasoningEffort: null, projectID: 'p', model: 'a/b', approvalMode: 'ask', confirmed: true } });
+  await runCommand(command('execution', 'enable', '--project', 'p', '--model', 'a/b', '--approval', 'ask', '--thinking', 'high', '--confirm'), api, io());
+  assert.equal((calls.at(-1)?.body as { reasoningEffort: string }).reasoningEffort, 'high');
+  await runCommand(command('execution', 'enable', '--project', 'p', '--model', 'a/b', '--approval', 'ask', '--thinking', 'auto', '--confirm'), api, io());
+  assert.equal((calls.at(-1)?.body as { reasoningEffort: null }).reasoningEffort, null);
+  const count = calls.length;
+  await assert.rejects(runCommand(command('execution', 'enable', '--project', 'p', '--model', 'a/b', '--approval', 'ask', '--thinking', 'bad value', '--confirm'), api, io()), /Invalid thinking/);
+  assert.equal(calls.length, count);
 });
 
 test('headless concurrency and fixed LAN ports reject out-of-range and ambiguous values', async () => {

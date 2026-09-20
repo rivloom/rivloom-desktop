@@ -172,23 +172,23 @@
   },
   {
     "name": "@opencode-ai/plugin",
-    "version": "1.18.25",
+    "version": "1.18.31",
     "license": "MIT",
     "developmentOnly": false,
-    "integrity": "sha512-Kb34zFqYosFNiMd1IuYiZGjX17z+18Srm7tHZMCz+uMVRTYNkEw1FTrfAK2FLbggwYdgzifGwKMNF1slLT8eLw==",
+    "integrity": "sha512-Rdc1bPK06PByaGyGd0kf7JUZ4pTkexz2OOUNlqZWLpHOiMEZ+/rFGjt46ypZ3QwA697gNdWwwwQbHbKG5NMwGA==",
     "packagePaths": [
       "node_modules/@opencode-ai/plugin"
     ],
-    "licenseFile": "licenses/npm/%40opencode-ai%2Fplugin/1.18.25/LICENSE",
+    "licenseFile": "licenses/npm/%40opencode-ai%2Fplugin/1.18.31/LICENSE",
     "licenseFiles": [
-      "licenses/npm/%40opencode-ai%2Fplugin/1.18.25/LICENSE"
+      "licenses/npm/%40opencode-ai%2Fplugin/1.18.31/LICENSE"
     ],
     "licenseSources": [
       {
         "kind": "upstream",
-        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.25",
-        "revision": "v1.18.25",
-        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/plugin/package.json",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.31",
+        "revision": "v1.18.31",
+        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/plugin/package.json",
         "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
         "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
       }
@@ -196,23 +196,23 @@
   },
   {
     "name": "@opencode-ai/sdk",
-    "version": "1.18.25",
+    "version": "1.18.31",
     "license": "MIT",
     "developmentOnly": false,
-    "integrity": "sha512-GwgwhW+vE8FWSDw730SjzqNhsWXB0uJjbFOiqFkmM+USFuG13HuTlGe6SR2ixt+WXxoD6FV1hILWqsXyqej9hQ==",
+    "integrity": "sha512-Raouthf8Lhe9edjvYeeSK7SgvdoU6bBjH9qV3f70dHoa6h+z0X2TMz/e22/wKp/StlFUZ4kIRpYYxFnY8/k01w==",
     "packagePaths": [
       "node_modules/@opencode-ai/sdk"
     ],
-    "licenseFile": "licenses/npm/%40opencode-ai%2Fsdk/1.18.25/LICENSE",
+    "licenseFile": "licenses/npm/%40opencode-ai%2Fsdk/1.18.31/LICENSE",
     "licenseFiles": [
-      "licenses/npm/%40opencode-ai%2Fsdk/1.18.25/LICENSE"
+      "licenses/npm/%40opencode-ai%2Fsdk/1.18.31/LICENSE"
     ],
     "licenseSources": [
       {
         "kind": "upstream",
-        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.25",
-        "revision": "v1.18.25",
-        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/sdk/js/package.json",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.31",
+        "revision": "v1.18.31",
+        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/sdk/js/package.json",
         "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
         "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
       }
@@ -3853,30 +3853,6 @@
         "kind": "installed-package",
         "file": "LICENSE",
         "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
-      }
-    ]
-  },
-  {
-    "name": "opencode-windows-x64",
-    "version": "1.18.25",
-    "license": "MIT (upstream)",
-    "developmentOnly": false,
-    "integrity": "sha512-xW5wtSxWYbI7DcmQWMlNWIiDBdMJON1vDiEmVWo88R9tT/PaahOhWKgp7FoWDqJKf89jS3ZIzkqnkU3F2dio7A==",
-    "packagePaths": [
-      "node_modules/opencode-windows-x64"
-    ],
-    "licenseFile": "licenses/npm/opencode-windows-x64/1.18.25/LICENSE",
-    "licenseFiles": [
-      "licenses/npm/opencode-windows-x64/1.18.25/LICENSE"
-    ],
-    "licenseSources": [
-      {
-        "kind": "upstream",
-        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.25",
-        "revision": "v1.18.25",
-        "packageVersionSource": "https://registry.npmjs.org/opencode-windows-x64/1.18.25",
-        "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
-        "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
       }
     ]
   },

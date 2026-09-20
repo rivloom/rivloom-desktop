@@ -12,7 +12,7 @@ export type WorkflowPlacementInput = {
   network: Pick<NodeNetwork, 'local' | 'paired' | 'brains'>;
   owner: boolean;
   catalog: ResourceDiscoveryNode[];
-  local: { projectID: string | null; model: string | null; projectExists: boolean; modelAvailable: boolean;
+  local: { projectID: string | null; model: string | null; reasoningEffort?: import('../shared/model-reasoning.ts').ReasoningEffort; projectExists: boolean; modelAvailable: boolean;
     engineReady: boolean; accepting: boolean; waitingCount: number };
 };
 export type WorkflowPlacement = { candidates: WorkflowCandidate[]; nodes: WorkflowNodeDiagnostic[] };
@@ -70,7 +70,7 @@ export function evaluateWorkflowPlacement(step: WorkflowStep, input: WorkflowPla
     }
     nodes.push({ nodeID: own.id, reasons });
     if (!reasons.length) candidates.push({ nodeID: own.id, kind: 'local', waitingCount: local.waitingCount,
-      localConfig: { projectID: local.projectID!, model: local.model! } });
+      localConfig: { projectID: local.projectID!, model: local.model!, ...(local.reasoningEffort !== undefined ? { reasoningEffort: local.reasoningEffort } : {}) } });
   }
   if (input.owner) for (const node of network.paired || []) {
     const reasons: WorkflowDiagnosticReason[] = [];

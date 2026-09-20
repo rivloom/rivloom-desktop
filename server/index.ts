@@ -1,4 +1,8 @@
+import { validReasoningEffort, reasoningSupported } from '../shared/model-reasoning.ts';
 import { installTaskFileAPI } from './task-file-api.ts';
+import { installProjectChangesAPI } from './project-changes-api.ts';
+import { installPromptTemplateAPI } from './prompt-template-api.ts';
+import { PromptTemplateStore } from './prompt-templates.ts';
 import { TaskFileError } from './task-files.ts';
 import { inputFileFields, taskFileUploadCount } from '../shared/task-files.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
@@ -50,6 +54,7 @@ import {
   changed,
   updates,
   runTask,
+  sendTaskMessage,
   stopTask,
   addRequirement,
   replyPermission,
@@ -389,7 +394,7 @@ setTaskInputMaterializer((value, directory) => {
     directory,
   );
 });
-setTaskStartGuard((value) => {
+setTaskStartGuard((value, options) => {
   conversationHistory.assertAvailable('local', value.id);
   requireThat(!updateMaintenance.active, 503, '正在准备软件更新，请稍后重试。');
   if (value.inputFiles?.length)
@@ -403,7 +408,9 @@ setTaskStartGuard((value) => {
     );
   const entry = nodeQueue.list().find((candidate) => candidate.localTaskID === value.id);
   requireThat(
-    !entry || entry.state === 'admitted' || (entry.state === 'ended' && entry.endReason?.code === 'stopped'),
+    !entry || entry.state === 'admitted' || (entry.state === 'ended' && entry.endReason?.code === 'stopped') ||
+      (options?.continuation && !value.collaboration && !value.remoteOrigin && entry.source.kind === 'local' &&
+        entry.state === 'ended' && entry.endReason?.code === 'completed'),
     409,
     '此任务由 Node 队列管理，请等待准入或使用队列操作。',
   );
@@ -610,6 +617,8 @@ app.use('/api', (req, _res, next) => {
 });
 installWorkflowAPI(app, workflowRuntime, nodeNetwork, who);
 installKnowledgeAPI(app, () => knowledge, who, projects);
+installProjectChangesAPI(app, who, projects);
+installPromptTemplateAPI(app, who, new PromptTemplateStore(db));
 function visibleTask(req: Request) {
   const t = task(String(req.params.id));
   requireThat(participant(t, who(req)), 403, '你不是此任务的参与者');
@@ -792,6 +801,7 @@ app.post('/api/network/execution-policy', (req, res) => {
       approvalMode: z.enum(['ask', 'auto', 'full']),
       projectID: z.string().uuid().nullable(),
       model: z.string().min(3).max(200).nullable(),
+      reasoningEffort: z.unknown().refine(validReasoningEffort).optional(),
       confirmed: z.literal(true),
       maxConcurrent: z.number().int().min(minimumRemoteConcurrency).max(maximumRemoteConcurrency).optional(),
     })
@@ -805,11 +815,13 @@ app.post('/api/network/execution-policy', (req, res) => {
       '所选模型当前不可用，请先在本机模型设置中连接。',
     );
   }
+  requireThat(!input.enabled || reasoningSupported(engineStatus.models.find(m => m.id === input.model), input.reasoningEffort), 400,
+    '所选思考等级当前不可用，请重新选择思考等级或使用自动。');
   const saved = executionPolicies.save({
     enabled: input.enabled,
     approvalMode: input.approvalMode,
     projectID: input.projectID,
-    model: input.model,
+    model: input.model, reasoningEffort: input.reasoningEffort,
     ...(input.maxConcurrent !== undefined ? { maxConcurrent: input.maxConcurrent } : {}),
   });
   configureResources();
@@ -1480,7 +1492,7 @@ async function processRemoteTask(taskID: string) {
           version: 1,
           createdAt,
           updatedAt: createdAt,
-          model: currentPolicy.model,
+          model: currentPolicy.model, reasoningEffort: currentPolicy.reasoningEffort,
           approvalMode: currentPolicy.approvalMode,
           sessionID: null,
           runAfter: 0,
@@ -1979,6 +1991,7 @@ const taskInput = z.object({
   approverID: z.string().uuid(),
   reviewerID: z.string().uuid(),
   model: z.string().min(3).max(200),
+  reasoningEffort: z.unknown().refine(validReasoningEffort).optional(),
   approvalMode: z.enum(['ask', 'auto', 'full']),
 });
 app.post('/api/tasks', (req, res) => {
@@ -2000,6 +2013,8 @@ app.post('/api/tasks', (req, res) => {
     '请选择已配置的模型；可先到模型设置连接提供方',
   );
   project(input.projectID);
+  requireThat(reasoningSupported(engineStatus.models.find(m => m.id === input.model), input.reasoningEffort), 400,
+    '所选思考等级当前不可用，请重新选择思考等级或使用自动。');
   requireThat(
     [input.assigneeID, input.approverID, input.reviewerID].every((uid) => user(uid)),
     400,
@@ -2088,6 +2103,20 @@ app.post('/api/tasks/:id/run', async (req, res) => {
       }),
     ),
   );
+});
+app.post('/api/tasks/:id/messages', async (req, res) => {
+  const value = visibleTask(req);
+  const body = z.object({ requestID: z.string().uuid(), text: z.string().trim().min(1).max(12_000),
+    model: z.string().trim().min(3).max(200).optional(), reasoningEffort: z.unknown().refine(validReasoningEffort).optional(), confirmed: z.literal(true) }).strict().parse(req.body);
+  res.json(await workerAdmission.run(() => exclusive('engine-settings', () =>
+    exclusive(`project:${value.projectID}`, () => sendTaskMessage(value.id, who(req), body, current => {
+      requireThat(!isRemoteExecution(current, nodeQueue.list(), nodeNetwork.remoteTaskRecords()), 409,
+        'Only ordinary local conversations support this message endpoint.');
+      assertExecutionCapacity(current, nodeQueue.list().find(entry => entry.localTaskID === current.id));
+      assertCanStartTask();
+      requireThat(!nodeNetwork.projectLeased(current.projectID), 409,
+        '该项目已由本机所有者暂时保留给一项跨设备任务；请先撤销或等待准备授权过期。');
+    })))));
 });
 app.post('/api/tasks/:id/stop', async (req, res) =>
   res.json(await stopTask(visibleTask(req).id, who(req))),

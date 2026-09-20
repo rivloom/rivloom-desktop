@@ -6,7 +6,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 自行构建与验证
 
+Linux x64 源码运行先准备 Node24.19.0、Git、Python3、make、C/C++ 编译器和 libc 开发头文件，执行 `npm ci`、`npm run engine:prepare`，再执行 `npm run linux:build` 与 `npm run linux:smoke`。自有引擎固定源码和外置 recipe 分别校验，不能用旧 npm Linux 二进制替代；Windows 与 Linux 的版本和验收独立记录，ARM64 暂缓。
+
 按 README 安装固定版本 Node.js、Rust 和 Windows 工具链，运行 `npm.cmd ci` 与 `npm.cmd run build`。原生构建使用 Rust 1.98.1；无需项目发布密钥。依赖变更应更新锁文件和许可证清单，不手改上游许可证原文。
+
+Windows 引擎首次使用前运行 `npm.cmd run engine:prepare`，需要 Git、PowerShell 7 和固定 Node 24.19.0。该命令从自有 runtime 的固定提交构建并运行合成模型 smoke，不复制本机账号；新克隆需要公开依赖网络及 C++ 原生依赖构建环境。源码、缓存与失败报告保留在工作区。源代码 checkout 路径过长会触发 Windows 原生依赖限制，应把本仓库放在较短目录。完整输入及升级方法见 [引擎说明](docs/ENGINE.md)。
 
 修改后运行 `ci:versions`、`ci:coverage`、`ci:selftest`、`test:ci:logic` 和 `build`；涉及协议、引擎或服务时，再运行 [CI](docs/CI.md) 对应的隔离测试。测试使用合成数据和本机模拟模型。真实账号、真实项目、安装版数据及真实模型调用需由操作者明确选择，不是构建或验证的必需资源。
 

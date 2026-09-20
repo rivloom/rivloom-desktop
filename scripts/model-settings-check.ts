@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import type { Bootstrap, ModelSettings, User } from '../shared/types.ts';
 import type { ProviderAccess } from '../shared/model-providers.ts';
 import { createServer } from 'node:http';
+import { readEngineSource } from '../server/engine-artifact.ts';
 
 const directory = resolve('.data', 'model-settings', String(Date.now()));
 const proofFile = resolve('.data', 'verification', 'model-settings.json');
@@ -428,8 +429,8 @@ try {
     JSON.stringify(
       {
         date: new Date().toISOString(),
-        kind: 'real-app / official-opencode / synthetic-local-model-only',
-        engineVersion: '1.18.25',
+        kind: 'real-app / pinned-platform-opencode / synthetic-local-model-only',
+        engineVersion: readEngineSource(resolve(import.meta.dirname, '..')).version,
         deepseekModelsSeen: configured.models.filter((model) => model.id.startsWith('deepseek/'))
           .length,
         assertions,

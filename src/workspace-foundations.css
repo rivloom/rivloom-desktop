@@ -1,0 +1,18 @@
+.workspace-command-entry { display:flex; align-items:center; gap:8px; width:100%; padding:7px 11px; border:0; background:transparent; color:var(--muted); text-align:left; border-radius:6px; }
+.workspace-command-entry:hover { background:var(--accent-soft); color:var(--text); }
+.workspace-command-entry span { flex:1; }
+.workspace-command-entry kbd { font-family:inherit; font-size:10px; opacity:.75; white-space:nowrap; }
+.history-draft-tools { display:flex; gap:8px; align-items:center; padding:6px 4px; flex-wrap:wrap; }
+.history-draft-tools button { display:flex; gap:5px; border:0; background:transparent; border-radius:5px; padding:4px 7px; color:var(--muted); font-size:11px; }
+.history-draft-tools button[aria-pressed=true] { background:var(--accent-soft,#e9f0ec); color:var(--accent,#42715a); }
+.history-draft-badge { flex:none; font-size:10px; color:var(--accent); border:1px solid var(--line); padding:1px 4px; border-radius:3px; }
+.conversation-header > .workspace-header-tools { display:flex; flex:0 0 auto; align-items:center; gap:3px; margin-left:0; }
+.workspace-header-tools + .local-queue-entry { margin-left:2px; }
+.workspace-shortcuts-modal { width:min(560px,calc(100vw - 32px)); }
+.workspace-shortcuts { margin:24px 0; }
+.workspace-shortcuts div { display:flex; justify-content:space-between; gap:16px; padding:11px 0; border-bottom:1px solid var(--line); }
+.workspace-shortcuts dt { font-size:13px; }
+.workspace-shortcuts dd { margin:0; font-size:12px; text-align:right; }
+.workspace-shortcuts kbd { font:inherit; }
+.composer-send-preference small { line-height:1.6; color:var(--muted); }
+@media(max-width:680px) { .workspace-header-tools { gap:0; } .workspace-header-tools .icon-button { width:30px; min-width:30px; } .workspace-shortcuts div { align-items:center; } }

@@ -57,6 +57,7 @@ export type RemoteTaskControlAction =
   | { kind: 'supplement'; text: string }
   | { kind: 'accept'; note: string };
 export type Task = {
+  telemetry?: import('./task-telemetry.ts').TaskTelemetry;
   collaboration?: import('./workflows.ts').WorkflowExecutionContext;
   collaborationOutcome?: {
     sessionID: string;
@@ -82,10 +83,13 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   model: string;
+  reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort;
   approvalMode: ApprovalMode;
   sessionID: string | null;
   runAfter: number;
   messages: Message[];
+  /** Visible records from previous engine sessions after an explicit account switch. */
+  priorMessages?: Message[];
   approvals: Approval[];
   questions: Question[];
   artifacts: Artifact[];
@@ -257,6 +261,7 @@ export type RemoteTaskInvite = {
   expiresAt: string;
 };
 export type NodeExecutionPolicy = {
+  reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort;
   enabled: boolean;
   approvalMode: ApprovalMode;
   projectID: string | null;

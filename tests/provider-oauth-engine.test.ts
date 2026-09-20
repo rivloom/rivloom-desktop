@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('OAuth staging uses a separate official engine and cleans it without changing main credentials', { timeout: 60000 }, async () => {
+test('OAuth staging uses a separate pinned engine and cleans it without changing main credentials', { timeout: 60000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'rivloom-oauth-engine-'));
   process.env.RIVLOOM_DATA_DIR = root;
   const mainAuth = join(root, 'engine', 'data', 'opencode'); mkdirSync(mainAuth, { recursive: true });

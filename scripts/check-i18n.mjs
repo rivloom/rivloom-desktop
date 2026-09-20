@@ -23,6 +23,38 @@ for (const [key, value] of Object.entries(zh))
 
 const failures = [];
 let phrases = 0;
+const cliZh = JSON.parse(read('cli/locales/zh-CN.json'));
+const normalizeSlots = value => value.replace(/\{\{\w+\}\}/g, '{{slot}}');
+const cliKeys = new Set(Object.keys(cliZh).map(normalizeSlots));
+for (const [key, value] of Object.entries(cliZh)) {
+  assert(typeof value === 'string' && value.trim() && han.test(value), `Missing Chinese CLI translation: ${key}`);
+  assert.deepEqual(slots(value), slots(key), `CLI interpolation parity: ${key}`);
+}
+for (const file of ['cli/commands.ts', 'cli/control.ts', 'cli/index.ts', 'cli/localization.ts']) {
+  const ast = parse(read(file), { sourceType: 'module', plugins: ['typescript'] });
+  const phrase = node => node?.type === 'StringLiteral' ? node.value : node?.type === 'TemplateLiteral'
+    ? node.quasis.map(part => part.value.cooked).join('{{slot}}') : null;
+  const check = (text, node) => {
+    if (text !== null && !cliKeys.has(normalizeSlots(text))) failures.push(`${file}:${node.loc.start.line}: Missing Chinese CLI phrase: ${text}`);
+  };
+  function visit(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'NewExpression' && node.callee.name === 'Error') check(phrase(node.arguments[0]), node);
+    if (node.type === 'VariableDeclarator' && node.id.name === 'help') {
+      for (const line of phrase(node.init).split('\n').filter(Boolean)) {
+        const description = line.match(/^\s*\S.*?\s{2,}(\S.*)$/)?.[1];
+        if (description) check(description, node);
+        else if (!line.startsWith(' ') || /^\s{10,}/.test(line)) check(line.trim(), node);
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (['loc', 'comments', 'leadingComments', 'trailingComments', 'innerComments'].includes(key)) continue;
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') visit(value);
+    }
+  }
+  visit(ast);
+}
 function sourceFiles(directory) {
   return readdirSync(join(root, directory), { withFileTypes: true }).flatMap((entry) => {
     const path = `${directory}/${entry.name}`;
@@ -100,5 +132,5 @@ for (const file of ['src-tauri/src/main.rs', 'src-tauri/src/desktop_tray.rs']) {
 }
 assert.equal(failures.length, 0, failures.join('\n'));
 console.log(
-  `Localization coverage passed: ${Object.keys(en).length} UI/native keys, ${Object.keys(system).length} system keys, ${phrases} source phrases.`,
+  `Localization coverage passed: ${Object.keys(en).length} UI/native keys, ${Object.keys(system).length} system keys, ${Object.keys(cliZh).length} CLI keys, ${phrases} source phrases.`,
 );

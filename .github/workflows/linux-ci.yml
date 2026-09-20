@@ -22,7 +22,7 @@ jobs:
           - arch: x64
             runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,10 +36,17 @@ jobs:
       - name: Require a supported native architecture
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
-        run: node -e 'require("node:assert/strict").ok(["x64", "arm64"].includes(process.env.EXPECTED_ARCH) && process.arch === process.env.EXPECTED_ARCH && process.platform === "linux")'
+        run: node -e 'require("node:assert/strict").ok(process.env.EXPECTED_ARCH === "x64" && process.arch === "x64" && process.platform === "linux")'
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:linux
+      - name: Require native source build tools
+        run: |
+          command -v git python3 make g++
+          make --version
+          g++ --version
+      - name: Build and smoke the source-locked Rivloom Linux engine
+        run: npm run engine:prepare
       - name: Test headless permissions, lifecycle and command interface
         run: node --test tests/headless-cli.test.ts tests/headless-runtime.test.ts
       - name: Test Linux node protocol with the platform-specific identity implementation
@@ -48,7 +55,7 @@ jobs:
         run: node scripts/headless-service-check.ts
       - name: Verify two-node pairing, approved task execution and encrypted results with a local synthetic model
         run: node scripts/headless-task-check.ts
-      - name: Assemble self-contained archive with verified Node, OpenCode and license originals
+      - name: Assemble self-contained archive with verified Node, source-built OpenCode and license originals
         run: npm run linux:build
       - name: Verify extracted archive startup, restart, identity, authentication and SIGTERM
         run: npm run linux:smoke

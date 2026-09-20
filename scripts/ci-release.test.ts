@@ -32,6 +32,10 @@ async function fixture() {
   await writeFile(join(root, 'package.json'), encode({ version: '0.1.3' }));
   await writeFile(join(root, 'package-lock.json'), 'synthetic npm lock');
   await writeFile(join(root, 'src-tauri', 'Cargo.lock'), 'synthetic cargo lock');
+  const engineLockBytes = await readFile(resolve(import.meta.dirname, '../shared/engine-source.json'));
+  const engineLock = JSON.parse(engineLockBytes.toString('utf8'));
+  await mkdir(join(root, 'shared'));
+  await writeFile(join(root, 'shared', 'engine-source.json'), engineLockBytes);
   const product = {
     kind: 'desktop',
     identifier: 'com.rivloom.desktop',
@@ -51,9 +55,9 @@ async function fixture() {
       source: 'https://nodejs.org/dist/v24.19.0/SHASUMS256.txt',
     },
     opencode: {
-      version: '1.18.25',
+      version: engineLock.version,
       sha256: 'b'.repeat(64),
-      source: 'opencode-windows-x64@1.18.25',
+      source: `${engineLock.repository}#${engineLock.commit}`,
     },
     documents: [],
     packages: [{ name: 'synthetic' }],
@@ -66,6 +70,12 @@ async function fixture() {
     target: manifest.target,
     inputs: manifest.inputs,
     binaries: { node: manifest.node, opencode: manifest.opencode },
+    engineSource: {
+      commit: engineLock.commit,
+      tree: engineLock.tree,
+      lockSha256: sha(engineLockBytes),
+      receiptSha256: 'd'.repeat(64),
+    },
     documents: [],
     packages: 1,
     licenses: { files: 1 },
@@ -360,6 +370,30 @@ test('failed local evidence or extra files cause zero GitHub calls', async () =>
     /original eight files/,
   );
   assert.equal(github.state.calls.length, 0);
+});
+
+test('matching candidate reports cannot substitute a different engine source or omit its build receipt', async () => {
+  for (const variant of ['version', 'source', 'commit', 'tree', 'lock', 'receipt-zero', 'receipt-missing']) {
+    const { root, directory, change } = await fixture();
+    const manifest = JSON.parse(await readFile(join(directory, 'runtime-manifest.json'), 'utf8'));
+    const runtime = JSON.parse(await readFile(join(directory, 'runtime-before.json'), 'utf8'));
+    if (variant === 'version') manifest.opencode.version = '1.18.25';
+    if (variant === 'source') manifest.opencode.source = 'opencode-windows-x64@1.18.25';
+    runtime.binaries.opencode = manifest.opencode;
+    if (variant === 'commit') runtime.engineSource.commit = 'e'.repeat(40);
+    if (variant === 'tree') runtime.engineSource.tree = 'e'.repeat(40);
+    if (variant === 'lock') runtime.engineSource.lockSha256 = 'e'.repeat(64);
+    if (variant === 'receipt-zero') runtime.engineSource.receiptSha256 = '0'.repeat(64);
+    if (variant === 'receipt-missing') delete runtime.engineSource.receiptSha256;
+    await writeFile(join(directory, 'runtime-manifest.json'), encode(manifest));
+    for (const name of ['runtime-before.json', 'runtime-after.json'])
+      await writeFile(join(directory, name), encode(runtime));
+    await change('candidate-build.json', (value) => { value.runtimeManifestSha256 = sha(encode(manifest)); });
+    await change('desktop-install.json', (value) => { value.runtime = runtime; });
+    const github = mockGithub();
+    await assert.rejects(() => publishRelease(root, context, github.transport), /engine|runtime binary/i, variant);
+    assert.equal(github.state.calls.length, 0, variant);
+  }
 });
 
 test('draft upload failure is resumable with the same artifact; completed release retry performs no mutations', async () => {

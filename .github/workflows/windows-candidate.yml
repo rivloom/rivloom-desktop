@@ -61,6 +61,8 @@ jobs:
       - name: Install fixed Rust toolchain and target
         run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
       - run: npm.cmd ci
+      - name: Build and verify the pinned Rivloom engine before packaging
+        run: npm.cmd run engine:prepare
       - name: Verify candidate source, version and Rivloom identity
         run: node scripts/ci-candidate.ts configure
       - name: Run CI helper guards

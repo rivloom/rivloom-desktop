@@ -1,3 +1,4 @@
+import { validReasoningEffort, reasoningForMessage } from '../shared/model-reasoning.ts';
 import {
   chmodSync,
   existsSync,
@@ -37,6 +38,7 @@ function validPolicy(value: unknown): value is NodeExecutionPolicy {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
   return (
+    (item.reasoningEffort === undefined || validReasoningEffort(item.reasoningEffort)) &&
     typeof item.enabled === 'boolean' &&
     ['ask', 'auto', 'full'].includes(String(item.approvalMode)) &&
     (item.projectID === null ||
@@ -121,6 +123,7 @@ export class ExecutionPolicyStore {
       approvalMode: input.approvalMode,
       projectID: input.enabled ? input.projectID : null,
       model: input.enabled ? input.model : null,
+      ...(input.enabled && reasoningForMessage(this.value, input) !== undefined ? { reasoningEffort: reasoningForMessage(this.value, input) } : {}),
       maxConcurrent: input.maxConcurrent === undefined ? this.value.maxConcurrent : input.maxConcurrent,
       updatedAt: new Date().toISOString(),
     };

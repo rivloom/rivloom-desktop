@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import {
   environmentRecord,
   isolatedWorkspace,
@@ -114,7 +115,8 @@ async function main() {
     check,
     script: serviceChecks[check],
     environment: environmentRecord(),
-    scope: 'official OpenCode; isolated application data; no paid model credentials supplied',
+    scope: 'pinned platform OpenCode; isolated application data; no paid model credentials supplied',
+    engineVersion: readEngineSource(resolve(import.meta.dirname, '..')).version,
     ...result,
   });
   console.log(`${check}: ${result.status}; exit=${result.exitCode}, timeout=${result.timedOut}`);

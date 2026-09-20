@@ -1,3 +1,4 @@
+import { reasoningSupported } from '../shared/model-reasoning.ts';
 import { collaborationCapability, keys, record, uuid } from '../shared/collaboration.ts';
 import { join, resolve } from 'node:path';
 import { nodeQueueBacklog } from '../shared/queue-backlog.ts';
@@ -73,6 +74,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     const queue = this.options.queueHealth();
     return { network, owner: !!user(value.creatorID)?.owner,
       catalog: this.options.resources()?.directory.nodes() || [], local: { projectID: ownProject, model: ownModel,
+        reasoningEffort: value.reasoningEffort !== undefined ? value.reasoningEffort : !value.model ? this.options.policies.snapshot().reasoningEffort : undefined,
         projectExists: projects().some((p) => p.id === ownProject), engineReady: engineStatus.ready,
         modelAvailable: engineStatus.models.some((m) => m.id === ownModel), accepting: queue.accepting,
         waitingCount: queue.waitingCount + this.options.occupiedSlots() } };
@@ -152,12 +154,14 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       const projectID = attempt.localConfig?.projectID;
       const model = attempt.localConfig?.model;
       if (!projectID || !model || !engineStatus.models.some((m) => m.id === model)) return { state: 'blocked', reason: 'workflow_model_unavailable' };
+      if (!reasoningSupported(engineStatus.models.find(m => m.id === model), attempt.localConfig?.reasoningEffort))
+        return { state: 'blocked', reason: '所选思考等级当前不可用，请重新选择思考等级或使用自动。' };
       project(projectID);
       const count = this.options.queueHealth().waitingCount + this.options.occupiedSlots();
       if (count >= 10 && !value.confirmations.some((c) => c.nodeID === attempt.nodeID)) return { state: 'confirmation', waitingCount: count };
       if (!this.options.queueHealth().accepting || !mayStart()) return { state: 'blocked', reason: 'workflow_queue_unavailable' };
       const at = now();
-      const local: Task = { id: attempt.executionID, number: taskQueries.nextNumber(), projectID, model,
+      const local: Task = { id: attempt.executionID, number: taskQueries.nextNumber(), projectID, model, reasoningEffort: attempt.localConfig?.reasoningEffort,
         title: step.title.slice(0, 120), description: attempt.context.instructions, criteria: 'Complete the requested business step and return verified outputs.',
         creatorID: actor.id, assigneeID: actor.id, approverID: actor.id, reviewerID: actor.id, acceptedBy: null,
         state: 'ready', approvalMode: value.approvalMode, version: 1, createdAt: at, updatedAt: at, sessionID: null, runAfter: 0,

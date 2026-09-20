@@ -1,5 +1,105 @@
 .provider-settings {
   margin-bottom: 22px;
+  container: provider-settings / inline-size;
+  min-width: 0;
+}
+.provider-platforms {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  min-width: 0;
+}
+.provider-platforms-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.provider-platform-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.provider-platform-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.provider-platform-buttons button > svg {
+  flex-shrink: 0;
+}
+.provider-platform-buttons button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.provider-platform-buttons button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.provider-platform-buttons button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.provider-platform-buttons button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.provider-platform-help {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--line);
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.provider-platform-help p {
+  margin: 0;
+}
+.provider-platform-help strong {
+  color: var(--text);
+  font-weight: 550;
+}
+.provider-platform-docs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.provider-platform-docs input {
+  flex: 1 1 220px;
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+}
+.provider-platform-docs .button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .provider-modes {
   display: grid;
@@ -269,7 +369,7 @@
 }
 .provider-form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 .provider-meta {
@@ -328,6 +428,36 @@
 }
 .provider-settings .notice {
   flex-wrap: wrap;
+}
+@container provider-settings (max-width: 480px) {
+  .provider-modes button {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 10px 8px;
+    gap: 8px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .provider-modes strong {
+    font-size: 12px;
+  }
+  .provider-modes small {
+    font-size: 10px;
+  }
+  .provider-choices,
+  .provider-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .provider-form-grid {
+    gap: 0;
+  }
+  .provider-accounts-heading,
+  .provider-account-name {
+    flex-wrap: wrap;
+  }
+  .provider-account-name .field {
+    flex-basis: 100%;
+  }
 }
 @media (max-width: 640px) {
   .provider-modes button {

@@ -1,3 +1,6 @@
+import type { AvailableModel } from '../shared/model-catalog.ts';
+import type { ReasoningEffort } from '../shared/model-reasoning.ts';
+import { ReasoningPicker } from './reasoning-picker';
 import { executionSummaryText } from './system-display';
 import { t, systemText, language } from '../shared/i18n.ts';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -75,6 +78,7 @@ type NetworkActions = {
     approvalMode: ApprovalMode;
     projectID: string | null;
     model: string | null;
+    reasoningEffort?: ReasoningEffort;
   }): void;
 };
 
@@ -630,10 +634,12 @@ export function ExecutionPolicyCard({
 }: {
   policy: NodeExecutionPolicy;
   projects: Project[];
-  models: { id: string; name: string }[];
+  models: AvailableModel[];
   actions: Pick<NetworkActions, 'owner' | 'busy' | 'saveExecutionPolicy'>;
 }) {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(policy.approvalMode);
+  const [model, setModel] = useState(policy.model || models[0]?.id || '');
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(policy.reasoningEffort ?? null);
   useEffect(() => setApprovalMode(policy.approvalMode), [policy.approvalMode, policy.updatedAt]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -642,7 +648,7 @@ export function ExecutionPolicyCard({
       enabled: true,
       approvalMode,
       projectID: String(data.get('projectID') || '') || null,
-      model: String(data.get('model') || '') || null,
+      model: model || null, reasoningEffort,
     });
   };
   return (
@@ -696,7 +702,7 @@ export function ExecutionPolicyCard({
         </label>
         <label>
           <span>{t('执行模型')}</span>
-          <select name="model" required defaultValue={policy.model || models[0]?.id || ''}>
+          <select name="model" required value={model} onChange={event => { setModel(event.target.value); setReasoningEffort(null); }}>
             {!models.length && <option value="">{t('请先连接本机模型')}</option>}
             {models.map((model) => (
               <option value={model.id} key={model.id}>
@@ -705,6 +711,7 @@ export function ExecutionPolicyCard({
             ))}
           </select>
         </label>
+        <ReasoningPicker model={models.find(entry => entry.id === model)} value={reasoningEffort} onChange={setReasoningEffort} disabled={actions.busy} />
         <label className="checkbox remote-preparation-confirmation">
           <input type="checkbox" required />
           {t('我确认所有已配对设备都可把任务交给该项目；模型请求可能包含任务说明和项目代码。')}
@@ -1067,7 +1074,7 @@ export function NodeNetworkView({
   network: NodeNetwork;
   owner: boolean;
   projects: Project[];
-  models: { id: string; name: string }[];
+  models: AvailableModel[];
   executionPolicy: NodeExecutionPolicy;
   busy: boolean;
   onRequestPairing(nodeID: string): void;
@@ -1087,6 +1094,7 @@ export function NodeNetworkView({
     approvalMode: ApprovalMode;
     projectID: string | null;
     model: string | null;
+    reasoningEffort?: ReasoningEffort;
   }): void;
 }) {
   const online = network.status === 'online';

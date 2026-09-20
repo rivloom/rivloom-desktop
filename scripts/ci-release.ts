@@ -252,9 +252,38 @@ export async function prepareRelease(root: string, context: ReleaseContext) {
     'Runtime binaries differ',
   );
   same(before.documents, manifest.documents, 'Runtime documents differ');
+  const engineLockPath = join(root, 'shared', 'engine-source.json');
+  const engineLock = await jsonFile(engineLockPath);
+  requireProof(
+    engineLock.schemaVersion === 1 &&
+      engineLock.kind === 'rivloom-source' &&
+      engineLock.target === 'windows-x64' &&
+      engineLock.repository === 'https://github.com/rivloom/rivloom-opencode-runtime.git' &&
+      commitPattern.test(engineLock.commit) &&
+      commitPattern.test(engineLock.tree) &&
+      versionPattern.test(engineLock.packageVersion) &&
+      engineLock.version === `${engineLock.packageVersion}-rivloom.${engineLock.commit.slice(0, 12)}`,
+    'Reviewed engine source lock is invalid',
+  );
+  requireProof(
+    typeof before.engineSource?.receiptSha256 === 'string' &&
+      /^(?!0{64}$)[0-9a-f]{64}$/.test(before.engineSource.receiptSha256),
+    'Verified engine build receipt digest is missing',
+  );
+  same(
+    before.engineSource,
+    {
+      commit: engineLock.commit,
+      tree: engineLock.tree,
+      lockSha256: sha(await readFile(engineLockPath)),
+      receiptSha256: before.engineSource.receiptSha256,
+    },
+    'Verified engine provenance is not this checkout',
+  );
   requireProof(
     before.binaries?.node?.version === '24.19.0' &&
-      before.binaries?.opencode?.version === '1.18.25' &&
+      before.binaries?.opencode?.version === engineLock.version &&
+      before.binaries.opencode.source === `${engineLock.repository}#${engineLock.commit}` &&
       shaPattern.test(before.binaries.node.sha256) &&
       shaPattern.test(before.binaries.opencode.sha256),
     'Pinned runtime binary evidence failed',

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { API } from './commands.ts';
 import { parseHeadlessControl, type HeadlessControl } from '../server/headless-control.ts';
 import { readPrivateFile } from '../server/private-storage.ts';
+import { cliSystemText } from './localization.ts';
 
 export const parseControl = parseHeadlessControl;
 
@@ -36,7 +37,7 @@ export class HeadlessClient implements API {
     const value = await response.json() as { error?: unknown };
     if (!response.ok) {
       // Provider validation errors must never echo submitted credentials.
-      const detail = path.startsWith('/api/model-settings/provider/') ? '' : typeof value.error === 'string' ? `: ${value.error}` : '';
+      const detail = path.startsWith('/api/model-settings/provider/') ? '' : typeof value.error === 'string' ? `: ${cliSystemText(value.error)}` : '';
       throw new Error(`Local request failed (HTTP ${response.status})${detail}`);
     }
     return value as T;

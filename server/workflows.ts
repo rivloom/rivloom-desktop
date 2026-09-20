@@ -1,3 +1,4 @@
+import { validReasoningEffort, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { uuid } from '../shared/collaboration.ts';
@@ -8,7 +9,7 @@ import { createHistorySchema, HistoryError } from './conversation-history.ts';
 
 export type WorkflowRequest = {
   requestID: string; creatorID: string; title: string; description: string; projectID: string | null;
-  model: string | null; approvalMode: ApprovalMode; target: Workflow['target']; inputFiles: TaskFileDescriptor[]; criteria?: string;
+  model: string | null; reasoningEffort?: ReasoningEffort; approvalMode: ApprovalMode; target: Workflow['target']; inputFiles: TaskFileDescriptor[]; criteria?: string;
 };
 export function workflowStep(plan: WorkflowStepPlan): WorkflowStep {
   return { ...structuredClone(plan), state: plan.dependsOn.length ? 'waiting' : 'ready', attempts: [], checkpoint: '',
@@ -40,7 +41,7 @@ export class WorkflowStore {
   create(request: WorkflowRequest): Workflow {
     if (this.db.prepare("SELECT 1 FROM conversation_retired WHERE kind='requests' AND id=?").get(`${request.creatorID}:${request.requestID}`))
       throw new HistoryError(410, '此会话已移入回收站或已永久删除。');
-    if (!uuid(request.requestID) || !request.creatorID || !request.title.trim() || request.title.length > 160 ||
+    if (request.reasoningEffort !== undefined && !validReasoningEffort(request.reasoningEffort) || !uuid(request.requestID) || !request.creatorID || !request.title.trim() || request.title.length > 160 ||
       !request.description.trim() || request.description.length > 12_000 || !validWorkflowTarget(request.target) ||
       (request.criteria !== undefined && (typeof request.criteria !== 'string' || request.criteria.length > 4000)) ||
       !['ask', 'auto', 'full'].includes(request.approvalMode) || request.inputFiles.length > 10 ||
@@ -50,6 +51,7 @@ export class WorkflowStore {
       request.title, request.description, request.criteria || '', request.projectID, request.model, request.approvalMode,
       request.target.mode, request.target.mode === 'automatic' ? null : request.target.nodeID,
       request.inputFiles.map((f) => [f.id, f.name, f.bytes, f.sha256, f.mime]),
+      ...(request.reasoningEffort !== undefined ? [{ reasoningEffort: request.reasoningEffort }] : []),
     ])).digest('hex');
     const previous = this.db.prepare('SELECT body FROM workflows WHERE creator_id=? AND request_id=?').get(request.creatorID, request.requestID);
     if (previous) {

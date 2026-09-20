@@ -35,8 +35,8 @@ export const chooseTaskFileDestination = (name: string) =>
 export const revealTaskFile = (path: string) => invoke<void>('reveal_task_file', { path });
 export const openTaskFile = (path: string) => invoke<void>('open_task_file', { path });
 export const openProjectDirectory = (path: string) => invoke<void>('open_project_directory', { path });
-export const notifyAttention = (target: string, kind: string, count: number) =>
-  invoke<boolean>('notify_attention', { target, kind, count });
+export const notifyAttention = (target: string, kind: string, count: number, silent = false) =>
+  invoke<boolean>('notify_attention', { target, kind, count, silent });
 export const takeNotificationTarget = () => invoke<string | null>('take_notification_target');
 export const desktopUpdateSnapshot = () => invoke<DesktopUpdateSnapshot>('desktop_update_snapshot');
 export const checkDesktopUpdate = () => invoke<DesktopUpdateSnapshot>('check_desktop_update');

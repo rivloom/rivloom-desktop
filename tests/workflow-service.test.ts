@@ -7,6 +7,35 @@ import { WorkflowService, type WorkflowExecutionAdapter, type WorkflowExecutionS
 import type { ExecutionOutcome, WorkflowAttempt, WorkflowPlan, WorkflowStepPlan } from '../shared/workflows.ts';
 
 const A = 'A'.repeat(32); const B = 'B'.repeat(32); const C = 'C'.repeat(32);
+
+test('queued thinking choices persist across restart, fence replays and reach each round independently', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = value => [{ nodeID: A, kind: 'local', waitingCount: 0,
+      localConfig: { projectID: 'project', model: value.model!, reasoningEffort: value.reasoningEffort } }];
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] }, { reasoningEffort: 'high' });
+    const next = randomUUID(), final = randomUUID();
+    f.service.enqueue(id, next, 'Use low', [], f.request.model, 'low');
+    f.service.enqueue(id, next, 'Use low', [], f.request.model, 'low');
+    assert.throws(() => f.service.enqueue(id, next, 'Use low', [], f.request.model, null), /conflict/);
+    f.service.enqueue(id, final, 'Use automatic', [], f.request.model, null);
+    assert.equal(f.store.get(id)!.reasoningEffort, 'high');
+    f.restart();
+    assert.equal(f.store.get(id)!.messages![0].reasoningEffort, 'low');
+    f.finish(f.starts[1], complete()); await f.service.advance(id); await f.service.tick(); await f.service.tick();
+    assert.equal(f.store.get(id)!.rounds![0].reasoningEffort, 'high');
+    assert.equal(f.starts[2].localConfig?.reasoningEffort, 'low');
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'Next', steps: [step('next')] } }); await f.service.advance(id);
+    assert.equal(f.starts[3].localConfig?.reasoningEffort, 'low');
+    f.finish(f.starts[3], complete()); await f.service.advance(id); await f.service.tick(); await f.service.tick();
+    assert.equal(f.store.get(id)!.rounds![1].reasoningEffort, 'low');
+    assert.equal(f.starts[4].localConfig?.reasoningEffort, null);
+    const request = { ...f.request, requestID: randomUUID(), reasoningEffort: 'high' };
+    f.service.create(request); assert.throws(() => f.service.create({ ...request, reasoningEffort: null }), /conflict/);
+    const legacy = { ...f.request, requestID: randomUUID() };
+    const original = f.service.create(legacy); assert.equal(f.service.create(legacy).contentDigest, original.contentDigest);
+  } finally { await f.service.close(); f.db.close(); }
+});
 const step = (id: string, dependsOn: string[] = [], nodeID: string | null = null): WorkflowStepPlan =>
   ({ id, title: id, instructions: `Complete ${id}`, dependsOn, nodeID, resources: [], software: [], requirements: {} });
 function setup() {
@@ -188,6 +217,69 @@ test('message cancellation, stop and failures hold the queue until explicitly re
       assert.equal(f.store.get(id)!.messages![0].state, 'cancelled');
     } finally { await f.service.close(); f.db.close(); }
   }
+});
+
+test('queued model choices are durable per message and only change the admitted round', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Original plan', steps: [step('work')] });
+    const second = randomUUID(), third = randomUUID();
+    const nextModel = 'rivloom-account-example/vendor/model-two';
+    f.adapter.candidates = value => [{ nodeID: A, kind: 'local', waitingCount: 0,
+      localConfig: { projectID: 'project', model: value.model || 'fixture/default' } }];
+    f.service.enqueue(id, second, 'Continue with another model', [], nextModel);
+    f.service.enqueue(id, third, 'Then use the configured default', [], null);
+    assert.equal(f.store.get(id)!.model, f.request.model, 'active execution keeps its model');
+    f.restart();
+    assert.equal(f.store.get(id)!.messages![0].model, nextModel);
+    assert.equal(f.store.get(id)!.messages![1].model, null);
+    f.finish(f.starts[1], complete('Preserved original result'));
+    await f.service.advance(id); await f.service.tick();
+    let value = f.store.get(id)!;
+    assert.equal(value.model, nextModel);
+    assert.equal(value.rounds![0].model, f.request.model);
+    assert.equal(value.rounds![0].steps[0].checkpoint, 'Preserved original result');
+    await f.service.tick();
+    assert.equal(f.starts[2].localConfig?.model, nextModel, 'dispatch receives the exact account and slash model');
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'Second plan', steps: [step('second')] } });
+    await f.service.advance(id);
+    assert.equal(f.starts[3].localConfig?.model, nextModel);
+    f.finish(f.starts[3], complete('Second result')); await f.service.advance(id); await f.service.tick();
+    value = f.store.get(id)!;
+    assert.equal(value.model, null);
+    assert.equal(value.rounds![1].model, nextModel);
+    await f.service.tick();
+    assert.equal(f.starts[4].localConfig?.model, 'fixture/default');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('queued model choices participate in idempotency without rewriting saved messages or current work', async () => {
+  const f = setup();
+  try {
+    const value = f.create(), id = randomUUID(), legacy = randomUUID();
+    f.service.enqueue(value.id, id, 'Next round', [], 'fixture/org/model');
+    f.service.enqueue(value.id, id, 'Next round', [], 'fixture/org/model');
+    for (const choice of [undefined, null, 'fixture/other'])
+      assert.throws(() => f.service.enqueue(value.id, id, 'Next round', [], choice), /conflict/);
+    f.service.enqueue(value.id, legacy, 'Old client', []);
+    assert.throws(() => f.service.enqueue(value.id, legacy, 'Old client', [], null), /conflict/);
+    assert.equal(f.store.get(value.id)!.messages!.length, 2);
+    assert.equal(f.store.get(value.id)!.model, value.model);
+    assert.equal(Object.hasOwn(f.store.get(value.id)!.messages![1], 'model'), false);
+    f.service.messageControl(value.id, 'cancel', id);
+    assert.equal(f.store.get(value.id)!.messages![0].state, 'cancelled');
+    assert.equal(f.store.get(value.id)!.model, value.model);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('invalid continuation model identities cannot enter the durable workflow queue', async () => {
+  const f = setup();
+  try {
+    const value = f.create();
+    for (const model of ['', 'missing-provider', '/model', 'provider/', 'provider/with space', 'provider/model\n', 'a/'.padEnd(201, 'x')])
+      assert.throws(() => f.service.enqueue(value.id, randomUUID(), 'Follow up', [], model), /invalid_workflow_request/);
+    assert.equal(f.store.get(value.id)!.messages, undefined);
+  } finally { await f.service.close(); f.db.close(); }
 });
 
 test('round admission rechecks cancellation during context preparation and archives only quiescent executions', async () => {

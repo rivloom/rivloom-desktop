@@ -1,12 +1,15 @@
 import { t, systemText, language } from '../shared/i18n.ts';
 import { useEffect, useRef, useState } from 'react';
-import { Bell, BellOff, CheckCheck, ChevronRight, Inbox, RefreshCw } from 'lucide-react';
+import { Bell, BellOff, CheckCheck, ChevronRight, Inbox, Play, RefreshCw, Volume2 } from 'lucide-react';
 import { api } from './api';
 import { desktop, notifyAttention, takeNotificationTarget } from './desktop';
 import { reuseJson } from './desktop-refresh';
 import { useDisplayClock } from './use-display-clock';
+import { playCompletionSound } from './completion-sound';
 import {
   attentionLabels,
+  completionSoundFor,
+  type CompletionSound,
   type AttentionSnapshot,
   type NotificationPreferences,
 } from '../shared/task-attention';
@@ -17,6 +20,7 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
   );
   const [error, setError] = useState('');
   const [notificationError, setNotificationError] = useState('');
+  const [soundError, setSoundError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [revision, setRevision] = useState(0);
   const openRef = useRef(open);
@@ -51,6 +55,12 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
           reuseJson(previous, { items: value.items, preferences: value.preferences }),
         );
         setError('');
+        const sound = completionSoundFor(value);
+        if (sound) {
+          try { await playCompletionSound(sound); if (!cancelled) setSoundError(false); }
+          catch { if (!cancelled) setSoundError(true); }
+        }
+        if (cancelled) return;
         if (desktop && value.notifications.length) {
           const first = value.notifications[0];
           try {
@@ -58,6 +68,7 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
               value.notifications.length === 1 ? first.conversationKey : 'attention',
               first.kind,
               value.notifications.length,
+              value.notifications.some(item => item.kind === 'completed'),
             );
             if (!cancelled) setNotificationError('');
           } catch (cause) {
@@ -89,6 +100,10 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
       const saved = await api<NotificationPreferences>('/attention/preferences', value);
       setSnapshot((previous) => (previous ? { ...previous, preferences: saved } : previous));
       setError('');
+      if (!saved.enabled || saved.completionSound === 'off' || saved.quietUntil !== null && saved.quietUntil > Date.now()) {
+        try { await playCompletionSound('off'); } catch { /* Preference is saved even if audio is unavailable. */ }
+        setSoundError(false);
+      }
       setRevision((v) => v + 1);
     } catch (cause) {
       setError((cause as Error).message);
@@ -96,10 +111,16 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
       setSaving(false);
     }
   }
+  async function previewSound(sound: CompletionSound) {
+    try { await playCompletionSound(sound); setSoundError(false); }
+    catch { setSoundError(true); }
+  }
   return {
     snapshot,
     error,
     notificationError,
+    soundError,
+    previewSound,
     saving,
     preferences,
     refresh: () => setRevision((v) => v + 1),
@@ -113,7 +134,7 @@ export function TaskAttentionView({
   controller: ReturnType<typeof useTaskAttention>;
   open: (key: string) => void;
 }) {
-  const { snapshot, error, notificationError, saving, preferences, refresh } = controller;
+  const { snapshot, error, notificationError, soundError, previewSound, saving, preferences, refresh } = controller;
   const [filter, setFilter] = useState('all');
   const items = snapshot?.items || [];
   const prefs = snapshot?.preferences;
@@ -174,6 +195,21 @@ export function TaskAttentionView({
               : t('系统通知在 Windows 安装版中提供。')}
         </small>
       </div>
+      <div className="attention-sound-preferences">
+        <Volume2 size={18} aria-hidden="true" />
+        <label htmlFor="completion-sound">{t('任务完成提示音')}</label>
+        <select id="completion-sound" value={prefs?.completionSound ?? 'chime'} disabled={!prefs || saving}
+          onChange={event => prefs && void preferences({ ...prefs, completionSound: event.target.value as CompletionSound })}>
+          <option value="off">{t('关闭声音')}</option>
+          <option value="chime">{t('轻柔双音')}</option>
+          <option value="bell">{t('清脆铃声')}</option>
+          <option value="pulse">{t('简短提示')}</option>
+        </select>
+        <button type="button" className="button" disabled={!prefs || saving || prefs.completionSound === 'off'}
+          onClick={() => prefs && void previewSound(prefs.completionSound)}><Play size={14} />{t('试听')}</button>
+        <small>{t('在此设备播放，也提醒远端 Node 完成的任务。关闭桌面通知或开启免打扰时保持静音。')}</small>
+      </div>
+      {soundError && <p className="attention-notice" role="status">{t('提示音未播放，请检查系统音量并点击试听。')}</p>}
       {error && (
         <p className="error" role="alert">
           {t('待办暂未刷新：{{value1}}。下方保留上次状态。', { value1: systemText(error) })}

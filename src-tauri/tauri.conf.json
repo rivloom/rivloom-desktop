@@ -36,6 +36,7 @@
             "allow-open-task-file",
             "allow-open-project-directory",
             "allow-notify-attention",
+            "allow-play-completion-sound",
             "allow-take-notification-target",
             "allow-desktop-update-snapshot",
             "allow-check-desktop-update",

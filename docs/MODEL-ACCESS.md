@@ -1,8 +1,37 @@
 # 模型选择与 Provider 接入
 
-**2026-09-16 · 0.1.17 已发布：** 同厂商多个账号、账号别名、独立 API Key / OAuth 接入和可折叠模型分组已实现，并保留本轮移除接入额度确认框的改动。正式版本为 **0.1.17**，已包含上述功能。本页说明 0.1.17 源码行为。真实厂商账号和套餐权限尚未作为本轮测试目标。
+## 思考等级（2026-09-20 本地源码，未发布）
+
+新对话和续聊的模型旁可选择思考等级。选项来自当前账号、自有 runtime 返回的模型能力；不为所有模型固定添加低、中、高。不提供可调等级的模型隐藏该入口。
+
+- **自动（模型默认） / Auto (model default)**：向 runtime 省略 `variant`，使用模型、提供方和 runtime 的默认配置，包括已配置的 agent 默认值。它不切换模型，不保证动态调整，也不等同于中等级或关闭思考。
+- 手动选择只发送对应模型的 variant，由 runtime 转换为提供方的 effort、thinking 或预算参数。只有模型明确提供时才显示关闭思考；高等级通常增加用量和耗时。
+- 切换模型恢复 Auto。草稿、续聊与每条待执行消息保存各自选择；调整输入区不会改变已经发送的任务。失效等级会被拒绝，不静默改成其他等级。
+- 委派时由执行节点自己的模型和执行设置决定等级，发起者的本机配置不会覆盖远端节点。Linux 可用 `models list` 查看 `reasoningEfforts`，通过 `execution enable ... --thinking auto|LEVEL --confirm` 设置后续接单默认值。
+
+Thinking levels are discovered per model from the pinned runtime. Auto omits the explicit variant and uses model/runtime defaults, without model routing. Model changes reset to Auto; drafts and queued messages preserve independent selections. Remote nodes retain control of their own model and thinking configuration.
+
+**2026-09-19 · 本地开发，未发布：** 模型接入增加 OpenRouter、硅基流动中国区、Groq、Together AI、DeepInfra 的常用入口和通用 OpenAI 兼容入口；API Key 列表优先显示常用平台，搜索支持平台别名。正式版仍为 **0.1.18**；上述入口属于当前未发布源码。
+
+**既有功能：** 同厂商多个账号、账号别名、独立 API Key / OAuth 接入和可折叠模型分组于 0.1.17 发布，0.1.18 继续保留。真实厂商账号和套餐权限不属于本轮自动测试范围。
 
 入口：**设备与模型 → 模型与执行 → 模型接入**。接入后的模型出现在会话输入框的“执行模型”、默认模型和连接测试中。
+
+## 常用模型平台
+
+在“模型接入”点击 **OpenRouter**，界面会切到对应 API Key 表单。填写账号别名和该平台的 Key，保存后即可从执行模型菜单选择这个账号的模型；保存不会自动发送模型请求。模型目录来自官方引擎，实际调用权限取决于账号和模型。OpenRouter 使用独立 API Key，参见 [OpenRouter 接入说明](https://openrouter.ai/docs/quickstart)。
+
+快捷入口优先使用实际引擎目录中的原生厂商及专用 SDK。若当前目录没有对应 API Key 接入，入口会提供新的兼容服务草稿，预填以下官方地址；仍须填写真实模型 ID 和 Key，再手动保存。草稿使用独立 Provider ID，不覆盖已有内置厂商、账号或自定义服务，不预设可用模型。
+
+| 平台 | 内置 Provider ID | 兼容配置的默认 API 地址 |
+| --- | --- | --- |
+| [OpenRouter](https://openrouter.ai/docs/quickstart) | `openrouter` | `https://openrouter.ai/api/v1` |
+| [硅基流动（中国区）](https://docs.siliconflow.cn/docs/userguide/quickstart) | `siliconflow-cn` | `https://api.siliconflow.cn/v1` |
+| [Groq](https://console.groq.com/docs/overview) | `groq` | `https://api.groq.com/openai/v1` |
+| [Together AI](https://docs.together.ai/docs/inference/openai-compatibility) | `togetherai` | `https://api.together.ai/v1` |
+| [DeepInfra](https://docs.deepinfra.com/chat/overview) | `deepinfra` | `https://api.deepinfra.com/v1/openai` |
+
+硅基流动中国区与国际区的地址、账号和 Key 分开处理；国际区仍可在 API Key 页搜索 `siliconflow` 或“国际区”，不会把其凭据写入中国区。其他服务可点击“通用 OpenAI 兼容”，自行填写基础地址、协议和完整模型 ID。带 `/` 的模型 ID 应完整保留，不能去掉厂商或组织前缀。
 
 ## 同厂商多个账号
 
@@ -15,7 +44,11 @@
 
 两个 OpenCode Go 账号可以分别保存 Key，并以不同别名选择模型。新增账号使用独立的官方引擎和凭据目录，内部保留原始 `opencode-go` Provider ID 及其专用请求处理。当前实现支持明确选择账号，没有自动轮换、额度合并或套餐共享；是否有权限调用某个模型仍由各账号的实际响应决定。[OpenCode Go 官方说明](https://opencode.ai/docs/go/)
 
-每个引擎会话固定使用开始执行时的账号，停止、审批、恢复和后续请求均沿用该账号。要改用另一账号，请开启新会话。修改默认模型只影响后续选择，不改写历史任务。删除某个新增账号会移除它的认证与模型目录；其他账号不受影响。仍绑定被删除账号的旧任务不会偷偷改用其他凭据。
+**当前本地源码新增，未发布：** 已完成的普通本机会话可在原输入框继续发送，并为下一条消息选择模型。选择随当前会话草稿保存，不修改新会话的默认选项；正在执行时不切换当前模型。工作流的选择随新消息排队，到该消息开始下一轮时生效。
+
+普通本机会话在同一账号内换模型会复用引擎会话。显式选择另一账号时，先确认旧引擎空闲，再建立该账号的引擎会话，保留旧可见消息并将完整可见历史作为背景传入；历史上下文超过 128 KiB 时明确拒绝换账号，不静默截断。停止、审批仍作用于当前实际绑定的引擎。远端会话沿用远端模型配置，不发送本机账号标识代替远端配置。
+
+修改默认模型不改写历史任务。删除某个新增账号会移除它的认证与模型目录；其他账号不受影响。仍绑定被删除账号的旧任务不会偷偷改用其他凭据，必须恢复账号或新开会话。
 
 ## 登录与 API Key
 

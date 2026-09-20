@@ -114,6 +114,7 @@ enum Command {
         target: String,
         title: String,
         body: String,
+        silent: bool,
         reply: mpsc::Sender<std::result::Result<(), String>>,
     },
     Shutdown,
@@ -162,10 +163,11 @@ impl NotificationService {
                                 target,
                                 title,
                                 body,
+                                silent,
                                 reply,
                             } => {
                                 let _ = reply.send(
-                                    show(&app_id, &target, &title, &body)
+                                    show(&app_id, &target, &title, &body, silent)
                                         .map_err(|error| error.to_string()),
                                 );
                             }
@@ -194,7 +196,7 @@ impl NotificationService {
         }
     }
 
-    pub fn show(&self, target: &str, title: &str, body: &str) -> std::result::Result<(), String> {
+    pub fn show(&self, target: &str, title: &str, body: &str, silent: bool) -> std::result::Result<(), String> {
         if !notification_target::valid(target) {
             return Err("Invalid notification target".into());
         }
@@ -204,6 +206,7 @@ impl NotificationService {
                 target: target.into(),
                 title: title.into(),
                 body: body.into(),
+                silent,
                 reply,
             })
             .map_err(|_| "Windows notification activator is unavailable".to_string())?;
@@ -237,19 +240,19 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn toast_xml(target: &str, title: &str, body: &str) -> Result<String> {
+fn toast_xml(target: &str, title: &str, body: &str, silent: bool) -> Result<String> {
     if !notification_target::valid(target) {
         return Err(E_INVALIDARG.into());
     }
     Ok(format!(
-        "<toast launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
-        escape_xml(target), escape_xml(title), escape_xml(body)
+        "<toast launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual>{}</toast>",
+        escape_xml(target), escape_xml(title), escape_xml(body), if silent { "<audio silent=\"true\"/>" } else { "" }
     ))
 }
 
-fn show(app_id: &str, target: &str, title: &str, body: &str) -> Result<()> {
+fn show(app_id: &str, target: &str, title: &str, body: &str, silent: bool) -> Result<()> {
     let document = XmlDocument::new()?;
-    document.LoadXml(&HSTRING::from(toast_xml(target, title, body)?))?;
+    document.LoadXml(&HSTRING::from(toast_xml(target, title, body, silent)?))?;
     let toast = ToastNotification::CreateToastNotification(&document)?;
     ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?.Show(&toast)
 }
@@ -343,12 +346,14 @@ mod tests {
 
     #[test]
     fn toast_generic_carries_a_valid_route_and_escapes_text() {
-        let xml = toast_xml("attention", "Rivloom <\"任务\">", "A & B '✅'").unwrap();
+        let xml = toast_xml("attention", "Rivloom <\"任务\">", "A & B '✅'", false).unwrap();
         assert!(xml.contains("<toast launch=\"attention\">"));
         assert!(xml.contains("template=\"ToastGeneric\""));
         assert!(xml.contains("Rivloom &lt;&quot;任务&quot;&gt;"));
         assert!(xml.contains("A &amp; B &apos;✅&apos;"));
-        assert!(toast_xml("attention\" activationType=\"protocol", "title", "body").is_err());
+        assert!(toast_xml("attention\" activationType=\"protocol", "title", "body", false).is_err());
+        assert!(!xml.contains("<audio"));
+        assert!(toast_xml("attention", "title", "body", true).unwrap().contains("<audio silent=\"true\"/>"));
     }
 
     #[test]

@@ -247,6 +247,13 @@ export async function verifyCandidate(root: string, directory: string, expectedC
   assert.equal(manifest.schemaVersion, 1, 'Unexpected runtime manifest schema');
   assert.deepEqual(manifest.product, record.product, 'Candidate runtime profile/version differs');
   assert.deepEqual(manifest.target, { platform: 'win32', arch: 'x64' });
+  const engineSource = readJson(root, join(root, 'shared', 'engine-source.json'));
+  assert.equal(engineSource.kind, 'rivloom-source');
+  assert.equal(engineSource.target, 'windows-x64');
+  assert.match(engineSource.commit, /^(?!0{40}$)[0-9a-f]{40}$/);
+  assert.equal(engineSource.artifactPath, `vendor/rivloom-opencode/windows-x64/${engineSource.commit.slice(0, 12)}`);
+  assert.equal(manifest.opencode?.version, engineSource.version);
+  assert.equal(manifest.opencode?.source, `${engineSource.repository}#${engineSource.commit}`);
   for (const name of ['runtime-before.json', 'runtime-after.json']) {
     const gate = readJson(directory, join(directory, name));
     assert.equal(gate.status, 'passed', `${name} did not pass`);
@@ -278,6 +285,7 @@ export async function verifyCandidate(root: string, directory: string, expectedC
     version: record.product.version,
     commit: expectedCommit,
     productName: desktopProduct,
+    engineSource,
   };
 }
 
@@ -825,12 +833,12 @@ async function runInstalled(
       await until(
         () => client.call<{ engineReady: boolean }>('/health'),
         (value) => value.engineReady,
-        'installed official engine health',
+        'installed Rivloom source engine health',
         90_000,
       );
       await client.authenticate();
       const state = await client.bootstrap();
-      assert.equal(state.engine.version, '1.18.25');
+      assert.equal(state.engine.version, candidate.engineSource.version);
       await until(
         async () => readJson(data, join(data, '.updates', 'startup-success.json')),
         (value) => value.version === candidate.version && value.confirmedAt >= startedAt && value.backupCleanupComplete === true,
@@ -862,15 +870,9 @@ async function runInstalled(
         owned.some(
           (item) =>
             item.ExecutablePath?.toLowerCase() ===
-            join(
-              runtime,
-              'node_modules',
-              'opencode-windows-x64',
-              'bin',
-              'opencode.exe',
-            ).toLowerCase(),
+            join(runtime, candidate.engineSource.artifactPath, 'opencode.exe').toLowerCase(),
         ),
-        'Official engine did not start from installed resources',
+        'Rivloom source engine did not start from the verified installed vendor path',
       );
       return { client, nodeID: network.local.id };
     };

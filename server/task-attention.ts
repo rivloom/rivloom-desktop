@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import {
   collectAttention,
+  completionSounds,
   type AttentionSnapshot,
   type NotificationPreferences,
 } from '../shared/task-attention.ts';
@@ -11,6 +12,7 @@ export const notificationPreferencesSchema = z
   .object({
     enabled: z.boolean(),
     quietUntil: z.number().int().nonnegative().nullable(),
+    completionSound: z.enum(completionSounds).default('chime'),
   })
   .strict();
 
@@ -31,9 +33,9 @@ export class TaskAttentionStore {
     try {
       return row
         ? notificationPreferencesSchema.parse(JSON.parse(String(row.body)))
-        : { enabled: true, quietUntil: null };
+        : { enabled: true, quietUntil: null, completionSound: 'chime' };
     } catch {
-      return { enabled: false, quietUntil: null };
+      return { enabled: false, quietUntil: null, completionSound: 'off' };
     }
   }
   savePreferences(userID: string, value: unknown) {

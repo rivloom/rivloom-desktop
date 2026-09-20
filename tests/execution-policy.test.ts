@@ -10,6 +10,22 @@ const fixture = () => {
   const root = mkdtempSync(join(process.cwd(), '.data/verification/concurrency-policy-'));
   return { root, path: join(root, 'execution-policy.json'), store: new ExecutionPolicyStore(root) };
 };
+
+test('node thinking defaults persist without affecting admitted work or surviving a model change', () => {
+  const f = fixture();
+  const input = { enabled: true, projectID: '2e54f03f-4346-4dca-814c-c09ec34e9551', model: 'provider/model', approvalMode: 'ask' as const };
+  const admitted = f.store.save({ ...input, reasoningEffort: 'high' });
+  assert.equal(new ExecutionPolicyStore(f.root).load().reasoningEffort, 'high');
+  assert.equal(f.store.saveConcurrency(4).reasoningEffort, 'high');
+  assert.equal(f.store.save(input).reasoningEffort, 'high', 'Older callers retain an unchanged model policy');
+  assert.equal(f.store.save({ ...input, reasoningEffort: null }).reasoningEffort, null);
+  assert.equal(admitted.reasoningEffort, 'high', 'Previously admitted task configuration remains a snapshot');
+  f.store.save({ ...input, reasoningEffort: 'high' });
+  assert.equal(f.store.save({ ...input, model: 'other/model' }).reasoningEffort, null);
+  const before = readFileSync(f.path, 'utf8');
+  assert.throws(() => f.store.save({ ...input, reasoningEffort: 'not a level' }));
+  assert.equal(readFileSync(f.path, 'utf8'), before);
+});
 test('remote concurrency defaults to three, validates integer bounds and persists without enabling execution', () => {
   const f = fixture();
   assert.equal(f.store.load().maxConcurrent, 3);

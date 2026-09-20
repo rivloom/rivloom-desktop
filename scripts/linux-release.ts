@@ -39,6 +39,24 @@ export async function prepareLinuxRelease(root: string, context: LinuxContext) {
   const source = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const version = source.version as string;
   assert(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version)?.[0] === version);
+  assert.deepEqual(releasePlatforms(context), ['linux-x64'], 'Only the verified source-built Linux x64 engine can be published; ARM64 is unavailable');
+  // Keep publication dependency-free: native smoke verifies the actual artifact;
+  // this gate binds that evidence to the checked-out source lock and recipe.
+  const sourceLockPath = join(root, 'shared/engine-source-linux.json');
+  const engine = await jsonFile(sourceLockPath);
+  assert.equal(engine.schemaVersion, 1); assert.equal(engine.kind, 'rivloom-source');
+  assert.equal(engine.repository, 'https://github.com/rivloom/rivloom-opencode-runtime.git');
+  assert.equal(engine.target, 'linux-x64');
+  for (const value of [engine.commit, engine.tree]) assert.match(value, /^(?!0{40}$)[0-9a-f]{40}$/);
+  assert.match(engine.packageVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(engine.version, `${engine.packageVersion}-rivloom.${engine.commit.slice(0, 12)}`);
+  assert.equal(engine.artifactPath, `vendor/rivloom-opencode/linux-x64/${engine.commit.slice(0, 12)}`);
+  assert.equal(engine.recipe.directory, 'scripts/runtime-linux');
+  const recipeFiles = Object.entries(engine.recipe.files as Record<string, string>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  assert.deepEqual(recipeFiles.map(([file]) => file), ['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs'], 'Review changes to the Linux build recipe files');
+  for (const [file, sha] of recipeFiles) { assert.match(file, /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/); assert.match(sha, /^(?!0{64}$)[0-9a-f]{64}$/); }
+  const recipeSha256 = digest(Buffer.from(JSON.stringify(recipeFiles)));
+  const lockSha256 = digest(await readFile(sourceLockPath));
   const assets = [];
   for (const platform of releasePlatforms(context)) {
     const arch = platform.slice(6), directory = join(root, 'test-results/linux', arch);
@@ -49,15 +67,22 @@ export async function prepareLinuxRelease(root: string, context: LinuxContext) {
     assert.equal(build.version, version); assert.equal(build.sourceCommit, context.commit); assert.equal(build.runID, context.runID);
     assert.equal(build.sourceDirty, false, 'Linux publication requires committed source');
     assert.deepEqual(build.target, { platform: 'linux', arch });
-    assert.equal(build.nodeVersion, '24.19.0'); assert.equal(build.engineVersion, '1.18.25');
+    assert.equal(build.nodeVersion, '24.19.0'); assert.equal(build.engineVersion, engine.version);
+    assert.match(build.engineSource?.receiptSha256, /^(?!0{64}$)[0-9a-f]{64}$/);
+    assert.deepEqual(build.engineSource, { commit: engine.commit, tree: engine.tree, lockSha256, receiptSha256: build.engineSource.receiptSha256, recipeSha256 });
+    assert.match(build.opencode?.sha256, /^(?!0{64}$)[0-9a-f]{64}$/);
+    assert.deepEqual(build.opencode, { version: engine.version, sha256: build.opencode.sha256, source: `${engine.repository}#${engine.commit}` });
     assert.match(build.runtimeManifestSha256, /^[0-9a-f]{64}$/);
     const smoke = await jsonFile(join(directory, 'smoke.json'));
     assert.equal(smoke.schemaVersion, 1); assert.equal(smoke.status, 'passed'); assert.equal(smoke.sourceCommit, context.commit);
     assert.equal(smoke.runID, context.runID); assert.equal(smoke.arch, arch); assert.equal(smoke.runtimeManifestSha256, build.runtimeManifestSha256);
     assert.equal(smoke.sourceDirty, false);
+    assert.equal(smoke.engineVersion, engine.version);
+    assert.deepEqual(smoke.engineSource, build.engineSource);
+    assert.deepEqual(smoke.opencode, build.opencode);
     assert.equal(smoke.environment.platform, 'linux'); assert.equal(smoke.environment.arch, arch); assert.equal(smoke.environment.node, '24.19.0');
     assert(positive(smoke.checks.extractedFiles));
-    for (const key of ['node', 'opencode', 'startup', 'restartIdentity', 'sigterm', 'privateData', 'authentication', 'noTokenRejected', 'originRejected', 'hostRejected', 'noGui', 'defaultExecutionDisabled', 'controlCleanup']) assert.equal(smoke.checks[key], true);
+    for (const key of ['node', 'opencode', 'engineSource', 'engineRecipe', 'engineElf', 'engineLicense', 'startup', 'restartIdentity', 'sigterm', 'privateData', 'authentication', 'noTokenRejected', 'originRejected', 'hostRejected', 'noGui', 'defaultExecutionDisabled', 'controlCleanup']) assert.equal(smoke.checks[key], true);
     const path = join(directory, fileName), info = await lstat(path);
     assert(info.isFile() && !info.isSymbolicLink() && info.size > 64 && info.size <= 2 * 1024 ** 3);
     const bytes = await readFile(path);

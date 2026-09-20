@@ -1,3 +1,4 @@
+import { reasoningForMessage, reasoningPromptOptions, reasoningSupported, validReasoningEffort, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { EventEmitter } from 'node:events';
 import { startEngine, dataRoot, ENGINE_VERSION, sessionPermissions } from './engine.ts';
 import {
@@ -10,6 +11,7 @@ import {
   exclusive,
   isLocked,
   db,
+  HttpError,
 } from './store.ts';
 import { openCodeArtifacts, sanitize, redact } from './artifacts.ts';
 import { activeStates, type Task, type User, type Message } from '../shared/types.ts';
@@ -21,6 +23,11 @@ import { knowledgePrompt } from '../shared/knowledge.ts';
 import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
 import { accountEngines, providerAccounts } from './account-engines.ts';
 import type { ProviderAccess } from '../shared/model-providers.ts';
+import { inactiveTelemetry } from '../shared/task-telemetry.ts';
+import { readTaskTelemetry } from './task-telemetry.ts';
+import { canContinueTask, isOrdinaryLocalTask, type TaskMessageRequest } from '../shared/task-continuation.ts';
+import { taskContinuationContext, taskMessageDigest, taskVisibleMessages } from './task-continuation.ts';
+import { uuid } from '../shared/collaboration.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -37,6 +44,10 @@ export const engineStatus = {
 let engine: Awaited<ReturnType<typeof startEngine>> | null = null;
 export const accountCatalog = new Map<string, ProviderAccess>();
 db.exec('CREATE TABLE IF NOT EXISTS task_engine_routes (task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, account_id TEXT NOT NULL)');
+db.exec(`CREATE TABLE IF NOT EXISTS task_message_requests (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, request_id TEXT NOT NULL,
+  digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','submitted','failed','uncertain')),
+  error TEXT, http_status INTEGER, PRIMARY KEY(task_id,request_id))`);
 function taskAccount(value: Task) {
   const route = db.prepare('SELECT account_id FROM task_engine_routes WHERE task_id=?').get(value.id);
   // Every old session belongs to the original engine, even if a model was later edited.
@@ -52,14 +63,15 @@ accountEngines.onExit = (id) => {
   const info = accountCatalog.get(id);
   if (info) accountCatalog.set(id, { ...info, connected: false, accountError: 'Account engine exited. Restart the application.' });
   for (const t of taskQueries.inStates(activeStates)) if (taskAccount(t) === id)
-    patchTask(t.id, { state: 'interrupted', error: 'Account engine exited. Restart the application.', approvals: [], questions: [] });
+    patchTask(t.id, { state: 'interrupted', error: 'Account engine exited. Restart the application.', approvals: [], questions: [], telemetry: inactiveTelemetry(t.telemetry) });
   changed();
 };
 let shuttingDown = false;
 const streams = new Map<string, AbortController>();
 const permissionEvents = new EnginePermissionEvents();
 let monitoring = false;
-let taskStartGuard: ((value: Task) => void) | null = null;
+type TaskStartOptions = { continuation?: boolean };
+let taskStartGuard: ((value: Task, options?: TaskStartOptions) => void) | null = null;
 let taskInputMaterializer: ((value: Task, directory: string) => string[]) | null = null;
 let taskKnowledgeContext: ((value: Task, directory: string) => string) | null = null;
 export function setTaskKnowledgeContext(provider: (value: Task, directory: string) => string) { taskKnowledgeContext = provider; }
@@ -68,11 +80,19 @@ export function setTaskInputMaterializer(
 ) {
   taskInputMaterializer = materializer;
 }
-export function setTaskStartGuard(guard: (value: Task) => void) {
+export function setTaskStartGuard(guard: (value: Task, options?: TaskStartOptions) => void) {
   taskStartGuard = guard;
 }
 
 export async function initializeEngine() {
+  // A crash between durable admission and the HTTP acknowledgement must never resend a message.
+  for (const row of db.prepare("SELECT task_id FROM task_message_requests WHERE state='pending'").all()) {
+    const value = task(String(row.task_id));
+    patchTask(value.id, { state: 'interrupted', telemetry: inactiveTelemetry(value.telemetry),
+      error: 'Message submission was interrupted before acknowledgement. Check execution records; this request will not be sent again automatically.' });
+  }
+  db.prepare("UPDATE task_message_requests SET state='uncertain',error=?,http_status=409 WHERE state='pending'")
+    .run('Message submission is uncertain. Check execution records and stop the previous execution before sending a new message.');
   // Legacy review records already represent a successful, finished engine run.
   // Migrate only those records; interrupted/active work is never inferred complete.
   for (const t of taskQueries.inStates(['review'])) {
@@ -85,6 +105,7 @@ export async function initializeEngine() {
       state: 'interrupted',
       approvals: [],
       questions: [],
+      telemetry: inactiveTelemetry(t.telemetry),
       error: '应用重启，执行已中断；请检查已有修改后手动继续。',
     });
     activity(t.id, null, 'interrupted', '应用重启，任务转为执行中断，不自动重试。');
@@ -112,6 +133,7 @@ export async function initializeEngine() {
           error: engineStatus.error,
           approvals: [],
           questions: [],
+          telemetry: inactiveTelemetry(t.telemetry),
         });
       changed();
     });
@@ -276,7 +298,7 @@ export async function sync(taskID: string) {
     // Shutdown aborts sessions; their abort replies are not completed executions.
     // Keep interrupted work reserved even when a poll was already in flight.
     if (shuttingDown) return;
-    const messages = normalizeMessages(rawMessages.data);
+    const messages = taskVisibleMessages(t, normalizeMessages(rawMessages.data));
     const approvals = sanitize(
       rawPermissions,
     );
@@ -328,10 +350,16 @@ export async function sync(taskID: string) {
       patch.acceptedBy = null;
       Object.assign(patch, await readSessionArtifacts(directory, t.sessionID));
     }
+    patch.telemetry = await readTaskTelemetry({
+      sessionID: t.sessionID, runAfter: t.runAfter, state: patch.state!, messages: rawMessages.data,
+      previous: t.telemetry,
+      readTodos: async () => (await client().session.todo({ directory, sessionID: t.sessionID! },
+        { signal: AbortSignal.timeout(2500) })).data,
+    });
     if (shuttingDown) return;
     if (
-      JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error]) !==
-      JSON.stringify([messages, approvals, questions, patch.state, patch.error])
+      JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error, t.telemetry]) !==
+      JSON.stringify([messages, approvals, questions, patch.state, patch.error, patch.telemetry])
     ) {
       patchTask(t.id, patch);
       if (patch.state !== t.state)
@@ -383,22 +411,31 @@ export async function workflowRetryReady(taskID: string): Promise<boolean> {
   } catch { return false; }
 }
 export async function runTask(taskID: string, actor: User, addition?: string) {
-  return taskExclusive(taskID, async () => {
+  return taskExclusive(taskID, () => runTaskInContext(taskID, actor, addition));
+}
+async function runTaskInContext(taskID: string, actor: User, addition?: string,
+  options: TaskStartOptions & { model?: string; reasoningEffort?: ReasoningEffort; reservedCreation?: boolean } = {}) {
     let t = task(taskID);
-    taskStartGuard?.(t);
+    taskStartGuard?.(t, options);
     requireThat(actor.id === t.assigneeID, 403, '只有接受人可以开始或继续执行');
     requireThat(
-      ['ready', 'stopped', 'failed', 'interrupted', 'review'].includes(t.state),
+      ['ready', 'stopped', 'failed', 'interrupted', 'review'].includes(t.state) ||
+        (options.continuation && isOrdinaryLocalTask(t) && t.state === 'accepted'),
       409,
       '当前状态不能执行',
     );
+    const model = options.model || t.model;
     requireThat(
-      engineStatus.models.some((m) => m.id === t.model),
+      engineStatus.models.some((m) => m.id === model),
       400,
       '所选模型当前不可用，请检查引擎登录配置',
     );
+    const reasoningEffort = reasoningForMessage(t, options);
+    requireThat(reasoningSupported(engineStatus.models.find(m => m.id === model), reasoningEffort), 400,
+      '所选思考等级当前不可用，请重新选择思考等级或使用自动。');
+    const reasoningOptions = reasoningPromptOptions(engineStatus.models.find(m => m.id === model), reasoningEffort);
     const projectInfo = project(t.projectID);
-    const selectedModel = providerAccounts.resolveModel(t.model);
+    const selectedModel = providerAccounts.resolveModel(model);
     requireThat(selectedModel.accountID === accountEngines.current(), 409, 'This conversation is bound to another account. Start a new conversation to switch accounts.');
     const directory = projectInfo.directory;
     if (t.sessionID) {
@@ -408,16 +445,17 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
       requireThat(!status || status.type === 'idle', 409, '引擎仍在执行，请先停止并确认后再继续');
     }
     await subscribe(directory);
-    taskStartGuard?.(task(t.id));
+    taskStartGuard?.(task(t.id), options);
     const inputPaths = taskInputMaterializer?.(t, directory) || [];
     if (!t.sessionID) {
+      const intent = db.prepare('SELECT state,session_id FROM task_engine_intents WHERE task_id=?').get(t.id);
       requireThat(
-        !db.prepare('SELECT task_id FROM task_engine_intents WHERE task_id=?').get(t.id),
+        !intent || options.reservedCreation && intent.state === 'creating' && intent.session_id === null,
         409,
         '已有未确认的引擎会话创建记录；请先检查执行现场，不能重复创建。',
       );
       db.prepare('INSERT INTO task_engine_routes VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET account_id=excluded.account_id').run(t.id, accountEngines.current());
-      db.prepare("INSERT INTO task_engine_intents VALUES(?,'creating',NULL,?)").run(
+      if (!intent) db.prepare("INSERT INTO task_engine_intents VALUES(?,'creating',NULL,?)").run(
         t.id,
         new Date().toISOString(),
       );
@@ -450,20 +488,32 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
         throw error;
       }
     }
-    taskStartGuard?.(task(t.id));
+    taskStartGuard?.(task(t.id), options);
     const knowledgeContext = taskKnowledgeContext?.(t, directory) || '';
+    let archivedContext = '';
+    if (t.priorMessages !== undefined) {
+      try { archivedContext = taskContinuationContext(t, t.priorMessages); }
+      catch (error) { throw new HttpError(409, (error as Error).message); }
+    }
     const runAfter = Date.now();
     const instructions =
       (t.collaboration ? workflowPrompt(t.collaboration) + (addition ? `\n\n用户补充：\n${addition}` : '') : addition) ||
       `任务：${t.title}\n\n要求：\n${t.description}\n\n验收标准：\n${t.criteria}\n\n在当前项目文件夹完成编程任务并运行必要测试。遵守当前任务审批模式。不提交、不推送、不部署，不访问凭据。最后总结修改、测试结果及限制。不要调用子代理。`;
     patchTask(t.id, {
+      model, reasoningEffort,
       state: 'running',
+      acceptedBy: null,
       runAfter,
       error: null,
       approvals: [],
       questions: [],
       artifacts: [],
       diffSource: '',
+      telemetry: {
+        source: 'opencode', sessionID: t.sessionID!, runAfter,
+        usage: t.telemetry?.sessionID === t.sessionID ? t.telemetry.usage : null,
+        todos: { state: 'not_reported', items: [], revision: null, truncated: false },
+      },
       ...(t.collaboration ? { collaborationOutcome: undefined } : {}),
     });
     changed(t.id);
@@ -478,9 +528,13 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
         directory,
         sessionID: t.sessionID!,
         model: { providerID: selectedModel.providerID, modelID: selectedModel.modelID },
+        ...reasoningOptions,
         system: (t.collaboration?.role === 'planner' ? workflowSystemPrompt :
           (t.collaboration ? `${workflowSystemPrompt}\n\n` : '') + taskApprovalPrompt(t.approvalMode)) +
-          (taskKnowledgeContext ? `\n\n${knowledgePrompt}${knowledgeContext}` : ''),
+          (taskKnowledgeContext ? `\n\n${knowledgePrompt}${knowledgeContext}` : '') +
+          // OpenCode's system field is per prompt. Reapply archived context on every
+          // turn so subsequent messages cannot silently forget the previous account.
+          (archivedContext ? `\n\n${archivedContext}` : ''),
         // OpenCode 1.18.25 cannot re-encode stored message.info.format (upstream #40169).
         // Keep the official session readable: workflowPrompt supplies the schema and sync strictly
         // validates the final JSON in this exact session/run. Never send a formatted prompt here.
@@ -498,12 +552,104 @@ export async function runTask(taskID: string, actor: User, addition?: string) {
     } catch {
       patchTask(t.id, {
         state: 'interrupted',
+        telemetry: inactiveTelemetry(task(t.id).telemetry),
         error: '提交结果不确定；请先停止并检查执行记录，不会自动重试。',
       });
       changed(t.id);
       throw new Error('提交任务失败，请检查执行记录');
     }
     return task(t.id);
+}
+/** One explicit idle-conversation message, durably fenced against HTTP retries.
+ * The caller retains the ordinary admission, engine-settings and project locks.
+ */
+export async function sendTaskMessage(taskID: string, actor: User, request: TaskMessageRequest, beforeStart?: (value: Task) => void) {
+  return exclusive(taskID, async () => {
+    let current = task(taskID);
+    requireThat(actor.id === current.assigneeID, 403, '只有接受人可以开始或继续执行');
+    requireThat(isOrdinaryLocalTask(current), 409, 'Only ordinary local conversations support this message endpoint.');
+    requireThat(!db.prepare("SELECT 1 FROM conversation_retired WHERE kind='local' AND id=?").get(taskID), 410,
+      '此会话已移入回收站或已永久删除，请先恢复或创建新会话。');
+    requireThat(uuid(request.requestID) && typeof request.text === 'string' && request.text.trim().length >= 1 &&
+      request.text.trim().length <= 12_000 && (request.model === undefined || typeof request.model === 'string' &&
+        request.model.trim().length >= 3 && request.model.trim().length <= 200) && (request.reasoningEffort === undefined || validReasoningEffort(request.reasoningEffort)), 400, 'Invalid conversation message.');
+    const digest = taskMessageDigest(request);
+    const previous = db.prepare('SELECT digest,state,error,http_status FROM task_message_requests WHERE task_id=? AND request_id=?')
+      .get(taskID, request.requestID);
+    // Replays precede mutable state/model availability checks: a lost HTTP response
+    // can be retried while that exact prompt is running or has already completed.
+    if (previous) {
+      requireThat(previous.digest === digest, 409, 'This message request ID was already used with different content or model.');
+      if (previous.state === 'submitted') return current;
+      throw new HttpError(Number(previous.http_status) || 409, String(previous.error ||
+        'Message submission is uncertain. Check execution records and stop the previous execution before sending a new message.'));
+    }
+    requireThat(canContinueTask(current), 409, 'This conversation must be idle before sending another message. Stop or resolve its current execution first.');
+    beforeStart?.(current);
+    taskStartGuard?.(current, { continuation: true });
+    const model = request.model?.trim() || current.model;
+    requireThat(engineStatus.models.some(value => value.id === model), 400, '所选模型当前不可用，请检查引擎登录配置');
+    const reasoningEffort = reasoningForMessage(current, request);
+    requireThat(reasoningSupported(engineStatus.models.find(value => value.id === model), reasoningEffort), 400,
+      '所选思考等级当前不可用，请重新选择思考等级或使用自动。');
+    const target = providerAccounts.resolveModel(model);
+    const previousAccount = current.sessionID ? taskAccount(current) : target.accountID;
+    const switching = !!current.sessionID && previousAccount !== target.accountID;
+    const intent = db.prepare('SELECT state FROM task_engine_intents WHERE task_id=?').get(current.id);
+    requireThat(!intent || current.sessionID && intent.state === 'bound', 409,
+      '已有未确认的引擎会话创建记录；请先检查执行现场，不能重复创建。');
+    let archived = current.messages;
+    if (current.sessionID) await accountEngines.run(previousAccount, async () => {
+      const directory = project(current.projectID).directory;
+      const [statuses, permissions, questions] = await Promise.all([
+        client().session.status({ directory }), readPermissions(directory, current.sessionID!), client().question.list({ directory }),
+      ]);
+      requireThat(statuses.data && typeof statuses.data === 'object', 503, '无法确认引擎会话状态。');
+      const status = statuses.data[current.sessionID!];
+      requireThat(!status || status.type === 'idle', 409, '引擎仍在执行，请先停止并确认后再继续');
+      requireThat(!permissions.length && Array.isArray(questions.data) && !questions.data.some(value => value.sessionID === current.sessionID),
+        409, 'Resolve the pending approval or question before continuing this conversation.');
+      if (switching) {
+        const messages = (await client().session.messages({ directory, sessionID: current.sessionID! })).data;
+        requireThat(Array.isArray(messages), 503, 'The previous conversation history could not be read. The account was not changed.');
+        archived = taskVisibleMessages(current, normalizeMessages(messages));
+        try { taskContinuationContext(current, archived); }
+        catch (error) { throw new HttpError(409, (error as Error).message); }
+      }
+    });
+    // Resolve/launch the chosen isolated account before changing the old task route.
+    return accountEngines.run(target.accountID, async () => {
+      db.prepare("INSERT INTO task_message_requests VALUES(?,?,?,'pending',NULL,NULL)").run(taskID, request.requestID, digest);
+      try {
+        if (switching) {
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            current = patchTask(current.id, { model, sessionID: null, state: 'interrupted', priorMessages: archived,
+              messages: archived, telemetry: undefined,
+              error: 'Creating a new engine session for the explicitly selected account.' });
+            db.prepare('INSERT INTO task_engine_routes VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET account_id=excluded.account_id')
+              .run(current.id, target.accountID);
+            db.prepare("INSERT INTO task_engine_intents VALUES(?,'creating',NULL,?) ON CONFLICT(task_id) DO UPDATE SET state='creating',session_id=NULL,updated_at=excluded.updated_at")
+              .run(current.id, new Date().toISOString());
+            db.exec('COMMIT');
+          } catch (error) { db.exec('ROLLBACK'); throw error; }
+        }
+        const result = await runTaskInContext(current.id, actor, request.text.trim(),
+          { continuation: true, model, reasoningEffort, reservedCreation: switching });
+        db.prepare("UPDATE task_message_requests SET state='submitted' WHERE task_id=? AND request_id=?")
+          .run(taskID, request.requestID);
+        return result;
+      } catch (error) {
+        const uncertain = task(taskID).state === 'interrupted';
+        const message = uncertain
+          ? 'Message submission is uncertain. Check execution records and stop the previous execution before sending a new message.'
+          : redact(error instanceof Error ? error.message : 'Message submission failed.');
+        db.prepare('UPDATE task_message_requests SET state=?,error=?,http_status=? WHERE task_id=? AND request_id=?')
+          .run(uncertain ? 'uncertain' : 'failed', message, uncertain ? 409 : error instanceof HttpError ? error.status : 500, taskID, request.requestID);
+        if (uncertain) throw new HttpError(409, message);
+        throw error;
+      }
+    });
   });
 }
 export async function stopTask(taskID: string, actor: User) {
@@ -516,7 +662,7 @@ export async function stopTask(taskID: string, actor: User) {
     );
     requireThat(t.sessionID, 409, '任务没有引擎会话');
     const directory = project(t.projectID).directory;
-    patchTask(t.id, { state: 'stopping' });
+    patchTask(t.id, { state: 'stopping', telemetry: inactiveTelemetry(t.telemetry) });
     changed(t.id);
     try {
       await client().session.abort({ directory, sessionID: t.sessionID });
@@ -532,15 +678,16 @@ export async function stopTask(taskID: string, actor: User) {
       const questions = (await client().question.list({ directory })).data || [];
       for (const q of questions.filter((q) => q.sessionID === t.sessionID))
         await client().question.reject({ directory, requestID: q.id });
-      const messages = normalizeMessages(
-        (await client().session.messages({ directory, sessionID: t.sessionID })).data,
-      );
+      const rawMessages = (await client().session.messages({ directory, sessionID: t.sessionID })).data;
+      const messages = taskVisibleMessages(t, normalizeMessages(rawMessages));
       const artifacts = await readSessionArtifacts(directory, t.sessionID);
       patchTask(t.id, {
         state: 'stopped',
         approvals: [],
         questions: [],
         messages,
+        telemetry: await readTaskTelemetry({ sessionID: t.sessionID, runAfter: t.runAfter,
+          state: 'stopped', messages: rawMessages, previous: t.telemetry, readTodos: async () => undefined }),
         ...artifacts,
         error: null,
       });
@@ -553,6 +700,7 @@ export async function stopTask(taskID: string, actor: User) {
     } catch {
       patchTask(t.id, {
         state: 'interrupted',
+        telemetry: inactiveTelemetry(task(t.id).telemetry),
         error: '无法确认引擎已停止。不要重复启动；请检查本机引擎进程。',
       });
       throw new Error('停止未确认，请检查本机引擎');

@@ -1,5 +1,7 @@
 # Windows 桌面端
 
+**2026-09-19 当前源码（未发布）：** 安装包准备阶段使用自有 OpenCode runtime 固定源码，SDK/plugin 基线 1.18.31，详见[引擎](ENGINE.md)。`engine:prepare` 从固定提交构建、校验并缓存，`desktop:prepare` 自动调用；不再依赖官方 Windows npm EXE。正式版本/下载仍见 [README](../README.md)。下文旧 M2/M3.5 验收段落仅作历史，不能替代本轮云 CI、安装或发行记录。
+
 产品交付形态是 Tauri 桌面客户端。React 只负责窗口内界面；浏览器入口保留作内部调试，不是给客户的启动方式。
 
 用户已启动 M2/M5 官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据为 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和维护者本地官网交接记录。
@@ -8,9 +10,17 @@
 
 ## 当前实现
 
+### 任务完成提示音（当前源码，未发布）
+
+在侧栏「待办中心」选择「任务完成提示音」：轻柔双音、清脆铃声、简短提示或关闭，支持试听并按操作者保存。任务在本机或远端 Linux Node 完成后，由接收通知的 Windows 桌面播放一次；同批完成合并提醒，重复同步与重新打开应用不补播旧任务。关闭桌面通知或开启免打扰会静音，试听仍由用户主动触发。Windows 使用随包的三段原创短音频，不依赖联网；Linux 无界面执行节点无需声卡。
+
+In **Attention center → Task completion sound**, choose Soft chime, Clear bell, Quick pulse, or Off, and preview the selection. Preferences are saved per operator. The Windows desktop plays once for newly completed local or remote tasks; duplicate polling and previously observed completions do not replay sounds. Desktop notification settings and Do Not Disturb also control automatic playback. Linux execution nodes do not play audio.
+
+### 桌面基础能力
+
 - 原生 Windows 窗口、图标、最小尺寸、单实例聚焦。
 - 原生文件夹选择器，用于选择本机已审核的普通项目文件夹；不要求 Git，不建立文件快照或内容哈希。选择目录仍需确认信任，不能代替沙箱。
-- 启动时自动运行随包 Node.js 24.19.0、本地业务服务、官方 OpenCode 1.18.25；无需客户另装 OpenCode 或 Node。
+- 启动时自动运行随包 Node.js 24.19.0、本地业务服务和固定版本自有 OpenCode；无需客户另装 OpenCode 或 Node。
 - 业务服务使用随机 loopback 端口；引擎也只监听 loopback，另有私有随机密码。前端不接触引擎地址和密码。
 - 每个 Windows 用户/数据目录生成稳定 Ed25519 节点身份，私钥由 Windows DPAPI CurrentUser 加密。桌面“节点与 Brain”页显示本机身份、Brain、局域网发现状态和通过签名验证的附近节点。
 - 自动发现以 `_rivloom._tcp.local` 为标准路径，并用 LAN UDP 43531 查询、临时端口单播回复处理 Windows 单向 mDNS 故障。两者只提供候选地址，必须再通过随机挑战和 Ed25519 签名校验；不暴露业务服务或 OpenCode。发现节点默认未配对、无任务权限；两台设备核对相同短码和指纹并分别确认后，才保存设备信任。
@@ -35,7 +45,7 @@ npm.cmd ci
 npm.cmd start
 ```
 
-需要 Node.js 24、Rust 和 Visual Studio C++ Build Tools。`npm start` 会准备随包资源并打开 Tauri 窗口；不再打开浏览器。Windows 安装包构建：
+需要 Node.js 24.19.0、Git、PowerShell 7、Rust 和 Visual Studio C++ Build Tools。`npm start` 会准备随包资源并打开 Tauri 窗口；不再打开浏览器。Windows 安装包构建：
 
 ```powershell
 node scripts/notices.ts
@@ -43,7 +53,7 @@ node scripts/desktop-notices.ts
 npm.cmd run desktop:build
 ```
 
-`npm run desktop:prepare` 校验官方 Node/OpenCode SHA-256，只复制应用代码、生产依赖和开源声明，拒绝哈希不匹配的二进制。不复制 `.data`、个人配置、账号或密钥。Rust 依赖使用 `src-tauri/Cargo.lock`，npm 依赖使用 `package-lock.json`。
+`npm run desktop:prepare` 校验官方 Node SHA-256，以及自有 OpenCode 固定源码/构建记录/二进制摘要，只复制应用代码、生产依赖、独立引擎产物和开源声明。不复制 `.data`、个人配置、账号或密钥。Rust 依赖使用 `src-tauri/Cargo.lock`，npm 依赖使用 `package-lock.json`。
 
 内置 Node 二进制 SHA-256：`3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237`，对应 [Node 官方 24.19.0 校验表](https://nodejs.org/dist/v24.19.0/SHASUMS256.txt)。
 

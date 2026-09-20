@@ -122,7 +122,7 @@ export function ConversationFilterButton({
                 onChange={(event) => onSourceChange(event.target.value as ConversationSourceFilter)}
               >
                 <option value="all">{t('全部来源')}</option>
-                <option value="own">{t('自己发起')}</option>
+                <option value="own">{t('本机发起')}</option>
                 <option value="incoming">{t('其他设备发来')}</option>
               </select>
             </label>

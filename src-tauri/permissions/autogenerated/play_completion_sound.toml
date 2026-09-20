@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-play-completion-sound"
+description = "Enables the play_completion_sound command without any pre-configured scope."
+commands.allow = ["play_completion_sound"]
+
+[[permission]]
+identifier = "deny-play-completion-sound"
+description = "Denies the play_completion_sound command without any pre-configured scope."
+commands.deny = ["play_completion_sound"]

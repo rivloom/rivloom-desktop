@@ -13,6 +13,7 @@ import {
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
 import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { Bootstrap, BrainTask, RemoteTaskInvite, Task, RivloomNode } from '../shared/types.ts';
+import { conversationOrigin } from '../src/conversation-origin.ts';
 
 const localID = 'local-node';
 const date = '2026-09-03T00:00:00Z';
@@ -147,6 +148,65 @@ function remoteTask(id: string, extra: Partial<RemoteTaskInvite> = {}): RemoteTa
     ...extra,
   } as RemoteTaskInvite;
 }
+test('history origin distinguishes local members without changing device-level incoming or sorting', () => {
+  const data = fixture();
+  data.tasks = [
+    { ...localTask('own'), creatorID: 'viewer', assigneeID: 'other' },
+    { ...localTask('delegated'), creatorID: 'other', assigneeID: 'viewer' },
+    localTask('legacy'),
+  ];
+  const context = { userID: 'viewer', owner: true, localNodeID: localID };
+  const items = conversations(data), before = structuredClone(items);
+  const byID = (id: string) => items.find(item => item.localTask?.id === id)!;
+  assert.deepEqual(conversationOrigin(byID('own'), context), { kind: 'own', actorID: 'viewer' });
+  assert.deepEqual(conversationOrigin(byID('delegated'), context), { kind: 'delegated', actorID: 'other' });
+  assert.deepEqual(conversationOrigin(byID('legacy'), context), { kind: 'unknown' });
+  assert.equal(byID('delegated').incoming, false, 'Physical origin remains this device');
+  assert.deepEqual(items, before, 'Origin presentation does not mutate aggregation, order or identities');
+});
+
+test('remote origin wins over worker-owner creator IDs, including missing invitation history', () => {
+  const context = { userID: 'viewer', owner: true, localNodeID: localID };
+  const local = { ...localTask('proxy'), creatorID: 'viewer', remoteOrigin: {
+    remoteTaskID: 'remote', ownerNodeID: 'delegator', ownerBrainID: 'brain' } };
+  const item = { key: 'local:proxy', incoming: true, sourceNodeID: 'delegator', localTask: local, attempts: [] } as unknown as Conversation;
+  assert.deepEqual(conversationOrigin(item, context), { kind: 'delegated', nodeID: 'delegator' });
+  assert.deepEqual(conversationOrigin({ ...item, localTask: { ...local, remoteOrigin: undefined },
+    remote: remoteTask('remote', { brainTaskID: null, ownerNodeID: 'delegator' }) }, context),
+    { kind: 'delegated', nodeID: 'delegator' });
+  assert.equal(conversationOrigin({ ...item, localTask: { ...local, remoteOrigin: { ...local.remoteOrigin, ownerNodeID: '' } } }, context).kind, 'unknown');
+  assert.equal(conversationOrigin({ ...item, localTask: { ...local, remoteOrigin: { ...local.remoteOrigin, ownerNodeID: localID } } }, context).kind, 'unknown',
+    'A local execution proxy alone cannot prove who originally submitted it');
+});
+
+test('Brain submitter and workflow creator take precedence over current execution ownership', () => {
+  const context = { userID: 'viewer', owner: true, localNodeID: localID };
+  const proxy = { ...localTask('proxy'), creatorID: 'viewer', remoteOrigin: { remoteTaskID: 'r', ownerNodeID: 'coordinator', ownerBrainID: 'b' } };
+  const item = { key: 'brain:b', incoming: true, sourceNodeID: 'coordinator', localTask: proxy, attempts: [],
+    remote: remoteTask('r', { direction: 'outgoing', ownerNodeID: localID }),
+    brainTask: { direction: 'owned', submitterNodeID: 'original-submitter' } } as unknown as Conversation;
+  assert.deepEqual(conversationOrigin(item, context), { kind: 'delegated', nodeID: 'original-submitter' });
+  assert.deepEqual(conversationOrigin({ ...item, brainTask: { ...item.brainTask!, submitterNodeID: localID } }, context),
+    { kind: 'own', actorID: 'viewer', nodeID: localID }, 'Self-submitted work returning through another coordinator stays own');
+  assert.equal(conversationOrigin(item, { ...context, localNodeID: null }).kind, 'unknown');
+  assert.equal(conversationOrigin({ ...item, brainTask: { ...item.brainTask!, submitterNodeID: '' } }, context).kind, 'unknown');
+  assert.deepEqual(conversationOrigin({ ...item, workflow: { creatorID: 'other' } as Conversation['workflow'] }, context),
+    { kind: 'delegated', actorID: 'other' });
+  assert.deepEqual(conversationOrigin({ ...item, workflow: { creatorID: 'viewer' } as Conversation['workflow'] }, context),
+    { kind: 'own', actorID: 'viewer' });
+});
+
+test('outgoing direct owner requests are own but missing Brain provenance and incomplete legacy facts stay unknown', () => {
+  const context = { userID: 'viewer', owner: true, localNodeID: localID };
+  const item = { key: 'remote:r', incoming: false, sourceNodeID: localID, attempts: [],
+    remote: remoteTask('r', { direction: 'outgoing', ownerNodeID: localID, brainTaskID: null }) } as unknown as Conversation;
+  assert.deepEqual(conversationOrigin(item, context), { kind: 'own', actorID: 'viewer', nodeID: localID });
+  assert.equal(conversationOrigin({ ...item, remote: { ...item.remote!, brainTaskID: 'missing-brain' } }, context).kind, 'unknown');
+  assert.equal(conversationOrigin(item, { ...context, owner: false }).kind, 'unknown');
+  assert.equal(conversationOrigin(item, { ...context, localNodeID: null }).kind, 'unknown');
+  assert.equal(conversationOrigin({ ...item, remote: undefined }, context).kind, 'unknown');
+  assert.equal(conversationOrigin({ ...item, remote: { ...item.remote!, direction: undefined as unknown as RemoteTaskInvite['direction'] } }, context).kind, 'unknown');
+});
 test('local and received sessions have different sources; linked execution appears once', () => {
   const data = fixture();
   data.tasks = [

@@ -27,6 +27,7 @@ mod update_backup;
 #[cfg(windows)]
 mod windows_taskbar_icon;
 mod notification_target;
+mod completion_sound;
 #[cfg(windows)]
 mod windows_notifications;
 
@@ -255,15 +256,15 @@ fn take_notification_target(window: WebviewWindow, state: tauri::State<DesktopSt
 // the notification mutex and the Windows/WinRT wait off that executor as well.
 #[tauri::command]
 async fn notify_attention(window: WebviewWindow, app: tauri::AppHandle,
-    target: String, kind: String, count: u32) -> Result<bool, String> {
+    target: String, kind: String, count: u32, silent: Option<bool>) -> Result<bool, String> {
     let worker_app = app.clone();
-    native_async::blocking(move || notify_attention_blocking(window, worker_app, target, kind, count))
+    native_async::blocking(move || notify_attention_blocking(window, worker_app, target, kind, count, silent.unwrap_or(false)))
         .await
         .map_err(|_| native_text(&app.state::<DesktopState>().data_dir, "通知状态暂时不可用"))?
 }
 
 fn notify_attention_blocking(window: WebviewWindow, app: tauri::AppHandle,
-    target: String, kind: String, count: u32) -> Result<bool, String> {
+    target: String, kind: String, count: u32, silent: bool) -> Result<bool, String> {
     let state = app.state::<DesktopState>();
     authorize(&window, &state)?;
     if !valid_notification_target(&target) || count == 0 || count > 10_000 {
@@ -284,13 +285,23 @@ fn notify_attention_blocking(window: WebviewWindow, app: tauri::AppHandle,
     {
         let title = if count > 1 { native_text(&state.data_dir, "Rivloom · {{count}} 项任务有新进展").replace("{{count}}", &count.to_string()) } else { format!("Rivloom · {}", native_text(&state.data_dir, label)) };
         state.notifications.as_ref().map_err(|_| native_text(&state.data_dir, "Windows 通知暂不可用，请检查应用安装和系统通知设置"))?
-            .show(&target, &title, &native_text(&state.data_dir, "打开工作区查看任务并处理。"))
+            .show(&target, &title, &native_text(&state.data_dir, "打开工作区查看任务并处理。"), silent)
             .map_err(|_| native_text(&state.data_dir, "Windows 通知暂不可用，请检查应用安装和系统通知设置"))?;
         *last = Some(Instant::now());
         Ok(true)
     }
     #[cfg(not(windows))]
-    { let _ = (label, target); Err(native_text(&state.data_dir, "当前平台尚未提供系统通知")) }
+    { let _ = (label, target, silent); Err(native_text(&state.data_dir, "当前平台尚未提供系统通知")) }
+}
+
+#[tauri::command]
+fn play_completion_sound(window: WebviewWindow, state: tauri::State<DesktopState>, sound: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    completion_sound::asset(&sound).map_err(|_| native_text(&state.data_dir, "提示音选项无效"))?;
+    #[cfg(windows)]
+    { completion_sound::play(&sound).map_err(|_| native_text(&state.data_dir, "提示音未播放，请检查系统音量并点击试听。")) }
+    #[cfg(not(windows))]
+    { Err(native_text(&state.data_dir, "当前平台尚未提供系统提示音")) }
 }
 
 fn start_runtime(
@@ -395,7 +406,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, play_completion_sound, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
             desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
             desktop_update::confirm_desktop_startup])

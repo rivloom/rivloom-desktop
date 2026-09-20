@@ -1,0 +1,37 @@
+.workspace-command-palette {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(640px, calc(100dvh - 64px));
+  margin: min(16vh, 120px) auto auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 22px 70px #17233330;
+}
+.workspace-command-palette[open] { display: flex; flex-direction: column; }
+.workspace-command-palette::backdrop { background: #17233355; }
+.command-palette-heading { display: flex; align-items: center; justify-content: space-between; padding: 13px 17px 8px; }
+.command-palette-heading h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.command-palette-search { display: flex; align-items: center; gap: 10px; margin: 0 14px 12px; padding: 0 12px; min-height: 44px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); }
+.command-palette-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.command-palette-search input { flex: 1; min-width: 0; border: 0; outline: none; box-shadow: none; padding: 10px 0; color: var(--text); background: transparent; font: inherit; font-size: 14px; }
+.command-palette-search input:focus { outline: none; box-shadow: none; }
+.command-palette-results { overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; min-height: 0; scrollbar-width: thin; }
+.command-palette-option { display: flex; align-items: center; gap: 11px; width: 100%; padding: 11px 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; font: inherit; }
+.command-palette-option.active { background: var(--accent-soft); border-color: var(--line); color: var(--accent-ink); }
+.command-palette-option > svg { flex-shrink: 0; }
+.command-palette-option[aria-disabled="true"] { opacity: .5; cursor: default; }
+.command-palette-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.command-palette-copy strong { color: var(--text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.command-palette-copy small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-palette-option kbd { font: inherit; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.command-palette-badge { flex-shrink: 0; font-size: 10px; color: var(--accent-ink); }
+.command-palette-empty { margin: 0; padding: 36px 18px; text-align: center; color: var(--muted); font-size: 13px; }
+.command-palette-footer { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px 12px; border-top: 1px solid var(--line); padding: 10px 17px; font-size: 10px; color: var(--muted); }
+@media (max-width: 480px) {
+  .workspace-command-palette { width: calc(100vw - 16px); margin-top: 24px; max-height: calc(100dvh - 48px); }
+  .command-palette-option { gap: 8px; padding: 10px 8px; }
+  .command-palette-option kbd { display: none; }
+}

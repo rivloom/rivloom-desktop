@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { readEngineSource, verifyPreparedEngine } from '../server/engine-artifact.ts';
 
 export type RuntimeProfile = 'desktop' | 'conversation-preview';
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -388,6 +389,16 @@ export async function verifyRuntime(
     app.dependencies,
     'Lock root dependencies differ from source package',
   );
+  assert.deepEqual(
+    runtimePackage.optionalDependencies ?? {},
+    app.optionalDependencies ?? {},
+    'Runtime optional dependencies differ from source package',
+  );
+  assert.deepEqual(
+    lock.packages[''].optionalDependencies ?? {},
+    app.optionalDependencies ?? {},
+    'Lock root optional dependencies differ from source package',
+  );
   assert.equal(
     manifest.inputs.packageLockSha256,
     await hashFile(await regularFile(root, 'package-lock.json')),
@@ -437,6 +448,13 @@ export async function verifyRuntime(
   }
 
   const notices = unique(manifest.notices, (row) => portablePath(row.path), 'notice');
+  const engineLockBytes = await readFile(await regularFile(root, 'shared/engine-source.json'));
+  assert.deepEqual(
+    await readFile(await regularFile(runtime, 'shared/engine-source.json')),
+    engineLockBytes,
+    'Bundled engine source lock differs from this checkout',
+  );
+  const engineLock = readEngineSource(root, 'windows-x64');
   const fixedNotices = [
     'LICENSE',
     'NOTICE',
@@ -445,11 +463,14 @@ export async function verifyRuntime(
     'docs/dependency-licenses.json',
     'docs/desktop-dependency-licenses.json',
     'docs/licenses/OpenCode-MIT.txt',
+    `${engineLock.artifactPath}/LICENSE`,
   ];
   const actualNotices = [
     ...new Set([...fixedNotices, ...(await walkFiles(runtime, 'docs/licenses'))]),
   ];
   equalSet(notices.keys(), actualNotices, 'Bundled notice files');
+  assert.equal(notices.get(`${engineLock.artifactPath}/LICENSE`)?.sha256, engineLock.inputs.LICENSE,
+    'Bundled engine license differs from the reviewed source');
   for (const [path, entry] of notices) {
     const actual = await hashFile(await regularFile(runtime, path));
     assert.equal(actual, entry.sha256, `Bundled notice hash drift: ${path}`);
@@ -581,17 +602,10 @@ export async function verifyRuntime(
   }
 
   const prepare = await readFile(await regularFile(root, 'scripts/desktop-prepare.ts'), 'utf8');
-  const engineLock = await json(root, 'docs/engine-lock.json');
   const nodeVersion = sourcePin(prepare, 'nodeVersion');
-  const engineVersion = app.dependencies['opencode-windows-x64'];
-  assert.equal(app.dependencies['@opencode-ai/sdk'], engineVersion, 'OpenCode SDK version differs');
-  assert.equal(engineLock.version, engineVersion, 'Engine lock version differs');
-  assert.equal(engineLock.modified, false, 'Engine lock is not the unmodified upstream binary');
-  assert.equal(
-    engineLock.binarySha256,
-    sourcePin(prepare, 'engineHash'),
-    'Engine lock hash differs from reviewed pin',
-  );
+  assert.equal(app.dependencies['@opencode-ai/sdk'], engineLock.packageVersion, 'OpenCode SDK version differs from the engine source');
+  assert.equal(app.dependencies['@opencode-ai/plugin'], engineLock.packageVersion, 'OpenCode plugin version differs from the engine source');
+  const engine = verifyPreparedEngine(runtime, 'windows-x64');
   assert.deepEqual(
     manifest.node,
     {
@@ -604,9 +618,9 @@ export async function verifyRuntime(
   assert.deepEqual(
     manifest.opencode,
     {
-      version: engineVersion,
-      sha256: sourcePin(prepare, 'engineHash'),
-      source: `opencode-windows-x64@${engineVersion}`,
+      version: engineLock.version,
+      sha256: engine.binarySHA256,
+      source: `${engineLock.repository}#${engineLock.commit}`,
     },
     'OpenCode manifest differs from reviewed source pin',
   );
@@ -614,9 +628,9 @@ export async function verifyRuntime(
     { name: 'node', path: 'node.exe', entry: manifest.node, output: `v${nodeVersion}` },
     {
       name: 'opencode',
-      path: 'node_modules/opencode-windows-x64/bin/opencode.exe',
+      path: `${engineLock.artifactPath}/opencode.exe`,
       entry: manifest.opencode,
-      output: engineVersion,
+      output: engineLock.version,
     },
   ];
   // Inspect and hash both files against reviewed pins before executing either one.
@@ -642,6 +656,12 @@ export async function verifyRuntime(
     target: manifest.target,
     inputs: manifest.inputs,
     binaries: { node: manifest.node, opencode: manifest.opencode },
+    engineSource: {
+      commit: engineLock.commit,
+      tree: engineLock.tree,
+      lockSha256: createHash('sha256').update(engineLockBytes).digest('hex'),
+      receiptSha256: engine.receiptSHA256,
+    },
     documents: manifest.documents,
     packages: packages.size,
     licenses: { npmRuntime: packages.size, rust: rustRows.size, files: notices.size },

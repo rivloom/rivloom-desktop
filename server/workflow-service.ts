@@ -1,13 +1,14 @@
+import { validReasoningEffort, reasoningForMessage, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { randomUUID } from 'node:crypto';
 import { jsonBytes, uuid } from '../shared/collaboration.ts';
 import { taskFileBatchBytes, taskFileMaximumCount, taskFileUploadCount, validTaskFileManifest, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
-import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, workflowPlanError, workflowPendingMessages, workflowAllSteps,
-  type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
+import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, validWorkflowMessageEdit, validWorkflowMessageModel, workflowPlanError, workflowPendingMessages, workflowAllSteps,
+  type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowMessageEdit, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { workflowCandidateAllowed } from '../shared/workflow-diagnostics.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
 
-export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string } };
+export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string; reasoningEffort?: ReasoningEffort } };
 export type WorkflowExecutionSnapshot = {
   phase: Exclude<WorkflowAttempt['phase'], 'intent'>; summary: string; error: string | null;
   outcome: WorkflowAttempt['outcome']; outputFiles: TaskFileDescriptor[]; safeToTransfer: boolean;
@@ -118,19 +119,21 @@ export class WorkflowService {
       attempt.clarifications = [...(attempt.clarifications || []).filter((v) => v.requestID !== requestID), { requestID, questions, answers }];
     });
   }
-  enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[]) {
-    if (!uuid(requestID) || !text.trim() || text.length > 12_000 || !validTaskFileManifest(inputFiles) || inputFiles.length > taskFileUploadCount)
+  enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[], model?: string | null, reasoningEffort?: ReasoningEffort) {
+    if (!uuid(requestID) || !text.trim() || text.length > 12_000 || !validTaskFileManifest(inputFiles) || inputFiles.length > taskFileUploadCount ||
+      model !== undefined && !validWorkflowMessageModel(model) || reasoningEffort !== undefined && !validReasoningEffort(reasoningEffort))
       throw new Error('invalid_workflow_request');
     return this.update(id, (value) => {
       const previous = value.messages?.find((m) => m.requestID === requestID);
       const round = value.rounds?.find((r) => r.requestID === requestID);
       if (previous) {
-        if (previous.text !== text || JSON.stringify(previous.inputFiles) !== JSON.stringify(inputFiles)) throw new Error('workflow_request_conflict');
+        if (previous.text !== text || previous.model !== model || previous.reasoningEffort !== reasoningEffort || JSON.stringify(previous.inputFiles) !== JSON.stringify(inputFiles)) throw new Error('workflow_request_conflict');
         return;
       }
       if (round || value.requestID === requestID || value.roundRequestID === requestID) throw new Error('workflow_request_conflict');
       if (workflowPendingMessages(value).length >= 50) throw new Error('workflow_message_queue_full');
-      (value.messages ||= []).push({ requestID, text, inputFiles: structuredClone(inputFiles), createdAt: new Date().toISOString(), state: 'queued' });
+      (value.messages ||= []).push({ requestID, text, inputFiles: structuredClone(inputFiles), createdAt: new Date().toISOString(), state: 'queued',
+        ...(model !== undefined ? { model } : {}), ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) });
       if (['failed', 'stopped', 'stopping'].includes(value.state)) value.queuePaused = true;
     });
   }
@@ -141,6 +144,18 @@ export class WorkflowService {
         if (!message || message.requestID === value.roundRequestID || value.rounds?.some((r) => r.requestID === requestID)) throw new Error('workflow_message_started');
         message.state = 'cancelled';
       } else { value.queuePaused = action === 'pause'; value.queueError = undefined; }
+    });
+  }
+  /** Only a pending message's text is editable. Checking the current text inside
+   * the durable mutation fences other editors and admission of a new round.
+   */
+  editMessage(id: string, request: WorkflowMessageEdit) {
+    if (!validWorkflowMessageEdit(request)) throw new Error('workflow_message_edit_invalid');
+    return this.update(id, (value) => {
+      const message = workflowPendingMessages(value).find(item => item.requestID === request.requestID);
+      if (!message) throw new Error('workflow_message_not_queued');
+      if (message.text !== request.expectedText) throw new Error('workflow_message_edit_conflict');
+      message.text = request.text;
     });
   }
   control(id: string, action: 'pause' | 'resume' | 'stop' | 'retry_planning') {
@@ -260,12 +275,17 @@ export class WorkflowService {
         ...value.steps.flatMap((s) => s.attempts.at(-1)?.outputFiles || []), ...message.inputFiles]) inherited.set(file.name, file);
       const inputFiles = mergeFiles([...inherited.values()], context ? [context] : []);
       this.update(value.id, (latest) => {
-        if (!terminalWorkflow(latest) || this.nextMessage(latest)?.requestID !== message.requestID || this.closed) return;
-        const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error } = latest;
+        const pending = this.nextMessage(latest);
+        // Editing during async context preparation invalidates this admission.
+        // A later tick rebuilds from the latest message instead of running old text.
+        if (!terminalWorkflow(latest) || pending?.requestID !== message.requestID || pending.text !== message.text || pending.model !== message.model || pending.reasoningEffort !== message.reasoningEffort || this.closed) return;
+        const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error, model, reasoningEffort } = latest;
         (latest.rounds ||= []).push({ description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error,
-          inputFiles: latest.inputFiles, requestID: latest.roundRequestID || latest.requestID, createdAt: latest.roundCreatedAt || latest.createdAt });
+          inputFiles: latest.inputFiles, requestID: latest.roundRequestID || latest.requestID, createdAt: latest.roundCreatedAt || latest.createdAt, model, reasoningEffort });
         latest.roundRequestID = message.requestID; latest.roundCreatedAt = message.createdAt;
         latest.description = message.text; latest.inputFiles = inputFiles; latest.conversationContextFile = context;
+        latest.reasoningEffort = reasoningForMessage(latest, message);
+        if (message.model !== undefined) latest.model = message.model;
         latest.state = 'planning'; latest.planVersion = 0; latest.summary = ''; latest.steps = []; latest.events = []; latest.handoffs = [];
         latest.confirmations = []; latest.pendingConfirmation = null; latest.error = null; latest.queueError = undefined;
         latest.planner = workflowStep({ id: 'planner', title: latest.title, instructions: message.text + (latest.criteria ? `\n\n完成要求：\n${latest.criteria}` : ''),

@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
-import { hash, linuxArch, LINUX_NODE_VERSION, LINUX_ENGINE_VERSION, LINUX_TARGETS } from './linux-build.ts';
+import { hash, linuxArch, linuxEngineEvidence, verifyElf, LINUX_NODE_VERSION } from './linux-build.ts';
+import { engineSourceFile, verifyPreparedEngine } from '../server/engine-artifact.ts';
 
 async function stop(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) throw new Error('Server exited before orderly shutdown');
@@ -32,6 +33,8 @@ export async function smokeLinux(root: string) {
   const arch = linuxArch(process.arch);
   const output = join(root, 'test-results/linux', arch);
   const build = JSON.parse(await readFile(join(output, 'build.json'), 'utf8'));
+  assert.deepEqual(build.target, { platform: 'linux', arch });
+  assert.equal(build.nodeVersion, LINUX_NODE_VERSION);
   const archive = join(output, build.artifact.fileName);
   const bytes = await readFile(archive);
   assert.equal(hash(bytes), build.artifact.sha256);
@@ -42,6 +45,9 @@ export async function smokeLinux(root: string) {
   await mkdir(home);
   const runtime = JSON.parse(await readFile(join(extracted, 'runtime-manifest.json'), 'utf8'));
   assert.equal(hash(await readFile(join(extracted, 'runtime-manifest.json'))), build.runtimeManifestSha256);
+  assert.equal(runtime.schemaVersion, 1); assert.equal(runtime.kind, 'rivloom-headless-runtime');
+  assert.equal(runtime.version, build.version); assert.equal(runtime.sourceCommit, build.sourceCommit);
+  assert.equal(runtime.sourceDirty, build.sourceDirty); assert.deepEqual(runtime.target, build.target);
   const found: string[] = [];
   async function walk(directory: string, prefix = '') {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -58,10 +64,25 @@ export async function smokeLinux(root: string) {
     const bytes = await readFile(join(extracted, file.path));
     assert.equal(bytes.length, file.bytes); assert.equal(hash(bytes), file.sha256);
   }
+  const app = join(extracted, 'app');
+  assert.deepEqual(await readFile(join(app, engineSourceFile('linux-x64'))), await readFile(join(root, engineSourceFile('linux-x64'))), 'Packaged Linux engine source lock differs');
+  const engine = verifyPreparedEngine(app, 'linux-x64');
+  const engineSource = await linuxEngineEvidence(app, engine);
+  assert.deepEqual(runtime.engineSource, engineSource);
+  assert.deepEqual(build.engineSource, engineSource);
+  const opencode = { version: engine.source.version, sha256: engine.binarySHA256, source: `${engine.source.repository}#${engine.source.commit}` };
+  assert.deepEqual(runtime.opencode, opencode); assert.deepEqual(build.opencode, opencode);
+  assert.equal(build.engineVersion, engine.source.version);
+  const enginePath = join(engine.directory, 'opencode');
+  verifyElf(await readFile(enginePath), arch);
+  verifyElf(await readFile(join(extracted, 'runtime/node')), arch);
+  assert.equal(hash(await readFile(join(extracted, 'runtime/node'))), runtime.node.sha256);
+  for (const name of ['@opencode-ai/sdk', '@opencode-ai/plugin']) assert.equal(JSON.parse(await readFile(join(app, 'node_modules', name, 'package.json'), 'utf8')).version, engine.source.packageVersion);
+  assert(!runtime.packages.some((item: { path: string }) => item.path.split('/').some(part => part.startsWith('opencode-'))), 'Published engine binaries must not be bundled');
   const launcher = join(extracted, 'bin/rivloom');
   const environment = { PATH: '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', CI: 'true', RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'disabled' };
   assert.equal((await run(join(extracted, 'runtime/node'), ['--version'], environment)).trim(), `v${LINUX_NODE_VERSION}`);
-  assert.equal((await run(join(extracted, 'app/node_modules', LINUX_TARGETS[arch].enginePackage, 'bin/opencode'), ['--version'], environment)).trim(), LINUX_ENGINE_VERSION);
+  assert.equal((await run(enginePath, ['--version'], environment)).trim(), engine.source.version);
   await run(launcher, ['--version'], environment);
   await run(launcher, ['--data-dir', data, 'init', '--name', `CI-linux-${arch}`, '--json'], environment);
   let serviceOutput = '';
@@ -113,7 +134,7 @@ export async function smokeLinux(root: string) {
   finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await writeFile(join(sandbox, 'service.log'), serviceOutput); }
   assert.equal(second.node.id, first.node.id, 'Restart changed node identity');
   assert.equal((await stat(data)).mode & 0o077, 0, 'Private data directory permissions are too broad');
-  const report = { schemaVersion: 1, status: 'passed', sourceCommit: build.sourceCommit, sourceDirty: build.sourceDirty, runID: build.runID, arch, artifact: build.artifact, runtimeManifestSha256: build.runtimeManifestSha256, checks: { extractedFiles: runtime.files.length, node: true, opencode: true, startup: true, restartIdentity: true, sigterm: true, privateData: true, authentication: true, noTokenRejected: true, originRejected: true, hostRejected: true, noGui: true, defaultExecutionDisabled: true, controlCleanup: true }, environment: { platform: process.platform, arch: process.arch, node: process.versions.node, image: process.env.ImageOS || 'local', imageVersion: process.env.ImageVersion || 'local' }, scope: 'Extracted headless package, isolated startup/restart/shutdown, authentication and persistent identity; no model calls, systemd enablement, physical LAN or cross-version task acceptance.' };
+  const report = { schemaVersion: 1, status: 'passed', sourceCommit: build.sourceCommit, sourceDirty: build.sourceDirty, runID: build.runID, arch, artifact: build.artifact, runtimeManifestSha256: build.runtimeManifestSha256, engineVersion: engine.source.version, opencode, engineSource, checks: { extractedFiles: runtime.files.length, node: true, opencode: true, engineSource: true, engineRecipe: true, engineElf: true, engineLicense: true, startup: true, restartIdentity: true, sigterm: true, privateData: true, authentication: true, noTokenRejected: true, originRejected: true, hostRejected: true, noGui: true, defaultExecutionDisabled: true, controlCleanup: true }, environment: { platform: process.platform, arch: process.arch, node: process.versions.node, image: process.env.ImageOS || 'local', imageVersion: process.env.ImageVersion || 'local' }, scope: 'Extracted headless package, source-built engine ELF/hash/receipt/recipe/license verification, isolated startup/restart/shutdown, authentication and persistent identity; no model calls, systemd enablement, physical LAN or cross-version task acceptance.' };
   await writeFile(join(output, 'smoke.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(`Linux ${arch} extracted-package smoke passed.`);
   return report;

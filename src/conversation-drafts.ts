@@ -1,5 +1,7 @@
+import type { ReasoningEffort } from '../shared/model-reasoning.ts';
 import { t } from '../shared/i18n.ts';
 import type { WorkflowTarget } from '../shared/workflows.ts';
+import type { Task } from '../shared/types.ts';
 export type ConversationRouting =
   { kind: 'local' } | { kind: 'automatic' } | { kind: 'node'; nodeID: string; name: string } |
   { kind: 'workflow'; target: WorkflowTarget; name?: string };
@@ -9,6 +11,9 @@ export type ConversationDraft = {
   text: string;
   routing: ConversationRouting;
   requestID: string;
+  /** Undefined marks an older draft; null follows the conversation's default model policy. */
+  model?: string | null;
+  reasoningEffort?: ReasoningEffort;
   /** Normalized creation options captured when this logical request is first sent. */
   requestSignature?: string;
 };
@@ -20,6 +25,45 @@ export function createConversationDraft(
 }
 export function createWorkflowDraft(requestID: string = crypto.randomUUID()): ConversationDraft {
   return { text: '', routing: { kind: 'workflow', target: { mode: 'automatic' } }, requestID };
+}
+
+/** Seed once. Live task updates must never replace an unsent choice or rotate its retry ID. */
+export function initializeConversationDraftModel(
+  draft: ConversationDraft,
+  model: string | null,
+  reasoningEffort?: ReasoningEffort,
+): ConversationDraft {
+  const next = draft.model === undefined ? { ...draft, model } : draft;
+  return next.reasoningEffort === undefined ? { ...next, reasoningEffort: next.model === model ? reasoningEffort ?? null : null } : next;
+}
+
+/** Collaboration and remote-origin tasks are controlled by their existing execution protocol. */
+export function localTaskCanContinue(
+  task: Pick<Task, 'assigneeID' | 'state' | 'collaboration' | 'remoteOrigin'> | undefined,
+  userID: string,
+): boolean {
+  return !!task && task.assigneeID === userID && !task.collaboration && !task.remoteOrigin &&
+    ['ready', 'stopped', 'failed', 'review', 'accepted'].includes(task.state);
+}
+
+/** A lost response may arrive after live bootstrap already reports the task as running. */
+export function isPendingLocalTaskMessage(draft: ConversationDraft): boolean {
+  try {
+    return JSON.parse(draft.requestSignature || 'null')?.options?.messageKind === 'local-task';
+  } catch {
+    return false;
+  }
+}
+
+/** Keep pre-upgrade HTTP retries byte-for-byte compatible; editing rotates the request ID. */
+export function conversationReasoningFields(draft: ConversationDraft, reasoningEffort: ReasoningEffort) {
+  if (reasoningEffort === null && draft.requestSignature) {
+    try {
+      const options = JSON.parse(draft.requestSignature)?.options;
+      if (options && !Object.hasOwn(options, 'reasoningEffort')) return {};
+    } catch { /* A malformed signature is rebuilt by prepareConversationRequest. */ }
+  }
+  return { reasoningEffort };
 }
 
 /** Match textarea maxLength, including its UTF-16 length convention. Never modify the draft. */
@@ -44,12 +88,13 @@ function routingIdentity(routing: ConversationRouting) {
 
 export function updateConversationDraft(
   draft: ConversationDraft,
-  change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'files'>>,
+  change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'files' | 'model' | 'reasoningEffort'>>,
   newRequestID: () => string = () => crypto.randomUUID(),
 ): ConversationDraft {
-  const next = { ...draft, ...change };
+  const next = { ...draft, ...change, ...(change.model !== undefined && change.model !== draft.model && change.reasoningEffort === undefined ? { reasoningEffort: null } : {}) };
   if (
     next.text.trim() === draft.text.trim() &&
+    next.model === draft.model && next.reasoningEffort === draft.reasoningEffort &&
     JSON.stringify((next.files || []).map((f) => f.id)) ===
       JSON.stringify((draft.files || []).map((f) => f.id)) &&
     routingIdentity(next.routing) === routingIdentity(draft.routing)
@@ -98,7 +143,9 @@ export function clearSubmittedDraft(
   factory: () => ConversationDraft = createConversationDraft,
 ): Record<string, ConversationDraft> {
   if (drafts[key]?.requestID !== requestID) return drafts;
-  return { ...drafts, [key]: factory() };
+  const model = drafts[key].model;
+  return { ...drafts, [key]: { ...factory(), ...(model !== undefined ? { model } : {}),
+    ...(drafts[key].reasoningEffort !== undefined ? { reasoningEffort: drafts[key].reasoningEffort } : {}) } };
 }
 
 export function createdConversationKey(routing: ConversationRouting, taskID: string): string {

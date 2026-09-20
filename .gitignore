@@ -1,4 +1,5 @@
 node_modules/
+vendor/rivloom-opencode/
 dist/
 .data/
 .npm-cache/
@@ -15,6 +16,7 @@ src-tauri/gen/
 # docs are local by default; only public and build-required files are shared.
 /docs/*
 !/docs/BRAND.md
+!/docs/AGENT-TOOLS.md
 !/docs/CI-RUNTIME.md
 !/docs/CI.md
 !/docs/COLLABORATION-FILES.md
@@ -37,7 +39,6 @@ src-tauri/gen/
 !/docs/WORKFLOW-RECOVERY-RESULTS.md
 !/docs/dependency-licenses.json
 !/docs/desktop-dependency-licenses.json
-!/docs/engine-lock.json
 !/docs/adr/
 !/docs/releases/
 !/docs/licenses/

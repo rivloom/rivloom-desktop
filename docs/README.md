@@ -9,6 +9,7 @@
 - [模型接入与选择](MODEL-ACCESS.md)、[输入区](COMPOSER.md)
 - [连续会话](CONVERSATION-CONTINUITY.md)、[历史管理](CONVERSATION-HISTORY.md)、[内容搜索](CONVERSATION-SEARCH.md)
 - [右键菜单](CONTEXT-MENUS.md)、[消息复制](MESSAGE-COPY.md)
+- [Agent 基础工具（未发布源码）](AGENT-TOOLS.md)：快捷访问、草稿、模板、导出、会话查找、排队消息编辑与项目改动
 - [共享 Skills 与 Wiki 记忆](KNOWLEDGE-LIBRARY.md)
 - [恢复与成果](WORKFLOW-RECOVERY-RESULTS.md)、[协作文件](COLLABORATION-FILES.md)
 - [应用内更新](DESKTOP-UPDATES.md)
@@ -19,9 +20,9 @@
 - [桌面构建](DESKTOP.md)、[引擎](ENGINE.md)、[CI](CI.md)、[Runtime 核验](CI-RUNTIME.md)
 - [架构决策](adr/)、[缓存机制研究](PROMPT-CACHING.md)
 - [正式发布流程](RELEASING.md)、[R2 保留策略](R2-RETENTION.md)、[版本说明与发行契约](releases/)
-- [第三方声明](../THIRD_PARTY_NOTICES.md)、[依赖清单](dependency-licenses.json)、[原生依赖清单](desktop-dependency-licenses.json)、[引擎锁定信息](engine-lock.json)、[许可原文](licenses/)
+- [第三方声明](../THIRD_PARTY_NOTICES.md)、[依赖清单](dependency-licenses.json)、[原生依赖清单](desktop-dependency-licenses.json)、[Windows 引擎源码锁](../shared/engine-source.json)、[Linux 引擎源码与 recipe 锁](../shared/engine-source-linux.json)、[许可原文](licenses/)
 
-`licenses/`、依赖清单、`engine-lock.json` 和 `releases/` 中的版本说明参与构建、核验或更新说明生成，不能作为内部记录排除。
+`licenses/`、依赖清单、两份 `shared/engine-source*.json`、Linux recipe 快照和 `releases/` 中的版本说明参与构建、核验或更新说明生成，不能作为内部记录排除。
 
 ## 维护者本地记录
 

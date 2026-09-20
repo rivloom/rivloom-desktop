@@ -1,5 +1,6 @@
 // A small process owner, not an agent. IPC disconnect also covers a crashed app.
 import { spawn } from 'node:child_process';
+import { stopWindowsEngineTree } from './windows-engine-stop.mjs';
 const engine = spawn(process.argv[2], process.argv.slice(3), {
   env: process.env,
   cwd: process.cwd(),
@@ -45,19 +46,20 @@ function close(exitCode = 0) {
   };
   engine.once('exit', () => { engineExited = true; finish(); });
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/PID', String(engine.pid), '/T', '/F'], {
-      windowsHide: true,
-      stdio: 'ignore',
-    });
-    killer.once('exit', (code) => {
-      if (code !== 0) return process.exit(1);
-      treeStopped = true; finish();
-    });
-    killer.once('error', () => {
-      engine.kill();
-      // Root-only termination does not establish that the tree has stopped.
+    const failed = () => {
+      // Best effort through the original child handle only. This does not prove
+      // descendant cleanup, so the host must still report failure.
+      if (engine.exitCode === null && engine.signalCode === null) {
+        try { engine.kill(); } catch { /* Keep the failure result. */ }
+      }
       process.exit(1);
-    });
+    };
+    void stopWindowsEngineTree(engine.pid, process.pid, {
+      isRootRunning: () => engine.exitCode === null && engine.signalCode === null,
+    }).then((result) => {
+      if (!result.stopped) return failed();
+      treeStopped = true; finish();
+    }, failed);
   } else {
     engine.kill();
   }

@@ -1,13 +1,13 @@
-import { cp, mkdir, readFile, writeFile, rm, access, readdir } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, rm, access, readdir, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, join, relative, isAbsolute } from 'node:path';
+import { prepareEngine } from './engine-prepare.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const destination = join(root, 'src-tauri', 'resources', 'runtime');
 const cache = join(root, '.data', 'desktop-downloads');
 const nodeVersion = '24.19.0';
 const nodeHash = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237';
-const engineHash = 'ef06e41a35795066e95acde276a42fbbf85d7a683c2787f6a19ed20bcde9b6ff';
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== '--profile'))
   throw new Error(
@@ -56,9 +56,7 @@ await download(
   `https://raw.githubusercontent.com/nodejs/node/v${nodeVersion}/LICENSE`,
   nodeLicense,
 );
-const engineFile = join(root, 'node_modules', 'opencode-windows-x64', 'bin', 'opencode.exe');
-if (sha(await readFile(engineFile)) !== engineHash)
-  throw new Error('OpenCode 官方二进制哈希不匹配');
+const engine = await prepareEngine(root);
 
 // This is a disposable, fixed build output. Never clean data directories or user projects.
 const relativeDestination = relative(root, destination);
@@ -67,12 +65,21 @@ if (
   relativeDestination !== join('src-tauri', 'resources', 'runtime')
 )
   throw new Error('非法构建输出目录');
+for (const path of [root, join(root, 'src-tauri'), join(root, 'src-tauri/resources')])
+  if ((await lstat(path)).isSymbolicLink()) throw new Error('构建输出父目录不能是链接');
+async function rejectLinks(path: string): Promise<void> {
+  const entry = await lstat(path);
+  if (entry.isSymbolicLink()) throw new Error('构建输出不能包含链接');
+  if (entry.isDirectory()) for (const child of await readdir(path)) await rejectLinks(join(path, child));
+}
+if (await exists(destination)) await rejectLinks(destination);
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
 for (const directory of ['server', 'shared', 'dist']) {
   await cp(join(root, directory), join(destination, directory), { recursive: true });
 }
 await cp(cachedNode, join(destination, 'node.exe'));
+await cp(engine.directory, join(destination, engine.source.artifactPath), { recursive: true });
 await cp(nodeLicense, join(destination, 'Node-LICENSE.txt'));
 await cp(join(root, 'THIRD_PARTY_NOTICES.md'), join(destination, 'THIRD_PARTY_NOTICES.md'));
 for (const notice of ['LICENSE', 'NOTICE']) {
@@ -123,6 +130,7 @@ await writeFile(
       license: manifest.license,
       type: 'module',
       dependencies: manifest.dependencies,
+      optionalDependencies: manifest.optionalDependencies,
     },
     null,
     2,
@@ -144,6 +152,7 @@ const noticePaths = [
   'Node-LICENSE.txt',
   'docs/dependency-licenses.json',
   'docs/desktop-dependency-licenses.json',
+  `${engine.source.artifactPath}/LICENSE`,
   ...(await noticeFiles('docs/licenses')),
 ].sort();
 const notices = await Promise.all(
@@ -173,7 +182,7 @@ await writeFile(
         sha256: nodeHash,
         source: `https://nodejs.org/dist/v${nodeVersion}/SHASUMS256.txt`,
       },
-      opencode: { version: '1.18.25', sha256: engineHash, source: 'opencode-windows-x64@1.18.25' },
+      opencode: { version: engine.source.version, sha256: engine.binarySHA256, source: `${engine.source.repository}#${engine.source.commit}` },
       documents,
       notices,
       packages,
@@ -183,5 +192,5 @@ await writeFile(
   ),
 );
 console.log(
-  `Desktop runtime prepared: Node ${nodeVersion}, official OpenCode 1.18.25, ${packages.length} runtime packages. No user data or credentials copied.`,
+  `Desktop runtime prepared: Node ${nodeVersion}, Rivloom OpenCode ${engine.source.version}, ${packages.length} runtime packages. No user data or credentials copied.`,
 );

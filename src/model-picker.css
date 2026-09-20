@@ -4,6 +4,10 @@
   font: inherit;
   cursor: pointer;
 }
+.reasoning-picker { flex-shrink: 0; max-width: 190px; }
+.reasoning-picker select { max-width: 166px; text-overflow: ellipsis; }
+.reasoning-picker.needs-setup { color: #a46a11; }
+.reasoning-picker:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .model-picker-trigger > span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -20,6 +24,11 @@
   cursor: default;
   opacity: 0.5;
 }
+.model-picker-trigger.needs-setup .model-picker-warning { color: #a46a11; flex-shrink: 0; }
+.model-picker-notice { flex-shrink: 0; margin: 2px 2px 6px; padding: 11px; border: 1px solid #ecd6aa; border-radius: 8px; background: #fff8e9; color: #694816; font-size: 12px; }
+.model-picker-notice strong { font-size: 13px; }
+.model-picker-notice p { margin: 6px 0 10px; line-height: 1.6; }
+.model-picker-notice .button { min-height: 32px; padding: 5px 10px; }
 .model-picker-panel {
   position: fixed;
   z-index: 1000;

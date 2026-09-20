@@ -1,21 +1,47 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Check, ChevronDown, ChevronRight, Network, Search } from 'lucide-react';
+import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, Network, Search } from 'lucide-react';
 import type { AvailableModel } from '../shared/model-catalog.ts';
 import { language, t } from '../shared/i18n.ts';
 import { formatContextWindow, groupModels, modelDetails } from './model-options.ts';
+import { modelReadinessIssue, type ModelReadinessIssue } from './model-onboarding.ts';
 import './model-picker.css';
+
+export function modelReadinessMessage(issue: ModelReadinessIssue, owner: boolean) {
+  if (issue === 'engine') return {
+    title: t('模型服务尚未就绪'),
+    description: t('请稍后重试，或查看连接诊断。已输入的内容会保留。'),
+  };
+  if (issue === 'selection') return {
+    title: t('请选择一个可用模型'),
+    description: t('当前选择未出现在可用模型列表中，请重新选择；也可检查原账号配置。'),
+  };
+  return {
+    title: t('本机暂无可选模型'),
+    description: owner
+      ? t('添加一个模型账号，或检查已有账号配置，即可在这里选择模型。')
+      : t('请联系工作区创建者添加或检查模型账号。你的草稿会保留。'),
+  };
+}
 
 export function ModelPicker({
   models,
   value,
   onChange,
   disabled = false,
+  engineReady = true,
+  engineError = null,
+  owner = false,
+  onSetup,
 }: {
   models: AvailableModel[];
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  engineReady?: boolean;
+  engineError?: string | null;
+  owner?: boolean;
+  onSetup?: (issue: ModelReadinessIssue) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -37,6 +63,8 @@ export function ModelPicker({
     active ? rows.findIndex((row) => row.key === active) : rows.findIndex((row) => row.model),
   );
   const selected = models.find((model) => model.id === value);
+  const issue = modelReadinessIssue({ ready: engineReady, error: engineError, models }, value);
+  const guidance = issue ? modelReadinessMessage(issue, owner) : null;
   const showing = open && !disabled;
 
   function close(restore = false) {
@@ -92,9 +120,9 @@ export function ModelPicker({
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - bounds.width - 8))}px`;
     element.style.top = `${Math.max(8, upwards ? rect.top - bounds.height - 6 : rect.bottom + 6)}px`;
-  }, [showing, groups, expanded]);
+  }, [showing, groups, expanded, issue, locale]);
   useLayoutEffect(() => {
-    if (showing) search.current?.focus({ preventScroll: true });
+    if (showing) (search.current || panel.current?.querySelector<HTMLButtonElement>('button') || panel.current)?.focus({ preventScroll: true });
   }, [showing]);
   useLayoutEffect(() => {
     if (showing)
@@ -129,13 +157,13 @@ export function ModelPicker({
       <button
         ref={trigger}
         type="button"
-        className="composer-select model-picker-trigger"
-        aria-label={t('执行模型')}
+        className={`composer-select model-picker-trigger${issue ? ' needs-setup' : ''}`}
+        aria-label={guidance ? t('执行模型：{{status}}', { status: guidance.title }) : t('执行模型')}
         aria-haspopup="tree"
         aria-expanded={showing}
         aria-controls={showing ? `${id}-list` : undefined}
         disabled={disabled}
-        title={selected ? `${selected.name}\n${selected.id}` : t('尚未连接模型')}
+        title={guidance ? `${guidance.title}\n${guidance.description}` : selected ? `${selected.name}\n${selected.id}` : t('选择模型')}
         onClick={() => (showing ? close() : show())}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -144,8 +172,8 @@ export function ModelPicker({
           }
         }}
       >
-        <Bot size={15} aria-hidden="true" />
-        <span>{selected?.name || (models.length ? t('选择模型') : t('尚未连接模型'))}</span>
+        {issue ? <AlertCircle size={15} className="model-picker-warning" aria-hidden="true" /> : <Bot size={15} aria-hidden="true" />}
+        <span>{selected?.name || (issue === 'engine' ? t('模型服务尚未就绪') : models.length ? t('选择模型') : owner ? t('添加模型') : t('暂无可选模型'))}</span>
         <ChevronDown size={12} aria-hidden="true" />
       </button>
       {showing &&
@@ -153,6 +181,7 @@ export function ModelPicker({
           <div
             ref={panel}
             className="model-picker-panel"
+            tabIndex={-1}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === 'Escape') {
@@ -185,7 +214,14 @@ export function ModelPicker({
               }
             }}
           >
-            <div className="model-picker-search">
+            {guidance && issue && <div className="model-picker-notice" role="status">
+              <strong>{guidance.title}</strong>
+              <p>{guidance.description}</p>
+              {onSetup && <button type="button" className="button" onClick={() => { close(); onSetup(issue); }}>
+                {issue === 'engine' ? t('连接诊断') : owner ? issue === 'empty' ? t('添加模型') : t('管理模型') : t('查看模型')}
+              </button>}
+            </div>}
+            {!!models.length && <div className="model-picker-search">
               <Search size={15} aria-hidden="true" />
               <input
                 ref={search}
@@ -205,8 +241,8 @@ export function ModelPicker({
                   setActive('');
                 }}
               />
-            </div>
-            <div className="model-picker-toolbar">
+            </div>}
+            {!!models.length && <div className="model-picker-toolbar">
               <span>{t('按服务商和账号分组')}</span>
               <button
                 type="button"
@@ -222,7 +258,7 @@ export function ModelPicker({
                   ? t('收起全部')
                   : t('展开全部')}
               </button>
-            </div>
+            </div>}
             <div
               id={`${id}-list`}
               role="tree"
@@ -323,7 +359,7 @@ export function ModelPicker({
                 );
               })}
             </div>
-            {!groups.length && (
+            {!!models.length && !groups.length && (
               <p className="model-picker-empty" role="status">
                 {models.length ? t('没有匹配的模型') : t('尚未连接模型')}
               </p>

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { collectAttention } from '../shared/task-attention.ts';
-import { TaskAttentionStore } from '../server/task-attention.ts';
+import { collectAttention, completionSoundFor } from '../shared/task-attention.ts';
+import { TaskAttentionStore, notificationPreferencesSchema } from '../server/task-attention.ts';
 import type { Bootstrap, Task, RemoteTaskInvite, BrainTask } from '../shared/types.ts';
 
 const task = (state: Task['state'], more: Partial<Task> = {}) =>
@@ -27,6 +27,52 @@ const fixture = (tasks: Task[] = []) =>
     tasks,
     network: { local: { id: 'local' }, remoteTasks: [], brainTasks: [] },
   }) as unknown as Bootstrap;
+
+test('sound preferences migrate old saved settings, persist per user and reject unknown audio sources', () => {
+  const db = new DatabaseSync(':memory:'), store = new TaskAttentionStore(db, () => 1000);
+  db.prepare('INSERT INTO task_attention_preferences VALUES (?,?)').run('owner', JSON.stringify({ enabled: false, quietUntil: 1500 }));
+  assert.deepEqual(store.preferences('owner'), { enabled: false, quietUntil: 1500, completionSound: 'chime' });
+  for (const completionSound of ['off', 'chime', 'bell', 'pulse'] as const) {
+    store.savePreferences('owner', { enabled: true, quietUntil: null, completionSound });
+    assert.equal(new TaskAttentionStore(db).preferences('owner').completionSound, completionSound);
+  }
+  assert.equal(store.preferences('other').completionSound, 'chime');
+  assert.throws(() => notificationPreferencesSchema.parse({ enabled: true, quietUntil: null, completionSound: 'file:///private.wav' }));
+  db.prepare('UPDATE task_attention_preferences SET body=? WHERE user_id=?').run('{broken', 'owner');
+  assert.equal(store.preferences('owner').completionSound, 'off');
+  assert.equal(store.preferences('owner').enabled, false);
+  db.close();
+});
+
+test('completion audio uses delivered events once per round, remains silent on restart/mute and covers remote completion', () => {
+  const db = new DatabaseSync(':memory:'), store = new TaskAttentionStore(db, () => 1000);
+  const data = fixture([task('running')]);
+  assert.equal(completionSoundFor(store.check(data), 1000), null);
+  data.tasks[0].state = 'review';
+  assert.equal(completionSoundFor(store.check(data), 1000), 'chime');
+  assert.equal(completionSoundFor(store.check(data), 1000), null);
+  assert.equal(completionSoundFor(new TaskAttentionStore(db).check(data), 1000), null);
+  for (const completionSound of ['off', 'bell', 'pulse'] as const) {
+    store.savePreferences('owner', { enabled: true, quietUntil: null, completionSound });
+    data.tasks[0].state = 'running'; store.check(data); data.tasks[0].state = 'accepted';
+    assert.equal(completionSoundFor(store.check(data), 1000), completionSound === 'off' ? null : completionSound);
+  }
+  store.savePreferences('owner', { enabled: true, quietUntil: 2000, completionSound: 'bell' });
+  data.tasks[0].state = 'running'; store.check(data); data.tasks[0].state = 'review';
+  assert.equal(completionSoundFor(store.check(data), 1000), null);
+  store.savePreferences('owner', { enabled: true, quietUntil: null, completionSound: 'bell' });
+  assert.equal(completionSoundFor(store.check(data), 3000), null, 'Unmuting does not replay old completions');
+  data.tasks = [];
+  data.network.remoteTasks = [{ id: 'remote', direction: 'outgoing', status: 'accepted', executionState: 'running', title: 'Remote', createdAt: '2026-09-20', updatedAt: '2026-09-20' }] as RemoteTaskInvite[];
+  store.check(data);
+  data.network.remoteTasks[0].executionState = 'review';
+  const delivered = store.check(data);
+  assert.equal(completionSoundFor(delivered, 3000), 'bell');
+  assert.equal(completionSoundFor({ ...delivered, preferences: { ...delivered.preferences, enabled: false } }, 3000), null);
+  assert.equal(completionSoundFor({ ...delivered, notifications: delivered.notifications.map(event => ({ ...event, kind: 'approval' })) }, 3000), null);
+  assert.equal(completionSoundFor({ ...delivered, notifications: [...delivered.notifications, ...delivered.notifications] }, 3000), 'bell', 'A batch has one sound selection');
+  db.close();
+});
 
 test('attention filters actual approval/input/review roles and excludes passive observers', () => {
   const data = fixture([

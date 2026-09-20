@@ -14,13 +14,23 @@ export type AttentionItem = {
   fingerprint: string;
 };
 export type AttentionObservation = { conversationKey: string; fingerprint: string };
-export type NotificationPreferences = { enabled: boolean; quietUntil: number | null };
+export const completionSounds = ['off', 'chime', 'bell', 'pulse'] as const;
+export type CompletionSound = typeof completionSounds[number];
+export type NotificationPreferences = { enabled: boolean; quietUntil: number | null; completionSound: CompletionSound };
 export type AttentionSnapshot = {
   items: AttentionItem[];
   notifications: AttentionItem[];
   preferences: NotificationPreferences;
   checkedAt: string;
 };
+
+/** One sound per delivered batch, using the same persisted deduplication as notifications. */
+export function completionSoundFor(snapshot: Pick<AttentionSnapshot, 'preferences' | 'notifications'>, now = Date.now()): CompletionSound | null {
+  const prefs = snapshot.preferences;
+  if (!prefs.enabled || prefs.quietUntil !== null && prefs.quietUntil > now ||
+      !prefs.completionSound || prefs.completionSound === 'off' || !completionSounds.includes(prefs.completionSound)) return null;
+  return snapshot.notifications.some(item => item.kind === 'completed') ? prefs.completionSound : null;
+}
 
 export const attentionLabels: Record<AttentionKind, string> = {
   get approval() {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import {
   Check,
+  Copy,
   ExternalLink,
   KeyRound,
   LoaderCircle,
@@ -18,6 +19,13 @@ import {
   type ProviderAccess,
 } from '../shared/model-providers.ts';
 import { api } from './api.ts';
+import {
+  PROVIDER_PLATFORMS,
+  nativePlatformProvider,
+  platformCustomDraft,
+  providerApiRank,
+  providerSearchText,
+} from './provider-platforms.ts';
 import './provider-settings.css';
 
 const emptyCustom = (): CustomProvider => ({
@@ -52,12 +60,17 @@ export function ProviderSettings({
   const [selected, setSelected] = useState('');
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>('oauth');
   const [loading, setLoading] = useState(true);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const modeID = useId();
   const [filter, setFilter] = useState('');
   const [key, setKey] = useState('');
   const [accountID, setAccountID] = useState('');
   const [accountName, setAccountName] = useState('');
   const [custom, setCustom] = useState<CustomProvider | null>(null);
+  const [customPlatformID, setCustomPlatformID] = useState<string | null>(null);
+  const [copyingDocsURL, setCopyingDocsURL] = useState('');
+  const [copiedDocsURL, setCopiedDocsURL] = useState('');
+  const [failedDocsURL, setFailedDocsURL] = useState('');
   const [modelLines, setModelLines] = useState('');
   const [editing, setEditing] = useState(false);
   const [method, setMethod] = useState(0);
@@ -78,17 +91,18 @@ export function ProviderSettings({
             (connectionMode === 'oauth'
               ? p.oauth.length > 0
               : connectionMode === 'api' && p.apiKey) &&
-            `${p.id} ${p.name} ${connectionMode === 'oauth' ? p.oauth.map((method) => method.label).join(' ') : ''}`
+            `${providerSearchText(p)} ${connectionMode === 'oauth' ? p.oauth.map((method) => method.label).join(' ') : ''}`
               .toLowerCase()
               .includes(filter.trim().toLowerCase()),
         )
         .sort((a, b) => {
-          const preferred =
-            connectionMode === 'oauth'
-              ? ['openai', 'github-copilot']
-              : ['deepseek', 'anthropic', 'openai'];
+          const preferred = ['openai', 'github-copilot'];
           const rank = (id: string) =>
-            preferred.includes(id) ? preferred.indexOf(id) : preferred.length;
+            connectionMode === 'api'
+              ? providerApiRank(id)
+              : preferred.includes(id)
+                ? preferred.indexOf(id)
+                : preferred.length;
           return (
             rank(a.id) - rank(b.id) ||
             a.name.localeCompare(b.name, locale) ||
@@ -110,11 +124,18 @@ export function ProviderSettings({
   const accountTarget = { ...(accountID ? { id: accountID } : {}), name: accountName.trim() };
   const connection = custom ? provider : account;
   const disabled = !owner || !engineReady || locked || busy || active;
+  const platformDisabled = disabled || loading || !catalogLoaded;
+  const selectedPlatform = PROVIDER_PLATFORMS.find((platform) =>
+    custom
+      ? platform.id === customPlatformID
+      : connectionMode === 'api' && nativePlatformProvider(providers, platform.id)?.id === selected,
+  );
   const catalog = async () => {
     setLoading(true);
     try {
       const next = await api<ProviderAccess[]>('/model-settings/providers');
       setProviders(next);
+      setCatalogLoaded(true);
       setError('');
       return next;
     } finally {
@@ -170,6 +191,7 @@ export function ProviderSettings({
     setMethod(0);
     setError('');
     setCustom(null);
+    setCustomPlatformID(null);
     setEditing(false);
   }
   function chooseAccount(entry?: ProviderAccess) {
@@ -186,6 +208,7 @@ export function ProviderSettings({
   }
   function edit(value?: CustomProvider) {
     setConnectionMode('custom');
+    setCustomPlatformID(null);
     setCustom(value ? structuredClone(value) : emptyCustom());
     setEditing(!!value);
     setModelLines(
@@ -194,6 +217,40 @@ export function ProviderSettings({
     setKey('');
     setError('');
     setRemove(false);
+  }
+  function choosePlatform(platformID: string) {
+    if (platformDisabled || selectedPlatform?.id === platformID) return;
+    setFilter('');
+    setOAuth(null);
+    setCode('');
+    const native = nativePlatformProvider(providers, platformID);
+    if (native) {
+      select(native.id);
+      setConnectionMode('api');
+      return;
+    }
+    select('');
+    edit();
+    if (platformID !== 'custom') {
+      const draft = platformCustomDraft(platformID, providers);
+      if (platformID === 'siliconflow-cn') draft.name = t('硅基流动（中国区）');
+      setCustom(draft);
+      setCustomPlatformID(platformID);
+    }
+  }
+  async function copyPlatformDocs(url: string) {
+    if (copyingDocsURL) return;
+    setCopyingDocsURL(url);
+    setCopiedDocsURL('');
+    setFailedDocsURL('');
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedDocsURL(url);
+    } catch {
+      setFailedDocsURL(url);
+    } finally {
+      setCopyingDocsURL('');
+    }
   }
   function chooseMode(mode: ConnectionMode) {
     if (mode === connectionMode) return;
@@ -261,6 +318,46 @@ export function ProviderSettings({
     ),
     ...inputs,
   };
+  const platformHelp = selectedPlatform && (
+    <aside className="provider-platform-help" data-platform-help={selectedPlatform.id}>
+      {custom && (
+        <p>{t('当前引擎目录未提供此平台，已打开兼容配置。请填写平台提供的模型 ID 后保存。')}</p>
+      )}
+      <p>{t('使用平台 API Key 连接后，可选择该账号可用的模型；实际可用性和额度由平台决定。')}</p>
+      <strong>
+        {t('{{platform}} 官方文档', {
+          platform:
+            selectedPlatform.id === 'siliconflow-cn'
+              ? t('硅基流动（中国区）')
+              : selectedPlatform.name,
+        })}
+      </strong>
+      <div className="provider-platform-docs">
+        <input
+          aria-label={t('接入文档链接')}
+          value={selectedPlatform.docsURL}
+          readOnly
+          onFocus={(event) => event.target.select()}
+        />
+        <button
+          className="button"
+          type="button"
+          data-platform-docs-copy={selectedPlatform.id}
+          disabled={!!copyingDocsURL}
+          onClick={() => void copyPlatformDocs(selectedPlatform.docsURL)}
+        >
+          <Copy size={13} aria-hidden="true" />
+          {t('复制接入文档链接')}
+        </button>
+      </div>
+      {copiedDocsURL === selectedPlatform.docsURL && (
+        <small role="status">{t('已复制到剪贴板')}</small>
+      )}
+      {failedDocsURL === selectedPlatform.docsURL && (
+        <small role="status">{t('复制失败，请选中文字后按 Ctrl+C。')}</small>
+      )}
+    </aside>
+  );
   return (
     <section className="settings-card provider-settings">
       <header>
@@ -273,6 +370,32 @@ export function ProviderSettings({
         </div>
       </header>
       <p className="settings-copy">{t('选择接入方式，连接后即可在会话中选择模型。')}</p>
+      <div className="provider-platforms" role="group" aria-label={t('常用平台')}>
+        <span className="provider-platforms-label">{t('常用平台')}</span>
+        <div className="provider-platform-buttons">
+          {PROVIDER_PLATFORMS.map((platform) => (
+            <button
+              key={platform.id}
+              type="button"
+              data-platform-id={platform.id}
+              aria-pressed={selectedPlatform?.id === platform.id}
+              disabled={platformDisabled}
+              onClick={() => choosePlatform(platform.id)}
+            >
+              {platform.id === 'siliconflow-cn' ? t('硅基流动（中国区）') : platform.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            data-platform-id="custom"
+            disabled={platformDisabled}
+            onClick={() => choosePlatform('custom')}
+          >
+            <Plus size={13} aria-hidden="true" />
+            {t('OpenAI 兼容服务')}
+          </button>
+        </div>
+      </div>
       {error && (
         <div className="error" role="alert">
           {systemText(error)}
@@ -498,6 +621,7 @@ export function ProviderSettings({
                     </button>
                   )}
                 </div>
+                {platformHelp}
                 <div className="provider-form-grid">
                   <label className="field">
                     <span>{t('显示名称')}</span>
@@ -727,6 +851,7 @@ export function ProviderSettings({
                         })}
                       </small>
                     </div>
+                    {platformHelp}
                     <div className="provider-accounts">
                       <div className="provider-accounts-heading">
                         <strong>{t('此厂商的账号')}</strong>

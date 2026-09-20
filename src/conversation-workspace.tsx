@@ -1,12 +1,32 @@
+import { ReasoningPicker } from './reasoning-picker';
+import { conversationReasoningFields } from './conversation-drafts';
+import type { ReasoningEffort } from '../shared/model-reasoning.ts';
 import { t, systemText, language } from '../shared/i18n.ts';
 import { executionSummaryText, executionStateText } from './system-display';
 import { TaskFilePicker, TaskFilesPanel } from './task-files';
 import { LanguageSwitcher } from './language-switcher';
 import { draftFilesReady } from './task-file-upload';
 import { CopyButton } from './copy-button';
-import { ModelPicker } from './model-picker';
+import { CommandPalette } from './command-palette';
+import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
+import { workspaceShortcutLabels, type WorkspaceCommand } from './workspace-commands';
+import { primaryShortcut } from './keyboard-platform';
+import { ComposerSendPreference } from './composer-send-preference';
+import { composerSendHint, shouldSendComposer, type ComposerSendMode } from './composer-keyboard';
+import { conversationDraftKeys, hasConversationDraft } from './conversation-draft-indicators';
+import { ConversationExportDialog } from './conversation-export-view';
+import { MessageReuseActions } from './message-reuse-view';
+import { applyMessageReuse, type MessageReuseIntent } from './message-reuse';
+import { TaskTelemetryView } from './task-telemetry-view';
+import { ProjectChangesView } from './project-changes-view';
+import { PromptTemplateLibrary } from './prompt-template-library';
+import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
+import './workspace-foundations.css';
+import { ModelPicker, modelReadinessMessage } from './model-picker';
+import { modelReadinessIssue, modelSendGuidance, type ModelReadinessIssue } from './model-onboarding';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
 import { ConversationFilterButton } from './conversation-filter-button';
+import { conversationOrigin, type ConversationOrigin } from './conversation-origin';
 import { ConversationTrash } from './conversation-trash';
 import { conversationDirectory, groupConversationHistory, historyCanTrash } from '../shared/conversation-history';
 import { directoryDisplayName } from '../shared/directory-aliases';
@@ -23,6 +43,7 @@ import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import { KnowledgeLibrary } from './knowledge-library';
 import type { Workflow } from '../shared/workflows';
+import { workflowPendingMessages } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
 import {
   filterConversations,
@@ -73,6 +94,9 @@ import {
   Pin,
   PinOff,
   MoreHorizontal,
+  Download,
+  GitCompareArrows,
+  Keyboard,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -101,6 +125,9 @@ import {
   conversationInputUsage,
   createWorkflowDraft,
   createdConversationKey,
+  initializeConversationDraftModel,
+  isPendingLocalTaskMessage,
+  localTaskCanContinue,
   prepareConversationRequest,
   updateConversationDraft,
   type ConversationDraft,
@@ -261,7 +288,7 @@ function QueuePanel({
                           item?.sourceNodeID ||
                             (entry.source.kind === 'remote' ? entry.source.ownerNodeID : null),
                         )
-                      : t('自己发起')}{' '}
+                      : t('本机发起')}{' '}
                     · {state}
                   </small>
                 </span>
@@ -345,6 +372,8 @@ const HistoryRow = memo(function HistoryRow({
   busy,
   matches,
   searchQuery,
+  hasDraft,
+  origin,
 }: {
   item: Conversation;
   selected: boolean;
@@ -359,25 +388,29 @@ const HistoryRow = memo(function HistoryRow({
   locale: string;
   matches?: SearchMatch[];
   searchQuery?: string;
+  hasDraft?: boolean;
+  origin: ConversationOrigin['kind'];
 }) {
   const menu = useContextMenu();
   const state = conversationState(item);
   const group = conversationStatusGroup(item);
-  const origin = item.incoming ? source : t('自己发起');
-  const label = [item.title, origin, state, item.pinned ? t('已置顶') : ''].filter(Boolean).join(' · ');
+  const originLabel = origin === 'delegated' ? t('他人委派') : origin === 'own' ? t('自己发起') : t('来源待确认');
+  const label = [selected ? t('当前') : '', item.title, originLabel, source, state, item.pinned ? t('已置顶') : '', hasDraft ? t('草稿') : ''].filter(Boolean).join(' · ');
   const excerpt = matches && contentSearchMatch(matches);
   return (
-    <div className={`history-row ${excerpt ? 'has-search-result' : ''}`} onContextMenu={menu.context} onKeyDown={menu.keyboard}>
+    <div className={`history-row ${excerpt ? 'has-search-result' : ''}`} data-conversation-key={item.key} onContextMenu={menu.context} onKeyDown={menu.keyboard}>
     <button
       aria-current={selected ? 'page' : undefined}
       aria-label={label}
-      className={`conversation-item ${item.incoming ? 'incoming' : 'own'} ${selected ? 'selected' : ''}`}
+      className={`conversation-item ${origin === 'delegated' ? 'incoming' : origin} ${selected ? 'selected' : ''}`}
       onClick={() => open(item)}
       title={label}
     >
       <span className="conversation-item-origin" aria-hidden="true">
-        {item.incoming ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
+        {origin === 'delegated' ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
       </span>
+      <span className="history-item-content">
+      <span className="history-item-title">
       <strong><SearchText text={item.title} query={searchQuery} /></strong>
       {item.pinned && <Pin className="conversation-pinned" size={11} aria-label={t('已置顶')} />}
       {group !== 'completed' && (
@@ -388,6 +421,9 @@ const HistoryRow = memo(function HistoryRow({
           <small>{state}</small>
         </span>
       )}
+      </span>
+      {hasDraft && <span className="history-draft-badge">{t('草稿')}</span>}
+      </span>
     </button>
     <button type="button" className="context-more icon-button" aria-label={t('会话操作：{{title}}', { title: item.title })} title={t('更多操作')} {...menu.trigger}><MoreHorizontal size={15} /></button>
     <button type="button" className="history-delete icon-button" disabled={!canRemove}
@@ -413,11 +449,17 @@ const Transcript = memo(function Transcript({
   item,
   source,
   searchQuery = '',
+  draft,
+  reuse,
+  reuseDisabled,
 }: {
   item: Conversation;
   source: string;
   locale: string;
   searchQuery?: string;
+  draft: ConversationDraft;
+  reuse: (intent: MessageReuseIntent) => boolean;
+  reuseDisabled: boolean;
 }) {
   const task = item.localTask;
   const messages = task?.messages || [];
@@ -453,6 +495,7 @@ const Transcript = memo(function Transcript({
               {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             {text && (message.role === 'user' ? <div className="chat-message-text"><SearchText text={text} query={searchQuery} /></div> : <MessageMarkdown text={text} searchQuery={searchQuery} />)}
+            {text.trim() && <MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} />}
             {message.tools.map((tool, index) => (
               <details className="chat-tool" key={index}>
                 <summary>
@@ -479,6 +522,7 @@ const Transcript = memo(function Transcript({
             <CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" />
           </div>
           <MessageMarkdown text={summary} searchQuery={searchQuery} />
+          <MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} />
         </article>
       )}
       {task && activeStates.includes(task.state) && (
@@ -512,6 +556,8 @@ export function ConversationWorkspace({
   const seenSelected = useRef<string | null>(null);
   selectedRef.current = selected;
   const [search, setSearch] = useState('');
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
   const deferredSearch = useDeferredValue(search.trim());
   // Clearing is an explicit navigation action; do not retain stale results for a deferred render.
   const searchQuery = search.trim() ? deferredSearch : '';
@@ -522,18 +568,28 @@ export function ConversationWorkspace({
   const [renameConversation, setRenameConversation] = useState<{ key: string; title: string } | null>(null);
   const [statusFilter, setStatusFilter] = useState<ConversationStatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<ConversationSourceFilter>('all');
+  const [draftsOnly, setDraftsOnly] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exportItem, setExportItem] = useState<Conversation | null>(null);
+  const [changesProject, setChangesProject] = useState<Project | null>(null);
+  const historySearchRef = useRef<HTMLInputElement>(null);
   const storageKey = draftStorageKey(data.user.id, data.network.local?.id || 'local');
   const [recovered] = useState(() => { try { return latestDrafts(localStorage.getItem(storageKey), data.conversationDrafts); }
     catch { return latestDrafts(null, data.conversationDrafts); } });
   const draftClock = useRef(recovered.savedAt || 0);
   const [drafts, setDrafts] = useState<Record<string, ConversationDraft>>(recovered.drafts);
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const [sendMode, setSendMode] = useState<ComposerSendMode>(recovered.settings?.sendMode || 'enter');
   const [draftSaveError, setDraftSaveError] = useState(false);
   const emptyDraft = useRef(createWorkflowDraft());
   const [busy, setBusy] = useState(false);
   const operation = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | null>(null);
+  const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | null>(null);
+  const [modelSetupReturn, setModelSetupReturn] = useState<string | null>(null);
+  useEffect(() => { if (view === 'chat') setModelSetupReturn(null); }, [view]);
   const [queueSnapshot, setQueueSnapshot] = useState<NodeQueueSnapshot | null>(null);
   const [queueError, setQueueError] = useState('');
   const [rejectQueueEntry, setRejectQueueEntry] = useState<NodeQueueItem | null>(null);
@@ -547,12 +603,13 @@ export function ConversationWorkspace({
     recovered.settings?.projectID ?? data.executionPolicy.projectID ?? data.projects[0]?.id ?? '',
   );
   const [model, setModel] = useState(recovered.settings?.model ?? data.defaultModel);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(recovered.settings?.reasoningEffort ?? null);
   const [approvalChoice, setApprovalChoice] = useState<ApprovalMode | 'default'>(recovered.settings?.approvalChoice || 'default');
   const mode = approvalChoice === 'default' ? data.executionPolicy.approvalMode : approvalChoice;
   const [criteria, setCriteria] = useState(recovered.settings?.criteria || '');
   useEffect(() => {
     draftClock.current = Math.max(Date.now(), draftClock.current + 1);
-    const value = encodeDrafts({ drafts, savedAt: draftClock.current, settings: { projectID, model, approvalChoice, criteria } });
+    const value = encodeDrafts({ drafts, savedAt: draftClock.current, settings: { projectID, model, reasoningEffort, approvalChoice, criteria, sendMode } });
     try { localStorage.setItem(storageKey, value); } catch { /* The service below also persists drafts independently of the browser origin. */ }
     let active = true;
     const save = () => void api('/ui/drafts', { value }).then(() => { if (active) setDraftSaveError(false); }).catch(() => { if (active) setDraftSaveError(true); });
@@ -563,7 +620,7 @@ export function ConversationWorkspace({
     };
     window.addEventListener('pagehide', flush); window.addEventListener('online', save);
     return () => { active = false; clearTimeout(timer); window.removeEventListener('pagehide', flush); window.removeEventListener('online', save); };
-  }, [storageKey, drafts, projectID, model, approvalChoice, criteria, connected]);
+  }, [storageKey, drafts, projectID, model, reasoningEffort, approvalChoice, criteria, sendMode, connected]);
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -649,13 +706,26 @@ export function ConversationWorkspace({
   const task = current?.localTask;
   const remote = current?.remote;
   const draftKey = selected || 'new';
-  const draftState = drafts[draftKey] || emptyDraft.current;
+  const draftModelSeed = task?.model || current?.workflow?.model || null;
+  const draftReasoningSeed = task ? task.reasoningEffort : current?.workflow?.reasoningEffort !== undefined
+    ? current.workflow.reasoningEffort : !current?.workflow?.model ? data.executionPolicy.reasoningEffort : null;
+  const draftState = current && (task || current.workflow)
+    ? initializeConversationDraftModel(drafts[draftKey] || emptyDraft.current, draftModelSeed, draftReasoningSeed)
+    : drafts[draftKey] || emptyDraft.current;
+  useEffect(() => {
+    if (!current || (!task && !current.workflow)) return;
+    setDrafts((previous) => {
+      const saved = previous[draftKey] || emptyDraft.current;
+      const initialized = initializeConversationDraftModel(saved, draftModelSeed, draftReasoningSeed);
+      return saved === initialized ? previous : { ...previous, [draftKey]: initialized };
+    });
+  }, [current?.key, draftKey, draftModelSeed, draftReasoningSeed]);
   const draft = draftState.text;
   const inputUsage = conversationInputUsage(draftState, !!current);
-  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing'>>) =>
+  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'model' | 'reasoningEffort'>>) =>
     setDrafts((previous) => ({
       ...previous,
-      [draftKey]: updateConversationDraft(previous[draftKey] || emptyDraft.current, change),
+      [draftKey]: updateConversationDraft(previous[draftKey] || draftState, change),
     }));
   const setDraft = (text: string) => changeDraft({ text });
   const setRouting = (routing: ConversationRouting) => changeDraft({ routing });
@@ -704,39 +774,64 @@ export function ConversationWorkspace({
     },
     [nodes, locale],
   );
-  const sourceName = current?.incoming ? nodeName(current.sourceNodeID) : t('你');
+  const originDetails = useMemo(() => new Map(all.map((item) => {
+    const origin = conversationOrigin(item, { userID: data.user.id, owner: data.user.owner, localNodeID: local?.id });
+    const source = origin.kind === 'own' ? undefined : origin.actorID
+      ? data.users.find((user) => user.id === origin.actorID)?.name || t('其他成员')
+      : origin.nodeID ? nodeName(origin.nodeID) : undefined;
+    return [item.key, { ...origin, source, icon: origin.nodeID ? nodes.find((node) => node.id === origin.nodeID)?.icon : undefined }];
+  })), [all, data.user.id, data.user.owner, data.users, local?.id, nodeName, nodes, locale]);
+  const currentOrigin = current ? originDetails.get(current.key) : undefined;
+  const sourceName = currentOrigin?.kind === 'own' ? t('你') : currentOrigin?.source || t('来源待确认');
   const searching = !!searchQuery;
   const searchIndex = useMemo(() => searching ? indexConversations(all, (item) => {
     const directory = conversationDirectory(item, data);
     return { device: nodeName(item.sourceNodeID), directory: `${directory.label}\n${directoryDisplayName(directory, data.directoryAliases)}` };
   }) : [], [searching, all, nodeName, data.projects, data.directoryAliases]);
   const searchResults = useMemo(() => searchConversations(searchIndex, searchQuery), [searchIndex, searchQuery]);
-  const currentMatches = current ? searchResults.get(current.key) || [] : [];
-  const currentMatch = searchSelection?.key === current?.key && searchSelection?.query === search.trim() && searchSelection.query === searchQuery
+  const findIndex = useMemo(() => findOpen && current ? indexConversations([current], () => ({ device: '', directory: '' })) : [], [findOpen, current]);
+  const findResults = useMemo(() => searchConversations(findIndex, findQuery), [findIndex, findQuery]);
+  const activeSearchQuery = findOpen ? findQuery.trim() : searchQuery;
+  const currentMatches = current ? (findOpen ? findResults : searchResults).get(current.key) || [] : [];
+  const selectedMatch = searchSelection?.key === current?.key && searchSelection?.query === activeSearchQuery && (findOpen || searchSelection.query === search.trim())
     ? currentMatches.find((match) => match.id === searchSelection.id) : undefined;
+  const currentMatch = selectedMatch || (findOpen ? currentMatches[0] : undefined);
   const visible = useMemo(
     () =>
       filterConversations(
         all,
         { status: statusFilter, source: sourceFilter, query: '' },
         nodeName,
-      ).filter((item) => !searchQuery || searchResults.has(item.key)),
-    [all, statusFilter, sourceFilter, searchQuery, searchResults, nodeName],
+      ).filter((item) => (!searchQuery || searchResults.has(item.key)) && (!draftsOnly || hasConversationDraft(drafts[item.key]))),
+    [all, statusFilter, sourceFilter, searchQuery, searchResults, nodeName, draftsOnly, drafts],
   );
   const historyGroups = groupConversationHistory(visible, data, data.directoryAliases);
   const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
   const renameHistory = useCallback((item: Conversation) => { setError(''); setRenameConversation({ key: item.key, title: item.title }); }, []);
   const pinHistory = (item: Conversation) => void perform(() => api('/ui/conversation', { key: item.key, pinned: !item.pinned }));
-  const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all';
+  const filtering = !!search.trim() || statusFilter !== 'all' || sourceFilter !== 'all' || draftsOnly;
   function clearFilters() {
     setSearch('');
     setSearchSelection(null);
     setStatusFilter('all');
     setSourceFilter('all');
+    setDraftsOnly(false);
   }
   const canRemoteControl =
     !!remote && remote.direction === 'outgoing' && remote.executionSequence > 0 && data.user.owner;
   const canWriteLocal = !!task && [task.creatorID, task.assigneeID].includes(data.user.id);
+  const canContinueLocal = localTaskCanContinue(task, data.user.id);
+  const localTaskModelChoice = !!task && task.assigneeID === data.user.id && !task.collaboration && !task.remoteOrigin;
+  const useLocalTaskMessages = localTaskModelChoice && (canContinueLocal || isPendingLocalTaskMessage(draftState));
+  const workflowModelChoice = !!current?.workflow && current.workflow.creatorID === data.user.id &&
+    (current.workflow.target.mode === 'automatic' || current.workflow.target.nodeID === local?.id);
+  const continuationModelChoice = workflowModelChoice || localTaskModelChoice;
+  const continuationModel = task ? draftState.model || task.model : draftState.model ?? data.executionPolicy.model ?? '';
+  const continuationModelUnavailable = continuationModelChoice &&
+    !data.engine.models.some((entry) => entry.id === continuationModel);
+  const workflowRemoteDefaultAllowed = data.user.owner && workflowModelChoice && current?.workflow?.target.mode !== 'locked' && draftState.model === null;
+  const continuationModelBlocked = continuationModelUnavailable &&
+    !workflowRemoteDefaultAllowed && (workflowModelChoice || canContinueLocal) && !draftState.requestSignature;
   const finished = !!current && conversationStatusGroup(current) === 'completed';
   const queueRejected =
     currentQueueEntry?.endReason?.code === 'rejected' ||
@@ -752,7 +847,15 @@ export function ConversationWorkspace({
   const canWrite =
     (!current && !awaitingCreatedConversation) ||
     (!!current?.workflow && current.workflow.creatorID === data.user.id) ||
+    (canContinueLocal && !queueRejected) ||
     (!finished && !queueRejected && (canWriteLocal || canRemoteControl));
+  const localModelPickerVisible = !current ? !targetNodeID || targetNodeID === local?.id : continuationModelChoice;
+  const composerModelIssue = localModelPickerVisible
+    ? modelReadinessIssue(data.engine, current ? continuationModel : model) : null;
+  const modelGuidance = modelSendGuidance({ issue: composerModelIssue, hasCurrent: !!current,
+    localPickerVisible: localModelPickerVisible, continuationBlocked: continuationModelBlocked,
+    requestPending: !!draftState.requestSignature, owner: data.user.owner, targetMode: workflowTarget.mode,
+    legacyNeedsModel: !current && conversationCreationNeedsModel(draftState) && !data.engine.models.some((entry) => entry.id === model) });
   const approvals = task?.approvals || remote?.remoteApprovals || [];
   const questions = task?.questions || remote?.remoteQuestions || [];
   const artifacts = task?.artifacts || remote?.remoteArtifacts || [];
@@ -764,11 +867,12 @@ export function ConversationWorkspace({
   const canApprove = task ? task.approverID === data.user.id : canRemoteControl;
 
   useEffect(() => {
-    if (!model && data.defaultModel) setModel(data.defaultModel);
+    if (!model && data.defaultModel && !drafts.new?.requestSignature) setModel(data.defaultModel);
     if (!current && scope === 'local' && !projectID && data.projects.length)
       setProjectID(data.executionPolicy.projectID || data.projects[0].id);
   }, [
     data.defaultModel,
+    drafts.new?.requestSignature,
     data.projects,
     data.executionPolicy.projectID,
     model,
@@ -860,9 +964,23 @@ export function ConversationWorkspace({
     };
   }, [selected, view, current?.key]);
   useEffect(() => {
-    if (!inputRef.current) return;
-    inputRef.current.style.height = 'auto';
-    inputRef.current.style.height = `${Math.min(180, inputRef.current.scrollHeight)}px`;
+    const input = inputRef.current;
+    if (!input) return;
+    const resize = () => {
+      input.style.height = 'auto';
+      input.style.height = `${Math.min(180, input.scrollHeight)}px`;
+    };
+    resize();
+    let previousWidth = input.clientWidth;
+    let resizeFrame = 0;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === previousWidth) return;
+      previousWidth = input.clientWidth;
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(resize);
+    });
+    observer.observe(input);
+    return () => { observer.disconnect(); cancelAnimationFrame(resizeFrame); };
   }, [draft, selected]);
 
   function updateScrollPosition() {
@@ -907,6 +1025,7 @@ export function ConversationWorkspace({
   }
   const open = useCallback((item: Conversation | null) => {
     setSearchSelection(null);
+    setFindOpen(false);
     selectedRef.current = item?.key || null;
     setSelected(item?.key || null);
     setMention(null);
@@ -916,14 +1035,64 @@ export function ConversationWorkspace({
     setNotice('');
     setMobileSidebar(false);
   }, []);
+  function focusComposer() {
+    setView('chat'); setMobileSidebar(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+  function focusHistorySearch() {
+    setMobileSidebar(true);
+    requestAnimationFrame(() => { historySearchRef.current?.focus(); historySearchRef.current?.select(); });
+  }
+  function openFind() { if (current) { setFindOpen(true); focusCurrentConversationFind(); } }
+  const reuseMessage = (intent: MessageReuseIntent): boolean => {
+    if (!canWrite || operation.current || (selectedRef.current || 'new') !== draftKey) return false;
+    const latest = draftsRef.current[draftKey] || emptyDraft.current;
+    const result = applyMessageReuse(latest, intent, !!current);
+    if (!result.ok) return false;
+    draftsRef.current = { ...draftsRef.current, [draftKey]: result.draft };
+    setDrafts(draftsRef.current);
+    setMention(null); focusComposer(); return true;
+  };
+  const reviewProjectID = current ? task?.projectID || current.workflow?.projectID : projectID;
+  const reviewProject = data.user.owner ? data.projects.find((project) => project.id === reviewProjectID) : undefined;
+  const currentDirectory = current ? conversationDirectory(current, data) : null;
+  const currentDirectoryName = currentDirectory && currentDirectory.key !== 'unspecified'
+    ? directoryDisplayName(currentDirectory, data.directoryAliases) : '';
+  const currentModelID = task?.model || current?.workflow?.model;
+  const currentModelName = currentModelID ? data.engine.models.find((entry) => entry.id === currentModelID)?.name || currentModelID : '';
+  const pendingMessages = current?.workflow ? workflowPendingMessages(current.workflow).length : 0;
+  const draftKeys = conversationDraftKeys(drafts, all.map((item) => item.key));
+  const workspaceCommands: WorkspaceCommand[] = [
+    { kind: 'action', id: 'new-conversation', label: t('新会话'), shortcut: workspaceShortcutLabels['new-conversation'], run: () => { open(null); focusComposer(); } },
+    { kind: 'action', id: 'search-conversations', label: t('搜索会话'), shortcut: workspaceShortcutLabels['search-conversations'], run: focusHistorySearch },
+    { kind: 'action', id: 'focus-composer', label: t('聚焦输入框'), shortcut: workspaceShortcutLabels['focus-composer'], disabled: !canWrite, run: focusComposer },
+    { kind: 'action', id: 'attention', label: t('待办中心'), run: () => openAttention('attention') },
+    { kind: 'action', id: 'models', label: t('设备与模型'), run: () => setView('models') },
+    { kind: 'action', id: 'knowledge', label: t('技能与记忆'), run: () => setView('knowledge') },
+    { kind: 'action', id: 'queue', label: t('本机执行队列'), run: () => setModal('queue') },
+    { kind: 'action', id: 'diagnostics', label: t('连接诊断'), run: () => { setDiagnosticTarget(null); setView('diagnostics'); } },
+    { kind: 'action', id: 'trash', label: t('回收站'), run: () => setView('trash') },
+    { kind: 'action', id: 'shortcuts', label: t('键盘与输入'), run: () => setModal('shortcuts') },
+    { kind: 'action', id: 'templates', label: t('提示词模板'), disabled: !canWrite, run: () => setModal('templates') },
+    { kind: 'action', id: 'export-conversation', label: t('导出会话'), disabled: !current, run: () => current && setExportItem(current) },
+    { kind: 'action', id: 'project-changes', label: t('查看项目改动'), disabled: !reviewProject, run: () => reviewProject && setChangesProject(reviewProject) },
+    { kind: 'action', id: 'find-current', label: t('在当前会话中查找'), shortcut: primaryShortcut('F'), disabled: !current, run: () => { setView('chat'); openFind(); } },
+    ...draftKeys.map((key): WorkspaceCommand => ({ kind: 'draft', id: key, label: all.find((item) => item.key === key)?.title || t('新会话'),
+      detail: drafts[key]?.text.slice(0, 100) || t('附件草稿'), run: () => { open(all.find((item) => item.key === key) || null); focusComposer(); } })),
+    ...all.map((item): WorkspaceCommand => ({ kind: 'conversation', id: item.key, label: item.title, detail: conversationState(item), run: () => open(item) })),
+  ];
+  useWorkspaceShortcuts({ openPalette: () => setPaletteOpen(true), newConversation: () => { open(null); focusComposer(); },
+    searchConversations: focusHistorySearch, focusComposer, blocked: paletteOpen });
   const openHistory = (item: Conversation) => {
     open(item);
     const first = contentSearchMatch(searchResults.get(item.key) || []);
     if (first && searchQuery === search.trim()) setSearchSelection({ key: item.key, query: searchQuery, id: first.id, revision: Date.now() });
   };
   const selectSearchMatch = (match: SearchMatch) => {
-    if (current) setSearchSelection((previous) => ({ key: current.key, query: searchQuery, id: match.id, revision: (previous?.revision || 0) + 1 }));
+    if (current) setSearchSelection((previous) => ({ key: current.key, query: activeSearchQuery, id: match.id, revision: (previous?.revision || 0) + 1 }));
   };
+  useCurrentConversationFindShortcuts({ open: openFind, active: findOpen, matches: currentMatches, activeID: currentMatch?.id || null,
+    select: selectSearchMatch, enabled: view === 'chat' && !!current, blocked: paletteOpen });
   useEffect(() => {
     const element = transcript.current;
     if (!element || view !== 'chat' || !currentMatch) return;
@@ -938,13 +1107,13 @@ export function ConversationWorkspace({
         target.classList.add('search-current');
         const bounds = (target.querySelector('mark.search-highlight') || target).getBoundingClientRect(), viewport = element.getBoundingClientRect();
         element.scrollTop += bounds.top - viewport.top - 24;
-        target.focus({ preventScroll: true });
-      } else { element.scrollTop = 0; element.focus({ preventScroll: true }); }
+        if (!findOpen) target.focus({ preventScroll: true });
+      } else { element.scrollTop = 0; if (!findOpen) element.focus({ preventScroll: true }); }
       setAwayFromLatest(element.scrollHeight - element.scrollTop - element.clientHeight > 100);
     };
     frame = requestAnimationFrame(locate);
     return () => { cancelAnimationFrame(frame); target?.classList.remove('search-current'); };
-  }, [view, selected, currentMatch?.id, searchSelection?.revision]);
+  }, [view, selected, currentMatch?.id, searchSelection?.revision, activeSearchQuery, findOpen]);
   useEffect(() => {
     if (current) seenSelected.current = current.key;
     else if (selected && seenSelected.current === selected) { seenSelected.current = null; open(null); }
@@ -1074,7 +1243,24 @@ export function ConversationWorkspace({
       ...(value.sessionID ? { addition: addition || value.description } : {}),
     });
   }
-  async function send(event: FormEvent) {
+  function openModelSetup(issue: ModelReadinessIssue) {
+    setModelSetupReturn(draftKey);
+    setModal(null); setMention(null); setOptions(false); setMobileSidebar(false);
+    if (issue === 'engine') { setDiagnosticTarget(null); setView('diagnostics'); }
+    else setView('models');
+  }
+  function returnFromModelSetup() {
+    if (modelSetupReturn !== null) setSelected(modelSetupReturn === 'new' ? null : modelSetupReturn);
+    setModelSetupReturn(null); setView('chat'); focusComposer();
+  }
+  function chooseComposerModel() {
+    setModal(null);
+    requestAnimationFrame(() => {
+      const trigger = inputRef.current?.form?.querySelector<HTMLButtonElement>('.model-picker-trigger');
+      trigger?.focus(); trigger?.click();
+    });
+  }
+  async function send(event: FormEvent, continueScheduling = false) {
     event.preventDefault();
     const text = draft.trim();
     if (
@@ -1085,15 +1271,30 @@ export function ConversationWorkspace({
       ((!current || current.workflow) && !draftFilesReady(draftState.files))
     )
       return;
+    if (modelGuidance.required && !(continueScheduling && modelGuidance.canSchedule)) {
+      setMention(null); setModal('model-guide'); return;
+    }
     await perform(async () => {
       if (current) {
         if (current.workflow) {
-          const body = { text, attachmentIDs: (draftState.files || []).map((f) => f.id) };
+          const body = { text, attachmentIDs: (draftState.files || []).map((f) => f.id),
+            ...(workflowModelChoice ? { model: draftState.model ?? null, ...conversationReasoningFields(draftState, draftState.reasoningEffort ?? null) } : {}) };
           const prepared = prepareConversationRequest(draftState, body);
           setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
           await api(`/workflows/${current.workflow.id}/messages`, { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
           scrollPinned.current = true;
           setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID, createWorkflowDraft));
+          return;
+        } else if (task && useLocalTaskMessages) {
+          const body = { text, ...(continuationModel ? { model: continuationModel } : {}), ...conversationReasoningFields(draftState, draftState.reasoningEffort ?? null), confirmed: true };
+          const prepared = prepareConversationRequest(
+            { ...draftState, ...(continuationModel ? { model: continuationModel } : {}) },
+            { ...body, messageKind: 'local-task' },
+          );
+          setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
+          await api(`/tasks/${task.id}/messages`, { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
+          scrollPinned.current = true;
+          setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID));
           return;
         } else if (task) {
           if (task.assigneeID !== data.user.id)
@@ -1118,7 +1319,9 @@ export function ConversationWorkspace({
           ...(draftState.files?.length ? { attachmentIDs: draftState.files.map((f) => f.id) } : {}),
           description: text,
           criteria: acceptance,
-          projectID: projectID || null, model: model || null, approvalMode: mode, target: workflowTarget,
+          projectID: projectID || null, model: !targetNodeID || targetNodeID === local?.id ? model || null : null,
+          ...(!targetNodeID || targetNodeID === local?.id ? conversationReasoningFields(draftState, reasoningEffort) : {}),
+          approvalMode: mode, target: workflowTarget,
         };
         const prepared = prepareConversationRequest(draftState, body);
         setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
@@ -1163,6 +1366,7 @@ export function ConversationWorkspace({
       approvalMode: ApprovalMode;
       projectID: string | null;
       model: string | null;
+      reasoningEffort?: ReasoningEffort;
     }) => void perform(() => api('/network/execution-policy', { ...input, confirmed: true })),
   };
 
@@ -1175,7 +1379,7 @@ export function ConversationWorkspace({
   }
   const composerToolbar = (
     <>
-      <div className="composer-choices">
+      <div className={`composer-choices ${current ? 'continuing' : ''}`}>
         {!current ? (
           <>
             {targetNodeID ? (
@@ -1212,7 +1416,10 @@ export function ConversationWorkspace({
               </label>
             )}
             {(!targetNodeID || targetNodeID === local?.id) && (
-              <ModelPicker models={data.engine.models} value={model} onChange={setModel} disabled={busy} />
+              <><ModelPicker models={data.engine.models} value={model} onChange={value => { if (value !== model) setReasoningEffort(null); setModel(value); }} disabled={busy}
+                engineReady={data.engine.ready} engineError={data.engine.error} owner={data.user.owner} onSetup={openModelSetup} />
+              <ReasoningPicker model={data.engine.models.find(entry => entry.id === model)} value={reasoningEffort}
+                onChange={setReasoningEffort} disabled={busy || !data.engine.ready} /></>
             )}
             {data.user.owner && <button type="button" className="composer-options" disabled={busy}
               aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
@@ -1234,36 +1441,50 @@ export function ConversationWorkspace({
             </button>
           </>
         ) : (
+          <>
           <span className="composer-context">
             {task ? (
               <>
                 <FolderOpen size={14} />
-                {data.projects.find((p) => p.id === task.projectID)?.name}
+                <span>{data.projects.find((p) => p.id === task.projectID)?.name}</span>
+              </>
+            ) : current.workflow ? (
+              <>
+                <MessageSquare size={14} />
+                <span>{pendingMessages ? `${t('待执行消息')} · ${pendingMessages}` : t('继续此会话')}</span>
               </>
             ) : (
               <>
                 <Network size={14} />
-                {conversationState(current)}
+                <span>{conversationState(current)}</span>
               </>
             )}
           </span>
+          {continuationModelChoice && (
+            <><ModelPicker models={data.engine.models} value={continuationModel}
+              onChange={(value) => changeDraft({ model: value })}
+              engineReady={data.engine.ready} engineError={data.engine.error} owner={data.user.owner} onSetup={openModelSetup}
+              disabled={busy || !canWrite || (localTaskModelChoice && !canContinueLocal)} />
+            <ReasoningPicker model={data.engine.models.find(entry => entry.id === continuationModel)} value={draftState.reasoningEffort}
+              onChange={value => changeDraft({ reasoningEffort: value })}
+              disabled={busy || !data.engine.ready || !canWrite || (localTaskModelChoice && !canContinueLocal)} /></>
+          )}
+          </>
         )}
       </div>
+      <button type="button" className="composer-options" disabled={busy || !canWrite} title={t('提示词模板')} aria-label={t('提示词模板')} onClick={() => { setMention(null); setModal('templates'); }}><BookOpen size={16} /></button>
       <button
         type="submit"
         className="send-message"
         aria-label={t('发送消息')}
-        title={t('Enter 发送 · Shift + Enter 换行')}
+        title={modelGuidance.required ? t('先完善模型设置，已输入的内容会保留。') : composerSendHint(sendMode)}
         disabled={
           busy ||
           !draft.trim() ||
           inputUsage.overLimit ||
           ((!current || current.workflow) && !draftFilesReady(draftState.files)) ||
           !canWrite ||
-          remote?.controlPending ||
-          (!current &&
-            conversationCreationNeedsModel(draftState) &&
-            !data.engine.models.some((m) => m.id === model))
+          remote?.controlPending
         }
       >
         {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
@@ -1306,10 +1527,14 @@ export function ConversationWorkspace({
           {t('新会话')}
           <span>↗</span>
         </button>
+        <button type="button" className="workspace-command-entry" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog">
+          <Search size={15} /><span>{t('快速访问')}</span><kbd>{workspaceShortcutLabels.palette}</kbd>
+        </button>
         <div className="conversation-searchbar">
           <label className="conversation-search">
             <Search size={15} />
             <input
+              ref={historySearchRef}
               aria-label={t('搜索会话')}
               title={t('搜索标题、目录、设备、历轮需求与回答')}
               placeholder={t('搜索会话')}
@@ -1334,6 +1559,10 @@ export function ConversationWorkspace({
             onClear={clearFilters}
           />
         </div>
+        {draftKeys.length > 0 && <div className="history-draft-tools">
+          <button type="button" aria-pressed={draftsOnly} onClick={() => setDraftsOnly(!draftsOnly)}>{t('草稿')}<span>{draftKeys.filter((key) => key !== 'new').length}</span></button>
+          {draftKeys.includes('new') && <button type="button" onClick={() => { open(null); focusComposer(); }}>{t('继续新会话草稿')}</button>}
+        </div>}
         {search.trim() && <p className="conversation-search-count" role="status" aria-busy={searchQuery !== search.trim()}>
           {searchQuery !== search.trim() ? t('正在搜索…') : t('找到 {{count}} 条会话', { count: visible.length })}
         </p>}
@@ -1350,9 +1579,11 @@ export function ConversationWorkspace({
             <HistoryRow
               key={item.key}
               item={item}
+              hasDraft={hasConversationDraft(drafts[item.key])}
               selected={view === 'chat' && selected === item.key}
-              source={item.incoming ? nodeName(item.sourceNodeID) : undefined}
-              icon={item.incoming ? nodes.find((n) => n.id === item.sourceNodeID)?.icon : undefined}
+              origin={originDetails.get(item.key)!.kind}
+              source={originDetails.get(item.key)?.source}
+              icon={originDetails.get(item.key)?.icon}
               open={openHistory}
               matches={searchResults.get(item.key)}
               searchQuery={searchQuery}
@@ -1413,6 +1644,7 @@ export function ConversationWorkspace({
             {t('连接诊断')}
             <ChevronRight size={14} />
           </button>
+          <button type="button" onClick={() => setModal('shortcuts')}><Keyboard size={17} />{t('键盘与输入')}<ChevronRight size={14} /></button>
           <div className="sidebar-signature">
             <Wordmark />
             <AboutRivloomEntry version={rivloomVersion} onClick={() => setModal('about')} />
@@ -1438,8 +1670,9 @@ export function ConversationWorkspace({
               <ArrowLeft size={18} />
             </button>
           )}
-          <div>
-            <span>
+          <div className="conversation-heading">
+            <div className="conversation-title-row">
+            <span title={view === 'chat' ? current?.title : undefined}>
               {view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站') : view === 'network'
                 ? t('设备与模型')
                 : view === 'models'
@@ -1451,7 +1684,21 @@ export function ConversationWorkspace({
                       : current?.title || t('新会话')}
             </span>
             {view === 'chat' && current && <small>{conversationState(current)}</small>}
+            </div>
+            {view === 'chat' && current && <div className="conversation-context-row">
+              <span className={`conversation-origin-context ${currentOrigin?.kind || 'unknown'}`} title={currentOrigin?.source}>
+                {currentOrigin?.kind === 'delegated' ? <NodeAvatar small icon={currentOrigin.icon} /> : <MessageSquare size={12} />}
+                <b>{currentOrigin?.kind === 'delegated' ? t('他人委派') : currentOrigin?.kind === 'own' ? t('自己发起') : t('来源待确认')}{currentOrigin?.source ? ` · ${currentOrigin.source}` : ''}</b>
+              </span>
+              {currentDirectoryName && <span title={currentDirectory?.label}><FolderOpen size={12} /><b>{currentDirectoryName}</b></span>}
+              {currentModelName && <span title={`${t('模型')} · ${currentModelID}`}><Bot size={12} /><b>{currentModelName}</b></span>}
+            </div>}
           </div>
+          {view === 'chat' && <div className="workspace-header-tools">
+            {current && <button type="button" className="icon-button" title={t('在当前会话中查找')} aria-label={t('在当前会话中查找')} onClick={openFind}><Search size={17} /></button>}
+            {reviewProject && <button type="button" className="icon-button" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => setChangesProject(reviewProject)}><GitCompareArrows size={17} /></button>}
+            {current && <button type="button" className="icon-button" title={t('导出会话')} aria-label={t('导出会话')} onClick={() => setExportItem(current)}><Download size={17} /></button>}
+          </div>}
           {view === 'chat' && data.user.owner && !rail && (
             <button
               className="local-queue-entry"
@@ -1463,9 +1710,9 @@ export function ConversationWorkspace({
               <span>{t('本机队列')}</span>
             </button>
           )}
-          <span className="header-status">
+          <span className="header-status" title={connected ? t('已连接') : t('正在重连')} aria-label={connected ? t('已连接') : t('正在重连')}>
             <i className={`status-dot ${connected ? 'online' : ''}`} />
-            {connected ? t('已连接') : t('正在重连')}
+            <span>{connected ? t('已连接') : t('正在重连')}</span>
           </span>
         </header>
         {(error || connectionError) && (
@@ -1483,7 +1730,8 @@ export function ConversationWorkspace({
         )}
         {view === 'chat' ? (
           <>
-            {currentMatch && <SearchNavigation query={searchQuery} matches={currentMatches} activeID={currentMatch.id}
+            {findOpen && current && <CurrentConversationFind query={findQuery} onQuery={(query) => { setFindQuery(query); setSearchSelection(null); }} matches={currentMatches} activeID={currentMatch?.id || null} select={selectSearchMatch} close={() => { setFindOpen(false); setSearchSelection(null); }} />}
+            {!findOpen && currentMatch && <SearchNavigation query={activeSearchQuery} matches={currentMatches} activeID={currentMatch.id}
               select={selectSearchMatch} close={() => { setSearchSelection(null); transcript.current?.focus({ preventScroll: true }); }} />}
             <div className="conversation-transcript">
               <div
@@ -1491,6 +1739,7 @@ export function ConversationWorkspace({
                 ref={transcript}
                 id="conversation-transcript"
                 tabIndex={0}
+                role="region"
                 aria-label={t('会话消息')}
                 onScroll={updateScrollPosition}
               >
@@ -1499,7 +1748,8 @@ export function ConversationWorkspace({
                     if (target === 'queue') setModal('queue');
                     else { if (target === 'diagnostics') setDiagnosticTarget(nodeID || null); setView(target); }
                   }}
-                  searchMatch={currentMatch} searchQuery={currentMatch ? searchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
+                  reuse={{ draft: draftState, onApply: reuseMessage, disabled: busy || !canWrite }}
+                  searchMatch={currentMatch} searchQuery={currentMatch ? activeSearchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
                     {currentReceipt && (
                       <section
@@ -1536,7 +1786,8 @@ export function ConversationWorkspace({
                         )}
                       </section>
                     )}
-                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? searchQuery : ''} />
+                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} />
+                    {task && <TaskTelemetryView task={task} />}
                     {task?.error && <p className="error">{systemText(task.error)}</p>}
                     {approvals.map((approval) => (
                       <section className="chat-approval" key={approval.id}>
@@ -1783,8 +2034,10 @@ export function ConversationWorkspace({
                       : waitingForRemoteSession
                         ? t('等待目标 Node 准备执行会话，开始后可补充要求')
                         : current?.workflow
-                          ? t('继续提出要求，当前轮结束后依次执行…')
-                        : finished
+                          ? ['completed', 'failed', 'stopped'].includes(current.workflow.state)
+                            ? t('继续对话，补充你的要求…')
+                            : t('继续提出要求，当前轮结束后依次执行…')
+                        : finished && !canWrite
                           ? t('会话已完成，点击「新会话」开始新的工作')
                           : !canWrite
                             ? t('当前只能查看此会话的执行状态')
@@ -1832,7 +2085,7 @@ export function ConversationWorkspace({
                       );
                   }}
                   disabled={!canWrite || busy}
-                  rows={2}
+                  rows={1}
                   maxLength={inputUsage.limit}
                   onKeyDown={(event) => {
                     // IME confirmation must precede both mention selection and form submission.
@@ -1858,11 +2111,7 @@ export function ConversationWorkspace({
                       setMention(null);
                       return;
                     }
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
+                    if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!mention, disabled: !canWrite || busy })) {
                       event.preventDefault();
                       event.currentTarget.form?.requestSubmit();
                     }
@@ -2056,20 +2305,37 @@ export function ConversationWorkspace({
                 </Modal>
               )}
               {draftSaveError && <p className="file-error" role="alert">{t('草稿暂时无法保存，请保留此窗口。')}</p>}
+              {continuationModelUnavailable && workflowRemoteDefaultAllowed ? (
+                <p className="composer-model-note" role="status">{t('本机默认模型不可用；自动调度仍可使用其他符合条件的 Node。')}</p>
+              ) : continuationModelUnavailable ? (
+                <p className="composer-model-note unavailable" role="status">
+                  {t('当前模型不可用：{{model}}。请选择其他模型或重新连接账号。', { model: continuationModel || t('未配置') })}
+                </p>
+              ) : localTaskModelChoice && !canContinueLocal ? (
+                <p className="composer-model-note" role="status">{t('当前执行结束后可切换模型；补充要求仍使用当前执行模型。')}</p>
+              ) : current?.workflow && !workflowModelChoice && canWrite ? (
+                <p className="composer-model-note">{t('远端执行使用目标 Node 配置的模型、目录和审批设置。')}</p>
+              ) : workflowModelChoice && (
+                <p className="composer-model-note">{t('所选模型仅用于这条新消息，当前轮的执行不变。')}</p>
+              )}
               <div className="composer-hint" id="conversation-composer-hint"
                 title={current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : undefined}>
                 {waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')
-                    : running && !current?.workflow
+                      : running && !current?.workflow && !isPendingLocalTaskMessage(draftState)
                       ? t('发送补充要求会先停止当前执行，再继续同一会话。')
-                      : t('Enter 发送 · Shift + Enter 换行')}
+                      : composerSendHint(sendMode)}
               </div>
             </div>
           </>
         ) : (
           <div className="conversation-settings-page">
+            {modelSetupReturn !== null && (view === 'models' || view === 'diagnostics') && <div className="model-onboarding-return" role="status">
+              <span>{t('草稿已保留。完成设置后，返回会话选择模型并发送。')}</span>
+              <Button onClick={returnFromModelSetup}>{t('返回会话')}</Button>
+            </div>}
             {(view === 'models' || view === 'network') && (
               <nav className="device-settings-tabs" aria-label={t('设备设置分类')}>
                 <button
@@ -2199,6 +2465,37 @@ export function ConversationWorkspace({
       {aliasDirectory && <DirectoryAliasEditor key={aliasDirectory.key} directory={aliasDirectory}
         alias={data.directoryAliases?.[aliasDirectory.key] || ''} busy={busy} failureMessage={error}
         close={() => setAliasDirectory(null)} save={(alias) => perform(() => api('/ui/directory-alias', { key: aliasDirectory.key, alias }))} />}
+      {paletteOpen && <CommandPalette commands={workspaceCommands} owner={data.user.owner} onClose={() => setPaletteOpen(false)} />}
+      {modal === 'templates' && <PromptTemplateLibrary scopeKey={storageKey} draft={draftState} existingConversation={!!current} onApply={reuseMessage} close={() => setModal(null)} />}
+      {exportItem && <ConversationExportDialog item={exportItem} close={() => setExportItem(null)} />}
+      {changesProject && data.user.owner && <ProjectChangesView project={changesProject} close={() => setChangesProject(null)} />}
+      {modal === 'model-guide' && <Modal title={composerModelIssue ? modelReadinessMessage(composerModelIssue, data.user.owner).title : t('模型已可用')}
+        close={() => { setModal(null); focusComposer(); }} className="model-onboarding-modal">
+        <p>{composerModelIssue ? modelReadinessMessage(composerModelIssue, data.user.owner).description : t('返回会话选择模型后，再发送消息。')}</p>
+        <p className="muted">{t('草稿和附件会保留，配置模型后不会自动发送。')}</p>
+        {modelGuidance.canSchedule && <p className="model-onboarding-remote">{t('也可以继续自动调度，由其他符合条件的 Node 执行。')}</p>}
+        <div className="modal-actions">
+          <Button onClick={() => { setModal(null); focusComposer(); }}>{t('继续编辑')}</Button>
+          {modelGuidance.canSchedule && <button type="button" className="button" disabled={busy} onClick={(event) => { setModal(null); void send(event, true); }}>{t('继续自动调度')}</button>}
+          {composerModelIssue === 'selection'
+            ? <Button variant="primary" onClick={chooseComposerModel}>{t('选择模型')}</Button>
+            : composerModelIssue && <Button variant="primary" onClick={() => openModelSetup(composerModelIssue)}>
+              {composerModelIssue === 'engine' ? t('连接诊断') : data.user.owner ? t('添加模型') : t('查看模型')}
+            </Button>}
+        </div>
+      </Modal>}
+      {modal === 'shortcuts' && <Modal title={t('键盘与输入')} close={() => setModal(null)} className="workspace-shortcuts-modal">
+        <ComposerSendPreference value={sendMode} onChange={setSendMode} />
+        <dl className="workspace-shortcuts">
+          <div><dt>{t('快速访问')}</dt><dd><kbd>{workspaceShortcutLabels.palette}</kbd></dd></div>
+          <div><dt>{t('新会话')}</dt><dd><kbd>{workspaceShortcutLabels['new-conversation']}</kbd></dd></div>
+          <div><dt>{t('搜索会话')}</dt><dd><kbd>{workspaceShortcutLabels['search-conversations']}</kbd></dd></div>
+          <div><dt>{t('聚焦输入框')}</dt><dd><kbd>{workspaceShortcutLabels['focus-composer']}</kbd></dd></div>
+          <div><dt>{t('在当前会话中查找')}</dt><dd><kbd>{primaryShortcut('F')}</kbd></dd></div>
+          <div><dt>{t('下一处匹配')} / {t('上一处匹配')}</dt><dd><kbd>F3 / Shift + F3</kbd></dd></div>
+        </dl>
+        <p className="muted">{t('切换会话会保留草稿；快捷键不会直接发送消息或执行任务。')}</p>
+      </Modal>}
       {modal === 'concurrency' && data.user.owner && (
         <Modal title={t('并发设置')} close={() => setModal(null)}>
           <ExecutionConcurrencySettings policy={data.executionPolicy} onChanged={() => void refresh()} />

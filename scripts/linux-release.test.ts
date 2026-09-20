@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { digest } from './ci-r2-storage.ts';
 import { checkLinuxProvenance, linuxContext, linuxPromotion, prepareLinuxRelease, publishLinux, synchronizeLinux } from './linux-release.ts';
@@ -10,6 +10,26 @@ import type { ObjectTransport } from './ci-r2-storage.ts';
 import { linuxChecksums, parseLinuxDownloadRecord, type LinuxDownloadRecord } from './linux-download-record.ts';
 
 const environment = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'rivloom/rivloom-desktop', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '200', RIVLOOM_LINUX_BUILD_RUN_ID: '100', RIVLOOM_LINUX_X64_ARTIFACT_ID: '101', RIVLOOM_LINUX_ARM64_ARTIFACT_ID: '102' };
+async function packageFixture(root: string) {
+  const context = linuxContext({ ...environment, RIVLOOM_LINUX_ARM64_ARTIFACT_ID: undefined });
+  await writeFile(join(root, 'package.json'), JSON.stringify({ version: '0.1.18' }));
+  await mkdir(join(root, 'shared'));
+  const lockBytes = await readFile(resolve(import.meta.dirname, '../shared/engine-source-linux.json'));
+  await writeFile(join(root, 'shared/engine-source-linux.json'), lockBytes);
+  const lock = JSON.parse(lockBytes.toString());
+  const recipeFiles = Object.entries(lock.recipe.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const engineSource = { commit: lock.commit, tree: lock.tree, lockSha256: digest(lockBytes), receiptSha256: 'e'.repeat(64), recipeSha256: digest(Buffer.from(JSON.stringify(recipeFiles))) };
+  const opencode = { version: lock.version, sha256: 'b'.repeat(64), source: `${lock.repository}#${lock.commit}` };
+  const directory = join(root, 'test-results/linux/x64'); await mkdir(directory, { recursive: true });
+  const fileName = 'Rivloom_0.1.18_linux_x64.tar.gz', bytes = Buffer.alloc(65); bytes.set([31, 139, 8]);
+  const artifact = { fileName, bytes: bytes.length, sha256: digest(bytes) }, runtimeManifestSha256 = 'd'.repeat(64);
+  const build = { schemaVersion: 1, kind: 'rivloom-linux-build', version: '0.1.18', sourceCommit: context.commit, sourceDirty: false, runID: context.runID, target: { platform: 'linux', arch: 'x64' }, artifact, runtimeManifestSha256, nodeVersion: '24.19.0', engineVersion: lock.version, opencode, engineSource };
+  const smoke = { schemaVersion: 1, status: 'passed', sourceCommit: context.commit, sourceDirty: false, runID: context.runID, arch: 'x64', artifact, runtimeManifestSha256, engineVersion: lock.version, opencode, engineSource, checks: { extractedFiles: 10, node: true, opencode: true, engineSource: true, engineRecipe: true, engineElf: true, engineLicense: true, startup: true, restartIdentity: true, sigterm: true, privateData: true, authentication: true, noTokenRejected: true, originRejected: true, hostRejected: true, noGui: true, defaultExecutionDisabled: true, controlCleanup: true }, environment: { platform: 'linux', arch: 'x64', node: '24.19.0' } };
+  await writeFile(join(directory, fileName), bytes);
+  await writeFile(join(directory, 'build.json'), JSON.stringify(build));
+  await writeFile(join(directory, 'smoke.json'), JSON.stringify(smoke));
+  return { context, directory, build, smoke, fileName };
+}
 function record(commit = 'a'.repeat(40), runID = '100', arm64 = true): LinuxDownloadRecord {
   const tag = `linux-v0.1.18-${commit.slice(0, 12)}-${runID}`, base = `https://downloads.rivloom.com/releases/linux/${tag}`;
   const platforms = Object.fromEntries((arm64 ? ['linux-x64', 'linux-arm64'] : ['linux-x64']).map(platform => {
@@ -60,30 +80,47 @@ test('Linux latest cannot regress its source or run and conflicting immutable re
 test('Linux publication refuses dirty-source or incomplete native smoke evidence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rivloom-linux-release-'));
   try {
-    await writeFile(join(root, 'package.json'), JSON.stringify({ version: '0.1.18' }));
-    for (const arch of ['x64', 'arm64']) {
-      const directory = join(root, 'test-results/linux', arch); await mkdir(directory, { recursive: true });
-      const fileName = `Rivloom_0.1.18_linux_${arch}.tar.gz`, bytes = Buffer.alloc(65); bytes.set([31, 139, 8]);
-      const artifact = { fileName, bytes: bytes.length, sha256: digest(bytes) };
-      const build = { schemaVersion: 1, kind: 'rivloom-linux-build', version: '0.1.18', sourceCommit: environment.GITHUB_SHA, sourceDirty: false, runID: '100', target: { platform: 'linux', arch }, artifact, runtimeManifestSha256: 'd'.repeat(64), nodeVersion: '24.19.0', engineVersion: '1.18.25' };
-      const smoke = { schemaVersion: 1, status: 'passed', sourceCommit: build.sourceCommit, sourceDirty: false, runID: '100', arch, artifact, runtimeManifestSha256: build.runtimeManifestSha256, checks: { extractedFiles: 10, node: true, opencode: true, startup: true, restartIdentity: true, sigterm: true, privateData: true, authentication: true, noTokenRejected: true, originRejected: true, hostRejected: true, noGui: true, defaultExecutionDisabled: true, controlCleanup: true }, environment: { platform: 'linux', arch, node: '24.19.0' } };
-      await writeFile(join(directory, fileName), bytes); await writeFile(join(directory, 'build.json'), JSON.stringify(build)); await writeFile(join(directory, 'smoke.json'), JSON.stringify(smoke));
-    }
-    assert.equal((await prepareLinuxRelease(root, linuxContext(environment))).assets.length, 3);
-    assert.equal((await prepareLinuxRelease(root, linuxContext({ ...environment, RIVLOOM_LINUX_ARM64_ARTIFACT_ID: undefined }))).assets.length, 2);
-    const path = join(root, 'test-results/linux/x64/build.json');
+    const { context, directory } = await packageFixture(root);
+    assert.equal((await prepareLinuxRelease(root, context)).assets.length, 2);
+    await assert.rejects(prepareLinuxRelease(root, linuxContext(environment)), /ARM64 is unavailable/);
+    const path = join(directory, 'build.json');
     const valid = await readFile(path, 'utf8');
     await writeFile(path, JSON.stringify({ ...JSON.parse(valid), sourceDirty: true }));
-    await assert.rejects(prepareLinuxRelease(root, linuxContext(environment)), /committed source/);
+    await assert.rejects(prepareLinuxRelease(root, context), /committed source/);
     await writeFile(path, valid);
-    const smokePath = join(root, 'test-results/linux/arm64/smoke.json');
+    const smokePath = join(directory, 'smoke.json');
     const originalSmoke = await readFile(smokePath, 'utf8'), smoke = JSON.parse(originalSmoke);
     smoke.checks.hostRejected = false;
     await writeFile(smokePath, JSON.stringify(smoke));
-    await assert.rejects(prepareLinuxRelease(root, linuxContext(environment)));
+    await assert.rejects(prepareLinuxRelease(root, context));
     await writeFile(smokePath, originalSmoke);
     await writeFile(join(root, 'test-results/linux/x64/Rivloom_0.1.18_linux_x64.tar.gz'), Buffer.alloc(80));
-    await assert.rejects(prepareLinuxRelease(root, linuxContext(environment)));
+    await assert.rejects(prepareLinuxRelease(root, context));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Linux publication binds the reviewed source recipe and actual engine to native smoke evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rivloom-linux-source-gate-'));
+  try {
+    const fixture = await packageFixture(root);
+    for (const mutate of [
+      (build: any, smoke: any) => { build.engineVersion = smoke.engineVersion = '1.18.25'; },
+      (build: any, smoke: any) => { build.engineSource.commit = smoke.engineSource.commit = 'a'.repeat(40); },
+      (build: any, smoke: any) => { build.engineSource.recipeSha256 = smoke.engineSource.recipeSha256 = 'a'.repeat(64); },
+      (build: any, smoke: any) => { build.engineSource.lockSha256 = smoke.engineSource.lockSha256 = 'a'.repeat(64); },
+      (build: any, smoke: any) => { build.engineSource.receiptSha256 = smoke.engineSource.receiptSha256 = '0'.repeat(64); },
+      (_build: any, smoke: any) => { smoke.engineSource.receiptSha256 = 'a'.repeat(64); },
+      (_build: any, smoke: any) => { smoke.opencode.sha256 = 'a'.repeat(64); },
+      (build: any, smoke: any) => { build.opencode.source = smoke.opencode.source = 'https://registry.npmjs.org/opencode-linux-x64-baseline'; },
+      (_build: any, smoke: any) => { smoke.checks.engineElf = false; },
+      (_build: any, smoke: any) => { delete smoke.checks.engineRecipe; },
+    ]) {
+      const build = structuredClone(fixture.build), smoke = structuredClone(fixture.smoke);
+      mutate(build, smoke);
+      await writeFile(join(fixture.directory, 'build.json'), JSON.stringify(build));
+      await writeFile(join(fixture.directory, 'smoke.json'), JSON.stringify(smoke));
+      await assert.rejects(prepareLinuxRelease(root, fixture.context));
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -91,13 +128,7 @@ test('x64 publication and R2 synchronization preserve Windows entries and reject
   const root = await mkdtemp(join(tmpdir(), 'rivloom-linux-publish-'));
   const context = linuxContext({ ...environment, RIVLOOM_LINUX_ARM64_ARTIFACT_ID: undefined });
   try {
-    await writeFile(join(root, 'package.json'), JSON.stringify({ version: '0.1.18' }));
-    const directory = join(root, 'test-results/linux/x64'); await mkdir(directory, { recursive: true });
-    const fileName = 'Rivloom_0.1.18_linux_x64.tar.gz', bytes = Buffer.alloc(65); bytes.set([31, 139, 8]);
-    const artifact = { fileName, bytes: bytes.length, sha256: digest(bytes) }, runtimeManifestSha256 = 'd'.repeat(64);
-    await writeFile(join(directory, fileName), bytes);
-    await writeFile(join(directory, 'build.json'), JSON.stringify({ schemaVersion: 1, kind: 'rivloom-linux-build', version: '0.1.18', sourceCommit: context.commit, sourceDirty: false, runID: context.runID, target: { platform: 'linux', arch: 'x64' }, artifact, runtimeManifestSha256, nodeVersion: '24.19.0', engineVersion: '1.18.25' }));
-    await writeFile(join(directory, 'smoke.json'), JSON.stringify({ schemaVersion: 1, status: 'passed', sourceCommit: context.commit, sourceDirty: false, runID: context.runID, arch: 'x64', artifact, runtimeManifestSha256, checks: { extractedFiles: 10, node: true, opencode: true, startup: true, restartIdentity: true, sigterm: true, privateData: true, authentication: true, noTokenRejected: true, originRejected: true, hostRejected: true, noGui: true, defaultExecutionDisabled: true, controlCleanup: true }, environment: { platform: 'linux', arch: 'x64', node: '24.19.0' } }));
+    await packageFixture(root);
     let release: Record<string, any> | undefined;
     const assets: Record<string, any>[] = [];
     const transport: ReleaseTransport = async request => {

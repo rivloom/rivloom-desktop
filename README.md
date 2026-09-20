@@ -8,11 +8,13 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows 正式版为 **0.1.18**，新增关闭到托盘、托盘直接退出、任务等待与队列诊断，以及局域网连接检测和修复。继续使用官方 OpenCode 1.18.25，保留已有模型账号、设备信任及任务记录。详见 [版本说明](docs/releases/0.1.18.md)，安装包见[官网下载页](https://rivloom.com/download/)。
+当前 Windows 正式版为 **0.1.18**，新增关闭到托盘、托盘直接退出、任务等待与队列诊断，以及局域网连接检测和修复。已发布安装包使用官方 OpenCode 1.18.25，保留已有模型账号、设备信任及任务记录。详见 [版本说明](docs/releases/0.1.18.md)，安装包见[官网下载页](https://rivloom.com/download/)。
+
+**当前源码变更（2026-09-19，未发布）：** Windows 已接入从 Rivloom runtime 固定源码编译的 OpenCode 1.18.31，SDK/plugin 同步对齐。首次构建运行 `npm.cmd run engine:prepare`，或由 `desktop:prepare` 自动执行；详见[引擎构建与官方升级流程](docs/ENGINE.md)。本地源码变化不替换官网正式包；Linux x64 源码也接入同一自有 runtime 及1.18.31 SDK/plugin，由独立来源锁和原生构建流程核验，ARM64 暂缓。
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.18 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.18.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线，提供下载、校验值和 curl / wget 命令。Windows 下载及签名更新保持不变。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；当前产品使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
+**Linux x86_64 命令行执行节点 0.1.18 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.18.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线，提供下载、校验值和 curl / wget 命令。Windows 下载及签名更新保持不变。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；已发布正式包使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
 
 ## 从源码运行
 
@@ -47,7 +49,7 @@ npm.cmd run test:ci:engine
 npm.cmd run test:knowledge
 ```
 
-这些检查使用隔离目录和合成数据；引擎检查运行官方二进制，知识库服务使用本机模拟模型。它们不代表真实模型、两台物理机或安装升级已验收。`engine:probe`、`test:integration` 和界面中的模型连接测试可能调用真实模型，按需自行授权运行。
+这些检查使用隔离目录和合成数据；Windows 引擎检查运行固定源码构建的 Rivloom runtime，知识库服务使用本机模拟模型。它们不代表真实模型、两台物理机或安装升级已验收。`engine:probe`、`test:integration` 和界面中的模型连接测试可能调用真实模型，按需自行授权运行。
 
 [文档目录](docs/README.md) · [CI 说明](docs/CI.md) · [正式发布流程](docs/RELEASING.md)
 

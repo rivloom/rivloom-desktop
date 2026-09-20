@@ -28,7 +28,7 @@ export type WorkflowAttempt = {
   context: WorkflowExecutionContext; handled: boolean;
   resultDelivery?: 'on-demand';
   clarifications?: { requestID: string; questions: string[]; answers: string[][] }[];
-  localConfig?: { projectID: string; model: string };
+  localConfig?: { projectID: string; model: string; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort };
 };
 export type WorkflowStep = WorkflowStepPlan & {
   state: 'waiting' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked';
@@ -45,14 +45,26 @@ export type WorkflowHandoff = {
 export type WorkflowMessage = {
   requestID: string; text: string; inputFiles: TaskFileDescriptor[]; createdAt: string;
   state: 'queued' | 'cancelled';
+  /** Omitted legacy messages inherit the previous round; null uses the local default. */
+  model?: string | null; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort;
 };
+export function validWorkflowMessageModel(value: unknown): value is string | null {
+  return value === null || typeof value === 'string' && value.length >= 3 && value.length <= 200 &&
+    !/[\s\x00-\x1f\x7f]/.test(value) && value.indexOf('/') > 0 && !value.endsWith('/');
+}
+export type WorkflowMessageEdit = { requestID: string; expectedText: string; text: string };
+export function validWorkflowMessageEdit(value: unknown): value is WorkflowMessageEdit {
+  return record(value) && keys(value, ['requestID', 'expectedText', 'text']) && uuid(value.requestID)
+    && typeof value.expectedText === 'string' && value.expectedText.length > 0 && value.expectedText.length <= 12_000
+    && typeof value.text === 'string' && value.text.trim().length > 0 && value.text.length <= 12_000 && !value.text.includes('\u0000');
+}
 export type WorkflowRound = Pick<Workflow, 'description' | 'criteria' | 'state' | 'planVersion' | 'summary' | 'planner' |
   'steps' | 'events' | 'handoffs' | 'inputFiles' | 'confirmations' | 'pendingConfirmation' | 'updatedAt' | 'error'> & {
-  requestID: string; createdAt: string;
+  requestID: string; createdAt: string; model?: string | null; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort;
 };
 export type Workflow = {
   id: string; requestID: string; contentDigest: string; creatorID: string; title: string; description: string; criteria: string;
-  projectID: string | null; model: string | null; approvalMode: ApprovalMode; target: WorkflowTarget;
+  projectID: string | null; model: string | null; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort; approvalMode: ApprovalMode; target: WorkflowTarget;
   state: 'planning' | 'running' | 'paused' | 'stopping' | 'stopped' | 'completed' | 'failed';
   version: number; planVersion: number; summary: string; planner: WorkflowStep; steps: WorkflowStep[];
   events: WorkflowEvent[]; handoffs: WorkflowHandoff[]; inputFiles: TaskFileDescriptor[];

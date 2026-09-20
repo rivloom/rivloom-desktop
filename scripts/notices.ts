@@ -5,10 +5,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-const engineVersion = '1.18.25';
 const engineLicense = {
   repository: 'anomalyco/opencode',
-  revision: 'v1.18.25',
+  revision: 'v1.18.31',
   file: 'LICENSE',
   gitBlobSha1: '6439474beed8e0271df9862eff97ffd70ec2464c',
 };
@@ -49,13 +48,13 @@ function fallback(
       { repository: 'kubernetes/kubernetes', revision: 'v1.30.0', file: 'LICENSE', gitBlobSha1: 'd645695673349e3947e8e5ae42332d0ac3164cd7' },
     ], versionSource: 'https://registry.npmjs.org/kubernetes-types/1.30.0',
   };
-  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64', 'opencode-linux-x64-baseline', 'opencode-linux-arm64'].includes(name) && version === engineVersion)
+  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64', 'opencode-linux-x64-baseline', 'opencode-linux-arm64'].includes(name) && ['1.18.25', '1.18.31'].includes(version))
     return {
-      files: [engineLicense],
+      files: [{ ...engineLicense, revision: `v${version}` }],
       versionSource:
-        name === '@opencode-ai/plugin' ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/plugin/package.json' : name === '@opencode-ai/sdk'
-          ? 'https://raw.githubusercontent.com/anomalyco/opencode/v1.18.25/packages/sdk/js/package.json'
-          : `https://registry.npmjs.org/${name}/1.18.25`,
+        name === '@opencode-ai/plugin' ? `https://raw.githubusercontent.com/anomalyco/opencode/v${version}/packages/plugin/package.json` : name === '@opencode-ai/sdk'
+          ? `https://raw.githubusercontent.com/anomalyco/opencode/v${version}/packages/sdk/js/package.json`
+          : `https://registry.npmjs.org/${name}/${version}`,
     };
   const tauriApi = name === '@tauri-apps/api' && version === '2.11.1';
   const tauriCli =
@@ -246,25 +245,8 @@ export async function generateNotices(root = resolve(import.meta.dirname, '..'))
     join(root, 'docs/dependency-licenses.json'),
     JSON.stringify(entries, null, 2) + '\n',
   );
-  const binary = await readFile(join(root, 'node_modules/opencode-windows-x64/bin/opencode.exe'));
-  await writeFile(
-    join(root, 'docs/engine-lock.json'),
-    JSON.stringify(
-      {
-        version: engineVersion,
-        platform: 'windows-x64',
-        package: 'opencode-windows-x64',
-        sdk: '@opencode-ai/sdk',
-        source: `https://github.com/anomalyco/opencode/releases/tag/v${engineVersion}`,
-        license: 'MIT',
-        licenseSource: `https://raw.githubusercontent.com/anomalyco/opencode/v${engineVersion}/LICENSE`,
-        binarySha256: sha(binary),
-        modified: false,
-      },
-      null,
-      2,
-    ) + '\n',
-  );
+  // Engine source and accepted artifacts are reviewed separately in shared/engine-source.json.
+  // Regenerating license notices must never silently approve a new executable.
   return {
     packages: entries.length,
     licenseFiles: entries.reduce((sum, row) => sum + row.licenseFiles.length, 0),

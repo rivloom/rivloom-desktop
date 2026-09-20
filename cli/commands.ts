@@ -1,3 +1,4 @@
+import { validReasoningEffort } from '../shared/model-reasoning.ts';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -8,7 +9,7 @@ import { validRemoteConcurrency } from '../shared/execution-concurrency.ts';
 
 export const help = `Rivloom Linux execution node
 
-Usage: rivloom [--data-dir PATH] COMMAND [OPTIONS] [--json]
+Usage: rivloom [--lang en|zh-CN] [--data-dir PATH] COMMAND [OPTIONS] [--json]
 
   init [--name NAME]                    Initialize private local data
   serve [--peer-port PORT]              Run the node until SIGINT/SIGTERM
@@ -27,7 +28,7 @@ Usage: rivloom [--data-dir PATH] COMMAND [OPTIONS] [--json]
   providers remove PROVIDER --confirm
   models list | default MODEL         List models or select the default
   execution status | disable
-  execution enable --project ID --model MODEL --approval ask|auto|full --confirm
+  execution enable --project ID --model MODEL --approval ask|auto|full [--thinking auto|LEVEL] --confirm
   execution concurrency NUMBER        Set 1–10 concurrent remote executions
   queue list | pause | resume
   pending                             List permission requests and questions
@@ -40,6 +41,9 @@ Usage: rivloom [--data-dir PATH] COMMAND [OPTIONS] [--json]
 Most commands need a running 'rivloom serve'. Results are JSON by default.
 API keys and custom-provider JSON are accepted only through stdin.
 Execution starts disabled. 'ask' waits for individual approval when required.
+Thinking defaults to auto (model/runtime defaults); list supported levels with models list.
+Thinking defaults to auto (model/runtime defaults); list supported levels with models list.
+Use --lang en or --lang zh-CN; otherwise follow LC_ALL, LC_MESSAGES or LANG.
 `;
 
 type CommandSpec = { count: number; options?: string[]; switches?: string[] };
@@ -55,13 +59,13 @@ const specs: Record<string, CommandSpec> = {
   'providers remove': { count: 1, switches: ['confirm'] },
   'models list': { count: 0 }, 'models default': { count: 1 },
   'execution status': { count: 0 }, 'execution disable': { count: 0 },
-  'execution enable': { count: 0, options: ['project', 'model', 'approval'], switches: ['confirm'] },
+  'execution enable': { count: 0, options: ['project', 'model', 'approval', 'thinking'], switches: ['confirm'] },
   'execution concurrency': { count: 1 },
   'queue list': { count: 0 }, 'queue pause': { count: 0 }, 'queue resume': { count: 0 },
   pending: { count: 0 }, approve: { count: 3 }, respond: { count: 2, switches: ['stdin'] },
   service: { count: 0, options: ['executable', 'peer-port'] },
 };
-const valueOptions = new Set(['data-dir', 'name', 'code', 'account', 'account-id', 'project', 'model', 'approval', 'executable', 'peer-port']);
+const valueOptions = new Set(['data-dir', 'name', 'code', 'account', 'account-id', 'project', 'model', 'approval', 'thinking', 'executable', 'peer-port']);
 const switchOptions = new Set(['json', 'confirm', 'stdin', 'help', 'version']);
 const groups = new Set(['pair', 'projects', 'providers', 'models', 'execution', 'queue']);
 export type Command = { name: string; args: string[]; options: Record<string, string | true> };
@@ -195,7 +199,10 @@ export async function runCommand(command: Command, api: API, io: CommandIO): Pro
     confirmed(command);
     const approvalMode = required(command, 'approval');
     if (!['ask', 'auto', 'full'].includes(approvalMode)) throw new Error('--approval must be ask, auto or full');
-    return api.request('/api/network/execution-policy', { enabled: true, projectID: required(command, 'project'), model: required(command, 'model'), approvalMode, confirmed: true });
+    const thinking = command.options.thinking;
+    const reasoningEffort = !thinking || thinking === 'auto' ? null : thinking;
+    if (!validReasoningEffort(reasoningEffort)) throw new Error('Invalid thinking level. Use auto or a level from models list.');
+    return api.request('/api/network/execution-policy', { enabled: true, reasoningEffort, projectID: required(command, 'project'), model: required(command, 'model'), approvalMode, confirmed: true });
   }
   if (name === 'execution disable') {
     const policy = await api.request<NodeExecutionPolicy>('/api/network/execution-policy');

@@ -27,7 +27,7 @@ function executable(label: string) {
   bytes.write(`TEST FIXTURE ONLY ${label}`, 180);
   return bytes;
 }
-async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-preview') {
+async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-preview', optionalEngines = false) {
   const parent = await realpath(tmpdir());
   const root = await mkdtemp(join(parent, 'rivloom-ci-runtime-test-'));
   t.after(async () => {
@@ -47,24 +47,30 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
     await source(path, bytes);
     await bundled(path, bytes);
   };
-  const dependencies = {
-    '@opencode-ai/sdk': '1.18.25',
-    'opencode-windows-x64': '1.18.25',
+  const installedDependencies = {
+    '@opencode-ai/sdk': '1.18.31',
+    '@opencode-ai/plugin': '1.18.31',
     'fixture-module': '1.0.0',
   };
-  const packageRows = Object.entries(dependencies).map(([name, version]) => ({
+  const dependencies: Record<string, string> = { ...installedDependencies };
+  const optionalDependencies = optionalEngines ? {
+    'opencode-linux-x64-baseline': '1.18.25', 'opencode-linux-arm64': '1.18.25',
+  } : undefined;
+  const packageRows = Object.entries(installedDependencies).map(([name, version]) => ({
     path: `node_modules/${name}`,
     version,
     integrity: `sha512-TEST-FIXTURE-${name}`,
   }));
-  const app = { name: 'rivloom-opencode', version: '0.1.3', dependencies };
+  const app = { name: 'rivloom-opencode', version: '0.1.3', dependencies, optionalDependencies };
   const lock = {
     version: app.version,
     packages: {
-      '': { version: app.version, dependencies },
+      '': { version: app.version, dependencies, optionalDependencies },
       ...Object.fromEntries(
         packageRows.map((row) => [row.path, { version: row.version, integrity: row.integrity }]),
       ),
+      ...(optionalEngines ? Object.fromEntries(['x64-baseline', 'arm64'].map(arch => [`node_modules/opencode-linux-${arch}`,
+        { version: '1.18.25', optional: true, os: ['linux'], cpu: [arch === 'arm64' ? 'arm64' : 'x64'], integrity: `sha512-TEST-FIXTURE-linux-${arch}` }])) : {}),
     },
   };
   await source('package.json', encode(app));
@@ -86,9 +92,10 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
       private: true,
       type: 'module',
       dependencies,
+      optionalDependencies,
     }),
   );
-  for (const [name, version] of Object.entries(dependencies))
+  for (const [name, version] of Object.entries(installedDependencies))
     await bundled(`node_modules/${name}/package.json`, encode({ name, version }));
   const original = 'LICENSE ORIGINAL: CI TEST DATA ONLY, not a third-party release license.\n';
   await bundled('node_modules/fixture-module/LICENSE', original);
@@ -165,14 +172,49 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
   const node = executable('node'),
     engine = executable('opencode');
   await bundled('node.exe', node);
-  await bundled('node_modules/opencode-windows-x64/bin/opencode.exe', engine);
+  const engineLicense = 'MIT ORIGINAL: CI TEST DATA ONLY\n';
+  const engineSource = {
+    schemaVersion: 1,
+    kind: 'rivloom-source',
+    repository: 'https://github.com/rivloom/rivloom-opencode-runtime.git',
+    commit: 'c'.repeat(40), tree: 'e'.repeat(40),
+    version: `1.18.31-rivloom.${'c'.repeat(12)}`, packageVersion: '1.18.31',
+    target: 'windows-x64', artifactPath: `vendor/rivloom-opencode/windows-x64/${'c'.repeat(12)}`,
+    upstream: { repository: 'anomalyco/opencode', tag: 'v1.18.31', commit: 'f'.repeat(40), version: '1.18.31' },
+    toolchain: { node: '24.19.0', bun: '1.3.14', bunArchiveSHA256: 'b'.repeat(64) },
+    inputs: Object.fromEntries(['bun.lock', 'rivloom/runtime.json', 'rivloom/build.mjs', 'rivloom/build.ps1',
+      'rivloom/smoke.mjs', 'rivloom/models.json', 'LICENSE'].map(path => [path, sha(path === 'LICENSE' ? engineLicense : path)])),
+    approvedArtifact: { binarySHA256: sha(engine), manifestSHA256: '', smokeSHA256: '' },
+  };
+  const engineManifest = {
+    schemaVersion: 1, version: engineSource.version, target: 'windows-x64', channel: 'rivloom',
+    source: { repository: engineSource.repository, commit: engineSource.commit, tree: engineSource.tree, dirty: false },
+    upstream: engineSource.upstream, toolchain: engineSource.toolchain,
+    packageVersions: { opencode: '1.18.31', sdk: '1.18.31', plugin: '1.18.31' },
+    inputs: { bunLockSHA256: engineSource.inputs['bun.lock'], modelsSHA256: engineSource.inputs['rivloom/models.json'] },
+    profile: { embedWebUI: false }, binary: { file: 'opencode.exe', bytes: engine.length, sha256: sha(engine) },
+  };
+  const engineSmoke = {
+    schemaVersion: 1, version: engineSource.version, binarySHA256: sha(engine), passed: true,
+    checks: Array.from({ length: 10 }, (_, index) => ({ name: `synthetic-check-${index}`, passed: true })),
+  };
+  engineSource.approvedArtifact.manifestSHA256 = sha(encode(engineManifest));
+  engineSource.approvedArtifact.smokeSHA256 = sha(encode(engineSmoke));
+  const engineReceipt = {
+    schemaVersion: 1, kind: 'rivloom-engine-build', mode: 'pinned-artifact',
+    sourceLockSHA256: sha(encode(engineSource)), commit: engineSource.commit, tree: engineSource.tree,
+    binarySHA256: sha(engine), manifestSHA256: sha(encode(engineManifest)), smokeSHA256: sha(encode(engineSmoke)),
+  };
+  await both('shared/engine-source.json', encode(engineSource));
+  const artifact = (path: string, bytes: string | Buffer) => bundled(`${engineSource.artifactPath}/${path}`, bytes);
+  for (const [path, bytes] of Object.entries({
+    'opencode.exe': engine, 'runtime-manifest.json': encode(engineManifest), 'smoke-report.json': encode(engineSmoke),
+    'engine-build.json': encode(engineReceipt), 'SHA256SUMS': `${sha(engine)}  opencode.exe\n`, 'LICENSE': engineLicense,
+  })) await artifact(path, bytes);
+  await source(`${engineSource.artifactPath}/LICENSE`, engineLicense);
   await source(
     'scripts/desktop-prepare.ts',
-    `const nodeVersion = '24.19.0';\nconst nodeHash = '${sha(node)}';\nconst engineHash = '${sha(engine)}';\n`,
-  );
-  await source(
-    'docs/engine-lock.json',
-    encode({ version: '1.18.25', modified: false, binarySha256: sha(engine) }),
+    `const nodeVersion = '24.19.0';\nconst nodeHash = '${sha(node)}';\n`,
   );
   const noticePaths = [
     'LICENSE',
@@ -186,6 +228,7 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
     'docs/licenses/rust/fixture-rust-1.0.0/LICENSE',
     'docs/licenses/rust/fixture-rust-1.0.0/fixture-rust-1.0.0.crate',
     'docs/licenses/rust/fixture-transitive-2.0.0/LICENSE',
+    `${engineSource.artifactPath}/LICENSE`,
   ];
   const records = async (paths: string[]) =>
     Promise.all(
@@ -209,7 +252,7 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
       sha256: sha(node),
       source: 'https://nodejs.org/dist/v24.19.0/SHASUMS256.txt',
     },
-    opencode: { version: '1.18.25', sha256: sha(engine), source: 'opencode-windows-x64@1.18.25' },
+    opencode: { version: engineSource.version, sha256: sha(engine), source: `${engineSource.repository}#${engineSource.commit}` },
     documents: await records(['README.md', 'SECURITY.md']),
     notices: await records(noticePaths),
     packages: packageRows,
@@ -220,7 +263,7 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
   const tools = {
     binaryVersion: async (file: string) => {
       calls.push(file);
-      return basename(file) === 'node.exe' ? 'v24.19.0' : '1.18.25';
+      return basename(file) === 'node.exe' ? 'v24.19.0' : engineSource.version;
     },
     cargoPackages: async () => cargoPackages,
   };
@@ -238,6 +281,11 @@ async function fixture(t: TestContext, profile: RuntimeProfile = 'conversation-p
     manifest,
     node,
     engine,
+    engineSource,
+    engineManifest,
+    engineSmoke,
+    engineReceipt,
+    artifact,
     npmInventory,
     rustInventory,
     source,
@@ -267,6 +315,117 @@ test('runtime gate accepts the explicit desktop profile and rejects preview iden
   f.manifest.product.identifier = 'com.rivloom.conversationpreview';
   await f.save();
   await assert.rejects(f.verify(), /product identity\/version mismatch/);
+});
+
+test('Windows gate excludes official Linux packages and verifies the source-built Windows payload', async (t) => {
+  const f = await fixture(t, 'desktop', true);
+  const result = await f.verify();
+  assert.equal(result.status, 'passed'); assert.equal(result.packages, 3);
+  assert.equal(f.calls.length, 2);
+  assert(!f.manifest.packages.some(row => row.path === 'node_modules/opencode-windows-x64'));
+  assert.equal(result.engineSource.commit, f.engineSource.commit);
+  assert.equal(result.engineSource.receiptSha256, sha(encode(f.engineReceipt)));
+  assert(!f.manifest.packages.some(row => row.path.startsWith('node_modules/opencode-linux-')));
+  f.calls.length = 0;
+  const altered = Buffer.from(f.engine); altered[220] ^= 1;
+  await f.artifact('opencode.exe', altered);
+  await assert.rejects(f.verify(), /Engine binary SHA256 mismatch/);
+  assert.equal(f.calls.length, 0, 'No unverified Windows binary can execute');
+});
+
+test('the prepared source engine is mandatory independently of optional Linux declarations', async (t) => {
+  const f = await fixture(t, 'desktop', true);
+  await rm(join(f.runtimeRoot, f.engineSource.artifactPath, 'opencode.exe'));
+  await assert.rejects(f.verify(), /ENOENT/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('runtime gate rejects missing or drifted optional dependency declarations before executable probes', async (t) => {
+  const f = await fixture(t, 'desktop', true);
+  const runtime = JSON.parse(await readFile(join(f.runtimeRoot, 'package.json'), 'utf8'));
+  const { optionalDependencies: _optional, ...missing } = runtime;
+  await f.bundled('package.json', encode(missing));
+  await assert.rejects(f.verify(), /Runtime optional dependencies differ/);
+  await f.bundled('package.json', encode(runtime));
+  const lock = JSON.parse(await readFile(join(f.root, 'package-lock.json'), 'utf8'));
+  lock.packages[''].optionalDependencies['opencode-linux-x64-baseline'] = '1.18.24';
+  await f.source('package-lock.json', encode(lock));
+  f.manifest.inputs.packageLockSha256 = sha(encode(lock)); await f.save();
+  await assert.rejects(f.verify(), /Lock root optional dependencies differ/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('both SDK and plugin must match the reviewed engine package version', async (t) => {
+  for (const name of ['@opencode-ai/sdk', '@opencode-ai/plugin']) {
+    const f = await fixture(t, 'desktop', true);
+    const app = JSON.parse(await readFile(join(f.root, 'package.json'), 'utf8'));
+    const runtime = JSON.parse(await readFile(join(f.runtimeRoot, 'package.json'), 'utf8'));
+    const lock = JSON.parse(await readFile(join(f.root, 'package-lock.json'), 'utf8'));
+    for (const value of [app, runtime, lock.packages['']]) value.dependencies[name] = '1.18.25';
+    await f.source('package.json', encode(app)); await f.bundled('package.json', encode(runtime));
+    await f.source('package-lock.json', encode(lock)); f.manifest.inputs.packageLockSha256 = sha(encode(lock)); await f.save();
+    await assert.rejects(f.verify(), /OpenCode (SDK|plugin) version differs/);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('source lock, producer identity and complete smoke evidence are required before executable probes', async (t) => {
+  for (const variant of ['lock', 'commit', 'dirty', 'target', 'checks', 'cleanup', 'receipt']) {
+    const f = await fixture(t);
+    if (variant === 'lock') await f.bundled('shared/engine-source.json', encode(f.engineSource) + '\n');
+    if (variant === 'commit') f.engineManifest.source.commit = 'a'.repeat(40);
+    if (variant === 'dirty') f.engineManifest.source.dirty = true;
+    if (variant === 'target') f.engineManifest.target = 'linux-x64';
+    if (variant === 'checks') f.engineSmoke.checks.pop();
+    if (variant === 'cleanup') Object.assign(f.engineSmoke, { cleanupError: 'fixture cleanup failure' });
+    if (variant === 'receipt') f.engineReceipt.sourceLockSHA256 = 'a'.repeat(64);
+    await f.artifact('runtime-manifest.json', encode(f.engineManifest));
+    await f.artifact('smoke-report.json', encode(f.engineSmoke));
+    await f.artifact('engine-build.json', encode(f.engineReceipt));
+    await assert.rejects(f.verify(), variant);
+    assert.equal(f.calls.length, 0, variant);
+  }
+});
+
+test('an imported artifact cannot launder changed bytes through consistent producer and receipt hashes', async (t) => {
+  const f = await fixture(t);
+  const changed = Buffer.from(f.engine); changed[220] ^= 1;
+  const changedSHA = sha(changed);
+  f.engineManifest.binary.sha256 = changedSHA;
+  f.engineSmoke.binarySHA256 = changedSHA;
+  Object.assign(f.engineReceipt, {
+    binarySHA256: changedSHA,
+    manifestSHA256: sha(encode(f.engineManifest)),
+    smokeSHA256: sha(encode(f.engineSmoke)),
+  });
+  await f.artifact('opencode.exe', changed);
+  await f.artifact('SHA256SUMS', `${changedSHA}  opencode.exe\n`);
+  await f.artifact('runtime-manifest.json', encode(f.engineManifest));
+  await f.artifact('smoke-report.json', encode(f.engineSmoke));
+  await f.artifact('engine-build.json', encode(f.engineReceipt));
+  f.manifest.opencode.sha256 = changedSHA; await f.save();
+  await assert.rejects(f.verify(), /Imported engine differs from the reviewed artifact/);
+  assert.equal(f.calls.length, 0);
+});
+
+test('source builds require a clean source proof bound to the reviewed inputs and receipt digest', async (t) => {
+  const f = await fixture(t);
+  const proof = {
+    commit: f.engineSource.commit, tree: f.engineSource.tree, clean: true,
+    inputs: f.engineSource.inputs, sourceSHA256: 'a'.repeat(64), files: 7,
+  };
+  const receipt = { ...f.engineReceipt, mode: 'source-build', sourceProofSHA256: sha(encode(proof)) };
+  await f.artifact('source-proof.json', encode(proof));
+  await f.artifact('engine-build.json', encode(receipt));
+  const result = await f.verify();
+  assert.equal(result.engineSource.receiptSha256, sha(encode(receipt)));
+  f.calls.length = 0;
+  proof.clean = false;
+  receipt.sourceProofSHA256 = sha(encode(proof));
+  await f.artifact('source-proof.json', encode(proof));
+  await f.artifact('engine-build.json', encode(receipt));
+  await assert.rejects(f.verify());
+  assert.equal(f.calls.length, 0);
 });
 
 test('runtime gate rejects old manifest schema without probing any executable', async (t) => {
@@ -363,13 +522,13 @@ test('runtime gate rejects actual npm version drift and additional installed pac
 
 test('runtime gate hashes both executables before probing and rejects declared hash laundering', async (t) => {
   const f = await fixture(t);
-  const altered = Buffer.concat([f.engine, Buffer.from('changed')]);
-  await f.bundled('node_modules/opencode-windows-x64/bin/opencode.exe', altered);
-  await assert.rejects(f.verify(), /Actual opencode binary SHA256 mismatch/);
+  const altered = Buffer.from(f.engine); altered[220] ^= 1;
+  await f.artifact('opencode.exe', altered);
+  await assert.rejects(f.verify(), /Engine binary SHA256 mismatch/);
   assert.equal(f.calls.length, 0);
   f.manifest.opencode.sha256 = sha(altered);
   await f.save();
-  await assert.rejects(f.verify(), /OpenCode manifest differs from reviewed source pin/);
+  await assert.rejects(f.verify(), /Engine binary SHA256 mismatch/);
 });
 
 test('runtime gate checks executable architecture and actual --version output', async (t) => {
@@ -386,7 +545,7 @@ test('runtime gate checks executable architecture and actual --version output', 
   f.manifest.node.sha256 = sha(f.node);
   await f.source(
     'scripts/desktop-prepare.ts',
-    `const nodeVersion = '24.19.0';\nconst nodeHash = '${sha(f.node)}';\nconst engineHash = '${sha(f.engine)}';\n`,
+    `const nodeVersion = '24.19.0';\nconst nodeHash = '${sha(f.node)}';\n`,
   );
   await f.save();
   await assert.rejects(f.verify(), /Runtime binary is not x64/);

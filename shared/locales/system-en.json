@@ -1,4 +1,5 @@
 {
+  "检测到两份引擎会话数据库，请先停止应用并备份 {{value1}}，完成数据库恢复后再启动。为避免遗漏会话，Rivloom 不会自动选择、合并或覆盖它们。": "Two engine session databases were found. Stop the app and back up {{value1}}, then resolve the database recovery before restarting. Rivloom will not automatically choose, merge, or overwrite either database, to avoid losing access to sessions.",
   "项目目录不存在或当前系统用户无法访问": "The project directory does not exist or the current system user cannot access it",
   "OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。": "OpenCode failed to start. Check the system architecture and pinned engine installation, then restart the application.",
   "无法发布 Rivloom 节点，请检查本机网络与防火墙。": "Could not advertise this Rivloom node. Check the local network and firewall.",
@@ -620,5 +621,17 @@
   "凭据已移除，但未确认账号引擎退出。请重启应用后重试。": "Account credentials were removed, but engine shutdown was not confirmed. Restart the application before retrying.",
   "账号数量已达上限，请移除不用的账号后再添加。": "Account limit reached. Remove an unused account before adding another.",
   "对方尚未发现并验证本机，请在两台电脑检查局域网连接权限后重新发现。": "The other device has not discovered and verified this computer. Check LAN access on both computers and rediscover.",
-  "尚未发现并验证请求配对的设备，请先检查双向连接。": "The requesting device has not been discovered and verified. Check communication in both directions first."
+  "尚未发现并验证请求配对的设备，请先检查双向连接。": "The requesting device has not been discovered and verified. Check communication in both directions first.",
+  "此消息接口只支持普通本地会话。": "Only ordinary local conversations support this message endpoint.",
+  "会话消息无效。": "Invalid conversation message.",
+  "此消息请求标识已用于不同的内容或模型。": "This message request ID was already used with different content or model.",
+  "消息提交结果尚未确认。请检查执行记录并停止上一次执行，再发送新消息。": "Message submission is uncertain. Check execution records and stop the previous execution before sending a new message.",
+  "会话须处于空闲状态才能发送新消息，请先停止或处理当前执行。": "This conversation must be idle before sending another message. Stop or resolve its current execution first.",
+  "请先处理当前的权限请求或问题，再继续此会话。": "Resolve the pending approval or question before continuing this conversation.",
+  "无法读取上一次会话历史，账号未更改。": "The previous conversation history could not be read. The account was not changed.",
+  "正在为选中的账号创建新的引擎会话。": "Creating a new engine session for the explicitly selected account.",
+  "消息提交在确认前中断。请检查执行记录，此请求不会自动再次发送。": "Message submission was interrupted before acknowledgement. Check execution records; this request will not be sent again automatically.",
+  "消息提交失败。": "Message submission failed.",
+  "已保存的会话上下文过大，无法在不丢失历史的情况下切换账号。请继续使用当前账号，或新建会话。": "Saved conversation context is too large to switch accounts without losing history. Continue with the current account or start a new conversation.",
+  "所选思考等级当前不可用，请重新选择思考等级或使用自动。": "The selected thinking level is unavailable. Choose another level or Auto."
 }

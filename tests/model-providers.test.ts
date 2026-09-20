@@ -3,15 +3,141 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { customProviderSchema, safeOAuthURL, promptVisible } from '../shared/model-providers.ts';
+import {
+  customProviderSchema,
+  safeOAuthURL,
+  promptVisible,
+  type ProviderAccess,
+} from '../shared/model-providers.ts';
+import {
+  PROVIDER_PLATFORMS,
+  nativePlatformProvider,
+  platformCustomDraft,
+  providerSearchText,
+  providerApiRank,
+} from '../src/provider-platforms.ts';
 import { ProviderConfigStore } from '../server/provider-config.ts';
 import { ProviderOAuth, type OAuthDriver } from '../server/provider-oauth.ts';
 import { availableModels, type AvailableModel } from '../shared/model-catalog.ts';
+import { reasoningPromptOptions, validReasoningEffort, reasoningForMessage } from '../shared/model-reasoning.ts';
 import { formatContextWindow, groupModels, modelDetails } from '../src/model-options.ts';
 import { ProviderAccountStore } from '../server/provider-accounts.ts';
 import { AccountEnginePool } from '../server/account-engines.ts';
 import { EventEmitter } from 'node:events';
 import { resolve, sep } from 'node:path';
+
+const platformAccess = (id: string, extra: Partial<ProviderAccess> = {}): ProviderAccess => ({
+  id,
+  name: id,
+  connected: false,
+  modelCount: 0,
+  apiKey: true,
+  oauth: [],
+  ...extra,
+});
+
+test('thinking choices come from runtime variants and expose no provider parameters', () => {
+  const models = availableModels([{ id: 'openrouter', name: 'OpenRouter', models: { one: {
+    id: 'org/model', name: 'One', limit: { context: 32000 }, capabilities: { input: { image: false } },
+    variants: { low: { reasoning: { effort: 'low' } }, high: { reasoning: { effort: 'high' }, private: 'hidden' },
+      removed: { disabled: true }, 'invalid value': {}, default: {}, auto: {} },
+  } } }] as unknown as Parameters<typeof availableModels>[0], ['openrouter']);
+  assert.deepEqual(models[0].reasoningEfforts, ['low', 'high']);
+  assert(!JSON.stringify(models).includes('hidden'));
+  assert.deepEqual(reasoningPromptOptions(models[0], 'high'), { variant: 'high' });
+  assert.deepEqual(reasoningPromptOptions(models[0], null), {});
+  assert.deepEqual(reasoningPromptOptions(models[0], undefined), {});
+  assert.throws(() => reasoningPromptOptions(models[0], 'max'));
+  assert.throws(() => reasoningPromptOptions({ id: 'plain/model', name: 'Plain' }, 'high'));
+  for (const value of ['', 'a b', '\n', 'high\n', {}, [], true, 'x'.repeat(65)]) assert(!validReasoningEffort(value));
+  const previous = { model: 'account/model', reasoningEffort: 'high' };
+  assert.equal(reasoningForMessage(previous, {}), 'high');
+  assert.equal(reasoningForMessage(previous, { reasoningEffort: null }), null);
+  assert.equal(reasoningForMessage(previous, { model: 'other/model' }), null);
+  assert.equal(reasoningForMessage(previous, { model: 'other/model', reasoningEffort: 'low' }), 'low');
+});
+
+test('platform shortcuts use exact native providers without merging regions or saved accounts', () => {
+  const native = platformAccess('openrouter', { modelCount: 372 });
+  const alias = platformAccess('rivloom-account-one', {
+    account: { providerID: 'openrouter', name: 'Work' },
+    connected: true,
+  });
+  const international = platformAccess('siliconflow');
+  const providers = [native, alias, international];
+  assert.equal(nativePlatformProvider(providers, 'openrouter'), native);
+  assert.equal(nativePlatformProvider([alias], 'openrouter'), undefined);
+  assert.equal(nativePlatformProvider(providers, 'siliconflow-cn'), undefined);
+  assert.equal(
+    nativePlatformProvider([platformAccess('openrouter', { apiKey: false })], 'openrouter'),
+    undefined,
+  );
+  assert.equal(
+    nativePlatformProvider(
+      [
+        platformAccess('openrouter', {
+          custom: { ...platformCustomDraft('openrouter', []), id: 'openrouter' },
+        }),
+      ],
+      'openrouter',
+    ),
+    undefined,
+  );
+  assert.equal(nativePlatformProvider(providers, 'unknown'), undefined);
+  assert.equal(native.connected, false);
+});
+
+test('compatible platform drafts never overwrite providers or invent model availability', () => {
+  const saved = platformAccess('openrouter-custom', {
+    custom: {
+      ...platformCustomDraft('openrouter', []),
+      models: [{ id: 'org/model', name: 'Model' }],
+    },
+  });
+  const catalog = [saved, platformAccess('openrouter-custom-2'), platformAccess('openrouter')];
+  const snapshot = structuredClone(catalog);
+  const draft = platformCustomDraft('openrouter', catalog);
+  assert.equal(draft.id, 'openrouter-custom-3');
+  assert.deepEqual(catalog, snapshot);
+  assert.deepEqual(draft.models, []);
+  assert.equal(customProviderSchema.safeParse(draft).success, false);
+  const valid = customProviderSchema.parse({
+    ...draft,
+    models: [{ id: 'org/model', name: 'org/model' }],
+  });
+  assert.equal(valid.models[0].id, 'org/model');
+  draft.name = 'Edited locally';
+  assert.equal(platformCustomDraft('openrouter', []).name, 'OpenRouter');
+  assert.throws(() => platformCustomDraft('unknown', []), /Unknown/);
+  for (const platform of PROVIDER_PLATFORMS) {
+    const value = platformCustomDraft(platform.id, []);
+    assert.equal(value.protocol, 'chat');
+    assert.equal(value.keyless, false);
+    assert.equal(value.baseURL, platform.baseURL);
+    assert.equal(new URL(platform.docsURL).protocol, 'https:');
+    assert.equal(
+      customProviderSchema.safeParse({ ...value, models: [{ id: 'vendor/model', name: 'Model' }] })
+        .success,
+      true,
+    );
+  }
+  assert.equal(platformCustomDraft('siliconflow-cn', []).baseURL, 'https://api.siliconflow.cn/v1');
+});
+
+test('provider search aliases distinguish SiliconFlow regions and common platforms rank first', () => {
+  assert.match(providerSearchText(platformAccess('siliconflow-cn')), /硅基流动.*中国/);
+  assert.match(providerSearchText(platformAccess('siliconflow')), /硅基流动.*国际/);
+  assert.doesNotMatch(providerSearchText(platformAccess('siliconflow')), /中国/);
+  assert.match(providerSearchText(platformAccess('openrouter')), /open router/);
+  assert.match(
+    providerSearchText(platformAccess('custom', { name: 'My Endpoint' })),
+    /my endpoint/,
+  );
+  assert.equal(providerApiRank('openrouter'), 0);
+  for (const platform of PROVIDER_PLATFORMS) {
+    assert(providerApiRank(platform.id) < providerApiRank('unknown'));
+  }
+});
 
 const accountFixture = (context: TestContext) => {
   const root = mkdtempSync(join(tmpdir(), 'rivloom-account-check-'));

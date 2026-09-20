@@ -1,0 +1,6 @@
+.conversation-export-modal { width: min(540px, calc(100vw - 32px)); }
+.conversation-export-file { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0; padding: 12px; background: var(--surface-soft, #f6f7f9); border-radius: 8px; }
+.conversation-export-file svg { flex-shrink: 0; margin-top: 2px; }
+.conversation-export-file span { overflow-wrap: anywhere; font-size: 13px; }
+.conversation-export-notes { padding-left: 20px; margin: 16px 0; font-size: 13px; line-height: 1.7; color: var(--text-muted, #647087); }
+.conversation-export-notes li + li { margin-top: 5px; }

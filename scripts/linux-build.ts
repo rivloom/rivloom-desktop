@@ -6,24 +6,25 @@ import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, writeFile } from '
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectDependencyNotices } from './notices.ts';
+import { engineSourceFile, verifyPreparedEngine } from '../server/engine-artifact.ts';
+import { prepareEngine } from './engine-prepare.ts';
 
 export const LINUX_NODE_VERSION = '24.19.0';
-export const LINUX_ENGINE_VERSION = '1.18.25';
 export const LINUX_TARGETS = {
-  x64: { nodeSha256: '14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647', enginePackage: 'opencode-linux-x64-baseline', machine: 62 },
-  arm64: { nodeSha256: '01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc', enginePackage: 'opencode-linux-arm64', machine: 183 },
+  x64: { nodeSha256: '14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647', machine: 62 },
 } as const;
 export type LinuxArch = keyof typeof LINUX_TARGETS;
 export const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
-export function verifyEnginePackagePath(path: string, arch: LinuxArch) {
-  assert(!path.startsWith('node_modules/opencode-') || path === `node_modules/${LINUX_TARGETS[arch].enginePackage}`, 'Wrong platform OpenCode dependency');
+export function verifyEnginePackagePath(path: string) {
+  assert(!path.split('/').some(part => part.startsWith('opencode-')), 'Published OpenCode binary packages cannot replace the source-built engine');
 }
 export function bundledLinuxReadme(source: string, commit: string) {
   assert(/^[0-9a-f]{40}$/.exec(commit)?.[0] === commit);
-  return source.replace(/\]\((CI|RELEASING|R2-RETENTION)\.md\)/g, (_match, name: string) => `](https://github.com/rivloom/rivloom-desktop/blob/${commit}/docs/${name}.md)`);
+  return source.replace(/\]\(((?:CI|RELEASING|R2-RETENTION|ENGINE)\.md|releases\/[a-zA-Z0-9._-]+\.md)(#[a-zA-Z0-9_-]+)?\)/g,
+    (_match, path: string, anchor = '') => `](https://github.com/rivloom/rivloom-desktop/blob/${commit}/docs/${path}${anchor})`);
 }
 export function linuxArch(value: string): LinuxArch {
-  assert(value === 'x64' || value === 'arm64', 'Linux supports x64 and arm64 only');
+  assert(value === 'x64', 'The source-built Linux engine currently supports x64 only; ARM64 is not available');
   return value;
 }
 export function verifyElf(bytes: Buffer, arch: LinuxArch) {
@@ -32,9 +33,11 @@ export function verifyElf(bytes: Buffer, arch: LinuxArch) {
   assert.equal(bytes[5], 1, 'Expected little-endian ELF');
   assert.equal(bytes.readUInt16LE(18), LINUX_TARGETS[arch].machine, 'ELF architecture differs');
 }
-export function verifyIntegrity(bytes: Buffer, integrity: string) {
-  assert.match(integrity, /^sha512-[A-Za-z0-9+/]+={0,2}$/);
-  assert.equal('sha512-' + createHash('sha512').update(bytes).digest('base64'), integrity, 'Pinned npm archive integrity differs');
+export async function linuxEngineEvidence(root: string, engine = verifyPreparedEngine(root, 'linux-x64')) {
+  assert(engine.recipeSHA256, 'Linux engine must include the reviewed recipe identity');
+  return { commit: engine.source.commit, tree: engine.source.tree,
+    lockSha256: hash(await readFile(join(root, engineSourceFile('linux-x64')))),
+    receiptSha256: engine.receiptSHA256, recipeSha256: engine.recipeSHA256 };
 }
 export function linuxLauncher() {
   return '#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\nexport RIVLOOM_CLI_EXECUTABLE="$ROOT/bin/rivloom"\nexec "$ROOT/runtime/node" "$ROOT/app/cli/index.ts" "$@"\n';
@@ -76,31 +79,38 @@ export async function buildLinux(root: string, arch = linuxArch(process.arch)) {
   assert.match(manifest.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
   const lockBytes = await readFile(join(root, 'package-lock.json'));
   const lock = JSON.parse(lockBytes.toString());
-  const engineLock = lock.packages[`node_modules/${target.enginePackage}`];
-  assert.equal(engineLock.version, LINUX_ENGINE_VERSION);
+  await prepareEngine(root);
+  const prepared = verifyPreparedEngine(root, 'linux-x64');
+  const engineSource = await linuxEngineEvidence(root, prepared);
+  for (const name of ['@opencode-ai/sdk', '@opencode-ai/plugin']) {
+    assert.equal(lock.packages[`node_modules/${name}`]?.version, prepared.source.packageVersion, 'Linux engine SDK/plugin lock differs');
+    assert.equal(JSON.parse(await readFile(join(root, 'node_modules', name, 'package.json'), 'utf8')).version, prepared.source.packageVersion, 'Installed Linux engine SDK/plugin differs');
+  }
   const cache = join(root, '.data', 'linux-downloads');
   await mkdir(cache, { recursive: true });
   const nodeName = `node-v${LINUX_NODE_VERSION}-linux-${arch}`;
   const nodeArchive = join(cache, `${nodeName}.tar.xz`);
   await download(`https://nodejs.org/dist/v${LINUX_NODE_VERSION}/${nodeName}.tar.xz`, nodeArchive, (bytes) => assert.equal(hash(bytes), target.nodeSha256, 'Pinned Node archive digest differs'));
-  const engineArchive = join(cache, `${target.enginePackage}-${LINUX_ENGINE_VERSION}.tgz`);
-  const engineUrl = `https://registry.npmjs.org/${target.enginePackage}/-/${target.enginePackage}-${LINUX_ENGINE_VERSION}.tgz`;
-  assert.equal(engineLock.resolved, engineUrl);
-  await download(engineUrl, engineArchive, (bytes) => verifyIntegrity(bytes, engineLock.integrity));
   const work = await mkdtemp(join(cache, `stage-${arch}-`));
   const upstream = join(work, 'upstream');
   await mkdir(upstream);
   execFileSync('tar', ['-xJf', nodeArchive, '-C', upstream, `${nodeName}/bin/node`, `${nodeName}/LICENSE`]);
-  execFileSync('tar', ['-xzf', engineArchive, '-C', upstream, 'package/bin/opencode', 'package/package.json']);
   const node = await readFile(join(upstream, nodeName, 'bin/node'));
-  const engine = await readFile(join(upstream, 'package/bin/opencode'));
+  const engine = await readFile(join(prepared.directory, 'opencode'));
   verifyElf(node, arch); verifyElf(engine, arch);
-  assert.equal(hash(engine), hash(await readFile(join(root, 'node_modules', target.enginePackage, 'bin/opencode'))), 'Installed OpenCode differs from pinned published archive');
+  assert.equal(hash(engine), prepared.binarySHA256);
   const destination = join(work, 'rivloom');
   await mkdir(join(destination, 'app'), { recursive: true });
   await mkdir(join(destination, 'runtime'));
   await mkdir(join(destination, 'bin'));
   for (const directory of ['cli', 'server', 'shared']) await cp(join(root, directory), join(destination, 'app', directory), { recursive: true });
+  const bundledEngine = join(destination, 'app', prepared.source.artifactPath);
+  await mkdir(dirname(bundledEngine), { recursive: true });
+  await cp(prepared.directory, bundledEngine, { recursive: true });
+  await chmod(join(bundledEngine, 'opencode'), 0o755);
+  const copiedEngine = verifyPreparedEngine(join(destination, 'app'), 'linux-x64');
+  assert.deepEqual(await linuxEngineEvidence(join(destination, 'app'), copiedEngine), engineSource, 'Copied Linux source engine provenance differs');
+  assert.equal(copiedEngine.binarySHA256, prepared.binarySHA256);
   await writeFile(join(destination, 'runtime/node'), node, { mode: 0o755 });
   await chmod(join(destination, 'runtime/node'), 0o755);
   await writeFile(join(destination, 'bin/rivloom'), linuxLauncher(), { mode: 0o755 });
@@ -111,12 +121,12 @@ export async function buildLinux(root: string, arch = linuxArch(process.arch)) {
   for (const [path, value] of Object.entries(lock.packages) as [string, any][]) {
     if (!path || value.dev) continue;
     assert(path.startsWith('node_modules/') && !path.split('/').includes('..'));
+    verifyEnginePackagePath(path);
     const source = join(root, path);
     try { await lstat(source); } catch (error) {
       if (value.optional && (error as NodeJS.ErrnoException).code === 'ENOENT') continue;
       throw error;
     }
-    verifyEnginePackagePath(path, arch);
     const to = join(destination, 'app', path);
     await mkdir(dirname(to), { recursive: true });
     await cp(source, to, { recursive: true, dereference: true, filter: (input) => !relative(source, input).split(/[\\/]/).includes('node_modules') });
@@ -131,7 +141,8 @@ export async function buildLinux(root: string, arch = linuxArch(process.arch)) {
   const notices = await collectDependencyNotices(join(destination, 'app'));
   await writeFile(join(destination, 'app/docs/dependency-licenses.json'), JSON.stringify(notices, null, 2) + '\n');
   const sourceDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], { cwd: root, encoding: 'utf8' }).trim() !== '';
-  const runtime = { schemaVersion: 1, kind: 'rivloom-headless-runtime', version: manifest.version, sourceCommit: commit, sourceDirty, target: { platform: 'linux', arch }, packageLockSha256: hash(lockBytes), node: { version: LINUX_NODE_VERSION, sha256: hash(node), archiveSha256: target.nodeSha256, source: `https://nodejs.org/dist/v${LINUX_NODE_VERSION}/${nodeName}.tar.xz` }, opencode: { version: LINUX_ENGINE_VERSION, sha256: hash(engine), package: target.enginePackage, integrity: engineLock.integrity, source: engineUrl }, packages, notices: notices.length, files: await files(destination) };
+  const opencode = { version: prepared.source.version, sha256: hash(engine), source: `${prepared.source.repository}#${prepared.source.commit}` };
+  const runtime = { schemaVersion: 1, kind: 'rivloom-headless-runtime', version: manifest.version, sourceCommit: commit, sourceDirty, target: { platform: 'linux', arch }, packageLockSha256: hash(lockBytes), node: { version: LINUX_NODE_VERSION, sha256: hash(node), archiveSha256: target.nodeSha256, source: `https://nodejs.org/dist/v${LINUX_NODE_VERSION}/${nodeName}.tar.xz` }, opencode, engineSource, packages, notices: notices.length, files: await files(destination) };
   await writeFile(join(destination, 'runtime-manifest.json'), JSON.stringify(runtime, null, 2) + '\n');
   const output = join(root, 'test-results', 'linux', arch);
   await mkdir(output, { recursive: true });
@@ -139,7 +150,7 @@ export async function buildLinux(root: string, arch = linuxArch(process.arch)) {
   const archive = join(output, fileName);
   execFileSync('tar', ['-czf', archive, '-C', work, 'rivloom']);
   const bytes = await readFile(archive);
-  const record = { schemaVersion: 1, kind: 'rivloom-linux-build', version: manifest.version, sourceCommit: commit, sourceDirty, runID: process.env.GITHUB_RUN_ID || 'local', target: { platform: 'linux', arch }, artifact: { fileName, bytes: bytes.length, sha256: hash(bytes) }, runtimeManifestSha256: hash(await readFile(join(destination, 'runtime-manifest.json'))), nodeVersion: LINUX_NODE_VERSION, engineVersion: LINUX_ENGINE_VERSION };
+  const record = { schemaVersion: 1, kind: 'rivloom-linux-build', version: manifest.version, sourceCommit: commit, sourceDirty, runID: process.env.GITHUB_RUN_ID || 'local', target: { platform: 'linux', arch }, artifact: { fileName, bytes: bytes.length, sha256: hash(bytes) }, runtimeManifestSha256: hash(await readFile(join(destination, 'runtime-manifest.json'))), nodeVersion: LINUX_NODE_VERSION, engineVersion: prepared.source.version, opencode, engineSource };
   await writeFile(join(output, 'build.json'), JSON.stringify(record, null, 2) + '\n');
   console.log(`Linux ${arch} built: ${fileName}. Native startup verification is still required.`);
   return record;

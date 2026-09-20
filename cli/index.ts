@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDirectory, help, parseArguments, peerPort, profile, runCommand, systemdUnit } from './commands.ts';
 import { HeadlessClient, readControl } from './control.ts';
+import { cliHelp, cliText, prepareCliArguments } from './localization.ts';
 
 export function initializeDataDirectory(dataDir: string, name?: string) {
   const local = name === undefined ? undefined : profile(name);
@@ -33,8 +34,9 @@ async function readStdin(): Promise<string> {
 
 export async function main(argv = process.argv.slice(2)) {
   process.umask(0o077);
-  const command = parseArguments(argv);
-  if (command.name === 'help') { process.stdout.write(help); return; }
+  const { args } = prepareCliArguments(argv);
+  const command = parseArguments(args);
+  if (command.name === 'help') { process.stdout.write(cliHelp(help)); return; }
   const packageRoot = fileURLToPath(new URL('../', import.meta.url));
   if (command.name === 'version') {
     const { version } = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as { version: string };
@@ -49,7 +51,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (command.name === 'init') {
     const name = typeof command.options.name === 'string' ? command.options.name : undefined;
-    process.stdout.write(JSON.stringify(initializeDataDirectory(dataDir, name), null, 2) + '\n');
+    const initialized = initializeDataDirectory(dataDir, name);
+    process.stdout.write(JSON.stringify({ ...initialized, next: cliText(initialized.next) }, null, 2) + '\n');
     return;
   }
   if (command.name === 'serve') {
@@ -73,7 +76,7 @@ export async function main(argv = process.argv.slice(2)) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error: unknown) => {
-    process.stderr.write(`rivloom: ${error instanceof Error ? error.message : 'Command failed'}\n`);
+    process.stderr.write(`rivloom: ${cliText(error instanceof Error ? error.message : 'Command failed')}\n`);
     process.exitCode = 1;
   });
 }

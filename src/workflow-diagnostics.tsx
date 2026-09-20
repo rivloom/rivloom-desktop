@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { language, systemText, t } from '../shared/i18n.ts';
 import { matchesWorkflowDiagnostic, workflowDiagnosticSummary, type WorkflowDiagnosticSnapshot, type WorkflowStepDiagnostic } from '../shared/workflow-diagnostics.ts';
@@ -9,20 +9,23 @@ import { Button } from './ui';
 import { CopyButton } from './copy-button';
 import { queueReasonLabel } from './task-receipts';
 import { diagnosticPhaseLabel, diagnosticReasonLabel, diagnosticRecoveryLabel } from './workflow-diagnostic-labels';
+import { healthyWorkflowDiagnostics } from './workflow-recent';
 
 export type WorkflowDiagnosticNavigation = (target: 'diagnostics' | 'models' | 'queue' | 'network', nodeID?: string) => void;
 function time(value: string | null) {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(language()) : t('尚无可确认的报告时间');
 }
-export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, editStep, retry, navigate }: {
+export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, editStep, retry, navigate, compact = false }: {
   value: Workflow; data: Bootstrap; busy: boolean; nodeName: (id: string | null) => string;
   showStep: (step: WorkflowStep) => void; editStep: (step: WorkflowStep) => void; retry: (step: WorkflowStep) => void;
   navigate?: WorkflowDiagnosticNavigation;
+  compact?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<WorkflowDiagnosticSnapshot | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false), detailsID = useId();
   const round = value.roundRequestID || value.requestID;
   const terminal = ['completed', 'failed', 'stopped'].includes(value.state);
   useEffect(() => {
@@ -56,7 +59,11 @@ export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, edi
   const steps = value.planVersion ? value.steps : [value.planner];
   const ordered = [...(current?.steps || [])].sort((a, b) => priority(a) - priority(b));
   const shown = expanded ? ordered : ordered.slice(0, 4);
+  const collapsed = compact && healthyWorkflowDiagnostics(current, unavailable) && !detailsExpanded;
   return <section className="workflow-diagnostics" aria-label={t('步骤状态与等待原因')}>
+    {compact && healthyWorkflowDiagnostics(current, unavailable) && <button type="button" className="workflow-diagnostics-toggle" aria-expanded={!collapsed}
+      aria-controls={detailsID} onClick={() => setDetailsExpanded(!detailsExpanded)}>{t('步骤诊断')}<ChevronDown size={13} /></button>}
+    <div id={detailsID} hidden={collapsed}>
     <div className="workflow-diagnostics-heading"><strong>{t('步骤状态')}</strong>
       <button type="button" className="workflow-diagnostics-refresh" onClick={() => setRefresh((n) => n + 1)} aria-label={t('刷新步骤状态')}>
         <RefreshCw size={13} />{t('刷新状态')}</button></div>
@@ -114,6 +121,7 @@ export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, edi
       <CopyButton text={workflowDiagnosticSummary(current, unavailable)} label={t('复制诊断摘要')} />
       <pre tabIndex={0}>{workflowDiagnosticSummary(current, unavailable)}</pre>
     </details>}
+    </div>
   </section>;
 }
 function priority(step: WorkflowStepDiagnostic) {

@@ -1,0 +1,17 @@
+.current-conversation-find { flex-shrink: 0; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--surface-soft); container: current-conversation-find / inline-size; }
+.conversation-find-bar { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.conversation-find-bar > svg { flex-shrink: 0; }
+.conversation-find-bar input { flex: 1; min-width: 80px; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+.conversation-find-count { font-size: 11px; white-space: nowrap; }
+.conversation-find-actions { display: flex; flex-shrink: 0; align-items: center; gap: 3px; }
+.conversation-find-actions .icon-button { width: 28px; height: 28px; }
+.conversation-find-preview { display: block; margin: 8px 0 1px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; line-height: 1.6; }
+.conversation-find-preview small { display: block; font-size: 10px; margin-bottom: 2px; }
+@container current-conversation-find (max-width: 420px) {
+  .conversation-find-bar { flex-wrap: wrap; gap: 7px; }
+  .conversation-find-bar input { flex-basis: calc(100% - 28px); }
+  .conversation-find-count { flex: 1; white-space: normal; }
+}
+@media (max-width: 740px) {
+  .current-conversation-find { padding: 9px 12px; }
+}

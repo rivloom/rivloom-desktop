@@ -3,30 +3,29 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { isBindConflict, probeHttpPort, withHttpPort } from './http-ports.ts';
 import { createOpencodeClient, type Config, type PermissionRuleset } from '@opencode-ai/sdk/v2';
 import type { ApprovalMode } from '../shared/types.ts';
 import { knowledgeEngineConfig } from './knowledge-engine.ts';
 import { prepareEnginePluginDependencies } from './engine-plugin-dependencies.ts';
 import { privateDirectory } from './private-storage.ts';
+import { engineBinaryName, engineTarget, findPreparedEngine, readEngineSource } from './engine-artifact.ts';
 
-export const ENGINE_VERSION = '1.18.25';
+const runtimeRoot = fileURLToPath(new URL('..', import.meta.url));
+export const ENGINE_VERSION = readEngineSource(runtimeRoot).version;
 export const dataRoot = resolve(process.env.RIVLOOM_DATA_DIR || '.data');
 if (process.env.RIVLOOM_HEADLESS === '1') {
   process.umask(0o077);
   privateDirectory(dataRoot);
 }
 export const engineRoot = join(dataRoot, 'engine');
-const require = createRequire(import.meta.url);
 export function enginePackage(platform: NodeJS.Platform = process.platform, arch: string = process.arch) {
-  if (platform === 'win32' && arch === 'x64') return 'opencode-windows-x64';
-  if (platform === 'linux' && arch === 'x64') return 'opencode-linux-x64-baseline';
-  if (platform === 'linux' && arch === 'arm64') return 'opencode-linux-arm64';
-  throw new Error(`Unsupported Rivloom engine platform: ${platform}/${arch}.`);
+  engineTarget(platform, arch);
+  return 'rivloom-opencode-runtime';
 }
 export function engineBinary() {
-  return join(require.resolve(`${enginePackage()}/package.json`), '..', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+  const engine = findPreparedEngine(runtimeRoot);
+  return join(engine.directory, engineBinaryName(engine.source));
 }
 export const permissions: Config['permission'] = {
   '*': 'ask',
@@ -91,6 +90,16 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
   return rules;
 }
 type EngineScope = { workspace?: boolean; providerID?: string };
+export function engineDatabasePath(root: string) {
+  const directory = resolve(root, 'data', 'opencode');
+  const legacy = join(directory, 'opencode.db'), preview = join(directory, 'opencode-rivloom.db');
+  const hasLegacy = existsSync(legacy), hasPreview = existsSync(preview);
+  if (hasLegacy && hasPreview)
+    throw new Error(`检测到两份引擎会话数据库，请先停止应用并备份 ${directory}，完成数据库恢复后再启动。为避免遗漏会话，Rivloom 不会自动选择、合并或覆盖它们。`);
+  // Preserve official-release sessions and earlier local fork sessions in place,
+  // including their WAL files; a channel change must never select a new empty DB.
+  return hasPreview ? preview : legacy;
+}
 export function engineEnv(password?: string, root = engineRoot, scope: EngineScope = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -101,6 +110,7 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     )
       env[key] = value;
   }
+  env.OPENCODE_DB = engineDatabasePath(root);
   for (const [key, folder] of Object.entries({
     XDG_CONFIG_HOME: 'config',
     XDG_DATA_HOME: 'data',
@@ -249,15 +259,29 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
       throw new Error(`引擎版本不匹配：需要 ${ENGINE_VERSION}`);
     }
     console.log(`RIVLOOM_ENGINE_READY ${url}`);
+    let closing: Promise<void> | undefined;
+    const close = () => {
+      closing ||= (async () => {
+        try {
+          if (child!.exitCode === null && child!.signalCode === null)
+            await client.global.dispose({ signal: AbortSignal.timeout(2000) });
+        } catch {
+          // A failed or unresponsive API must not prevent owned-process cleanup.
+        } finally {
+          if (child!.connected) child!.disconnect();
+        }
+      })();
+      // Existing callers may request close without awaiting it; waitForExit still
+      // observes this same promise and the host's strict process-tree exit result.
+      void closing.catch(() => {});
+    };
     return {
       client,
       url,
       child: child!,
       headers,
-      close: () => {
-        if (child!.connected) child!.disconnect();
-      },
-      waitForExit: () => stopFailedEngine(child, true),
+      close,
+      waitForExit: async () => { close(); await closing; await stopFailedEngine(child, true); },
     };
   } catch (error) {
     await stopFailedEngine(child);

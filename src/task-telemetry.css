@@ -1,0 +1,25 @@
+.task-telemetry {
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.task-telemetry > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+.task-telemetry > summary > span:first-child { margin-left: 4px; }
+.task-telemetry-count { margin-left: 12px; font-variant-numeric: tabular-nums; }
+.task-telemetry-body { padding: 0 12px 12px; display: grid; gap: 14px; }
+.task-telemetry h4 { font-size: 12px; margin: 0 0 8px; }
+.task-telemetry p { color: var(--muted); margin: 6px 0 0; line-height: 1.6; }
+.task-telemetry-usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 16px; margin: 0; }
+.task-telemetry-usage div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.task-telemetry-usage dt { color: var(--muted); }
+.task-telemetry-usage dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.task-telemetry-todos { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.task-telemetry-todos li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline; overflow-wrap: anywhere; }
+.task-telemetry-todo-status { color: var(--muted); }
+.task-telemetry-todos [data-status="in_progress"] .task-telemetry-todo-status { color: var(--accent); font-weight: 600; }
+.task-telemetry-todos [data-status="completed"] .task-telemetry-todo-status { color: var(--success); }

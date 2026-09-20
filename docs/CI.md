@@ -1,5 +1,17 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+## 2026-09-19 当前源码：Linux 自有引擎（未发布）
+
+Linux x64 CI 在任何真实引擎服务检查前运行 `engine:prepare`。该步骤按 `shared/engine-source-linux.json` 克隆固定自有源码并校验本仓库的 runtime Linux recipe 快照，然后原生编译 baseline ELF、运行合成模型 smoke。SDK/plugin 为1.18.31；ARM64 不进入本次构建矩阵。Linux 包不再下载/安装官方 npm 引擎。
+
+原三文件候选契约保留；build/smoke 新增源码 commit/tree、source lock、recipe 和 receipt 摘要，绑定实际 ELF 哈希与仓库来源。解包 smoke 重新验证源码清单、构建记录、许可、SDK/plugin 和完整文件树，再执行启动/重启/停止。纯 Node 发行 job 按当前 lock 核对同一候选证据与归档，不声称独立重跑模型或产生签名。工作流变更尚未提交运行，以下 Linux0.1.18 已发布历史不代表新 runtime 已上线。
+
+## 2026-09-19 当前源码：自有 Windows 引擎（未发布）
+
+Windows 服务检查和候选构建新增 `engine:prepare`，从 `shared/engine-source.json` 固定的自有 runtime 提交构建，运行真实 EXE 的合成模型 smoke。无需新的发布密钥；输入源仓库可匿名读取。每次源码构建前后核对干净源码、完整源摘要和固定工具链/锁/模型目录，生成当次产物摘要。runtime gate、实际进程路径和发行前校验改为自有 vendor 产物，原安装/更新/全树/许可门槛保留，不回退官方 npm Windows EXE。
+
+原候选8文件契约保留；`runtime-before/after.json` 的 `engineSource` 绑定源码与receipt，完整runtime树覆盖vendor内实际记录。发布 job 校对这些已通过的同一候选证据，不独立重编译、不把receipt当外部签名。共享SDK/plugin已升级1.18.31；Linux引擎仍25，Linux原生新组合待验证。新云工作流尚未推送/运行，不能把本地检查称为云CI通过。具体构建/官方跟进方式见 [引擎](ENGINE.md)。
+
 ## Linux 执行节点构建与手动发布
 
 **2026-09-18 · Linux x64 0.1.18 已发布，官网已实际上线。** 源码 `509294bbf0fd684606a5764f2af2d98375bcb939` 已通过 [原生 Linux CI](https://github.com/rivloom/rivloom-desktop/actions/runs/35357963026) 与 [手动发行](https://github.com/rivloom/rivloom-desktop/actions/runs/35358465412)，发行 tag 为 `linux-v0.1.18-509294bbf0fd-35357963026`。公开完整下载和 Linux curl / wget 原生命令验收通过；Windows 安装包及签名更新指针保持不变，ARM64 暂不发布。[官网下载页](https://rivloom.com/download/) 及配套中英文指南已由 Pages 实际部署，包地址、校验值、curl / wget 命令、x64 302 下载入口及 ARM64 未发布入口均已复核。详情见 [Linux 0.1.18 发行说明](releases/linux-0.1.18.md)。

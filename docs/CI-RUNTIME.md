@@ -1,5 +1,7 @@
 # 候选运行时与许可证校验
 
+**2026-09-19 当前源码（未发布）：** Windows 使用自有 runtime 的固定源码构建，详见 [引擎构建与升级](ENGINE.md)。canonical pin 已迁移为 `shared/engine-source.json`；不再通过 npm 安装官方 Windows 引擎。gate 核对共享 source lock 字节、SDK/plugin、生产者 manifest、通过的 smoke、当次 EXE、许可与构建 receipt；保留原 Node、完整 npm/Rust 许可和包前后字节树门槛。发行报告新增 `engineSource` 提交/tree/lock/receipt 摘要，原8文件候选契约不变。已发布包和下方历史结果不因此改变。
+
 更新：2026-09-05。入口为 `scripts/ci-verify-runtime.ts`，夹具测试为 `tests/ci-runtime.test.ts`。校验针对已准备的目录，生成清单本身不算通过。
 
 ## 最新真实候选验证（2026-09-05）
@@ -56,7 +58,7 @@ Rust 对照使用 `cargo metadata --locked --offline --filter-platform x86_64-pc
 3. **许可证与清单**：重新计算每份实际随包文件摘要，与 manifest 和仓库原文分别比较；Node 许可与准备使用的 `.data/desktop-downloads/Node-LICENSE.txt` 比较。当前步骤不联网重新确认原文来源，也不把缓存摘要当作上游签名。
 4. **npm 许可**：每个随包生产依赖必须有对应版本、完整性记录和明确的 `licenseFile`，引用的原文必须存在。依赖内提供了 LICENSE 时，再把随包声明原文与实际依赖的原文比较，避免生成器按包名覆盖不同版本的声明。完全一致的重复 name/version 行允许，冲突重复行失败。开发工具的空许可项不会当作随包运行依赖，仍应在发行人工审查中处理。
 5. **Rust 许可**：清单集合须与当前 Cargo 独立解析的 Windows 依赖集合一致，包含该解析集的构建期依赖；名称、版本、SPDX 与 Cargo 对照。每个原文必须存在并与 Cargo 缓存内提供的原文一致。包内缺少原文时须保留明确的上游来源记录，并与已审查的仓库原文一致。MPL 项必须随包保留对应 `.crate` 源码归档，重新计算摘要并核对 Cargo.lock 的 registry checksum。
-6. **运行二进制**：实际 Node/OpenCode 文件的 SHA256 必须匹配清单与 `desktop-prepare.ts` 中受版本控制的固定值；OpenCode 还须与 `docs/engine-lock.json` 和 SDK/二进制依赖版本一致。随后核对两个真实 CLI 的 `--version` 输出。把被修改二进制的新哈希重新写入生成清单仍会失败。
+6. **运行二进制**：Node 的 SHA256 匹配 `desktop-prepare.ts` 固定值；Windows OpenCode 匹配固定源代码的构建记录或已批准导入摘要，详见上方当前契约。随后核对两个真实 CLI 的 `--version` 输出，拒绝失效源码 pin、未通过 smoke、脏源及不一致产物。
 
 此校验不重新验证 npm tarball 内每个 JavaScript 文件，也不计算 server/shared/dist 的完整内容基线。npm integrity 字段比较不等同于重新计算安装后目录的 tarball integrity；许可证清单也不是完整二进制 SBOM。源码来源、干净构建、目录摘要和最终安装包证据属于相邻的候选流程，不能从此报告推断。
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
-import type { RemoteTaskInvite, BrainTask, Task } from '../shared/types.ts';
+import { stateLabels, type RemoteTaskInvite, type BrainTask, type Task } from '../shared/types.ts';
 import type { Conversation } from '../src/conversations.ts';
 import { taskReceiptView } from '../src/task-receipts.ts';
 import { remoteExecutionSummary } from '../server/remote-execution-summary.ts';
@@ -222,4 +222,38 @@ test('direct local execution retains priority and an unstarted local queue rejec
   const rejected = taskReceiptView(item, { connected: true, queueEntry });
   assert.equal(rejected?.label, '本机已拒绝执行');
   assert.equal(rejected?.detail, '维护中，请稍后提交');
+});
+
+test('ordinary local continuation uses current execution facts over a historical finished queue entry', () => {
+  for (const code of ['completed', 'stopped', 'failed'] as const) {
+    const queueEntry = { state: 'ended', endReason: { code }, updatedAt: date } as NodeQueueItem;
+    for (const state of ['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted', 'review'] as const) {
+      const item = { ...conversation(), remote: undefined, localTask: { state, sessionID: 'continued-session' } as Task };
+      const view = taskReceiptView(item, { connected: true, queueEntry });
+      assert.equal(view?.label, stateLabels[state], `${code} must not mask ${state}`);
+      assert.equal(view?.tone, 'working');
+      const disconnected = taskReceiptView(item, { connected: false, queueEntry });
+      assert.equal(disconnected?.label, '正在确认状态');
+      assert.match(disconnected!.detail, new RegExp(stateLabels[state]));
+      assert.equal(taskReceiptView(item, { connected: true, queueEntry, queueConfirmed: false })?.syncing, true);
+    }
+  }
+});
+
+test('continuation receipt precedence cannot override rejection, remote or collaboration ownership', () => {
+  const task = { state: 'running', sessionID: 'existing-session' } as Task;
+  const ordinary = { ...conversation(), remote: undefined, localTask: task };
+  const ended = { state: 'ended', endReason: { code: 'completed' } } as NodeQueueItem;
+  for (const item of [
+    { ...conversation({ executionState: 'running' }), localTask: task },
+    { ...ordinary, brainTask: { status: 'running' } as BrainTask },
+    { ...ordinary, localTask: { ...task, remoteOrigin: { remoteTaskID: 'remote', ownerNodeID: 'node', ownerBrainID: 'brain' } } },
+    { ...ordinary, localTask: { ...task, collaboration: {} as Task['collaboration'] } },
+  ]) assert.equal(taskReceiptView(item, { connected: true, queueEntry: ended })?.label, '执行已完成');
+  const rejected = { ...ended, endReason: { code: 'rejected' as const, message: 'Do not execute' } };
+  assert.equal(taskReceiptView(ordinary, { connected: true, queueEntry: rejected })?.label, 'Do not execute');
+  const unstarted = { ...ordinary, localTask: { ...task, state: 'ready' as const, sessionID: null } };
+  assert.equal(taskReceiptView(unstarted, { connected: true, queueEntry: rejected })?.label, '本机已拒绝执行');
+  assert.equal(taskReceiptView(unstarted, { connected: true, queueEntry: ended })?.label, '执行已完成');
+  assert.equal(taskReceiptView({ ...ordinary, localTask: { ...task, state: 'accepted' } }, { connected: true, queueEntry: ended })?.label, '已完成');
 });

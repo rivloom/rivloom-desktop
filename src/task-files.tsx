@@ -452,7 +452,6 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
         <>
           {!!value.results.length && (
             <>
-              <p className="task-files-label">{t('交付成果')}</p>
               {list(value.results)}
             </>
           )}

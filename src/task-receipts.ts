@@ -177,7 +177,13 @@ export function taskReceiptView(
     );
   if (terminalExecution)
     return base(stateLabels[executionState!], t('保留原执行记录与结果。'), 'ended');
-  if (local?.state === 'ended')
+  // Ordinary local continuations reuse the Task while its previous queue record
+  // remains ended. Only completed execution receipts yield to those direct facts;
+  // rejection, remote ownership and collaboration keep their existing precedence.
+  const historicalLocalExecution = actualLocalExecution &&
+    !item.localTask?.remoteOrigin && !item.localTask?.collaboration && !remote && !brain &&
+    ['completed', 'stopped', 'failed'].includes(local?.endReason?.code || '');
+  if (local?.state === 'ended' && !historicalLocalExecution)
     return base(
       queueReasonLabel(local.endReason) || t('本机队列项已结束'),
       t('原任务和执行记录继续保留。'),

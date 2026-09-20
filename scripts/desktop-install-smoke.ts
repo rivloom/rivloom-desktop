@@ -19,6 +19,19 @@ assert(
   'Invalid isolated installer root',
 );
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version as string;
+const engineSource = JSON.parse(readFileSync('shared/engine-source.json', 'utf8'));
+assert.equal(engineSource.kind, 'rivloom-source');
+assert.equal(engineSource.target, 'windows-x64');
+assert.match(engineSource.commit, /^(?!0{40}$)[0-9a-f]{40}$/);
+assert.equal(engineSource.artifactPath, `vendor/rivloom-opencode/windows-x64/${engineSource.commit.slice(0, 12)}`);
+const currentEngine = {
+  version: engineSource.version as string,
+  path: join(engineSource.artifactPath, 'opencode.exe'),
+};
+const baselineEngine = {
+  version: '1.18.25',
+  path: join('node_modules', 'opencode-windows-x64', 'bin', 'opencode.exe'),
+};
 const installer = resolve(
   'src-tauri',
   'target',
@@ -123,7 +136,7 @@ async function stopDesktop() {
   desktop = null;
   ownedPIDs = [];
 }
-async function start(data: string, expectedVersion: string) {
+async function start(data: string, expectedVersion: string, expectedEngine = currentEngine) {
   requireNoDesktop();
   const client = new ServiceClient(data);
   desktop = spawn(appExecutable, [], {
@@ -145,12 +158,12 @@ async function start(data: string, expectedVersion: string) {
   await until(
     () => client.call<{ engineReady: boolean }>('/health'),
     (health) => health.engineReady,
-    'bundled official engine',
+    'bundled engine',
     75_000,
   );
   await client.authenticate();
   const state = await client.bootstrap();
-  assert.equal(state.engine.version, '1.18.25');
+  assert.equal(state.engine.version, expectedEngine.version);
   assert.deepEqual(
     state.engine.models.map((model) => model.id),
     ['fixture/m34'],
@@ -159,8 +172,9 @@ async function start(data: string, expectedVersion: string) {
     item.ExecutablePath?.toLowerCase().startsWith(installDirectory.toLowerCase() + '\\'),
   );
   assert(
-    installedProcesses.some((item) => item.ExecutablePath?.endsWith('opencode.exe')),
-    'Official engine was not launched from the installed runtime',
+    installedProcesses.some((item) => item.ExecutablePath?.toLowerCase() ===
+      join(installDirectory, 'runtime', expectedEngine.path).toLowerCase()),
+    'Expected engine was not launched from the installed runtime path',
   );
   ownedPIDs = installedProcesses.map((item) => item.ProcessId);
   assert(ownedPIDs.includes(runtime.backendPID));
@@ -235,7 +249,7 @@ try {
   );
 
   install(baseline);
-  const old = await start(dataDirectory, '0.1.0');
+  const old = await start(dataDirectory, '0.1.0', baselineEngine);
   const before = await old.bootstrap();
   const project = await old.call(
     '/projects',

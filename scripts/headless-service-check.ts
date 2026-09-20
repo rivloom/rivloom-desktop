@@ -1,5 +1,6 @@
-// Real CLI -> local headless API -> official engine; isolated data and a loopback provider only.
+// Real CLI -> local headless API -> Rivloom engine; isolated data and a loopback provider only.
 import assert from 'node:assert/strict';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -10,7 +11,7 @@ import { listenHttp } from '../server/http-ports.ts';
 import { testEnvironment } from './ci-workspace.ts';
 import type { ModelSettings, NodeExecutionPolicy, Project, RivloomNode } from '../shared/types.ts';
 
-type Status = { online: boolean; node: RivloomNode; engine: { ready: boolean }; executionPolicy: NodeExecutionPolicy; queue: { paused: boolean } };
+type Status = { online: boolean; node: RivloomNode; engine: { ready: boolean; version: string }; executionPolicy: NodeExecutionPolicy; queue: { paused: boolean } };
 
 export async function checkHeadlessService(root = resolve(import.meta.dirname, '..')) {
   const base = join(root, 'test-results', 'headless-service');
@@ -59,7 +60,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
         const control = JSON.parse(await readFile(join(data, 'headless-control.json'), 'utf8')) as { url: string };
         const health = await fetch(`${control.url}/api/health`, { signal: AbortSignal.timeout(1000) }).then(response => response.json()) as { engineReady: boolean };
         if (health.engineReady) return await run<Status>(['status']);
-      } catch { /* Wait for control file and the official engine to become ready. */ }
+      } catch { /* Wait for control file and the Rivloom engine to become ready. */ }
       await delay(250);
     }
     throw new Error(`Headless readiness timeout: ${serverOutput.slice(-3000)}`);
@@ -78,6 +79,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
     await run(['init', '--name', 'CLI integration node']);
     const first = await start();
     assert(first.online && first.engine.ready && first.node.id);
+    assert.equal(first.engine.version, readEngineSource(root).version);
     assert.equal(first.node.name, 'CLI integration node');
     assert.equal(first.executionPolicy.enabled, false);
     pass('CLI init/serve/status starts an isolated node with execution disabled');
@@ -114,6 +116,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
 
     await stop();
     const second = await start();
+    assert.equal(second.engine.version, readEngineSource(root).version);
     assert.equal(second.node.id, first.node.id);
     assert.equal(second.node.name, 'CLI renamed');
     assert.equal(second.executionPolicy.enabled, false);
@@ -131,7 +134,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
     fixture.closeAllConnections();
     await new Promise<void>(done => fixture.close(() => done()));
     await writeFile(join(sandbox, 'server.log'), serverOutput);
-    await writeFile(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, modelRequests, platform: process.platform, arch: process.arch, dataDirectory: data, shutdown: process.platform === 'win32' ? 'test-only IPC -> exported shutdown' : 'SIGTERM', scope: 'Isolated real CLI/API/official engine configuration and restart. No model inference, user data, systemd changes or physical LAN.', ...(failure ? { error: String(failure) } : {}) }, null, 2) + '\n');
+    await writeFile(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, modelRequests, engineVersion: readEngineSource(root).version, platform: process.platform, arch: process.arch, dataDirectory: data, shutdown: process.platform === 'win32' ? 'test-only IPC -> exported shutdown' : 'SIGTERM', scope: 'Isolated real CLI/API/Rivloom engine configuration and restart. No model inference, user data, systemd changes or physical LAN.', ...(failure ? { error: String(failure) } : {}) }, null, 2) + '\n');
   }
   if (failure) throw failure;
   console.log(`Headless service report: ${join(sandbox, 'report.json')}`);

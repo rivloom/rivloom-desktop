@@ -1,5 +1,6 @@
-// Two isolated services, the official OpenCode engine, and a deterministic loopback model.
+// Two isolated services, the Rivloom OpenCode engine, and a deterministic loopback model.
 import assert from 'node:assert/strict';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
@@ -23,7 +24,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
   const home = join(sandbox, 'home'), projectDirectory = join(sandbox, 'project');
   mkdirSync(home); mkdirSync(projectDirectory);
   const outputPath = join(projectDirectory, 'headless-result.txt');
-  const outputText = 'This file was written by official OpenCode on the isolated headless worker.\n';
+  const outputText = 'This file was written by Rivloom OpenCode on the isolated headless worker.\n';
   const completionText = 'HEADLESS_TASK_OK: wrote headless-result.txt on the headless worker.';
   const environment = { ...testEnvironment(sandbox), HOME: home, USERPROFILE: home, RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'enabled' };
   const socket = createSocket('udp4');
@@ -63,12 +64,14 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
       };
       this.child.stdout!.on('data', capture); this.child.stderr!.on('data', capture);
       await until(async () => { assert.equal(this.child!.exitCode, null, this.output); return this.base; }, Boolean, 'isolated node listener');
-      await until(() => this.call<{ engineReady: boolean }>('/health'), health => health.engineReady, 'official engine readiness', 60_000);
+      await until(() => this.call<{ engineReady: boolean }>('/health'), health => health.engineReady, 'Rivloom engine readiness', 60_000);
       if (this.headless) {
         const control = JSON.parse(readFileSync(join(this.root, 'headless-control.json'), 'utf8')) as { token: string };
         await this.call('/auth/headless', {}, 200, { 'X-Rivloom-Headless-Token': control.token });
       } else await this.authenticate();
-      assert.deepEqual((await this.bootstrap()).engine.models.map(model => model.id), ['fixture/m34']);
+      const state = await this.bootstrap();
+      assert.equal(state.engine.version, readEngineSource(root).version);
+      assert.deepEqual(state.engine.models.map(model => model.id), ['fixture/m34']);
     }
     override async stop() {
       const child = this.child;
@@ -156,7 +159,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     assert(completedTask.sessionID);
     const received = await until(() => origin.network(), network => network.remoteTasks.some(task => task.id === remoteID && task.executionState === 'accepted' && task.executionSummary.includes(completionText)), 'origin completion summary');
     assert(received.remoteTasks.find(task => task.id === remoteID)!.executionSummary.includes(completionText));
-    pass('An actual official-engine write waits for CLI approval, then completes and returns its summary to the desktop origin', { remoteID, localTaskID: completedTask.id, sessionID: completedTask.sessionID });
+    pass('An actual Rivloom-engine write waits for CLI approval, then completes and returns its summary to the desktop origin', { remoteID, localTaskID: completedTask.id, sessionID: completedTask.sessionID });
 
     // Explicitly select the file that OpenCode actually wrote, using the existing
     // result-attachment API; this does not claim all arbitrary output files auto-publish.
@@ -198,7 +201,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
       writeFileSync(join(sandbox, node.headless ? 'worker.log' : 'origin.log'), node.logs);
     }
     await fixture.close();
-    writeFileSync(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, platform: process.platform, arch: process.arch, modelRequests: fixture.requests, discoveryPort, shutdown: process.platform === 'win32' ? 'headless test IPC -> exported shutdown; desktop stdin lifecycle' : 'headless SIGTERM; desktop stdin lifecycle', scope: 'Two isolated services; real CLI, pairing, encrypted task/result transport and official OpenCode with a deterministic loopback model. No real provider, physical devices or systemd enablement.', ...(failure ? { error: String(failure) } : {}) }, null, 2) + '\n');
+    writeFileSync(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, engineVersion: readEngineSource(root).version, platform: process.platform, arch: process.arch, modelRequests: fixture.requests, discoveryPort, shutdown: process.platform === 'win32' ? 'headless test IPC -> exported shutdown; desktop stdin lifecycle' : 'headless SIGTERM; desktop stdin lifecycle', scope: 'Two isolated services; real CLI, pairing, encrypted task/result transport and Rivloom OpenCode with a deterministic loopback model. No real provider, physical devices or systemd enablement.', ...(failure ? { error: String(failure) } : {}) }, null, 2) + '\n');
     process.umask(previousUmask);
   }
   console.log(`Headless task report: ${join(sandbox, 'report.json')}`);

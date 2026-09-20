@@ -1,11 +1,13 @@
+import { validReasoningEffort, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { createWorkflowDraft, type ConversationDraft } from './conversation-drafts.ts';
 import { validTaskFileDescriptor } from '../shared/task-files.ts';
 import { validWorkflowTarget } from '../shared/workflows.ts';
 import { t } from '../shared/i18n.ts';
 import type { ApprovalMode } from '../shared/types.ts';
+import { normalizeComposerSendMode, type ComposerSendMode } from './composer-keyboard.ts';
 
 export type DraftSnapshot = { savedAt?: number; drafts: Record<string, ConversationDraft>; settings?: {
-  projectID: string; model: string; approvalChoice: ApprovalMode | 'default'; criteria: string;
+  projectID: string; model: string; reasoningEffort?: ReasoningEffort; approvalChoice: ApprovalMode | 'default'; criteria: string; sendMode?: ComposerSendMode;
 } };
 export const draftStorageKey = (userID: string, nodeID: string) => `rivloom:drafts:v1:${nodeID}:${userID}`;
 export function latestDrafts(local: string | null, server?: string | null): DraftSnapshot {
@@ -36,11 +38,14 @@ export function decodeDrafts(text: string | null): DraftSnapshot {
           error: f.state === 'complete' && validTaskFileDescriptor(f.descriptor) ? null : t('上传尚未完成，请移除此附件后重新选择。'),
           file: { name: f.file.name, size: f.file.size, type: f.file.type || '' },
         }));
-      drafts[key] = { ...draft, files };
+      const { model, reasoningEffort, ...rest } = draft;
+      const validModel = model === null || typeof model === 'string' && model.length > 0 && model.length <= 200;
+      drafts[key] = { ...rest, files, ...(validModel ? { model } : {}), ...(validReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}) };
     }
     const settings = value.settings;
+    if (settings && !validReasoningEffort(settings.reasoningEffort)) delete settings.reasoningEffort;
     return { savedAt: Number.isSafeInteger(value.savedAt) ? value.savedAt : 0, drafts: { new: createWorkflowDraft(), ...drafts }, ...(settings && typeof settings.projectID === 'string' &&
       typeof settings.model === 'string' && typeof settings.criteria === 'string' && settings.criteria.length <= 4000 &&
-      ['default', 'ask', 'auto', 'full'].includes(settings.approvalChoice) ? { settings } : {}) };
+      ['default', 'ask', 'auto', 'full'].includes(settings.approvalChoice) ? { settings: { ...settings, sendMode: normalizeComposerSendMode(settings.sendMode) } } : {}) };
   } catch { return empty(); }
 }

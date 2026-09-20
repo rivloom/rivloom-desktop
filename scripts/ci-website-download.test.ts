@@ -36,6 +36,10 @@ async function fixture() {
   await writeFile(join(root, 'package.json'), encode({ version: '0.1.3' }));
   await writeFile(join(root, 'package-lock.json'), 'synthetic npm lock');
   await writeFile(join(root, 'src-tauri', 'Cargo.lock'), 'synthetic cargo lock');
+  const engineLockBytes = await readFile(resolve(import.meta.dirname, '../shared/engine-source.json'));
+  const engineLock = JSON.parse(engineLockBytes.toString('utf8'));
+  await mkdir(join(root, 'shared'));
+  await writeFile(join(root, 'shared', 'engine-source.json'), engineLockBytes);
   const product = {
     kind: 'desktop',
     identifier: 'com.rivloom.desktop',
@@ -50,7 +54,11 @@ async function fixture() {
       cargoLockSha256: digest('synthetic cargo lock'),
     },
     node: { version: '24.19.0', sha256: 'a'.repeat(64) },
-    opencode: { version: '1.18.25', sha256: 'b'.repeat(64) },
+    opencode: {
+      version: engineLock.version,
+      sha256: 'b'.repeat(64),
+      source: `${engineLock.repository}#${engineLock.commit}`,
+    },
     documents: [],
     packages: [{}],
     notices: [{}],
@@ -62,6 +70,12 @@ async function fixture() {
     target: manifest.target,
     inputs: manifest.inputs,
     binaries: { node: manifest.node, opencode: manifest.opencode },
+    engineSource: {
+      commit: engineLock.commit,
+      tree: engineLock.tree,
+      lockSha256: digest(engineLockBytes),
+      receiptSha256: 'd'.repeat(64),
+    },
     documents: [],
     packages: 1,
     licenses: { files: 1 },
