@@ -49,7 +49,7 @@ test('version gate rejects Cargo drift, desktop branding drift and preview ident
 
 test('network mapping rejects omitted, duplicate and unrecognized declarations', () => {
   const source = readFileSync(join(ciRoot, 'tests/node-network.test.ts'), 'utf8');
-  assert.equal(auditNetworkCases(source, networkCases), 35);
+  assert.equal(auditNetworkCases(source, networkCases), 36);
   assert.throws(
     () => auditNetworkCases(source, { ...networkCases, mdns: [] }),
     /incomplete or stale/,

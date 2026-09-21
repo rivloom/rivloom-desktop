@@ -6,6 +6,7 @@ import { validWorkflowTarget, type Workflow, type WorkflowStep, type WorkflowSte
 import { validTaskFileDescriptor, type TaskFileDescriptor } from '../shared/task-files.ts';
 import type { ApprovalMode } from '../shared/types.ts';
 import { createHistorySchema, HistoryError } from './conversation-history.ts';
+import { WorkflowHistory } from './workflow-history.ts';
 
 export type WorkflowRequest = {
   requestID: string; creatorID: string; title: string; description: string; projectID: string | null;
@@ -22,16 +23,20 @@ export function workflowEvent(value: Workflow, kind: Workflow['events'][number][
 /** Logical workflow persistence is independent of the execution engine and network delivery. */
 export class WorkflowStore {
   private db: DatabaseSync;
+  readonly history: WorkflowHistory;
   constructor(db: DatabaseSync) {
     this.db = db;
     createHistorySchema(db);
     db.exec(`CREATE TABLE IF NOT EXISTS workflows (
       id TEXT PRIMARY KEY, creator_id TEXT NOT NULL, request_id TEXT NOT NULL, version INTEGER NOT NULL,
       body TEXT NOT NULL, UNIQUE(creator_id,request_id));`);
+    this.history = new WorkflowHistory(db);
   }
   get(id: string): Workflow | null {
     const row = this.db.prepare('SELECT body FROM workflows WHERE id=?').get(id);
-    return row ? JSON.parse(String(row.body)) : null;
+    if (!row) return null;
+    const value = JSON.parse(String(row.body)) as Workflow;
+    this.history.sync(value); return value;
   }
   list(creatorID?: string): Workflow[] {
     const rows = creatorID === undefined ? this.db.prepare('SELECT body FROM workflows ORDER BY rowid DESC').all() :
@@ -68,6 +73,7 @@ export class WorkflowStore {
       createdAt: at, updatedAt: at, error: null,
     };
     this.db.prepare('INSERT INTO workflows VALUES (?,?,?,?,?)').run(value.id, value.creatorID, value.requestID, value.version, JSON.stringify(value));
+    this.history.sync(value);
     return value;
   }
   /** Every mutation reads the latest value; an optional version fences stale UI edits. */

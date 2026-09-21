@@ -42,7 +42,7 @@ test('engine completion persists results and releases capacity automatically whi
     permissions: unknown[] = [],
     questions: unknown[] = [];
   let statuses: Record<string, { type: string }> = {};
-  let diffCalls = 0;
+  let diffCalls = 0, abortCalls = 0;
   let createCalls = 0, failPrompt = false, failCreate = false;
   let currentAccount = () => '';
   const prompts: Array<{ account: string; input: { sessionID: string; model: { providerID: string; modelID: string }; system: string; parts: Array<{ text: string }> } }> = [];
@@ -62,7 +62,7 @@ test('engine completion persists results and releases capacity automatically whi
             data: [{ file: 'RESULT.md', before: '', after: 'Done', additions: 1, deletions: 0 }],
           };
         },
-        abort: async () => ({}),
+        abort: async () => { abortCalls++; return {}; },
         create: async () => { createCalls++; if (failCreate) throw new Error('Uncertain create response'); return { data: { id: `new-session-${createCalls}` } }; },
         promptAsync: async (input: (typeof prompts)[number]['input']) => {
           prompts.push({ account: currentAccount(), input });
@@ -247,6 +247,25 @@ test('engine completion persists results and releases capacity automatically whi
 
     const owner: User = { id: 'owner', username: 'owner', name: 'Owner', owner: true };
     store.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(owner.id, owner.username, owner.name, 1, 'unused');
+    const failed = make('failed');
+    store.saveTask(failed);
+    const failedEntry = queue.enqueue({ kind: 'local', taskID: failed.id });
+    queue.admit(failedEntry.id, failedEntry.version, failed.id);
+    queue.markStarting(failedEntry.id);
+    queue.markStarted(failedEntry.id);
+    permissions = []; questions = []; messages = assistant();
+    statuses = { session: { type: 'busy' } };
+    await assert.rejects(service.stopTask(failed.id, owner), /停止未确认/);
+    assert.equal(store.task(failed.id).state, 'interrupted');
+    assert.equal(nodeQueueRecoveryDecision(queue.get(failedEntry.id)!, { source: 'live', task: store.task(failed.id) }).action, 'retain_execution');
+    statuses = {};
+    const stopped = await service.stopTask(failed.id, owner);
+    assert.equal(stopped.state, 'stopped');
+    assert.equal(stopped.messages[0].text, 'Completed result retained.');
+    assert.equal(nodeQueueRecoveryDecision(queue.get(failedEntry.id)!, { source: 'live', task: stopped }).action, 'end');
+    await service.stopTask(failed.id, owner);
+    assert.equal(abortCalls, 2, 'Repeated stop after confirmation does not abort twice');
+    assert.equal(createCalls, 0); assert.equal(prompts.length, 0);
     const account = providerAccounts.create('fixture', 'Alternate');
     service.engineStatus.models = ['fixture/model', 'fixture/org/beta', `${account.id}/org/beta`].map(id => ({ id, name: id }));
     statuses = {}; questions = []; permissions = []; messages = assistant();

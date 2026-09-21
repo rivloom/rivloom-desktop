@@ -5,6 +5,8 @@ import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/workflow-history.test.ts',
+  'tests/task-context.test.ts',
   'tests/task-stream.test.ts',
   'tests/windows-engine-stop.test.ts',
   'tests/engine-artifact.test.ts',
@@ -87,6 +89,7 @@ export const networkFile = 'tests/node-network.test.ts';
 export const networkCases = {
   logic: [
     'node rate limits isolate discovery, hello and channel budgets without bypassing caps',
+    'node response limits distinguish encrypted collaboration data from small control replies',
     'GPU memory parsing preserves values above 4 GiB and treats unavailable values as unknown',
     'worker resource validation excludes identity and secret-shaped hardware fields',
     'worker scheduling filters stale and incompatible reports before ranking live capacity',

@@ -1180,6 +1180,8 @@
   "当前轮结束后，按发送顺序继续执行。": "Messages will run in order after the current round finishes.",
   "排队第 {{count}} 条": "Queue position {{count}}",
   "取消排队": "Remove from queue",
+  "结束并移出队列": "End and remove from queue",
+  "停止执行": "Stop execution",
   "图片较大，请下载后打开。": "This image is too large to preview. Download it to open it.",
   "读取范围无效。": "Invalid read range.",
   "最多同时排队 50 条消息，请等待部分消息完成。": "Up to 50 messages can wait in the queue. Wait for some to finish.",

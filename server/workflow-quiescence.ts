@@ -60,7 +60,9 @@ async function mediaProcessCount(): Promise<number> {
 }
 /** Engine idle is checked by the caller. Opaque scripts cannot prove their external work has stopped. */
 export async function checkWorkflowQuiescence(options: QuiescenceOptions): Promise<QuiescenceEvidence> {
-  const synchronous = new Set(['read', 'glob', 'grep', 'list', 'edit', 'write', 'apply_patch', 'todowrite', 'todoread', 'question', 'StructuredOutput']);
+  // These built-in history calls await the bounded request and never start external work.
+  const synchronous = new Set(['read', 'glob', 'grep', 'list', 'edit', 'write', 'apply_patch', 'todowrite', 'todoread', 'question',
+    'StructuredOutput', 'rivloom_history', 'rivloom_context_note']);
   let media = false;
   for (const tool of options.tools) {
     if (!['completed', 'error'].includes(tool.state.status)) return { confirmed: false, reason: 'workflow_tools_active' };

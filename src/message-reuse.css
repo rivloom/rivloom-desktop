@@ -1,4 +1,5 @@
 .message-reuse-actions { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
+.chat-message > .message-reuse-actions, .workflow-result > .message-reuse-actions { margin-top: 6px; }
 .message-reuse-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted, #647087); cursor: pointer; }
 .message-reuse-button:hover { background: var(--surface-soft, #eef1f5); color: var(--text, #25324a); }
 .message-reuse-button:focus-visible { outline: 2px solid #4b77d1; outline-offset: 2px; }

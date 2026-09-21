@@ -1,12 +1,18 @@
 import { z } from 'zod';
+import { contextHooks } from './context-plugin.mjs';
+import { historyTools } from './history-plugin.mjs';
 
 const url = process.env.RIVLOOM_KNOWLEDGE_BRIDGE_URL;
 const token = process.env.RIVLOOM_KNOWLEDGE_BRIDGE_TOKEN;
+const contextURL = process.env.RIVLOOM_CONTEXT_BRIDGE_URL;
+const contextToken = process.env.RIVLOOM_CONTEXT_BRIDGE_TOKEN;
 delete process.env.RIVLOOM_KNOWLEDGE_BRIDGE_URL;
 delete process.env.RIVLOOM_KNOWLEDGE_BRIDGE_TOKEN;
+delete process.env.RIVLOOM_CONTEXT_BRIDGE_URL;
+delete process.env.RIVLOOM_CONTEXT_BRIDGE_TOKEN;
 
 // Official OpenCode plugin interface. The bridge secret is never an argument or model-visible result.
-export default async function RivloomKnowledgePlugin() {
+export default async function RivloomKnowledgePlugin({ directory }) {
   if (!url || !token) return {};
   const request = (name, description, args) => ({
     description,
@@ -23,7 +29,8 @@ export default async function RivloomKnowledgePlugin() {
       return JSON.stringify(result);
     },
   });
-  return { tool: {
+  return { ...contextHooks({ url: contextURL, token: contextToken, directory }), tool: {
+    ...historyTools({ url: contextURL, token: contextToken }),
     rivloom_knowledge_search: request('rivloom_knowledge_search',
       'Find Skills or Wiki memory by purpose, name, or category across this Node and its Brains. Returns summaries only. Browse before loading; use offset for the next page.', {
         text: z.string().optional(), kind: z.enum(['skill', 'memory']).optional(), category: z.string().optional(),

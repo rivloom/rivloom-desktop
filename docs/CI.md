@@ -1,5 +1,9 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+## 2026-09-21：0.1.19 发行准备
+
+0.1.19 整理固定自有 Runtime、执行过程展示、压缩后上下文连续性、带来源的会话状态与历史按需读取、32 KiB 历史页、队列取消及模型/网络修复。Windows 与 Linux x64 核心均固定为 `9b07cf4`，不追踪 Runtime 最新 HEAD。Windows 沿用同提交三组 CI、候选安装验收、Release、公开下载与签名更新链；服务矩阵新增 context-continuity、context-service、workflow-history 和 workflow-history-remote，核对固定 Runtime 的规则连续性、本地及加密远端历史读取。Linux 原生 CI 与手动发行独立验收。当前仅本地验证通过，云端、官网实际部署与 R2 保留收尾须按本次提交实际结果记录，下面旧版成功记录不替代本次验收。
+
 ## 2026-09-19 当前源码：Linux 自有引擎（未发布）
 
 Linux x64 CI 在任何真实引擎服务检查前运行 `engine:prepare`。该步骤按 `shared/engine-source-linux.json` 克隆固定自有源码并校验本仓库的 runtime Linux recipe 快照，然后原生编译 baseline ELF、运行合成模型 smoke。SDK/plugin 为1.18.31；ARM64 不进入本次构建矩阵。Linux 包不再下载/安装官方 npm 引擎。

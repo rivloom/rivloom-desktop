@@ -29,13 +29,12 @@ function workflowReply(input: any): FixtureModelReply {
   systemBoundRequests++;
   const planner = userText.includes('此会话只允许读取和规划');
   if (userText.includes('CASE_FOLLOWUP')) {
-    const contextPath = /"(\.rivloom-inputs\/[^"\n]+\/rivloom-conversation-\d+\.json)"/.exec(userText)?.[1];
-    assert(contextPath, 'Follow-up needs a materialized full conversation transcript');
-    const directory = userText.includes(`本次实际执行 Node：${otherNode}`) ? remoteDirectory : outputDirectory;
-    const transcript = JSON.parse(readFileSync(join(directory, contextPath), 'utf8'));
-    assert(transcript.some((r: any) => r.request.includes('CASE_CONTINUITY') || r.request.includes('CASE_OUTPUT')));
-    const read = input.messages.some((m: any) => m.role === 'assistant' && m.tool_calls?.some((call: any) => call.function?.name === 'read'));
-    if (!read) return { toolName: 'read', arguments: { filePath: join(directory, contextPath) } };
+    const results = input.messages.filter((m: any) => m.role === 'tool').map((m: any) =>
+      JSON.parse(typeof m.content === 'string' ? m.content : m.content.map((p: any) => p.text || '').join('')));
+    if (!results.length) return { toolName: 'rivloom_history', arguments: { action: 'search', round: 1 } };
+    const source = results[0].entries.find((e: any) => e.kind === 'request'); assert(source);
+    if (results.length === 1) return { toolName: 'rivloom_history', arguments: { action: 'read', id: source.id, revision: source.revision } };
+    assert(results[1].content.includes('CASE_CONTINUITY') || results[1].content.includes('CASE_OUTPUT'));
   }
   const outcome: Record<string, unknown> = { kind: 'completed', summary: 'Verified loopback fixture output', files: [] };
   if (planner) {
@@ -77,6 +76,12 @@ function workflowReply(input: any): FixtureModelReply {
     const written = input.messages.some((m: any) => m.role === 'assistant' && m.tool_calls?.some((call: any) => call.function?.name === 'write'));
     if (!written) return { toolName: 'write', arguments: { filePath: join(outputDirectory, 'result.txt'), content: 'A verified business result from the official execution.\n' } };
     outcome.files = ['result.txt'];
+  }
+  if (userText.includes('CASE_HANDOFF')) {
+    const results = input.messages.filter((m: any) => m.role === 'tool').map((m: any) =>
+      JSON.parse(typeof m.content === 'string' ? m.content : m.content.map((p: any) => p.text || '').join('')));
+    if (!results.length) return { toolName: 'rivloom_history', arguments: { action: 'state' } };
+    assert(results[0].goal?.id, 'Both handoff participants must read their authorized workflow state');
   }
   if (userText.includes('HANDOFF_STEP') && !userText.includes('HANDOFF_CHECKPOINT')) return { toolName: 'StructuredOutput', arguments: {
     kind: 'handoff', nodeID: otherNode, reason: 'The next operation belongs on the material Node', checkpoint: userText.includes('RESTART_TARGET') ? 'HANDOFF_CHECKPOINT RESTART_TARGET' : 'HANDOFF_CHECKPOINT', files: [], processesStopped: true } };
@@ -152,11 +157,11 @@ try {
   const followed = await until(() => origin.call<Workflow>(`/workflows/${continuity.id}`), (w) => w.roundRequestID === queuedRequest.requestID && ['completed', 'failed'].includes(w.state), 'queued conversation continuation', 90_000);
   assert.equal(followed.state, 'completed', JSON.stringify(followed)); assert.equal(followed.rounds!.length, 1);
   assert.equal(followed.rounds![0].description, continuity.description); assert.equal(followed.target.mode, 'locked');
-  assert(followed.planner.attempts[0].inputFiles.some((f) => f.name === 'rivloom-conversation-1.json'));
+  assert(!followed.planner.attempts[0].inputFiles.some((f) => f.name.startsWith('rivloom-conversation-')));
   const continuityHistory = conversations(await origin.bootstrap());
   assert.equal(continuityHistory.filter((c) => c.workflow?.id === continuity.id).length, 1);
   assert(!continuityHistory.some((c) => c.localTask?.collaboration?.workflowID === continuity.id));
-  pass('Queued follow-ups do not interrupt the current round; replay, cancellation, full-context reads and stable history work through official sessions');
+  pass('Queued follow-ups preserve stable history and retrieve exact earlier sources on demand through official sessions');
   const parallel = await completed((await create('CASE_PARALLEL')).id); assert.equal(parallel.state, 'completed', JSON.stringify(parallel));
   assert.equal(parallel.steps.length, 4); assert.equal(parallel.steps[3].dependsOn.length, 2);
   assert(parallel.steps.some((s) => s.attempts[0].nodeID === otherNode));
@@ -221,6 +226,12 @@ try {
   const handoff = await completed((await create('CASE_HANDOFF')).id); assert.equal(handoff.state, 'completed', JSON.stringify(handoff));
   assert.equal(handoff.handoffs.length, 1); assert.equal(handoff.steps[0].attempts.length, 2);
   assert.equal(handoff.steps[0].attempts[1].nodeID, otherNode); assert.equal(handoff.handoffs[0].phase, 'completed');
+  for (const client of clients) {
+    const execution = (await client.bootstrap()).tasks.find(t => t.collaboration?.workflowID === handoff.id && t.collaboration.role === 'executor');
+    assert(execution);
+    assert(execution.messages.some(m => m.parts?.some(p => p.type === 'tool' && p.name === 'rivloom_history')));
+    assert.equal(execution.collaborationOutcome?.quiescence.confirmed, true);
+  }
   pass('A quiescent execution transfers to the selected Node with a distinct attempt and saved business checkpoint');
   const material = await completed((await create('CASE_RESOURCE', { mode: 'locked', nodeID: ownNode })).id);
   assert.equal(material.state, 'completed', JSON.stringify(material)); assert(material.steps[0].attempts.every((a) => a.nodeID === ownNode));
@@ -243,7 +254,7 @@ try {
     (w) => w.roundRequestID === metadataRequest && ['completed', 'failed'].includes(w.state), 'metadata-only continuation', 90_000);
   assert.equal(metadataFollowup.state, 'completed', JSON.stringify(metadataFollowup));
   for (const attempt of [...metadataFollowup.planner.attempts, ...metadataFollowup.steps.flatMap((s) => s.attempts)])
-    assert(attempt.inputFiles.every((f) => f.name.startsWith('rivloom-conversation-')));
+    assert.equal(attempt.inputFiles.length, 0, 'Metadata-only continuation must not transfer results or cumulative history');
   assert.deepEqual((await origin.call(remotePath)).results.map((f: any) => f.state), ['remote', 'remote']);
   pass('A later round can use result records without downloading prior remote outputs for planning or execution');
   await origin.call(`${remotePath}/fetch`, { fileID: randomUUID() }, 409);

@@ -6,6 +6,7 @@ import {
   conversationIsRunning,
   localQueue,
   executionQueueEntries,
+  executionQueueStopTask,
   pairedNodes,
   showNetworkRail,
   type Conversation,
@@ -17,6 +18,19 @@ import { conversationOrigin } from '../src/conversation-origin.ts';
 
 const localID = 'local-node';
 const date = '2026-09-03T00:00:00Z';
+
+test('queue offers direct stop for failed and active sessions without inventing a session', () => {
+  const entry = { id: 'queue', localTaskID: 'task', state: 'admitted' } as NodeQueueItem;
+  for (const state of ['failed', 'interrupted', 'running', 'waiting_approval', 'waiting_input'] as const) {
+    const task = { ...localTask('task', state), sessionID: 'session' };
+    assert.equal(executionQueueStopTask(entry, [task]), task, state);
+    assert.equal(executionQueueStopTask({ ...entry, state: 'held' }, [task]), undefined);
+    assert.equal(executionQueueStopTask(entry, [{ ...task, sessionID: null }]), undefined);
+  }
+  for (const state of ['stopped', 'stopping', 'accepted', 'ready'] as const)
+    assert.equal(executionQueueStopTask(entry, [{ ...localTask('task', state), sessionID: 'session' }]), undefined);
+  assert.equal(executionQueueStopTask(entry, []), undefined);
+});
 
 test('confirmed stopped tasks leave the rail while history and explicit continuation remain visible', () => {
   const entry = { id: 'queue', localTaskID: 'task', state: 'admitted', endReason: null } as NodeQueueItem;

@@ -55,3 +55,16 @@ test('handoff quiescence uses tool and process evidence, rejecting opaque script
   assert(!(await checkWorkflowQuiescence({ ...options, mediaProcesses: async () => 1 })).confirmed);
   assert(!(await checkWorkflowQuiescence({ ...options, mediaProcesses: async () => { throw new Error('unavailable'); } })).confirmed);
 });
+
+test('finished workflow history tools permit handoff while active or unknown tools remain blocked', async () => {
+  const history: WorkflowToolRecord = { tool: 'rivloom_history', state: { status: 'completed', input: { action: 'read', offset: 4000 } } };
+  const note: WorkflowToolRecord = { tool: 'rivloom_context_note', state: { status: 'completed' } };
+  const check = (tools: WorkflowToolRecord[]) => checkWorkflowQuiescence({ directory: '.', tools });
+  assert.deepEqual(await check([history, note]), { confirmed: true, reason: 'synchronous_tools_completed' });
+  assert((await check([{ ...history, state: { status: 'error' } }])).confirmed);
+  for (const tool of [history, note]) for (const status of ['pending', 'running'])
+    assert.deepEqual(await check([{ ...tool, state: { status } }]), { confirmed: false, reason: 'workflow_tools_active' });
+  for (const tool of ['rivloom_history_custom', 'task', 'bash', 'unrecognized_plugin'])
+    assert.deepEqual(await check([history, { tool, state: { status: 'completed' } }]),
+      { confirmed: false, reason: 'workflow_external_work_unconfirmed' });
+});

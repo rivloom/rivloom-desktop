@@ -24,6 +24,13 @@ export function executionQueueEntries(entries: NodeQueueItem[], tasks: Task[]): 
   });
 }
 
+/** Failed executions still require an engine stop acknowledgement before releasing their slot. */
+export function executionQueueStopTask(entry: NodeQueueItem, tasks: Task[]): Task | undefined {
+  if (entry.state !== 'admitted' && entry.state !== 'ended') return;
+  return tasks.find(task => task.id === entry.localTaskID && !!task.sessionID &&
+    [...activeStates, 'interrupted', 'failed'].includes(task.state) && task.state !== 'stopping');
+}
+
 const brainLabels: Record<BrainTask['status'], string> = {
   get submitting() {
     return t('正在发送');

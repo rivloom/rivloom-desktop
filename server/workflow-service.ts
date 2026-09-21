@@ -7,8 +7,9 @@ import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, 
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { workflowCandidateAllowed } from '../shared/workflow-diagnostics.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
+import { workflowHistoryGuide } from '../shared/workflow-history.ts';
 
-export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string; reasoningEffort?: ReasoningEffort } };
+export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; history?: boolean; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string; reasoningEffort?: ReasoningEffort } };
 export type WorkflowExecutionSnapshot = {
   phase: Exclude<WorkflowAttempt['phase'], 'intent'>; summary: string; error: string | null;
   outcome: WorkflowAttempt['outcome']; outputFiles: TaskFileDescriptor[]; safeToTransfer: boolean;
@@ -26,6 +27,7 @@ export interface WorkflowExecutionAdapter {
   materialize(workflow: Workflow, references: ResourceReference[]): Promise<TaskFileDescriptor[]>;
   stageInputs(workflow: Workflow, key: string, files: TaskFileDescriptor[], mayRead: () => boolean): Promise<TaskFileDescriptor[]>;
   conversationContext?(workflow: Workflow): Promise<TaskFileDescriptor>;
+  legacyHistory?(workflow: Workflow, candidate: WorkflowCandidate): Promise<TaskFileDescriptor | undefined>;
   retryReady?(workflow: Workflow, attempt: WorkflowAttempt): Promise<boolean>;
   prepareInputs?(workflow: Workflow, files: TaskFileDescriptor[], role: WorkflowExecutionContext['role'], required: TaskFileDescriptor[]): Promise<TaskFileDescriptor[] | null>;
 }
@@ -114,10 +116,12 @@ export class WorkflowService {
   recordAnswers(executionID: string, requestID: string, questions: string[], answers: string[][]) {
     const value = this.store.list().find((w) => workflowAllSteps(w).some((s) => s.attempts.some((a) => a.executionID === executionID)));
     if (!value || !questions.length || questions.length !== answers.length) return;
-    this.update(value.id, (latest) => {
+    const updated = this.update(value.id, (latest) => {
       const attempt = workflowAllSteps(latest).flatMap((s) => s.attempts).find((a) => a.executionID === executionID)!;
       attempt.clarifications = [...(attempt.clarifications || []).filter((v) => v.requestID !== requestID), { requestID, questions, answers }];
     });
+    const archived = updated.rounds?.find(round => [round.planner, ...round.steps].some(s => s.attempts.some(a => a.executionID === executionID)));
+    this.store.history.sync(updated, archived?.requestID);
   }
   enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[], model?: string | null, reasoningEffort?: ReasoningEffort) {
     if (!uuid(requestID) || !text.trim() || text.length > 12_000 || !validTaskFileManifest(inputFiles) || inputFiles.length > taskFileUploadCount ||
@@ -372,7 +376,8 @@ export class WorkflowService {
       this.preparing.set(reservation, candidate.nodeID);
       observe(prepared, candidate.nodeID);
       const parents = step.dependsOn.map((id) => value.steps.find((s) => s.id === id)!);
-      let originalFiles = mergeFiles(value.inputFiles, step.materials, resources, ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
+      const legacyHistory = await this.adapter.legacyHistory?.(value, candidate);
+      let originalFiles = mergeFiles(value.inputFiles, step.materials, resources, legacyHistory ? [legacyHistory] : [], ...parents.map((p) => p.attempts.at(-1)?.outputFiles || []));
       if (this.adapter.prepareInputs) {
         const ready = await this.adapter.prepareInputs(value, originalFiles, role,
           [...step.materials, ...resources, ...parents.flatMap((p) => p.attempts.at(-1)?.outputFiles || [])]);
@@ -387,21 +392,27 @@ export class WorkflowService {
       const evidence = boundedText([this.adapter.evidence(value), step.evidence].filter(Boolean).join('\n\n'), 12_000, 18_000);
       const correction = role === 'planner' && step.validationRounds
         ? `上次只读规划未通过 JSON 格式校验。这是第 ${step.validationRounds}/2 次格式纠正；尚未执行业务步骤。重新按原需求返回一个且仅一个完整 JSON 对象。检查资源引用与文件/软件区别；无输入文件用 resources:[]；缺少事实只返回 query，已有事实只返回 plan。` : '';
-      const location = (value.conversationContextFile ? `这是同一会话的后续请求。先读取输入文件 ${value.conversationContextFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n` : '') +
+      const historyFile = legacyHistory || value.conversationContextFile;
+      const location = (historyFile ? `这是同一会话的后续请求。先读取输入文件 ${historyFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n` : '') +
         `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
         (continuation?.handoff ? '本次接收上一个 Node 的转交；从下方已保存检查点继续，不重复源端已完成的操作，不再次转交给自己。' : '');
       const originalRequest = role === 'executor' ? `用户完整需求（本步骤及后续转交都必须遵守其中适用的约束；只执行当前步骤）：\n${value.planner.instructions}` : '';
       if (location.length + originalRequest.length + 4 > 16_000) throw new Error('workflow_context_limit');
-      let progress = boundedText([correction, step.checkpoint, ...parents.map((p) => `${p.title}\n${p.checkpoint}`)].filter(Boolean).join('\n\n'),
-        Math.min(8000, Math.max(0, 16_000 - location.length - originalRequest.length - 4)), 12_000);
+      let preview = 600;
+      const guide = candidate.history === false ? '此 Node 不支持历史检索工具；此前各轮原文通过兼容附件读取。下方 preview 若标记 truncated 则不完整；不能编造省略细节。当前用户需求优先于旧历史和推断条目，文件引用不代表已下载。' : workflowHistoryGuide;
+      const progressText = () => [correction, guide, JSON.stringify(this.store.history.handoff(value, step, preview))].filter(Boolean).join('\n\n');
+      let progress = progressText();
+      while (location.length + originalRequest.length + progress.length + 4 > 16_000 && preview > 0) {
+        preview = Math.floor(preview / 2); progress = progressText();
+      }
       const priorContext = [location, originalRequest, progress].filter(Boolean).join('\n\n');
       const context: WorkflowExecutionContext = { workflowID: value.id, stepID: step.id, attempt: step.attempts.length + 1,
         role, target: value.target, instructions: continuation?.handoff && step.checkpoint ? step.checkpoint : step.instructions, evidence, priorContext };
       // Preserve the actual request; reduce supporting evidence to fit the authenticated channel in UTF-8.
       while (jsonBytes({ executionID: '0'.repeat(36), context, inputFiles }) > 58_000 || jsonBytes(context) > 55_000) {
         if (context.evidence.length > 100) context.evidence = context.evidence.slice(0, Math.floor(context.evidence.length * 0.8));
-        else if (progress.length > 100) {
-          progress = progress.slice(0, Math.floor(progress.length * 0.8));
+        else if (preview > 0) {
+          preview = Math.floor(preview / 2); progress = progressText();
           context.priorContext = [location, originalRequest, progress].filter(Boolean).join('\n\n');
         }
         else throw new Error('workflow_context_limit');
@@ -539,14 +550,17 @@ export class WorkflowService {
       this.update(id, (current) => {
         const active = currentStep(current, stepID, executionID)!; const attempt = active.attempts.at(-1)!;
         attempt.handled = true; active.materials = materials;
+        if (outcome!.kind === 'completed' || outcome!.kind === 'handoff') {
+          // A receiver that safely hands off again has also finished its incoming transfer.
+          const handoff = current.handoffs.findLast((h) => h.stepID === stepID && h.toAttempt <= attempt.number && h.toNodeID === attempt.nodeID);
+          if (handoff) handoff.phase = 'completed';
+        }
         if (outcome!.kind === 'plan') {
           current.summary = outcome!.plan.summary; current.steps = outcome!.plan.steps.map(workflowStep); current.planVersion++;
           active.state = 'completed'; if (current.state !== 'paused') current.state = 'running';
           workflowEvent(current, 'plan', current.summary);
         } else if (outcome!.kind === 'completed') {
           active.checkpoint = outcome!.summary; active.state = 'completed';
-          const handoff = current.handoffs.findLast((h) => h.stepID === stepID && h.toAttempt <= attempt.number && h.toNodeID === attempt.nodeID);
-          if (handoff) handoff.phase = 'completed';
         } else {
           if ('checkpoint' in outcome!) active.checkpoint = outcome!.checkpoint;
           if (outcome!.kind === 'expand') this.expand(current, active, outcome!.plan);

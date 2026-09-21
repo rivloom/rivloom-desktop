@@ -44,7 +44,7 @@ import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import { KnowledgeLibrary } from './knowledge-library';
 import type { Workflow } from '../shared/workflows';
-import { workflowPendingMessages } from '../shared/workflows';
+import { workflowAllSteps, workflowPendingMessages } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
 import {
   filterConversations,
@@ -140,6 +140,7 @@ import {
   conversationState,
   conversationIsRunning,
   executionQueueEntries,
+  executionQueueStopTask,
   pairedNodes,
   showNetworkRail,
   type Conversation,
@@ -169,7 +170,7 @@ const dateLabel = (value: string) =>
 function queueConversation(entry: NodeQueueItem, items: Conversation[]) {
   const source = entry.source;
   return items.find((item) => item.workflow
-    ? [item.workflow.planner, ...item.workflow.steps].some((step) => step.attempts.some((attempt) =>
+    ? workflowAllSteps(item.workflow).some((step) => step.attempts.some((attempt) =>
       attempt.executionID === (source.kind === 'local' ? source.taskID : source.remoteTaskID))) : source.kind === 'local'
       ? item.localTask?.id === source.taskID
       : item.remote?.id === source.remoteTaskID ||
@@ -188,6 +189,7 @@ function QueuePanel({
   error,
   open,
   control,
+  stop,
   pause,
   retry,
 }: {
@@ -201,6 +203,7 @@ function QueuePanel({
   error: string;
   open: (item: Conversation) => void;
   control: (entry: NodeQueueItem, action: NodeQueueAction) => void;
+  stop: (task: Task) => void;
   pause: (paused: boolean) => void;
   retry?: () => void;
 }) {
@@ -249,6 +252,7 @@ function QueuePanel({
       <div className="queue-list">
         {entries.map((entry) => {
           const executing = entry.state === 'admitted' || entry.state === 'ended';
+          const stoppable = executionQueueStopTask(entry, tasks);
           const item = queueConversation(entry, items);
           const incoming = item?.incoming ?? entry.source.kind === 'remote';
           const title = item?.title || t('正在同步会话');
@@ -329,10 +333,10 @@ function QueuePanel({
                   <button
                     type="button"
                     disabled={busy || !!error}
-                    onClick={() => control(entry, 'reject')}
+                    onClick={() => control(entry, entry.source.kind === 'local' ? 'cancel' : 'reject')}
                   >
                     <X size={12} />
-                    {t('拒绝')}
+                    {entry.source.kind === 'local' ? t('取消排队') : t('拒绝')}
                   </button>
                 </div>
               )}
@@ -345,6 +349,11 @@ function QueuePanel({
                     : t('执行槽已保留 · 在会话中继续处理')}
                 </p>
               )}
+              {stoppable && <div className="queue-controls">
+                <button type="button" disabled={busy || !!error} onClick={() => stop(stoppable)}>
+                  <Square size={12} />{stoppable.state === 'failed' ? t('结束并移出队列') : t('停止执行')}
+                </button>
+              </div>}
             </article>
           );
         })}
@@ -1211,6 +1220,10 @@ export function ConversationWorkspace({
         if (action === 'reject') setRejectQueueEntry(entry);
         else void controlQueue(entry, action);
       }}
+      stop={(task) => void perform(async () => {
+        await api(`/tasks/${task.id}/stop`, {});
+        await refreshQueue();
+      })}
       pause={(paused) => {
         if (!queueSnapshot || pendingQueueRequest) return;
         void executeQueueRequest({

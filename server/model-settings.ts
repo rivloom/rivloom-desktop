@@ -371,8 +371,6 @@ export function defaultModel() {
   const desired = preferences.defaultModel || process.env.RIVLOOM_MODEL;
   return (
     engineStatus.models.find((model) => model.id === desired)?.id ||
-    engineStatus.models.find((model) => model.id.startsWith('deepseek/'))?.id ||
-    engineStatus.models.find((model) => model.id === 'opencode/mimo-v2.5-free')?.id ||
     engineStatus.models[0]?.id ||
     ''
   );

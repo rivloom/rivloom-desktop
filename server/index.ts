@@ -65,6 +65,7 @@ import {
   setTaskStartGuard,
   setTaskInputMaterializer,
   setTaskKnowledgeContext,
+  taskContexts,
 } from './task-service.ts';
 import { validateProject, redact } from './artifacts.ts';
 import { dataRoot } from './engine.ts';
@@ -1084,7 +1085,7 @@ app.post('/api/node-queue/:id/control', async (req, res) => {
       operationID: z.string().uuid(),
       expectedVersion: z.number().int().positive(),
       expectedQueueVersion: z.number().int().nonnegative().optional(),
-      action: z.enum(['up', 'down', 'hold', 'resume', 'reject']),
+      action: z.enum(['up', 'down', 'hold', 'resume', 'reject', 'cancel']),
       reason: z.string().trim().min(1).max(500).optional(),
     })
     .parse(req.body);
@@ -1102,7 +1103,7 @@ app.post('/api/node-queue/:id/control', async (req, res) => {
           409,
           '本机任务已经变化，请刷新队列。',
         );
-        patchTask(current.id, { state: 'stopped', error: 'Node 已拒绝执行此排队任务。' });
+        patchTask(current.id, { state: 'stopped', error: input.action === 'cancel' ? null : 'Node 已拒绝执行此排队任务。' });
       },
     );
     return applied;
@@ -2069,6 +2070,7 @@ app.post('/api/tasks', (req, res) => {
 app.get('/api/tasks/:id', (req, res) =>
   res.json({ task: visibleTask(req), activities: activities(String(req.params.id)) }),
 );
+app.get('/api/tasks/:id/context', (req, res) => res.json(taskContexts.list(visibleTask(req).id)));
 app.post('/api/tasks/:id/claim', (req, res) => {
   const t = visibleTask(req);
   requireThat(who(req).id === t.assigneeID, 403, '只有指定接受人可以接受任务');
@@ -2268,7 +2270,13 @@ try {
   console.log(headless ? `RIVLOOM_HEADLESS_READY ${url}` : desktop ? `RIVLOOM_DESKTOP_READY ${url}` : `Rivloom: ${url}`);
   if (!users().length && !desktop && !headless)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
-  knowledgeBridge = await startKnowledgeBridge(() => knowledge?.tools || null);
+  knowledgeBridge = await startKnowledgeBridge(() => knowledge?.tools || null, (root, body) => taskContexts.call(root, body), async (root, raw) => {
+    const body = z.object({ sessionID: z.string(), directory: z.string(), name: z.enum(['rivloom_history', 'rivloom_context_note']), args: z.unknown() }).strict().parse(raw);
+    const before = taskContexts.authorize(root, body.sessionID, body.directory);
+    const result = await workflowRuntime.historyTool(before.taskID, body.name, body.args);
+    if (taskContexts.authorize(root, body.sessionID, body.directory).id !== before.id) throw new Error('context_execution_changed');
+    return result;
+  });
   void nodeNetwork.start().then(() => { configureResources(); sweepConversationHistory(); });
   void initializeEngine();
   workflowRuntime.start();

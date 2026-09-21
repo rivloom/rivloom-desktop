@@ -37,6 +37,8 @@ export async function modelFixture(timeout = 120_000, replyFor?: (input: any) =>
   const pending = new Set<() => void>();
   const sockets = new Set<import('node:net').Socket>();
   const server = createServer(async (request, response: ServerResponse) => {
+    // Decode across HTTP chunks; a chunk boundary may split a Chinese character or emoji.
+    request.setEncoding('utf8');
     let body = '';
     for await (const chunk of request) body += chunk;
     if (request.url !== '/v1/chat/completions') {

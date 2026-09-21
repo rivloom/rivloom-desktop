@@ -500,6 +500,49 @@ test('original user constraints survive narrowed plans, handoff and evidence tri
   } finally { f.db.close(); }
 });
 
+test('history capability selects legacy attachments while structured handoff preserves confirmed constraints', async () => {
+  const f = setup();
+  try {
+    let legacy = true;
+    const descriptor = { id: randomUUID(), name: 'rivloom-conversation-1.json', bytes: 10, sha256: 'a'.repeat(64), mime: 'application/octet-stream' };
+    f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 0, history: !legacy }];
+    f.adapter.legacyHistory = async (_value, candidate) => candidate.history === false ? descriptor : undefined;
+    const value = f.create();
+    const state = f.store.history.state(value);
+    f.store.history.note(value, { requestID: randomUUID(), expectedVersion: state.version, kind: 'constraint', text: 'Preserve material',
+      source: { id: state.goal.id, revision: state.goal.revision, quote: 'material' } }, 'user');
+    await f.service.advance(value.id);
+    assert(f.starts[0].inputFiles.some(file => file.id === descriptor.id));
+    assert.match(f.starts[0].context.priorContext, /Preserve material/);
+    assert.match(f.starts[0].context.priorContext, /不支持历史检索工具/);
+    assert(!f.starts[0].context.priorContext.includes('Use rivloom_history'));
+    f.finish(f.starts[0], { kind: 'plan', plan: { summary: 'Plan', steps: [step('work')] } });
+    legacy = false; await f.service.advance(value.id);
+    assert.equal(f.starts[1].inputFiles.length, 0); assert.match(f.starts[1].context.priorContext, /Use rivloom_history/);
+    assert.match(f.starts[1].context.priorContext, /"authority":"user"/);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('late clarification after round admission refreshes historical sources without losing the previous revision', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    const oldExecution = f.starts[1].executionID, question = randomUUID();
+    f.service.recordAnswers(oldExecution, question, ['Format?'], [['PNG']]);
+    f.finish(f.starts[1], complete()); f.service.enqueue(id, randomUUID(), 'Next round', []);
+    await f.service.advance(id); await f.service.tick();
+    let value = f.store.get(id)!; assert.equal(value.rounds?.length, 1);
+    const before = f.store.history.query(value, { action: 'search', text: 'Format?', round: 1 }) as { entries: { id: string; revision: string }[] };
+    assert.equal(before.entries.length, 1);
+    f.service.recordAnswers(oldExecution, question, ['Format?'], [['JPG']]);
+    value = f.store.get(id)!;
+    const after = f.store.history.query(value, { action: 'search', text: 'JPG', round: 1 }) as typeof before;
+    assert.equal(after.entries[0].id, before.entries[0].id); assert.notEqual(after.entries[0].revision, before.entries[0].revision);
+    const old = f.store.history.query(value, { action: 'read', id: before.entries[0].id, revision: before.entries[0].revision }) as { content: string };
+    assert(old.content.includes('PNG'));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
 test('requests that cannot fit with step instructions fail instead of trimming original constraints', async () => {
   const f = setup();
   try {
@@ -635,4 +678,26 @@ test('execution expansion rewires pending dependents through the new leaves and 
     f.finish(f.starts[2], complete() as never); await f.service.advance(id); assert.equal(f.starts.length, 4);
     f.finish(f.starts[3], complete() as never); await f.service.advance(id); assert.equal(f.starts[4].context.stepID, 'publish');
   } finally { f.db.close(); }
+});
+
+test('a completed three-node handoff chain closes each transfer without rewriting earlier attempts', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Relay', steps: [step('relay')] });
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: B, reason: 'Second Node', checkpoint: 'A read the history', files: [], processesStopped: true });
+    await f.service.advance(id);
+    assert.equal(f.starts[2].nodeID, B);
+    const firstAttempt = structuredClone(f.store.get(id)!.steps[0].attempts[0]);
+    f.finish(f.starts[2], { kind: 'handoff', nodeID: C, reason: 'Third Node', checkpoint: 'B read the history', files: [], processesStopped: true });
+    await f.service.advance(id);
+    assert.equal(f.starts[3].nodeID, C);
+    assert.deepEqual(f.store.get(id)!.handoffs.map(h => h.phase), ['completed', 'queued']);
+    f.restart(); f.finish(f.starts[3], complete('All three Nodes read the history'));
+    await f.service.advance(id); await f.service.tick();
+    const done = f.store.get(id)!;
+    assert.equal(done.state, 'completed');
+    assert.deepEqual(done.handoffs.map(h => h.phase), ['completed', 'completed']);
+    assert.deepEqual(done.steps[0].attempts[0], firstAttempt);
+    assert.deepEqual(done.steps[0].attempts.map(a => a.nodeID), [A, B, C]);
+  } finally { await f.service.close(); f.db.close(); }
 });

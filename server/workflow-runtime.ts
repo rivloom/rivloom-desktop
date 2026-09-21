@@ -13,7 +13,9 @@ import { evaluateWorkflowPlacement, type WorkflowPlacementInput } from './workfl
 import { workflowDiagnostics, type WorkflowExecutionDiagnostic } from './workflow-diagnostics.ts';
 import { WorkflowStore } from './workflows.ts';
 import { WorkflowContexts, workflowContextDigest } from './workflow-contexts.ts';
-import { WorkflowOutputs, relayWorkflowInputs, importConversationContext } from './workflow-files.ts';
+import { workflowHistoryCapability } from '../shared/workflow-history.ts';
+import { WorkflowHistoryAccess, historyAttempt, historyOperation } from './workflow-history-access.ts';
+import { WorkflowOutputs, relayWorkflowInputs, importLegacyConversationContext } from './workflow-files.ts';
 import { WorkflowService, type WorkflowCandidate, type WorkflowDispatchResult, type WorkflowExecutionAdapter, type WorkflowExecutionSnapshot } from './workflow-service.ts';
 import { QueueConfirmationRequired } from './queue-confirmation.ts';
 import type { NodeNetwork } from './node-network.ts';
@@ -36,6 +38,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   readonly service: WorkflowService;
   readonly contexts: WorkflowContexts;
   private outputs: WorkflowOutputs;
+  private historyAccess: WorkflowHistoryAccess;
   private options: RuntimeOptions;
   private interval: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -44,6 +47,8 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   constructor(options: RuntimeOptions) {
     this.options = options; this.store = new WorkflowStore(db); this.service = new WorkflowService(this.store, this, changed);
     this.contexts = new WorkflowContexts(db, () => options.network.snapshot().local?.id || null, (id) => options.network.remoteTask(id));
+    this.historyAccess = new WorkflowHistoryAccess(this.store, id => options.network.remoteTask(id), peer => options.network.isTrustedNode(peer),
+      id => !db.prepare("SELECT 1 FROM conversation_retired WHERE kind='workflow' AND id=?").get(id));
     options.network.setDeferredWorkflowResults((id) => this.contexts.get(id)?.resultDelivery === 'on-demand');
     this.outputs = new WorkflowOutputs(db, options.network.files, () => { options.network.refreshTaskFiles(); changed(); });
   }
@@ -51,7 +56,11 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     if (this.interval) return;
     this.interval = setInterval(() => this.kick(), 1500); this.interval.unref(); this.kick();
   }
-  async conversationContext(value: Workflow) { return importConversationContext(this.options.network.files, value); }
+  async legacyHistory(value: Workflow, candidate: WorkflowCandidate) {
+    // Preserve the full-file path only when the selected peer cannot query history.
+    if (candidate.history !== false || !value.rounds?.length) return undefined;
+    return importLegacyConversationContext(this.options.network.files, value);
+  }
   fileLocations(local: Task, fileID: string) {
     const directory = projects().find((value) => value.id === local.projectID)?.directory;
     if (!directory) return [];
@@ -66,7 +75,9 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     void this.service.tick().finally(() => { this.running = false; });
   }
   candidates(value: Workflow, step: WorkflowStep, _role: WorkflowExecutionContext['role']): WorkflowCandidate[] {
-    return evaluateWorkflowPlacement(step, this.placementInput(value)).candidates;
+    const snapshot = this.options.network.snapshot();
+    return evaluateWorkflowPlacement(step, this.placementInput(value, snapshot)).candidates.map(candidate => ({ ...candidate,
+      history: candidate.kind === 'local' || !!snapshot.paired?.find(n => n.id === candidate.nodeID)?.capabilities.includes(workflowHistoryCapability) }));
   }
   private placementInput(value: Workflow, network = this.options.network.snapshot()): WorkflowPlacementInput {
     const ownProject = value.projectID || this.options.policies.snapshot().projectID;
@@ -214,6 +225,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   }
   async handle(peer: string, operation: string, payload: unknown): Promise<unknown> {
     if (!this.options.network.isTrustedNode(peer)) throw new Error('workflow_untrusted_peer');
+    if (operation === 'execution-history') return this.historyAccess.handle(peer, payload);
     if (operation === 'execution-context') return this.contexts.receive(peer, payload);
     if (!['execution-outcome', 'execution-files', 'execution-retry-check'].includes(operation)) throw new Error('workflow_unsupported_operation');
     if (operation === 'execution-files' && (!record(payload) || !keys(payload, ['executionID', 'digest', 'fileID']) || !uuid(payload.fileID)))
@@ -321,7 +333,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     for (const file of files) {
       const source = attempts.find((a) => a.kind === 'remote' && a.resultDelivery === 'on-demand' && a.outputFiles.some((f) => sameTaskFile(f, file)));
       if (!source || this.options.network.files.complete({ scope: 'remote', taskID: source.executionID, purpose: 'result' }, [file])) { result.push(file); continue; }
-      // Planning reads the transcript's remote file metadata; only business execution needs the bytes.
+      // Planning reads verified history/result metadata; only business execution needs the bytes.
       if (role === 'planner' || !required.some((f) => sameTaskFile(f, file))) continue;
       waiting = true;
       if (Date.now() - (this.fileRequests.get(file.id) || 0) < 10_000) continue;
@@ -364,5 +376,35 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   async close() {
     if (this.interval) clearInterval(this.interval); this.interval = null;
     await this.service.close(); await this.outputs.close();
+  }
+  async historyTool(taskID: string, name: unknown, args: unknown) {
+    const local = task(taskID), context = local.collaboration;
+    if (!context) throw new Error('context_history_not_available');
+    if (db.prepare("SELECT 1 FROM conversation_retired WHERE kind='local' AND id=? OR kind='remote' AND id=?")
+      .get(local.id, local.remoteOrigin?.remoteTaskID || '')) throw new Error('context_history_not_available');
+    const digest = workflowContextDigest(context, local.inputFiles || []);
+    if (local.remoteOrigin) {
+      const bound = this.contexts.get(local.remoteOrigin.remoteTaskID);
+      const remote = this.options.network.remoteTask(local.remoteOrigin.remoteTaskID);
+      if (!bound || bound.localTaskID !== local.id || bound.digest !== digest || bound.ownerNodeID !== local.remoteOrigin.ownerNodeID ||
+        !remote || remote.direction !== 'incoming' || remote.ownerNodeID !== bound.ownerNodeID || remote.status !== 'accepted' || remote.localTaskID !== local.id)
+        throw new Error('context_execution_changed');
+      const available = () => this.options.network.snapshot().paired?.some(n => n.id === bound.ownerNodeID && n.online && n.trusted && n.channelReady && n.capabilities.includes(workflowHistoryCapability));
+      if (!available()) throw new Error('context_history_unavailable');
+      const result = await this.options.network.collaborationRequest(bound.ownerNodeID, 'execution-history', {
+        workflowID: context.workflowID, executionID: bound.executionID, digest, name, args });
+      if (!available()) throw new Error('context_history_unavailable');
+      if (!record(result) || !keys(result, ['workflowID', 'executionID', 'digest', 'name', 'result']) || result.workflowID !== context.workflowID ||
+        result.executionID !== bound.executionID || result.digest !== digest || result.name !== name || Buffer.byteLength(JSON.stringify(result)) > 60_000)
+        throw new Error('context_invalid_reply');
+      return result.result;
+    }
+    if (db.prepare("SELECT 1 FROM conversation_retired WHERE kind='workflow' AND id=?").get(context.workflowID)) throw new Error('context_history_not_available');
+    const value = this.store.get(context.workflowID);
+    if (!value || value.creatorID !== local.creatorID) throw new Error('context_history_not_authorized');
+    const attempt = historyAttempt(value, local.id, digest);
+    if (attempt.kind !== 'local') throw new Error('context_history_not_authorized');
+    this.assertBinding(value, attempt, local);
+    return historyOperation(this.store, value, attempt, name, args);
   }
 }

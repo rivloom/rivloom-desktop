@@ -5,7 +5,7 @@ import { mkdir, writeFile, symlink } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { TaskFileStore } from '../server/task-files.ts';
-import { importWorkflowOutput, importConversationContext, relayWorkflowInputs, WorkflowOutputs } from '../server/workflow-files.ts';
+import { importWorkflowOutput, importConversationContext, importLegacyConversationContext, relayWorkflowInputs, WorkflowOutputs } from '../server/workflow-files.ts';
 import { WorkflowStore } from '../server/workflows.ts';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -19,6 +19,11 @@ test('conversation context preserves full requests with repeatable verified atta
     assert.equal(files.view(first.id).state, 'complete');
     const transcript = JSON.parse(files.content(first.id).toString());
     assert.equal(transcript[0].request, value.description); assert(transcript[0].request.endsWith('END'));
+    const later = { ...value, rounds: [{ ...value }], roundRequestID: randomUUID(), description: 'New current request' };
+    const legacy = importLegacyConversationContext(files, later)!;
+    assert.deepEqual(legacy, first, 'Legacy negotiation reuses the exact completed-round transcript');
+    assert(!files.content(legacy.id).toString().includes('New current request'));
+    assert.equal(importLegacyConversationContext(files, value), undefined);
     files.close(); files = new TaskFileStore(root);
     assert.deepEqual(importConversationContext(files, value), first);
     assert.equal(files.content(first.id).length, first.bytes);

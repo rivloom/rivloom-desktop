@@ -35,6 +35,12 @@ export function importConversationContext(files: TaskFileStore, value: Workflow)
   if (view.state !== 'complete') throw new Error('workflow_context_failed');
   return descriptor;
 }
+/** Legacy peers receive the same completed-round transcript as before, generated only when selected. */
+export function importLegacyConversationContext(files: TaskFileStore, value: Workflow) {
+  const last = value.rounds?.at(-1);
+  if (!last) return undefined;
+  return importConversationContext(files, { ...value, ...last, rounds: value.rounds!.slice(0, -1), roundRequestID: last.requestID });
+}
 /** Each remote attempt has its own transfer identities, preserving the store's original-source binding. */
 export async function relayWorkflowInputs(files: TaskFileStore, key: string, input: TaskFileDescriptor[],
   mayRead: () => boolean = () => true): Promise<TaskFileDescriptor[]> {

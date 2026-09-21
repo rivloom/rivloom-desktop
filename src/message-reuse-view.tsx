@@ -26,7 +26,7 @@ function failure(result: MessageReuseResult): string {
   if (result.reason === 'confirmation-required') return t('当前已有草稿，请选择追加或替换正文。');
   return t('这条消息没有可复用的正文。');
 }
-export function MessageReuseActions({ text, draft, existingConversation, onApply, disabled = false, allowReuse = true, reuseLabel, showQuote = true, iconOnly = true, className = '' }: MessageReuseActionsProps) {
+export function MessageReuseActions({ text, draft, existingConversation, onApply, disabled = false, allowReuse = true, reuseLabel, showQuote = true, iconOnly = false, className = '' }: MessageReuseActionsProps) {
   const [selection, setSelection] = useState<Omit<MessageReuseIntent, 'placement' | 'replaceConfirmed'> | null>(null);
   const [error, setError] = useState('');
   const preview = (intent: MessageReuseIntent) => applyMessageReuse(draft, intent, existingConversation, () => draft.requestID);

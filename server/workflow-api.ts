@@ -33,6 +33,19 @@ export function installWorkflowAPI(app: Express, runtime: WorkflowRuntime, netwo
   });
   app.get('/api/workflows/:id', (req, res) => res.json(visible(req)));
   app.get('/api/workflows/:id/diagnostics', (req, res) => res.json(runtime.diagnostics(visible(req))));
+  app.get('/api/workflows/:id/context', (req, res) => res.json(runtime.store.history.state(visible(req))));
+  app.post('/api/workflows/:id/history', (req, res) => {
+    try { res.json(runtime.store.history.query(visible(req), req.body)); } catch (value) { error(value); }
+  });
+  app.post('/api/workflows/:id/context/notes', (req, res) => {
+    try { res.json(runtime.store.history.note(visible(req), req.body, 'user')); } catch (value) { error(value); }
+  });
+  app.get('/api/workflows/:id/context/notes', (req, res) => {
+    try {
+      const offset = z.coerce.number().int().min(0).max(1_000_000).parse(req.query.offset || 0);
+      res.json({ notes: runtime.store.history.audit(visible(req), offset), offset });
+    } catch (value) { error(value); }
+  });
   app.post('/api/workflows/:id/messages', (req, res) => {
     try {
       const value = visible(req); const body = z.object({ requestID: z.string().uuid(), text: z.string().trim().min(1).max(12_000),

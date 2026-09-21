@@ -40,6 +40,8 @@ export const permissions: Config['permission'] = {
   rivloom_knowledge_search: 'allow',
   rivloom_knowledge_read: 'allow',
   rivloom_memory_save: 'ask',
+  rivloom_history: 'allow',
+  rivloom_context_note: 'allow',
   external_directory: 'deny',
   webfetch: 'deny',
   websearch: 'deny',
@@ -56,6 +58,8 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
     { permission: 'rivloom_knowledge_search', pattern: '*', action: 'allow' },
     { permission: 'rivloom_knowledge_read', pattern: '*', action: 'allow' },
     { permission: 'rivloom_memory_save', pattern: '*', action: mode === 'ask' ? 'ask' : 'allow' },
+    { permission: 'rivloom_history', pattern: '*', action: 'allow' },
+    { permission: 'rivloom_context_note', pattern: '*', action: 'allow' },
   ];
   if (mode === 'auto' || mode === 'full') {
     rules.push(
@@ -123,11 +127,15 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     env[key] = join(root, folder);
     mkdirSync(env[key]!, { recursive: true });
   }
-  const knowledge = root === engineRoot || scope.workspace ? knowledgeEngineConfig() : null;
+  const knowledge = root === engineRoot || scope.workspace ? knowledgeEngineConfig(root) : null;
   if (knowledge) {
     prepareEnginePluginDependencies(root);
     env.RIVLOOM_KNOWLEDGE_BRIDGE_URL = knowledge.url;
     env.RIVLOOM_KNOWLEDGE_BRIDGE_TOKEN = knowledge.token;
+    if (knowledge.context) {
+      env.RIVLOOM_CONTEXT_BRIDGE_URL = knowledge.context.url;
+      env.RIVLOOM_CONTEXT_BRIDGE_TOKEN = knowledge.context.token;
+    }
   }
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     autoupdate: false,
@@ -135,7 +143,11 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     snapshot: false,
     permission: permissions,
     agent: { build: { permission: permissions } },
-    ...(scope.providerID ? { enabled_providers: [scope.providerID] } : {}),
+    ...(scope.providerID ? { enabled_providers: [scope.providerID] } : {
+      // Zen exposes free models without a user connection. Rivloom starts unconfigured;
+      // preserve only an explicit existing Zen credential or a separately connected account.
+      disabled_providers: hasZenCredential(root) ? [] : ['opencode'],
+    }),
     ...(knowledge ? { plugin: [knowledge.plugin] } : {}),
   });
   const providerConfig = join(root, 'rivloom-providers.json');
@@ -146,6 +158,14 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     env.OPENCODE_SERVER_USERNAME = 'rivloom';
   }
   return env;
+}
+
+function hasZenCredential(root: string) {
+  try {
+    const auth = JSON.parse(readFileSync(join(root, 'data', 'opencode', 'auth.json'), 'utf8'))?.opencode;
+    return auth?.type === 'api' && typeof auth.key === 'string' && !!auth.key.trim() ||
+      auth?.type === 'oauth' && typeof auth.refresh === 'string' && !!auth.refresh;
+  } catch { return false; }
 }
 
 export function importAuth(source: string) {

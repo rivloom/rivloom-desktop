@@ -56,7 +56,7 @@ export type NodeQueueSnapshot = {
   updatedAt: string;
   entries: NodeQueueItem[];
 };
-export type NodeQueueAction = 'up' | 'down' | 'hold' | 'resume' | 'reject';
+export type NodeQueueAction = 'up' | 'down' | 'hold' | 'resume' | 'reject' | 'cancel';
 export type NodeQueueControl = {
   operationID: string;
   itemID: string;

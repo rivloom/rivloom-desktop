@@ -222,12 +222,13 @@ try {
 
   const initial = await owner.call<ModelSettings>('/model-settings');
   assert.equal(initial.credentialState, 'unconfigured');
-  assert(initial.models.some((model) => model.id === 'opencode/mimo-v2.5-free'));
+  assert.deepEqual(initial.models, []);
+  assert.equal(initial.defaultModel, '');
   assert(!JSON.stringify(initial).includes(fakeKey));
-  pass('Initial status is readable without a provider key and exposes the free engine model');
+  pass('Fresh installation has no connected models or implicit Zen default');
 
   await member.call('/model-settings/deepseek', { key: fakeKey, shared: true }, 403);
-  await member.call('/model-settings/default', { model: initial.defaultModel }, 403);
+  await member.call('/model-settings/default', { model: 'unconfigured/model' }, 403);
   await owner.call(
     '/model-settings/deepseek',
     { key: 'contains spaces and is invalid', shared: true },

@@ -296,7 +296,7 @@ export class NodeQueueStore {
     });
   }
 
-  control(input: NodeQueueControl, onRejected: (entry: NodeQueueEntry) => void = () => {}) {
+  control(input: NodeQueueControl, onEnded: (entry: NodeQueueEntry) => void = () => {}) {
     const request: NodeQueueControl = {
       operationID: input.operationID,
       itemID: input.itemID,
@@ -323,10 +323,16 @@ export class NodeQueueStore {
         this.update(neighbor, { order: entry.order });
         return this.update(entry, { order: neighbor.order });
       }
+      if (request.action === 'cancel') {
+        if (entry.source.kind !== 'local')
+          throw new NodeQueueError(400, 'Only locally originated queued tasks can be cancelled here.');
+        onEnded(entry);
+        return this.update(entry, { state: 'ended', blockReason: null, endReason: { code: 'cancelled' } });
+      }
       if (request.action === 'reject') {
         if (!request.reason || request.reason.length > 500)
           throw new NodeQueueError(400, '请填写 1–500 字的拒绝原因。');
-        onRejected(entry);
+        onEnded(entry);
         return this.update(entry, {
           state: 'ended',
           blockReason: null,

@@ -4,6 +4,55 @@ import { randomUUID } from 'node:crypto';
 import { WorkerAdmissionGate } from '../server/worker-admission.ts';
 import { queueFixture, localSource, remoteSource } from './node-queue-fixture.ts';
 
+test('local waiting and held entries can be cancelled while paused, atomically and durably', () => {
+  for (const held of [false, true]) {
+    const f = queueFixture();
+    try {
+      const source = localSource();
+      let entry = f.store.enqueue(source);
+      if (held) entry = f.store.control({ operationID: randomUUID(), itemID: entry.id,
+        expectedVersion: entry.version, action: 'hold' }).entry!;
+      f.store.setPaused({ operationID: randomUUID(), expectedVersion: f.store.snapshot().version, paused: true });
+      const command = { operationID: randomUUID(), itemID: entry.id, expectedVersion: entry.version, action: 'cancel' as const };
+      f.db.exec('CREATE TABLE cancellation_effect (id TEXT)');
+      assert.throws(() => f.store.control(command, () => {
+        f.db.prepare('INSERT INTO cancellation_effect VALUES (?)').run(entry.id);
+        throw new Error('Task changed');
+      }), /Task changed/);
+      assert.equal(f.db.prepare('SELECT count(*) AS n FROM cancellation_effect').get()!.n, 0);
+      assert.equal(f.store.get(entry.id)!.state, held ? 'held' : 'waiting');
+      let ends = 0;
+      const result = f.store.control(command, () => { ends++; });
+      assert.equal(result.entry!.state, 'ended');
+      assert.equal(result.entry!.endReason!.code, 'cancelled');
+      assert.deepEqual(f.reopen().control(command, () => { ends++; }), result);
+      assert.equal(ends, 1);
+      assert.equal(f.store.enqueue(source).state, 'ended');
+      assert.throws(() => f.store.admit(entry.id, result.entry!.version, entry.localTaskID!), /准入/);
+      const remote = f.store.enqueue(remoteSource());
+      assert.throws(() => f.store.control({ ...command, operationID: randomUUID(), itemID: remote.id,
+        expectedVersion: remote.version }), /locally originated/);
+    } finally { f.close(); }
+  }
+});
+
+test('cancellation racing with admission cannot stop an already admitted execution', async () => {
+  for (const cancelFirst of [true, false]) {
+    const f = queueFixture();
+    try {
+      const gate = new WorkerAdmissionGate(), entry = f.store.enqueue(localSource());
+      let ends = 0;
+      const cancel = () => gate.run(async () => f.store.control({ operationID: randomUUID(),
+        itemID: entry.id, expectedVersion: entry.version, action: 'cancel' }, () => { ends++; }));
+      const admit = () => gate.run(async () => f.store.admit(entry.id, entry.version, entry.localTaskID!));
+      const results = await Promise.allSettled(cancelFirst ? [cancel(), admit()] : [admit(), cancel()]);
+      assert.deepEqual(results.map(r => r.status), ['fulfilled', 'rejected']);
+      assert.equal(ends, cancelFirst ? 1 : 0);
+      assert.equal(f.store.get(entry.id)!.state, cancelFirst ? 'ended' : 'admitted');
+    } finally { f.close(); }
+  }
+});
+
 test('reorder changes authoritative order, fences stale neighbors and survives restart', () => {
   const f = queueFixture();
   try {

@@ -1,6 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { engineEnv } from '../server/engine.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -34,6 +35,28 @@ const platformAccess = (id: string, extra: Partial<ProviderAccess> = {}): Provid
   apiKey: true,
   oauth: [],
   ...extra,
+});
+
+test('fresh engine disables implicit Zen while explicit credentials and scoped accounts remain usable', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-zen-test-'));
+  try {
+    const config = (providerID?: string) => JSON.parse(engineEnv(undefined, root, { providerID }).OPENCODE_CONFIG_CONTENT!);
+    assert.deepEqual(config().disabled_providers, ['opencode']);
+    mkdirSync(join(root, 'data', 'opencode'), { recursive: true });
+    const auth = join(root, 'data', 'opencode', 'auth.json');
+    for (const value of ['broken', '{}', JSON.stringify({ opencode: { type: 'api', key: '  ' } })]) {
+      writeFileSync(auth, value);
+      assert.deepEqual(config().disabled_providers, ['opencode']);
+    }
+    writeFileSync(auth, JSON.stringify({ opencode: { type: 'api', key: 'synthetic-zen-key' } }));
+    assert.deepEqual(config().disabled_providers, []);
+    writeFileSync(auth, '{}');
+    for (const id of ['opencode', 'deepseek']) {
+      const scoped = config(id);
+      assert.deepEqual(scoped.enabled_providers, [id]);
+      assert.equal(scoped.disabled_providers, undefined);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('thinking choices come from runtime variants and expose no provider parameters', () => {

@@ -1,5 +1,6 @@
 import Bonjour from 'bonjour-service';
 import { workflowControlsCapability } from '../shared/workflow-channel.ts';
+import { workflowHistoryCapability } from '../shared/workflow-history.ts';
 import { collaborationCapability, validCollaborationRequest, validCollaborationResponse,
   type CollaborationRequest, type CollaborationResponse } from '../shared/collaboration.ts';
 import { createSocket, type RemoteInfo, type Socket } from 'node:dgram';
@@ -219,7 +220,7 @@ export class NodeNetworkError extends Error {
 
 const serviceType = 'rivloom';
 const capabilities = [
-  'brain',
+  workflowHistoryCapability,
   workflowControlsCapability,
   // Keep the signed hello within older decoders' 12-capability bound.
   // Obsolete descriptive flags have no protocol behavior.
@@ -236,6 +237,8 @@ const capabilities = [
 ];
 const maximumHelloBytes = 16 * 1024;
 const maximumChannelRequestBytes = 96 * 1024;
+// Data replies wrap up to 64 KiB of plaintext in authenticated base64 ciphertext.
+const maximumCollaborationResponseBytes = 96 * 1024;
 const maximumDiscoveryBytes = 2 * 1024;
 const defaultDiscoveryPort = 43_531;
 const discoveryProtocol = 'rivloom-node-discovery';
@@ -539,7 +542,7 @@ function validDiscoveryDeparture(value: unknown): value is DiscoveryDeparture {
   );
 }
 
-async function limitedJson(response: Response) {
+async function limitedJson(response: Response, maximumBytes = maximumHelloBytes) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('节点响应没有正文。');
   const chunks: Uint8Array[] = [];
@@ -548,7 +551,7 @@ async function limitedJson(response: Response) {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > maximumHelloBytes) {
+    if (total > maximumBytes) {
       await reader.cancel();
       throw new Error('节点响应过大。');
     }
@@ -731,7 +734,7 @@ export class NodeNetwork extends EventEmitter {
       const masterNode = this.nodes.get(brain.masterNodeID);
       const master =
         brain.masterNodeID === this.identity?.nodeID
-          ? this.status === 'online'
+          ? this.transportReady()
           : !!masterNode?.online && masterNode.trusted && masterNode.channelReady;
       const workers = [
         ...(localWorker ? [localWorker] : []),
@@ -1051,6 +1054,13 @@ export class NodeNetwork extends EventEmitter {
     this.status = 'degraded';
     this.error = message;
     this.update();
+  }
+
+  private transportReady() {
+    // Discovery can fail after authenticated unicast is established. Keep its warning,
+    // but gate execution on our live protocol listener and the peer's verified channel.
+    return !!this.identity && !!this.peerServer?.listening &&
+      (this.status === 'online' || this.status === 'degraded');
   }
 
   private allowed(remoteAddress: string | undefined) {
@@ -2326,7 +2336,8 @@ export class NodeNetwork extends EventEmitter {
         unavailable = false;
         if (response.status === 204) return null;
         const body = response.headers.get('content-type')?.startsWith('application/json')
-          ? await limitedJson(response)
+          ? await limitedJson(response, path === '/v1/channel/collaboration' && response.ok
+            ? maximumCollaborationResponseBytes : maximumHelloBytes)
           : null;
         if (response.ok) return body;
         if (path === '/v1/pairing/request' && response.status === 403 && body && typeof body === 'object' && 'code' in body && body.code === 'peer_not_discovered')
@@ -2601,7 +2612,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   async requestPairing(nodeID: string) {
-    if (!this.identity || this.status !== 'online')
+    if (!this.identity || !this.transportReady())
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
     const node = this.nodes.get(nodeID);
     if (!node?.online || !node.verified)
@@ -2726,7 +2737,7 @@ export class NodeNetwork extends EventEmitter {
     },
     taskID?: string,
   ) {
-    if (!this.identity || this.status !== 'online')
+    if (!this.identity || !this.transportReady())
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
     const node = this.nodes.get(nodeID);
     if (!node?.online || !node.trusted || !node.channelReady)
@@ -2866,7 +2877,7 @@ export class NodeNetwork extends EventEmitter {
         throw new NodeNetworkError(409, '创建请求的内容与原 Brain Task 冲突。');
       return { ...this.snapshot(), createdTaskID: existing.id };
     }
-    if (!this.identity || this.status !== 'online')
+    if (!this.identity || !this.transportReady())
       throw new NodeNetworkError(503, '节点网络尚未就绪。');
     const topology = this.snapshot()
       .brains.filter(

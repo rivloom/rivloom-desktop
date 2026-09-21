@@ -9,6 +9,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import {
   acceptSecureChannel,
@@ -89,6 +90,29 @@ test('node rate limits isolate discovery, hello and channel budgets without bypa
       `${scope} cap and normalized address`,
     );
     assert.equal(limiter.rateLimited('192.168.10.3', scope), false, `${scope} independent address`);
+  }
+});
+
+test('node response limits distinguish encrypted collaboration data from small control replies', async () => {
+  let content = 'x'.repeat(20_000);
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ content }));
+  });
+  await new Promise<void>(ok => server.listen(0, '127.0.0.1', ok));
+  const address = server.address(); assert(address && typeof address !== 'string');
+  const network = new NodeNetwork(join(tmpdir(), `rivloom-response-${randomUUID()}`), false);
+  const transport = network as unknown as { postToNode(node: Pick<RivloomNode, 'addresses' | 'port'>, path: string, value: unknown): Promise<unknown> };
+  const node = { addresses: ['127.0.0.1'], port: address.port };
+  try {
+    await assert.rejects(transport.postToNode(node, '/v1/channel/open', {}));
+    await assert.rejects(transport.postToNode(node, '/v1/pairing/request', {}));
+    assert.deepEqual(await transport.postToNode(node, '/v1/channel/collaboration', {}), { content });
+    content = 'x'.repeat(97 * 1024);
+    await assert.rejects(transport.postToNode(node, '/v1/channel/collaboration', {}));
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((ok, reject) => server.close(error => error ? reject(error) : ok()));
   }
 });
 
@@ -1350,6 +1374,21 @@ test(
       await assert.rejects(sender.collaborationRequest(peerID, 'resource-query', 'reject'));
       assert.deepEqual(await sender.collaborationRequest(peerID, 'resource-query', { query: 9 }), { found: { query: 9 }, ownerNodeID: peerID });
       assert.equal(received, 10);
+      // A 4000-character Chinese history page exceeds the 16 KiB hello limit
+      // after authenticated encryption/base64, while remaining valid protocol data.
+      receiver.setCollaborationHandler((peer, operation, payload) => {
+        assert.equal(peer, sender.snapshot().local!.id); assert.equal(operation, 'execution-history');
+        return { content: '汉'.repeat(Number(payload)), nextOffset: 4000 };
+      });
+      for (const length of [4000, 20_000]) {
+        assert.deepEqual(await sender.collaborationRequest(peerID, 'execution-history', length), { content: '汉'.repeat(length), nextOffset: 4000 });
+      }
+      await assert.rejects(sender.collaborationRequest(peerID, 'execution-history', 21_000));
+      assert.deepEqual(await sender.collaborationRequest(peerID, 'execution-history', 4000), { content: '汉'.repeat(4000), nextOffset: 4000 });
+      assert(sender.snapshot().paired?.find(node => node.id === peerID)?.channelReady);
+      receiver.setCollaborationHandler((peer, operation, payload) => {
+        assert.equal(peer, sender.snapshot().local!.id); assert.equal(operation, 'resource-query'); return payload;
+      });
       sender.setCollaborationHandler((peer, operation, payload) => {
         assert.equal(peer, peerID); assert.equal(operation, 'resource-query'); return payload;
       });
@@ -1399,6 +1438,8 @@ test(
         sampledAt: new Date().toISOString(),
       }));
       await Promise.all([sender.start(), receiver.start()]);
+      (sender as unknown as { fail(message: string): void }).fail('Synthetic discovery failure');
+      assert.equal(sender.snapshot().status, 'degraded');
       await pairNetworks(sender, receiver);
       const peer = receiver.snapshot().local!;
       const deadline = Date.now() + 10_000;
@@ -1427,6 +1468,21 @@ test(
         sender.snapshot().nearby.find((node) => node.id === peer.id)?.nodeQueue,
         before,
       );
+      const created = await sender.createTaskForNode(peer.id, {
+        title: 'Verified channel survives discovery degradation', description: 'Synthetic text only', criteria: 'No execution',
+      }, randomUUID(), peer.id);
+      assert.equal(sender.remoteTask(created.createdTaskID)!.targetNodeID, peer.id);
+      assert.equal(sender.snapshot().status, 'degraded', 'Keep the discovery warning visible');
+      assert.equal(sender.snapshot().error, 'Synthetic discovery failure');
+      assert(sender.snapshot().brains.filter(brain => brain.hosted).every(brain => brain.online));
+      await assert.rejects(sender.createRemoteTask('x'.repeat(32), peer.brains[0].id, {
+        title: 'Untrusted', description: 'Synthetic', criteria: 'Reject',
+      }), /互信/);
+      await sender.stop();
+      assert(sender.snapshot().brains.filter(brain => brain.hosted).every(brain => !brain.online));
+      await assert.rejects(sender.createRemoteTask(peer.id, peer.brains[0].id, {
+        title: 'Closed listener', description: 'Synthetic', criteria: 'Reject',
+      }), /尚未就绪/);
     } finally {
       writeFileSync(
         join(evidence, 'snapshots.json'),
