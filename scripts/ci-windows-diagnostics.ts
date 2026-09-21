@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { windowsPowerShellEnvironment, windowsPowerShellPrelude } from '../server/windows-engine-stop.mjs';
 import { testEnvironment } from './ci-workspace.ts';
 
 // Observation only: the real Windows tests remain the pass/fail gate. This probe
@@ -87,7 +89,8 @@ function safeStderr(stderr: string) {
   return { stages: stageRecords, exceptions, unclassifiedStderrPresent };
 }
 
-console.log('Windows DPAPI diagnostic observation; actual test failures remain the CI gate.');
+const cimOnly = process.argv.includes('--cim-only');
+console.log(`Windows ${cimOnly ? 'CIM module' : 'DPAPI'} diagnostic observation; actual test failures remain the CI gate.`);
 if (process.platform !== 'win32') {
   console.log(JSON.stringify({ kind: 'diagnostic-observation', outcome: 'unsupported-platform' }));
 } else {
@@ -96,7 +99,7 @@ if (process.platform !== 'win32') {
     ['inherited', { ...process.env }],
     ['fixed-ci-whitelist', fixedEnvironment],
   ] as const;
-  for (const [environment, env] of environments) {
+  if (!cimOnly) for (const [environment, env] of environments) {
     const startedAt = Date.now();
     const result = spawnSync(
       'powershell.exe',
@@ -131,5 +134,35 @@ if (process.platform !== 'win32') {
         ...safeStderr(result.stderr || ''),
       }),
     );
+  }
+  if (cimOnly) {
+  // Run after real lifecycle checks; never prewarm their cold-stop path.
+  // Fresh PowerShell processes, same read-only CIM enumeration and isolated TEMP.
+  // This timing observation never overrides the real 1800ms owned-stop gate.
+  const temporary = resolve('.data/verification/ci-windows-diagnostics/cim-temp');
+  mkdirSync(temporary, { recursive: true });
+  // Match engineEnv's system whitelist; no model, account or provider settings.
+  const withoutModules = Object.fromEntries(Object.entries(fixedEnvironment).filter(([name]) =>
+    /^(path|home|shell|lang|lc_all|lc_ctype|term|systemroot|windir|comspec|pathext|userprofile|appdata|localappdata|programdata|programfiles|programfiles\(x86\)|systemdrive|https?_proxy|no_proxy)$/i.test(name)));
+  Object.assign(withoutModules, { TEMP: temporary, TMP: temporary });
+  const inheritedModules = Object.fromEntries(Object.entries(fixedEnvironment).filter(([name]) => name.toUpperCase() === 'PSMODULEPATH'));
+  const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const command = '$ErrorActionPreference="Stop"; $all=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate -ErrorAction Stop); if($all.Count -eq 0){throw "Process inventory unavailable"}; [Console]::Out.Write([string]$all.Count + "|" + [string]($env:PSModulePath -ceq ($PSHOME + "\\Modules")))';
+  for (const [environment, env] of [
+    ['missing-module-path-first', withoutModules],
+    ['fixed-system-modules', windowsPowerShellEnvironment(withoutModules)],
+    ['inherited-module-path', { ...withoutModules, ...inheritedModules }],
+    ['missing-module-path-repeat', withoutModules],
+  ] as const) {
+    const startedAt = Date.now();
+    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', (environment === 'fixed-system-modules' ? windowsPowerShellPrelude : '') + command], { env, encoding: 'utf8', windowsHide: true, timeout: 8000, maxBuffer: 4096 });
+    const durationMs = Date.now() - startedAt;
+    const observed = (result.stdout || '').trim().match(/^[1-9]\d{0,6}\|(True|False)$/);
+    const inventoryAvailable = !result.error && result.status === 0 && !!observed;
+    console.log(JSON.stringify({ kind: 'cim-module-diagnostic', environment, freshPowerShell: true, readOnly: true, durationMs, timeoutMs: 8000,
+      stopBudgetMs: 1800, withinStopBudget: inventoryAvailable && durationMs < 1800, inventoryAvailable,
+      actualSystemModulesOnly: observed ? observed[1] === 'True' : null,
+      status: result.status, timedOut: (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT', stderrPresent: !!result.stderr }));
+  }
   }
 }

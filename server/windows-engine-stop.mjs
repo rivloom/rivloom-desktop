@@ -80,9 +80,22 @@ export function recordedTreeExited(before, after) {
   return true;
 }
 
-function run(file, args, timeout) {
+export function windowsPowerShellEnvironment(environment = process.env) {
+  const env = Object.fromEntries(Object.entries(environment).filter(([name]) => name.toUpperCase() !== 'PSMODULEPATH'));
+  const systemRoot = Object.entries(environment).find(([name]) => name.toUpperCase() === 'SYSTEMROOT')?.[1] || 'C:\\Windows';
+  // CIM is a Windows built-in. Avoid slow implicit module-path reconstruction
+  // and never load user/provider modules just to prove an owned process exit.
+  env.PSModulePath = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+  return env;
+}
+
+// Windows PowerShell may expand an inherited PSModulePath during startup.
+// Reassert the actual search path before invoking any auto-loadable command.
+export const windowsPowerShellPrelude = "$env:PSModulePath = $PSHOME + '\\Modules'; ";
+
+function run(file, args, timeout, env = process.env) {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, encoding: 'utf8', timeout, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+    execFile(file, args, { env, windowsHide: true, encoding: 'utf8', timeout, maxBuffer: 1024 * 1024 }, (error, stdout) => {
       if (error) reject(error);
       else resolve(stdout);
     });
@@ -96,8 +109,8 @@ async function windowsSnapshot(rootPID, recorded) {
   // CIM reads metadata once. Only the selected owned identities and descendants
   // leave PowerShell; missing creation times are retained so validation fails.
   const output = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
-    `$ErrorActionPreference="Stop"; $all=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate -ErrorAction Stop); if($all.Count -eq 0){throw "Process inventory unavailable"}; $ids=[Collections.Generic.HashSet[int]]::new(); @(${ids.join(',')}) | ForEach-Object {[void]$ids.Add($_)}; do {$count=$ids.Count; foreach($p in $all) {if($ids.Contains([int]$p.ParentProcessId)) {[void]$ids.Add([int]$p.ProcessId)}}} while($ids.Count -ne $count); ConvertTo-Json -Compress -InputObject @($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object {[pscustomobject]@{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;created=if($null -ne $_.CreationDate){$_.CreationDate.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)}else{""}}})`,
-  ], 1800);
+    `${windowsPowerShellPrelude}$ErrorActionPreference="Stop"; $all=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate -ErrorAction Stop); if($all.Count -eq 0){throw "Process inventory unavailable"}; $ids=[Collections.Generic.HashSet[int]]::new(); @(${ids.join(',')}) | ForEach-Object {[void]$ids.Add($_)}; do {$count=$ids.Count; foreach($p in $all) {if($ids.Contains([int]$p.ParentProcessId)) {[void]$ids.Add([int]$p.ProcessId)}}} while($ids.Count -ne $count); ConvertTo-Json -Compress -InputObject @($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object {[pscustomobject]@{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;created=if($null -ne $_.CreationDate){$_.CreationDate.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)}else{""}}})`,
+  ], 1800, windowsPowerShellEnvironment());
   return processSnapshot(JSON.parse(output.trim()));
 }
 

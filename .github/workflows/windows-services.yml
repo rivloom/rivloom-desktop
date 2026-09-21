@@ -35,6 +35,9 @@ jobs:
       - name: Build the pinned Rivloom runtime source and verify its smoke tests
         run: npm.cmd run engine:prepare
       - run: npm.cmd run test:ci:engine
+      - name: Observe CIM module lookup after the real lifecycle checks
+        if: always()
+        run: node scripts/ci-windows-diagnostics.ts --cim-only
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

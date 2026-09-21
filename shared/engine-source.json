@@ -36,7 +36,7 @@
   "verification": {
     "files": {
       "scripts/runtime-windows/smoke.mjs": "b7130e252fbc346154f921415b0b8b14fffcb86266356d8ec880a9beeac29dc9",
-      "server/windows-engine-stop.mjs": "82398555e86d3e3eecf85331014613372587484519e0e89084a693b518cb2495"
+      "server/windows-engine-stop.mjs": "425ad81ca0d697282b977de8a365db614edb90aa0c13ee2eb72991b22596de04"
     }
   }
 }

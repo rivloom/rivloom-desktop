@@ -8,3 +8,5 @@ export interface WindowsEngineStopDiagnostic {
   reason?: 'timeout' | 'output_limit' | 'command_missing' | 'command_denied' | 'command_failed' | 'invalid_inventory' | 'invalid_result' | 'root_exited' | 'survivor';
 }
 export function parseWindowsEngineStopDiagnostic(line: unknown): WindowsEngineStopDiagnostic | undefined;
+export function windowsPowerShellEnvironment(environment?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+export const windowsPowerShellPrelude: string;

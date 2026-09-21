@@ -2,13 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const modulePath = '../server/windows-engine-stop.mjs';
-const { processSnapshot, ownedProcessTree, recordedTreeExited, stopWindowsEngineTree, parseWindowsEngineStopDiagnostic } = await import(modulePath);
+const { processSnapshot, ownedProcessTree, recordedTreeExited, stopWindowsEngineTree, parseWindowsEngineStopDiagnostic, windowsPowerShellEnvironment } = await import(modulePath);
 type ProcessRow = { pid: number; parentPid: number; created: string };
 const row = (pid: number, parentPid: number, order: number): ProcessRow => ({
   pid, parentPid, created: String(638900000000000000n + BigInt(order)),
 });
 const root = row(100, 50, 10), child = row(101, 100, 20), grandchild = row(102, 101, 30);
 const tree = [root, child, grandchild];
+
+test('CIM helper confines module discovery to Windows built-ins without modifying the engine environment', () => {
+  const inherited = { SystemRoot: 'C:\\Windows', PSModulePath: 'C:\\user-modules', psMODULEpath: 'C:\\other-modules', TEMP: 'C:\\fixture-temp' };
+  const before = { ...inherited };
+  const scoped = windowsPowerShellEnvironment(inherited);
+  assert.deepEqual(inherited, before);
+  assert.deepEqual(Object.keys(scoped).filter(name => name.toUpperCase() === 'PSMODULEPATH'), ['PSModulePath']);
+  assert.equal(scoped.PSModulePath.replaceAll('\\', '/'), 'C:/Windows/System32/WindowsPowerShell/v1.0/Modules');
+  assert.equal(scoped.TEMP, inherited.TEMP);
+  assert.doesNotMatch(scoped.PSModulePath, /user-modules|other-modules/);
+});
 
 test('Windows owned inventory includes descendants but excludes unrelated and reused-parent processes', () => {
   assert.deepEqual(ownedProcessTree([grandchild, row(999, 1, 1), row(103, 100, 5), child, root], 100, 50), tree);
