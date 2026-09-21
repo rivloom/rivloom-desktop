@@ -10,6 +10,7 @@ import { knowledgeEngineConfig } from './knowledge-engine.ts';
 import { prepareEnginePluginDependencies } from './engine-plugin-dependencies.ts';
 import { privateDirectory } from './private-storage.ts';
 import { engineBinaryName, engineTarget, findPreparedEngine, readEngineSource } from './engine-artifact.ts';
+import { parseWindowsEngineStopDiagnostic } from './windows-engine-stop.mjs';
 
 const runtimeRoot = fileURLToPath(new URL('..', import.meta.url));
 export const ENGINE_VERSION = readEngineSource(runtimeRoot).version;
@@ -209,6 +210,7 @@ async function stopFailedEngine(child: ChildProcess | undefined, requireSuccessf
 async function startEngineOnPort(cwd: string, port: number, password: string, root: string, scope: EngineScope) {
   let child: ChildProcess | undefined;
   let announced = false;
+  const stopDiagnostics: NonNullable<ReturnType<typeof parseWindowsEngineStopDiagnostic>>[] = [];
   try {
     const url = await new Promise<string>((ok, fail) => {
       child = spawn(
@@ -253,6 +255,21 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
       };
       child.stdout!.on('data', onData);
       child.stderr!.on('data', onData);
+      let diagnosticLine = '';
+      let discardDiagnosticLine = false;
+      child.stderr!.on('data', (data: Buffer) => {
+        for (const part of data.toString().split(/(?<=\n)/)) {
+          if (!discardDiagnosticLine) {
+            diagnosticLine += part;
+            if (diagnosticLine.length > 768) { diagnosticLine = ''; discardDiagnosticLine = true; }
+          }
+          if (part.endsWith('\n')) {
+            const diagnostic = parseWindowsEngineStopDiagnostic(diagnosticLine.trimEnd());
+            if (diagnostic) { stopDiagnostics.push(diagnostic); if (stopDiagnostics.length > 8) stopDiagnostics.shift(); }
+            diagnosticLine = ''; discardDiagnosticLine = false;
+          }
+        }
+      });
     });
     if (url !== `http://127.0.0.1:${port}`)
       throw new Error('OpenCode 返回了非预期监听地址，不连接该服务。');
@@ -301,7 +318,13 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
       child: child!,
       headers,
       close,
-      waitForExit: async () => { close(); await closing; await stopFailedEngine(child, true); },
+      waitForExit: async () => {
+        try { close(); await closing; await stopFailedEngine(child, true); }
+        catch (error) {
+          if (stopDiagnostics.length) console.error('RIVLOOM_ENGINE_STOP_DIAGNOSTICS', JSON.stringify(stopDiagnostics));
+          throw error;
+        }
+      },
     };
   } catch (error) {
     await stopFailedEngine(child);

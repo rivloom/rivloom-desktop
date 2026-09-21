@@ -4,7 +4,8 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from
 import { chmod, copyFile, mkdir, mkdtemp, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { engineBinaryName, engineDigest, engineRecipeDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { setTimeout as delay } from 'node:timers/promises';
+import { engineBinaryName, engineDigest, engineRecipeDigest, engineVerificationDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 
 export function parseEngineArguments(args: string[]) {
   assert(args.length === 0 || (args.length === 2 && ['--artifact', '--source'].includes(args[0]) && args[1] && !args[1].startsWith('--')), 'Usage: node scripts/engine-prepare.ts [--artifact VERIFIED_DIRECTORY | --source LOCAL_RUNTIME_REPOSITORY]');
@@ -46,20 +47,64 @@ export function verifyEngineRecipe(root: string, source: EngineSource) {
   const files = Object.fromEntries(Object.keys(source.recipe.files).map(file => [file, engineDigest(readFileSync(engineRegularFile(root, `${source.recipe!.directory}/${file}`)))]));
   assert.deepEqual(files, source.recipe.files, 'Linux build recipe differs from the pinned snapshot');
 }
+export function verifyEngineVerification(root: string, source: EngineSource) {
+  if (!source.verification) return;
+  const files = Object.fromEntries(Object.keys(source.verification.files).map(file => [file, engineDigest(readFileSync(engineRegularFile(root, file)))]));
+  assert.deepEqual(files, source.verification.files, 'Windows verification differs from the pinned snapshot');
+}
+async function prepareWindowsBun(checkout: string, source: EngineSource) {
+  const config = JSON.parse(readFileSync(engineRegularFile(checkout, 'rivloom/runtime.json'), 'utf8'));
+  assert.equal(config.bun.version, source.toolchain.bun);
+  assert.equal(config.bun.sha256, source.toolchain.bunArchiveSHA256);
+  assert.equal(config.bun.url, `https://github.com/oven-sh/bun/releases/download/bun-v${source.toolchain.bun}/bun-windows-x64-baseline.zip`);
+  const directory = await realDirectory(checkout, `rivloom/.tools/bun-${source.toolchain.bun}`);
+  const archive = join(directory, 'bun.zip');
+  assert(!existsSync(archive), 'A new Bun download location is required');
+  // Use the same system proxy transport as the pinned producer, with bounded retries.
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri ${quote(config.bun.url)} -OutFile ${quote(archive)} -TimeoutSec 120`],
+      { windowsHide: true, stdio: 'inherit', timeout: 125_000 });
+      break;
+    } catch (error) {
+      if (attempt === 3) throw error;
+      console.log(`Pinned Bun download retry ${attempt}/2 after a transport failure.`);
+      await delay(attempt * 1000);
+    }
+  }
+  assert(lstatSync(archive).size <= 100 * 1024 ** 2, 'Pinned Bun archive is oversized');
+  assert.equal(engineDigest(readFileSync(engineRegularFile(directory, 'bun.zip'))), source.toolchain.bunArchiveSHA256, 'Bun download SHA256 mismatch');
+  execFileSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-xf', archive, '-C', directory], { windowsHide: true, stdio: 'inherit' });
+  const executable = engineRegularFile(directory, 'bun-windows-x64-baseline/bun.exe');
+  assert.equal(execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim(), source.toolchain.bun);
+}
 async function build(root: string, checkout: string, source: EngineSource, artifact: string) {
   const linux = source.target === 'linux-x64';
   verifyEngineRecipe(root, source);
+  verifyEngineVerification(root, source);
+  if (source.verification) await prepareWindowsBun(checkout, source);
   await new Promise<void>((accept, reject) => {
     const command = linux ? process.execPath : 'pwsh.exe';
     const args = linux ? [join(root, source.recipe!.directory, 'build.mjs'), '--source', checkout, '--output', artifact]
-      : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(checkout, 'rivloom/build.ps1'), '-RequireClean'];
+      : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(checkout, 'rivloom/build.ps1'), '-RequireClean', ...(source.verification ? ['-SkipSmoke'] : [])];
     const child = spawn(command, args, {
       cwd: checkout, windowsHide: true, stdio: 'inherit', env: { ...process.env, CI: 'true' },
     });
     child.once('error', reject);
     child.once('exit', code => code === 0 ? accept() : reject(new Error(`Pinned runtime build failed (${code}); no fallback engine will be used.`)));
   });
+  if (source.verification) {
+    verifyEngineVerification(root, source);
+    await new Promise<void>((accept, reject) => {
+      const child = spawn(process.execPath, [join(root, 'scripts/runtime-windows/smoke.mjs'), checkout], { cwd: checkout, windowsHide: true, stdio: 'inherit', env: { ...process.env, CI: 'true' } });
+      child.once('error', reject);
+      child.once('exit', code => code === 0 ? accept() : reject(new Error(`Pinned Windows verification failed (${code}); no fallback or unverified artifact will be used.`)));
+    });
+  }
   verifyEngineRecipe(root, source);
+  verifyEngineVerification(root, source);
 }
 export async function prepareEngine(root: string, options = parseEngineArguments([])) {
   const target = engineTarget(), source = readEngineSource(root, target);
@@ -110,6 +155,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
     commit: source.commit, tree: source.tree, binarySHA256: result.binarySHA256,
     manifestSHA256: result.manifestSHA256, smokeSHA256: result.smokeSHA256, ...(sourceProofSHA256 ? { sourceProofSHA256 } : {}),
     ...(source.recipe ? { recipeSHA256: engineRecipeDigest(source) } : {}),
+    ...(source.verification ? { verificationSHA256: engineVerificationDigest(source) } : {}),
   }, null, 2) + '\n', { flag: 'wx' });
   verifyEngineArtifact(staging, source, options.mode === 'artifact');
   assert(!existsSync(destination), 'Another engine preparation finished concurrently; preserve both outputs and retry');

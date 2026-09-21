@@ -4,6 +4,35 @@ import { join } from 'node:path';
 const validPID = (value) => Number.isSafeInteger(value) && value > 0;
 const validCreated = (value) => typeof value === 'string' && /^[1-9]\d{15,18}$/.test(value);
 
+const diagnosticPhases = ['before', 'root-check', 'kill', 'after', 'result', 'deadline', 'unexpected'];
+const diagnosticReasons = ['timeout', 'output_limit', 'command_missing', 'command_denied', 'command_failed', 'invalid_inventory', 'invalid_result', 'root_exited', 'survivor'];
+// Parse only this fixed, bounded schema. Never forward raw child output/errors:
+// those may contain command lines, paths or credentials supplied to the engine.
+export function parseWindowsEngineStopDiagnostic(line) {
+  const prefix = 'RIVLOOM_ENGINE_STOP ';
+  if (typeof line !== 'string' || line.length > 768 || !line.startsWith(prefix)) return;
+  try {
+    const value = JSON.parse(line.slice(prefix.length));
+    if (!value || !diagnosticPhases.includes(value.phase) || !['ok', 'failed', 'skipped'].includes(value.outcome) ||
+        !Number.isSafeInteger(value.durationMs) || value.durationMs < 0) return;
+    const result = { phase: value.phase, outcome: value.outcome, durationMs: value.durationMs };
+    if ('code' in value) { if (value.code !== null && (!Number.isSafeInteger(value.code) || value.code < 0)) return; result.code = value.code; }
+    if ('recorded' in value) { if (!Number.isSafeInteger(value.recorded) || value.recorded < 0) return; result.recorded = value.recorded; }
+    if ('proof' in value) { if (!['taskkill', 'observed-exit', 'unproven'].includes(value.proof)) return; result.proof = value.proof; }
+    if ('reason' in value) { if (!diagnosticReasons.includes(value.reason)) return; result.reason = value.reason; }
+    return result;
+  } catch { return; }
+}
+
+function failureReason(error, fallback) {
+  if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'output_limit';
+  if (error?.killed === true) return 'timeout';
+  if (error?.code === 'ENOENT') return 'command_missing';
+  if (error?.code === 'EACCES' || error?.code === 'EPERM') return 'command_denied';
+  if (Number.isSafeInteger(error?.code) && error.code >= 0) return 'command_failed';
+  return fallback;
+}
+
 // Creation ticks stay strings: .NET ticks exceed JavaScript's safe integer range.
 // No names, command lines, credentials or unrelated process records are logged.
 export function processSnapshot(value) {
@@ -79,7 +108,8 @@ async function killTree(rootPID) {
     return 0;
   } catch (error) {
     // A timeout, signal, missing command or query error is not a taskkill exit code.
-    return Number.isSafeInteger(error.code) && error.code >= 0 && !error.killed ? error.code : null;
+    if (Number.isSafeInteger(error.code) && error.code >= 0 && !error.killed) return error.code;
+    throw error;
   }
 }
 
@@ -87,19 +117,41 @@ export async function stopWindowsEngineTree(rootPID, hostPID, options = {}) {
   if (!validPID(rootPID) || !validPID(hostPID)) throw new Error('Invalid owned process identity.');
   const snapshot = options.snapshot || ((recorded) => windowsSnapshot(rootPID, recorded));
   const kill = options.kill || killTree;
+  const started = performance.now();
+  const report = (phase, outcome, since, detail = {}) => {
+    try { options.onDiagnostic?.({ phase, outcome, durationMs: Math.max(0, Math.round(performance.now() - since)), ...detail }); }
+    catch { /* Diagnostics must not alter cleanup or its proof. */ }
+  };
+  const done = (result) => {
+    report('result', result.stopped ? 'ok' : 'failed', started, { code: result.code, proof: result.proof, recorded: result.recorded });
+    return result;
+  };
   let owned;
-  try { owned = ownedProcessTree(await snapshot(), rootPID, hostPID); } catch { /* Fail closed after cleanup. */ }
+  const before = performance.now();
+  try {
+    owned = ownedProcessTree(await snapshot(), rootPID, hostPID);
+    report('before', 'ok', before, { recorded: owned.length });
+  } catch (error) { report('before', 'failed', before, { reason: failureReason(error, 'invalid_inventory') }); }
   // Exactly one kill request, always to the owned engine PID; never kill by name,
   // enumerate-and-kill individual PIDs, or retry against a potentially reused PID.
-  if (options.isRootRunning && !options.isRootRunning())
-    return { stopped: false, code: null, proof: 'unproven', recorded: owned?.length || 0 };
-  const code = await kill(rootPID).catch(() => null);
-  if (!owned || !Number.isSafeInteger(code) || code < 0) return { stopped: false, code, proof: 'unproven', recorded: owned?.length || 0 };
-  if (code === 0) return { stopped: true, code, proof: 'taskkill', recorded: owned.length };
+  if (options.isRootRunning && !options.isRootRunning()) {
+    report('root-check', 'skipped', started, { reason: 'root_exited' });
+    return done({ stopped: false, code: null, proof: 'unproven', recorded: owned?.length || 0 });
+  }
+  const killing = performance.now();
+  let code = null, reason;
+  try { code = await kill(rootPID); } catch (error) { reason = failureReason(error, 'command_failed'); }
+  const validCode = Number.isSafeInteger(code) && code >= 0;
+  report('kill', validCode ? 'ok' : 'failed', killing, { code: validCode ? code : null, ...(!validCode ? { reason: reason || 'invalid_result' } : {}) });
+  if (!owned || !validCode) return done({ stopped: false, code, proof: 'unproven', recorded: owned?.length || 0 });
+  if (code === 0) return done({ stopped: true, code, proof: 'taskkill', recorded: owned.length });
+  const after = performance.now();
   try {
     const stopped = recordedTreeExited(owned, await snapshot(owned));
-    return { stopped, code, proof: stopped ? 'observed-exit' : 'unproven', recorded: owned.length };
-  } catch {
-    return { stopped: false, code, proof: 'unproven', recorded: owned.length };
+    report('after', stopped ? 'ok' : 'failed', after, stopped ? {} : { reason: 'survivor' });
+    return done({ stopped, code, proof: stopped ? 'observed-exit' : 'unproven', recorded: owned.length });
+  } catch (error) {
+    report('after', 'failed', after, { reason: failureReason(error, 'invalid_inventory') });
+    return done({ stopped: false, code, proof: 'unproven', recorded: owned.length });
   }
 }

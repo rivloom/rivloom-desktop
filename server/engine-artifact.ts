@@ -17,6 +17,7 @@ export const engineSourceSchema = z.strictObject({
   inputs: z.record(z.string(), digest),
   approvedArtifact: z.strictObject({ binarySHA256: digest, manifestSHA256: digest, smokeSHA256: digest }).optional(),
   recipe: z.strictObject({ directory: z.literal('scripts/runtime-linux'), files: z.record(z.string(), digest) }).optional(),
+  verification: z.strictObject({ files: z.record(z.string(), digest) }).optional(),
 });
 export type EngineSource = z.infer<typeof engineSourceSchema>;
 export const engineDigest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
@@ -28,6 +29,7 @@ export function engineTarget(platform: NodeJS.Platform = process.platform, arch:
 export const engineSourceFile = (target: EngineTarget = engineTarget()) => target === 'linux-x64' ? 'shared/engine-source-linux.json' : 'shared/engine-source.json';
 export const engineBinaryName = (source: EngineSource) => source.target === 'linux-x64' ? 'opencode' : 'opencode.exe';
 export const engineRecipeDigest = (source: EngineSource) => source.recipe ? engineDigest(JSON.stringify(Object.entries(source.recipe.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) : undefined;
+export const engineVerificationDigest = (source: EngineSource) => source.verification ? engineDigest(JSON.stringify(Object.entries(source.verification.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) : undefined;
 export function readEngineSource(root: string, target: EngineTarget = engineTarget()) {
   const source = engineSourceSchema.parse(JSON.parse(readFileSync(engineRegularFile(root, engineSourceFile(target)), 'utf8')));
   assert.equal(source.target, target);
@@ -38,8 +40,12 @@ export function readEngineSource(root: string, target: EngineTarget = engineTarg
   for (const path of ['bun.lock', 'rivloom/runtime.json', 'rivloom/build.mjs', 'rivloom/build.ps1', 'rivloom/smoke.mjs', 'rivloom/models.json', 'LICENSE'])
     assert(source.inputs[path], `Missing reviewed engine input: ${path}`);
   for (const path of Object.keys(source.inputs)) engineRelativePath(path);
-  if (target === 'windows-x64') assert(source.approvedArtifact && !source.recipe, 'Windows uses its existing committed producer');
+  if (target === 'windows-x64') {
+    assert(source.approvedArtifact && !source.recipe, 'Windows uses its existing committed producer');
+    if (source.verification) assert.deepEqual(Object.keys(source.verification.files).sort(), ['scripts/runtime-windows/smoke.mjs', 'server/windows-engine-stop.mjs']);
+  }
   else {
+    assert(!source.verification, 'Linux uses its complete pinned recipe');
     assert(source.recipe, 'Linux source requires an independently pinned build recipe');
     assert.deepEqual(Object.keys(source.recipe.files).sort(), ['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs']);
     assert(source.inputs['packages/opencode/script/build.ts'], 'Linux compiler entrypoint must be pinned');
@@ -109,6 +115,16 @@ export function verifyEngineArtifact(directory: string, source: EngineSource, ap
   assert.equal(smoke.passed, true, 'Engine smoke did not pass');
   assert(!smoke.error && !smoke.cleanupError, 'Engine smoke reported a failure');
   assert(Array.isArray(smoke.checks) && smoke.checks.length === (linux ? 11 : 10) && smoke.checks.every((check: { passed: boolean }) => check.passed === true), 'Incomplete engine smoke');
+  if (source.verification) {
+    assert.equal(smoke.manifestSHA256, manifestSHA256, 'Windows smoke belongs to a different producer manifest');
+    assert.equal(smoke.verificationSHA256, engineVerificationDigest(source), 'Windows verification recipe changed');
+    assert.equal(smoke.harnessSHA256, source.verification.files['scripts/runtime-windows/smoke.mjs']);
+    assert.deepEqual(smoke.verificationFiles, source.verification.files, 'Windows verification inputs differ');
+    assert(Array.isArray(smoke.stops) && smoke.stops.length === 2 && smoke.stops.every((stop: { stopped: boolean; recorded: number; rootExited: boolean; proof: string; code: number }) =>
+      stop.stopped === true && Number.isSafeInteger(stop.recorded) && stop.recorded > 0 && stop.rootExited === true &&
+      ((stop.proof === 'taskkill' && stop.code === 0) || (stop.proof === 'observed-exit' && Number.isSafeInteger(stop.code) && stop.code > 0))),
+    'Windows smoke lacks owned process exit proof');
+  }
   if (linux) {
     assert.deepEqual(manifest.inputs.files, source.inputs, 'Linux compiled source inputs differ');
     assert.deepEqual(manifest.recipe, { files: source.recipe!.files, sha256: engineRecipeDigest(source) }, 'Linux recipe differs from reviewed inputs');
@@ -156,6 +172,7 @@ export function verifyPreparedEngine(root: string, target: EngineTarget = engine
   assert.equal(receipt.manifestSHA256, result.manifestSHA256);
   assert.equal(receipt.smokeSHA256, result.smokeSHA256);
   if (source.recipe) assert.equal(receipt.recipeSHA256, engineRecipeDigest(source), 'Linux receipt recipe changed');
+  if (source.verification) assert.equal(receipt.verificationSHA256, engineVerificationDigest(source), 'Windows receipt verification changed');
   if (receipt.mode === 'pinned-artifact') verifyEngineArtifact(directory, source, true);
   else {
     assert.equal(receipt.mode, 'source-build');

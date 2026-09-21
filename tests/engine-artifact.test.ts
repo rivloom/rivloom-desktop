@@ -4,8 +4,8 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, sy
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { engineDigest, engineRecipeDigest, engineTarget, readEngineSource, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
-import { prepareEngine, verifyEngineRecipe } from '../scripts/engine-prepare.ts';
+import { engineDigest, engineRecipeDigest, engineVerificationDigest, engineTarget, readEngineSource, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { prepareEngine, verifyEngineRecipe, verifyEngineVerification } from '../scripts/engine-prepare.ts';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 
@@ -27,6 +27,9 @@ function artifact(directory: string, source: EngineSource, payload: string) {
     binary: { file: 'opencode.exe', bytes: binary.length, sha256: binarySHA256 },
   };
   const smoke = { schemaVersion: 1, version: source.version, binarySHA256, passed: true,
+    ...(source.verification ? { manifestSHA256: engineDigest(JSON.stringify(manifest, null, 2) + '\n'), verificationSHA256: engineVerificationDigest(source),
+      verificationFiles: source.verification.files, harnessSHA256: source.verification.files['scripts/runtime-windows/smoke.mjs'],
+      stops: [{ stopped: true, recorded: 1, rootExited: true, proof: 'taskkill', code: 0 }, { stopped: true, recorded: 1, rootExited: true, proof: 'observed-exit', code: 128 }] } : {}),
     checks: Array.from({ length: 10 }, (_, index) => ({ name: `synthetic-check-${index}`, passed: true })) };
   const manifestBytes = JSON.stringify(manifest, null, 2) + '\n';
   const smokeBytes = JSON.stringify(smoke, null, 2) + '\n';
@@ -47,6 +50,7 @@ function fixture(t: TestContext, sameArtifact = false) {
   const root = join(base, 'desktop'), approved = join(base, 'approved');
   mkdirSync(join(root, 'shared'), { recursive: true });
   const source = structuredClone(readEngineSource(repository, 'windows-x64'));
+  for (const file of Object.keys(source.verification?.files || {})) { mkdirSync(dirname(join(root, file)), { recursive: true }); writeFileSync(join(root, file), readFileSync(join(repository, file))); }
   source.inputs.LICENSE = engineDigest('synthetic license\n');
   source.approvedArtifact = artifact(approved, source, 'approved');
   const lock = JSON.stringify(source, null, 2) + '\n';
@@ -59,6 +63,7 @@ function fixture(t: TestContext, sameArtifact = false) {
   writeFileSync(join(directory, 'engine-build.json'), JSON.stringify({
     schemaVersion: 1, kind: 'rivloom-engine-build', mode: 'source-build', sourceLockSHA256: engineDigest(lock),
     commit: source.commit, tree: source.tree, ...cached, sourceProofSHA256: engineDigest(proof),
+    ...(source.verification ? { verificationSHA256: engineVerificationDigest(source) } : {}),
   }, null, 2) + '\n');
   return { base, root, approved, directory, source, cached };
 }
@@ -93,11 +98,37 @@ test('prepared engine rejects a junction in the workspace-to-vendor ancestor cha
   assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /link|directory|ancestor|escape/i);
 });
 
+test('Windows verification rejects a changed harness before executing it', t => {
+  const value = fixture(t);
+  verifyEngineVerification(value.root, value.source);
+  writeFileSync(join(value.root, 'scripts/runtime-windows/smoke.mjs'), 'changed verifier');
+  assert.throws(() => verifyEngineVerification(value.root, value.source), /verification differs/);
+});
+
+test('Windows smoke rejects rehashed reports with missing exit proof or a different producer', t => {
+  const value = fixture(t);
+  const file = join(value.directory, 'smoke-report.json'), original = JSON.parse(readFileSync(file, 'utf8'));
+  const receiptFile = join(value.directory, 'engine-build.json'), receipt = JSON.parse(readFileSync(receiptFile, 'utf8'));
+  for (const change of [
+    (smoke: typeof original) => { smoke.stops[0].rootExited = false; },
+    (smoke: typeof original) => { smoke.stops[0].recorded = 0; },
+    (smoke: typeof original) => { smoke.stops[0].proof = 'unproven'; },
+    (smoke: typeof original) => { smoke.stops[0].code = 128; },
+    (smoke: typeof original) => { smoke.manifestSHA256 = engineDigest('other producer'); },
+    (smoke: typeof original) => { smoke.verificationSHA256 = engineDigest('other verification'); },
+  ]) {
+    const smoke = structuredClone(original); change(smoke); const bytes = JSON.stringify(smoke);
+    writeFileSync(file, bytes); writeFileSync(receiptFile, JSON.stringify({ ...receipt, smokeSHA256: engineDigest(bytes) }));
+    assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /exit proof|different producer|verification recipe/);
+  }
+});
+
 function linuxFixture(t: TestContext) {
   const value = fixture(t);
   const source: EngineSource = { ...value.source, target: 'linux-x64', artifactPath: `vendor/rivloom-opencode/linux-x64/${value.source.commit.slice(0, 12)}`,
     recipe: { directory: 'scripts/runtime-linux', files: Object.fromEntries(['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs'].map(file => [file, engineDigest(file)])) } };
   delete source.approvedArtifact;
+  delete source.verification;
   source.inputs['packages/opencode/script/build.ts'] = engineDigest('pinned compiler');
   const directory = join(value.root, source.artifactPath); mkdirSync(directory, { recursive: true });
   mkdirSync(join(value.root, source.recipe!.directory), { recursive: true });

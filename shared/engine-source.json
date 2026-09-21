@@ -32,5 +32,11 @@
     "binarySHA256": "7ebb5b6be207eb54dd8207e14e0dc601e39641d115916ac6ed1557e6238e756c",
     "manifestSHA256": "0093a6c5d206e9d462f4b22d4e07ef979bdfd51ec329df38600333bfac60087d",
     "smokeSHA256": "0508cbca1ed46b6939ff8ffbd4cb7087c5e18710ce36b2e7cc5583549f0fc7ee"
+  },
+  "verification": {
+    "files": {
+      "scripts/runtime-windows/smoke.mjs": "b7130e252fbc346154f921415b0b8b14fffcb86266356d8ec880a9beeac29dc9",
+      "server/windows-engine-stop.mjs": "82398555e86d3e3eecf85331014613372587484519e0e89084a693b518cb2495"
+    }
   }
 }

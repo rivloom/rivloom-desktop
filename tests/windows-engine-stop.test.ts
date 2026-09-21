@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const modulePath = '../server/windows-engine-stop.mjs';
-const { processSnapshot, ownedProcessTree, recordedTreeExited, stopWindowsEngineTree } = await import(modulePath);
+const { processSnapshot, ownedProcessTree, recordedTreeExited, stopWindowsEngineTree, parseWindowsEngineStopDiagnostic } = await import(modulePath);
 type ProcessRow = { pid: number; parentPid: number; created: string };
 const row = (pid: number, parentPid: number, order: number): ProcessRow => ({
   pid, parentPid, created: String(638900000000000000n + BigInt(order)),
@@ -87,4 +87,48 @@ test('an engine that exits during the pre-kill query is never targeted by a poss
   });
   assert.equal(kills, 0);
   assert.equal(result.stopped, false);
+});
+
+test('stop diagnostics distinguish inventory and taskkill timeouts without exposing raw errors', async () => {
+  const events: Record<string, unknown>[] = [];
+  const secretError = Object.assign(new Error('secret command line and credential'), { code: 'ETIMEDOUT', killed: true, path: 'secret-path' });
+  const result = await stopWindowsEngineTree(100, 50, {
+    snapshot: async () => { throw secretError; },
+    kill: async () => { throw secretError; },
+    onDiagnostic: (event: Record<string, unknown>) => events.push(event),
+  });
+  assert.deepEqual(result, { stopped: false, code: null, proof: 'unproven', recorded: 0 });
+  assert.deepEqual(events.map(({ phase, outcome, reason }) => ({ phase, outcome, reason })), [
+    { phase: 'before', outcome: 'failed', reason: 'timeout' },
+    { phase: 'kill', outcome: 'failed', reason: 'timeout' },
+    { phase: 'result', outcome: 'failed', reason: undefined },
+  ]);
+  for (const event of events) {
+    assert.equal(Number.isSafeInteger(event.durationMs), true);
+    assert.deepEqual(parseWindowsEngineStopDiagnostic(`RIVLOOM_ENGINE_STOP ${JSON.stringify(event)}`), event);
+  }
+  assert.doesNotMatch(JSON.stringify(events), /secret|credential|path|\bpid\b/i);
+});
+
+test('diagnostic failures cannot change cleanup proof or repeat a kill request', async () => {
+  let reads = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    snapshot: async () => ++reads === 1 ? tree : [],
+    kill: async () => { kills++; return 128; },
+    onDiagnostic: () => { throw new Error('diagnostic sink unavailable'); },
+  });
+  assert.deepEqual(result, { stopped: true, code: 128, proof: 'observed-exit', recorded: 3 });
+  assert.equal(kills, 1);
+});
+
+test('diagnostic parser forwards only bounded allowlisted fields', () => {
+  const safe = { phase: 'before', outcome: 'failed', durationMs: 1802, reason: 'timeout' };
+  assert.deepEqual(parseWindowsEngineStopDiagnostic(`RIVLOOM_ENGINE_STOP ${JSON.stringify({ ...safe, path: 'private', command: 'secret', pid: 999 })}`), safe);
+  for (const value of [
+    { ...safe, phase: 'private/path' }, { ...safe, outcome: 'private' }, { ...safe, reason: 'secret' },
+    { ...safe, durationMs: -1 }, { ...safe, code: 'ETIMEDOUT' }, { ...safe, recorded: -1 },
+    { ...safe, proof: 'private' }, { ...safe, padding: 'x'.repeat(768) },
+  ]) assert.equal(parseWindowsEngineStopDiagnostic(`RIVLOOM_ENGINE_STOP ${JSON.stringify(value)}`), undefined);
+  assert.equal(parseWindowsEngineStopDiagnostic('unrelated engine stderr'), undefined);
+  assert.equal(parseWindowsEngineStopDiagnostic('RIVLOOM_ENGINE_STOP invalid JSON'), undefined);
 });

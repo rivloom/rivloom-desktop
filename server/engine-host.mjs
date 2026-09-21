@@ -1,6 +1,11 @@
 // A small process owner, not an agent. IPC disconnect also covers a crashed app.
 import { spawn } from 'node:child_process';
+import { writeSync } from 'node:fs';
 import { stopWindowsEngineTree } from './windows-engine-stop.mjs';
+function stopDiagnostic(value) {
+  // Synchronous and bounded so process.exit cannot discard the final evidence.
+  try { writeSync(2, `RIVLOOM_ENGINE_STOP ${JSON.stringify(value)}\n`); } catch { /* Diagnostics are best effort. */ }
+}
 const engine = spawn(process.argv[2], process.argv.slice(3), {
   env: process.env,
   cwd: process.cwd(),
@@ -40,7 +45,11 @@ function close(exitCode = 0) {
   // claim success merely because taskkill returned or TerminateProcess was sent.
   let engineExited = false;
   let treeStopped = process.platform !== 'win32';
-  const deadline = setTimeout(() => process.exit(1), 7000);
+  const started = performance.now();
+  const deadline = setTimeout(() => {
+    if (process.platform === 'win32') stopDiagnostic({ phase: 'deadline', outcome: 'failed', durationMs: Math.round(performance.now() - started), reason: 'timeout' });
+    process.exit(1);
+  }, 7000);
   const finish = () => {
     if (engineExited && treeStopped) { clearTimeout(deadline); process.exit(0); }
   };
@@ -56,10 +65,14 @@ function close(exitCode = 0) {
     };
     void stopWindowsEngineTree(engine.pid, process.pid, {
       isRootRunning: () => engine.exitCode === null && engine.signalCode === null,
+      onDiagnostic: stopDiagnostic,
     }).then((result) => {
       if (!result.stopped) return failed();
       treeStopped = true; finish();
-    }, failed);
+    }, () => {
+      stopDiagnostic({ phase: 'unexpected', outcome: 'failed', durationMs: Math.round(performance.now() - started), reason: 'invalid_result' });
+      failed();
+    });
   } else {
     engine.kill();
   }
