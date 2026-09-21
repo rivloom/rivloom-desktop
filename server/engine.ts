@@ -321,7 +321,7 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
       waitForExit: async () => {
         try { close(); await closing; await stopFailedEngine(child, true); }
         catch (error) {
-          if (stopDiagnostics.length) console.error('RIVLOOM_ENGINE_STOP_DIAGNOSTICS', JSON.stringify(stopDiagnostics));
+          if (stopDiagnostics.length) throw new Error(`Owned OpenCode process tree did not exit cleanly. Stop diagnostics: ${JSON.stringify(stopDiagnostics)}`, { cause: error });
           throw error;
         }
       },

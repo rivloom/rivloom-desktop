@@ -1,5 +1,6 @@
 /** Fixed-runtime compatibility check. Isolated SQLite, loopback provider, no paid model calls. */
 import assert from 'node:assert/strict';
+import { parseWindowsEngineStopDiagnostic } from '../server/windows-engine-stop.mjs';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -131,7 +132,11 @@ try {
 finally {
   if (child.connected) child.disconnect();
   try { await until(() => child.exitCode !== null, 'owned engine tree exit'); assert.equal(child.exitCode, 0); report.engineHostExit = 0; }
-  catch (error) { report.shutdownError = String(error); process.exitCode = 1; }
+  catch (error) {
+    report.shutdownError = String(error);
+    report.stopDiagnostics = log.split(/\r?\n/).map(parseWindowsEngineStopDiagnostic).filter(Boolean).slice(-8);
+    process.exitCode = 1;
+  }
   provider.closeAllConnections(); await new Promise<void>(done => provider.close(() => done()));
   await bridge.close(); db.close();
   report.requests = requests.length;
