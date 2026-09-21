@@ -63,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TARGET,
             "Rivloom 通知点击验证（独立）",
             "请点击这条测试通知，验证原生任务定位回调。",
+            false,
         )?;
     }
     if mode == "--show-and-exit" {
