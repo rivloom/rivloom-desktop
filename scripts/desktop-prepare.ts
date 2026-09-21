@@ -65,8 +65,14 @@ if (
   relativeDestination !== join('src-tauri', 'resources', 'runtime')
 )
   throw new Error('非法构建输出目录');
-for (const path of [root, join(root, 'src-tauri'), join(root, 'src-tauri/resources')])
+for (const path of [root, join(root, 'src-tauri')])
   if ((await lstat(path)).isSymbolicLink()) throw new Error('构建输出父目录不能是链接');
+// Git does not preserve this generated parent directory in a fresh checkout.
+const resources = join(root, 'src-tauri/resources');
+await mkdir(resources, { recursive: true });
+const resourcesEntry = await lstat(resources);
+if (resourcesEntry.isSymbolicLink() || !resourcesEntry.isDirectory())
+  throw new Error('构建输出父目录必须是实际目录');
 async function rejectLinks(path: string): Promise<void> {
   const entry = await lstat(path);
   if (entry.isSymbolicLink()) throw new Error('构建输出不能包含链接');
