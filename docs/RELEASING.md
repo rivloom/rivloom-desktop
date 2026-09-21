@@ -1,5 +1,8 @@
 # 官网分发与安全更新方案
 
+**2026-09-22 · 0.1.19 正式发布与收尾完成。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640` 的 Windows x64 与 Linux x64 0.1.19 已发行。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)、[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)及同提交 CI 通过；Windows 隔离安装/启动/重启/卸载、公开完整下载与原公钥签名核验通过，Linux 原生构建及公开包验收通过。官网双语下载页已部署并复核，ARM64 暂不发布。核心固定 `9b07cf4`，Windows 停止验证限定辅助 PowerShell 的系统模块来源，保留既有进程归属、退出证明与时间门槛。[Windows 发行说明](releases/0.1.19.md)、[Linux 发行说明](releases/linux-0.1.19.md)及[R2 保留审计](releases/0.1.19-r2-retention.md)：保留 62、暂缓 0、删除 0 个；检查完成，删除 0 个。以下准备状态与旧版本记录保留为历史。
+
+
 **2026-09-19 Linux 未发布源码变更：** Linux x64 也改为 [自有 runtime](ENGINE.md)。正式发布须通过新 Linux lock/recipe/receipt、ELF/许可/完整包和启动重启退出核验；build、runtime manifest、smoke 必须指向同一引擎。仍使用独立手动 Linux 发行与 R2 保留流程，ARM64 不允许用 x64 证据发布。现有官网和更新记录不自动改变。
 
 **2026-09-19 未发布源码变更：** 下一次 Windows 发行将使用 [自有 runtime 固定源码](ENGINE.md)。发布前必须核对新的 `engineSource`、产物receipt、包前后/解包字节、实际引擎路径和版本，以及云端原生安装/升级验证。runtime schema 2 构建工具目前仅本地，须先提交并验证后才更新 desktop pin；不得发布 dirty runtime 或绕过失败的构建/smoke。正式官网和更新清单仍指向下方已发行版本，本轮未改变它们。

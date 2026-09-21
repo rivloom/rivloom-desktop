@@ -1,5 +1,8 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+**2026-09-22 · 0.1.19 正式发布与收尾完成。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640` 的 Windows x64 与 Linux x64 0.1.19 已发行。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)、[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)及同提交 CI 通过；Windows 隔离安装/启动/重启/卸载、公开完整下载与原公钥签名核验通过，Linux 原生构建及公开包验收通过。官网双语下载页已部署并复核，ARM64 暂不发布。核心固定 `9b07cf4`，Windows 停止验证限定辅助 PowerShell 的系统模块来源，保留既有进程归属、退出证明与时间门槛。[Windows 发行说明](releases/0.1.19.md)、[Linux 发行说明](releases/linux-0.1.19.md)及[R2 保留审计](releases/0.1.19-r2-retention.md)：保留 62、暂缓 0、删除 0 个；检查完成，删除 0 个。以下准备状态与旧版本记录保留为历史。
+
+
 ## 2026-09-21：0.1.19 发行准备
 
 Windows 验证仍要求固定核心全部 10 项 smoke；消费端单独锁定验证脚本与停止模块，保留进程归属和实际退出证明，并等待插件清单完整写入。固定 Bun 下载增加有界重试。停机错误附带严格白名单阶段诊断，不能用诊断通过替代停机成功或跳过服务矩阵。临时项目测试使用真实规范路径，避免 Windows runner 路径别名被现有安全边界拒绝。每次必要修复后重新验收相同提交的完整门槛。

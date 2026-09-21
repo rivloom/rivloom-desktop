@@ -1,5 +1,8 @@
 # OpenCode 接入与范围决策
 
+**2026-09-22 · 0.1.19 Windows/Linux x64 自有 runtime 已发行。** 两平台发行源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，核心仍固定 `9b07cf442a7eba60a6fe690f630251d23d24194a`，引擎为 `1.18.31-rivloom.9b07cf442a7e`。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)与[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、同提交 CI、Windows 隔离安装和原公钥更新签名、Linux 公开完整下载及隔离运行核验通过；ARM64 暂不发布。Windows 停止修复只限定辅助 PowerShell 的系统模块搜索，未放宽归属证明或超时门槛。Linux glibc 下限为 **2.30**。见[Windows 发行说明](releases/0.1.19.md)和[Linux 发行说明](releases/linux-0.1.19.md)。下方早期开发状态保留为历史。
+
+
 ## 2026-09-21：Windows 固定核心与独立验证脚本
 
 Windows 核心仍为 `9b07cf4`，生产者构建脚本和 schema 1 manifest 不变。消费端先按固定 URL 和 SHA256 获取 Bun，传输失败最多重试两次；随后调用生产者构建，再强制运行本仓库 `scripts/runtime-windows/smoke.mjs`。原有 10 项实际引擎检查全部保留，任一失败均拒绝产物。验证脚本及 Windows 停止模块由 `engine-source.json` 单独固定摘要，执行前后核对；smoke 与 receipt 同时绑定这些摘要及当次 producer manifest。
@@ -8,9 +11,9 @@ Windows 核心仍为 `9b07cf4`，生产者构建脚本和 schema 1 manifest 不�
 
 Windows 停止辅助进程的 PowerShell 模块搜索仅使用系统 `WindowsPowerShell/v1.0/Modules`，不向模型引擎传入用户模块路径。CIM 查询仍限时 1.8 秒，退出证明和宿主总期限不变。CI 在真实生命周期测试结束后才进行缺省/系统/继承模块路径的只读计时对照，避免诊断预热实际停机路径；诊断观察不替代测试结果。
 
-## 2026-09-19 当前源码：Windows 与 Linux x64 使用自有 runtime（未发布）
+## 2026-09-19 来源说明：Windows 与 Linux x64 自有 runtime（已随 0.1.19 发行）
 
-两端固定同一份干净的 Rivloom runtime 源码 `9b07cf442a7eba60a6fe690f630251d23d24194a`，引擎版本 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 为 1.18.31。Linux 使用 glibc x64 baseline ELF，可执行文件名为 `opencode`；ARM64 暂不提供自有产物，也不回退到旧官方包。现有官网下载和已发布 0.1.18 包不受本地源码变化影响。
+两端固定同一份干净的 Rivloom runtime 源码 `9b07cf442a7eba60a6fe690f630251d23d24194a`，引擎版本 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 为 1.18.31。Linux 使用 glibc x64 baseline ELF，可执行文件名为 `opencode`；ARM64 暂不提供自有产物，也不回退到旧官方包。开发期间未替换 0.1.18 下载；当前 0.1.19 发行状态以本页顶部为准。
 
 Windows 锁为 [engine-source.json](../shared/engine-source.json)，Linux 锁为 [engine-source-linux.json](../shared/engine-source-linux.json)。Linux canonical recipe 位于独立 runtime 仓库的 `rivloom/linux/`，本仓库 `scripts/runtime-linux/` 保存四个文件的精确快照，由 Linux 锁逐项固定摘要。recipe 在干净的固定源码 checkout 外运行；源码提交和外置构建脚本分别记录，不把新增脚本冒称为已存在于旧提交。它不会修改业务源码或提示词。
 
