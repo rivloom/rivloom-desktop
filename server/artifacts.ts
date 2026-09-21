@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import { HttpError, requireThat } from './store.ts';
 import type { Artifact } from '../shared/types.ts';
 import { redact } from '../shared/redaction.ts';
-export { redact } from '../shared/redaction.ts';
+export { redact, sanitize } from '../shared/redaction.ts';
 
 export async function validateProject(directory: string) {
   let canonical: string;
@@ -14,11 +14,6 @@ export async function validateProject(directory: string) {
   }
   requireThat((await lstat(canonical)).isDirectory(), 400, '需要选择一个文件夹');
   return canonical;
-}
-export function sanitize<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value), (_key, item) =>
-    typeof item === 'string' ? redact(item) : item,
-  );
 }
 type OpenCodeFileDiff = {
   file?: string;

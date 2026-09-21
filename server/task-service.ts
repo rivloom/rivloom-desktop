@@ -14,7 +14,10 @@ import {
   HttpError,
 } from './store.ts';
 import { openCodeArtifacts, sanitize, redact } from './artifacts.ts';
-import { activeStates, type Task, type User, type Message } from '../shared/types.ts';
+import { activeStates, type Task, type User } from '../shared/types.ts';
+import { normalizeMessages } from './task-messages.ts';
+import { TaskMessageStream } from './task-stream.ts';
+import type { TaskStreamUpdate } from '../shared/task-stream.ts';
 import { parseWorkflowOutcome, plannerPermissions, workflowPrompt, workflowSystemPrompt } from './workflow-prompts.ts';
 import { checkWorkflowQuiescence } from './workflow-quiescence.ts';
 import { taskApprovalPrompt } from './task-prompts.ts';
@@ -68,6 +71,22 @@ accountEngines.onExit = (id) => {
 };
 let shuttingDown = false;
 const streams = new Map<string, AbortController>();
+const messageStream = new TaskMessageStream();
+const pendingFrames = new Map<string, TaskStreamUpdate>();
+let frameTimer: ReturnType<typeof setTimeout> | null = null;
+function streamFrame(frame: TaskStreamUpdate) {
+  pendingFrames.set(`${frame.taskID}:${frame.message.id}`, frame);
+  if (!frameTimer) frameTimer = setTimeout(() => {
+    frameTimer = null;
+    for (const value of pendingFrames.values()) {
+      if (!taskQueries.stateForID(value.taskID)) continue;
+      const current = task(value.taskID);
+      if (activeStates.includes(current.state) && current.sessionID === value.sessionID && current.runAfter === value.runAfter)
+        updates.emit('task-stream', value);
+    }
+    pendingFrames.clear();
+  }, 80);
+}
 const permissionEvents = new EnginePermissionEvents();
 let monitoring = false;
 type TaskStartOptions = { continuation?: boolean };
@@ -210,15 +229,11 @@ async function subscribe(directory: string) {
   const permissionFeed = permissionEvents.open(key);
   try {
     const feed = await client().event.subscribe({ directory }, { signal: abort.signal });
-    const partKinds = new Map<string, string>();
     void (async () => {
       try {
         for await (const event of feed.stream) {
           if (event.type === 'permission.asked') permissionEvents.asked(key, event.properties, permissionFeed);
           if (event.type === 'permission.replied') permissionEvents.replied(key, event.properties.requestID, permissionFeed);
-          if (event.type === 'message.part.updated') {
-            partKinds.set(event.properties.part.id, event.properties.part.type);
-          }
           const props = event.properties as Record<string, unknown>;
           const sessionID =
             props.sessionID ||
@@ -226,13 +241,9 @@ async function subscribe(directory: string) {
             (props.info as { sessionID?: string } | undefined)?.sessionID;
           const current = taskQueries.routeForSession(sessionID);
           if (!current || taskAccount(task(current.id)) !== accountEngines.current() || !activeStates.includes(current.state)) continue;
+          const frame = messageStream.event(task(current.id), event);
+          if (frame) streamFrame(frame);
           if (
-            event.type === 'message.part.delta' &&
-            event.properties.field === 'text' &&
-            partKinds.get(event.properties.partID) === 'text'
-          ) {
-            updates.emit('delta', { taskID: current.id, ...sanitize(event.properties) });
-          } else if (
             event.type === 'permission.asked' ||
             event.type === 'question.asked' ||
             event.type === 'session.idle' ||
@@ -256,39 +267,13 @@ async function subscribe(directory: string) {
 }
 const readPermissions = (directory: string, sessionID: string) => permissionEvents.read(feedKey(directory), sessionID,
   async () => (await client().permission.list({ directory })).data || []);
-function normalizeMessages(
-  messages: Awaited<ReturnType<ReturnType<typeof client>['session']['messages']>>['data'],
-): Message[] {
-  return sanitize(
-    (messages || []).map((m) => ({
-      id: m.info.id,
-      role: m.info.role,
-      text: m.parts
-        .filter((p) => p.type === 'text')
-        .map((p) => p.text)
-        .join('\n'),
-      tools: m.parts
-        .filter((p) => p.type === 'tool')
-        .map((p) => ({
-          name: p.tool,
-          status: p.state.status,
-          title: 'title' in p.state ? String(p.state.title) : p.tool,
-          output:
-            'output' in p.state
-              ? String(p.state.output).slice(0, 24000)
-              : 'error' in p.state
-                ? String(p.state.error)
-                : '',
-        })),
-    })),
-  );
-}
 export async function sync(taskID: string) {
   if (shuttingDown || isLocked(taskID)) return;
   return taskExclusive(taskID, async () => {
     const t = task(taskID);
     if (shuttingDown || !t.sessionID || !engineStatus.ready || t.state === 'stopping') return;
     const directory = project(t.projectID).directory;
+    const streamStarted = messageStream.mark();
     const [rawMessages, rawPermissions, rawQuestions, statuses] = await Promise.all([
       client().session.messages({ directory, sessionID: t.sessionID }),
       readPermissions(directory, t.sessionID),
@@ -298,7 +283,7 @@ export async function sync(taskID: string) {
     // Shutdown aborts sessions; their abort replies are not completed executions.
     // Keep interrupted work reserved even when a poll was already in flight.
     if (shuttingDown) return;
-    const messages = taskVisibleMessages(t, normalizeMessages(rawMessages.data));
+    const messages = taskVisibleMessages(t, messageStream.reconcile(t, rawMessages.data || [], streamStarted));
     const approvals = sanitize(
       rawPermissions,
     );
@@ -375,6 +360,7 @@ export async function sync(taskID: string) {
         );
       changed(t.id);
     }
+    if (!activeStates.includes(patch.state!)) messageStream.clear(t.id);
   });
 }
 const timer = setInterval(async () => {
@@ -833,6 +819,9 @@ export async function requestChanges(taskID: string, actor: User, note: string) 
 }
 export async function shutdownEngine(waitForExit = false) {
   shuttingDown = true;
+  if (frameTimer) clearTimeout(frameTimer);
+  pendingFrames.clear();
+  messageStream.clear();
   clearInterval(timer);
   for (const abort of streams.values()) abort.abort();
   if (engine) {

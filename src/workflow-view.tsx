@@ -11,6 +11,7 @@ import { Button, Field, Modal } from './ui';
 import { CopyButton } from './copy-button';
 import { MessageReuseActions, type MessageReuseActionsProps } from './message-reuse-view';
 import { TaskTelemetryView } from './task-telemetry-view';
+import { MessageTrace, TaskTrace } from './message-trace';
 import { PendingMessageEditor } from './pending-message-editor';
 import { MessageMarkdown } from './message-markdown';
 import { FilePreviewButton } from './file-preview';
@@ -157,7 +158,10 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
     {attentionExecutions.map(entry => <section className="workflow-step-attention" key={entry.attempt.executionID}>
       <p>{entry.step.title} · {nodeName(entry.attempt.nodeID)}</p><ExecutionActions local={entry.local} remote={entry.remote} data={data} busy={busy} perform={perform} />
     </section>)}
-    {recentExecutions.map(entry => <WorkflowRecentOutput key={entry.attempt.executionID} entry={entry} nodeName={nodeName} showStep={showStep} />)}
+    {[value.planner, ...value.steps].flatMap(step => step.attempts.map(attempt => ({ step, attempt, local: records(attempt).local })))
+      .filter(entry => entry.local).map(({ step, attempt, local }) => <TaskTrace key={attempt.executionID} task={local!}
+        label={`${step.title} · ${nodeName(attempt.nodeID)}${step.attempts.length > 1 ? ` #${attempt.number}` : ''}`} />)}
+    {recentExecutions.filter(entry => !entry.local).map(entry => <WorkflowRecentOutput key={entry.attempt.executionID} entry={entry} nodeName={nodeName} showStep={showStep} />)}
     <section className={`workflow-overview ${value.state}`} aria-label={complete ? t('最终结果') : t('任务进展')}>
       {(complete || results.length > 0) && <div className="workflow-results">
         {!complete && <p className="workflow-partial-label">{t('已完成的部分')}</p>}
@@ -234,7 +238,7 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
           {selectedStep.attempts.map((attempt) => <option key={attempt.number} value={attempt.number}>#{attempt.number} · {nodeName(attempt.nodeID)}</option>)}
         </select></label>}
         {(current.local?.messages || []).filter((message) => message.role === 'assistant').map((message) => <div key={message.id}>
-          {message.tools.map((tool, i) => <details className="chat-tool" key={i}><summary>{tool.title || tool.name}<small>{tool.status}</small></summary><pre>{tool.output}</pre></details>)}
+          <MessageTrace message={message} showText={false} active={current.local?.state === 'running'} />
           {message.text && <details className="chat-tool"><summary>{t('模型回复原文')}</summary><pre>{message.text}</pre></details>}
         </div>)}
         {!current.local && current.remote?.executionSummary && <pre>{current.remote.executionSummary}</pre>}

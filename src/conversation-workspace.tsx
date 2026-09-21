@@ -18,6 +18,7 @@ import { ConversationExportDialog } from './conversation-export-view';
 import { MessageReuseActions } from './message-reuse-view';
 import { applyMessageReuse, type MessageReuseIntent } from './message-reuse';
 import { TaskTelemetryView } from './task-telemetry-view';
+import { MessageTrace, MessageSpeed } from './message-trace';
 import { ProjectChangesView } from './project-changes-view';
 import { PromptTemplateLibrary } from './prompt-template-library';
 import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
@@ -492,25 +493,12 @@ const Transcript = memo(function Transcript({
             {message.role === 'assistant' ? <div className="chat-message-byline">
               <Bot size={17} />
               <strong>Rivloom</strong>
+              <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />
               {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
             </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
-            {text && (message.role === 'user' ? <div className="chat-message-text"><SearchText text={text} query={searchQuery} /></div> : <MessageMarkdown text={text} searchQuery={searchQuery} />)}
+            {message.role === 'user' ? text && <div className="chat-message-text"><SearchText text={text} query={searchQuery} /></div> :
+              <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} searchQuery={searchQuery} />}
             {text.trim() && <MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} />}
-            {message.tools.map((tool, index) => (
-              <details className="chat-tool" key={index}>
-                <summary>
-                  <FileCode2 size={15} />
-                  <span>{tool.title || tool.name}</span>
-                  <small>{executionStateText(tool.status)}</small>
-                </summary>
-                <pre>{tool.output || t('等待执行结果…')}</pre>
-                {tool.output?.trim() && (
-                  <div className="tool-copy">
-                    <CopyButton text={tool.output} label={t('复制工具输出')} iconOnly className="message-copy" />
-                  </div>
-                )}
-              </details>
-            ))}
           </article>
         );
       })}
@@ -704,6 +692,13 @@ export function ConversationWorkspace({
       Object.fromEntries(Object.entries(previous).filter(([key]) => available.has(key))));
   }, [all, data.conversationTrash]);
   const task = current?.localTask;
+  const workflowStreamRevision = useMemo(() => {
+    const workflow = current?.workflow;
+    if (!workflow) return '';
+    const ids = new Set([workflow.planner, ...workflow.steps].flatMap(step => step.attempts.map(attempt => attempt.executionID)));
+    return data.tasks.filter(value => ids.has(value.id)).map(value =>
+      `${value.id}:${value.version}:${value.messages.map(message => message.streamVersion || message.text.length).join(',')}`).join('|');
+  }, [current?.workflow, data.tasks]);
   const remote = current?.remote;
   const draftKey = selected || 'new';
   const draftModelSeed = task?.model || current?.workflow?.model || null;
@@ -932,12 +927,13 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
     if (transcript.current && scrollPinned.current && !currentMatch)
-      transcript.current.scrollTop = current?.workflow && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
+      transcript.current.scrollTop = current?.workflow && !workflowStreamRevision && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
     selected,
     view,
     task?.messages,
+    workflowStreamRevision,
     current?.brainTask?.executionSummary,
     remote?.executionSummary,
     task?.state,

@@ -2181,6 +2181,8 @@ app.get('/api/events', (req, res) => {
   const onNetwork = () => send('network', { changed: true });
   updates.on('update', onUpdate);
   updates.on('delta', onDelta);
+  const onStream = (value: { taskID: string }) => { if (visible(value.taskID)) send('task-stream', value); };
+  updates.on('task-stream', onStream);
   nodeNetwork.on('update', onNetwork);
   send('connected', { ok: true });
   const heartbeat = setInterval(() => {
@@ -2196,6 +2198,7 @@ app.get('/api/events', (req, res) => {
     clearInterval(heartbeat);
     updates.off('update', onUpdate);
     updates.off('delta', onDelta);
+    updates.off('task-stream', onStream);
     nodeNetwork.off('update', onNetwork);
   });
 });

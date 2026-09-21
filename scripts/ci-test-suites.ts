@@ -5,6 +5,7 @@ import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/task-stream.test.ts',
   'tests/windows-engine-stop.test.ts',
   'tests/engine-artifact.test.ts',
   'tests/workflow-activity.test.ts',

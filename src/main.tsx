@@ -10,6 +10,7 @@ import { createRoot } from 'react-dom/client';
 import { ArrowRight, Bot, CircleCheck, CircleDot, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { api, ApiError } from './api';
 import { createRefreshQueue, reuseJson, type RefreshScope } from './desktop-refresh';
+import { applyTaskStream, reconcileTaskStream, type TaskStreamUpdate } from '../shared/task-stream';
 import { authenticateDesktop, desktop } from './desktop';
 import { Wordmark, Button, Field } from './ui';
 import { ConversationWorkspace } from './conversation-workspace';
@@ -171,7 +172,11 @@ function App() {
   useDesktopStartup(!!data?.user.id && data.engine.ready && connected && !loading && !error);
   const refreshQueue = useRef<ReturnType<typeof createRefreshQueue> | null>(null);
   const applyBootstrap = (next: Bootstrap) =>
-    setData((previous) => (previous?.user.id === next.user.id ? reuseJson(previous, next) : next));
+    setData((previous) => (previous?.user.id === next.user.id ? reuseJson(previous, { ...next,
+      tasks: next.tasks.map(task => {
+        const old = previous.tasks.find(value => value.id === task.id);
+        return old ? reconcileTaskStream(old, task) : task;
+      }) }) : next));
   if (!refreshQueue.current)
     refreshQueue.current = createRefreshQueue(async (scope) => {
       try {
@@ -226,6 +231,12 @@ function App() {
     feed.addEventListener('update', update);
     feed.addEventListener('network', () => schedule('network'));
     feed.addEventListener('delta', update);
+    feed.addEventListener('task-stream', (event) => {
+      try {
+        const frame = JSON.parse((event as MessageEvent).data) as TaskStreamUpdate;
+        setData(previous => previous ? { ...previous, tasks: previous.tasks.map(task => applyTaskStream(task, frame)) } : previous);
+      } catch { update(); }
+    });
     feed.onerror = () => setConnected(false);
     const fallback = setInterval(() => void refresh(), 5000);
     return () => {

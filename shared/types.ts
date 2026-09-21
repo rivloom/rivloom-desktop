@@ -34,7 +34,15 @@ export type Message = {
   role: 'user' | 'assistant';
   text: string;
   tools: { name: string; status: string; title: string; output: string }[];
+  /** Ordered, displayable engine parts. Absent on records saved by older desktops. */
+  parts?: MessagePart[];
+  timing?: { created: number; completed?: number; outputTokens?: number; reasoningTokens?: number };
+  /** Monotonic snapshot revision, used only to reconcile live display with HTTP reads. */
+  streamVersion?: number;
 };
+export type MessagePart =
+  | { id: string; type: 'text' | 'reasoning'; text: string; startedAt?: number; endedAt?: number; truncated?: boolean }
+  | { id: string; type: 'tool'; name: string; status: string; title: string; input: string; output: string; startedAt?: number; endedAt?: number; truncated?: boolean };
 export type Approval = {
   id: string;
   permission: string;
