@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { listenHttp } from '../server/http-ports.ts';
-import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, link, chmod } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, link, chmod, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, join, sep, delimiter } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -114,7 +114,8 @@ test('project review resolves Git outside the project cwd and classifies a plain
     process.env.PATH = ['.', previous || ''].join(delimiter);
     assert.equal((await readProjectChanges(root)).state, 'ready', 'project-local Git must not execute');
   } finally { process.env.PATH = previous; }
-  const temporaryRoot = resolve(tmpdir()), directory = await mkdtemp(join(temporaryRoot, 'rivloom-nonrepo-'));
+  // Registered project directories are canonical; Windows runner TEMP may use an 8.3 alias.
+  const temporaryRoot = await realpath(tmpdir()), directory = await mkdtemp(join(temporaryRoot, 'rivloom-nonrepo-'));
   try { assert.equal((await readProjectChanges(directory)).state, 'not-repository'); }
   finally { assert(directory.startsWith(temporaryRoot + sep)); await rm(directory, { recursive: true, force: true }); }
 }));
