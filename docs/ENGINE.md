@@ -1,5 +1,7 @@
 # OpenCode 接入与范围决策
 
+**2026-09-22 · 0.1.20 Windows/Linux x64 已发行。** 两平台源码 [`ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3`](https://github.com/rivloom/rivloom-desktop/commit/ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3)，核心仍固定 `9b07cf442a7eba60a6fe690f630251d23d24194a`，SDK/plugin 为 1.18.31。正式包的来源、云端安装、公开下载及签名核验见 [0.1.20 发行验收](releases/0.1.20-verification.md)。Windows 进程检查继续共享原有 5800 ms 总截止时间，并保留归属与实际退出证明；ARM64 暂不发布。
+
 **2026-09-22 · 0.1.19 Windows/Linux x64 自有 runtime 已发行。** 两平台发行源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，核心仍固定 `9b07cf442a7eba60a6fe690f630251d23d24194a`，引擎为 `1.18.31-rivloom.9b07cf442a7e`。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)与[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、同提交 CI、Windows 隔离安装和原公钥更新签名、Linux 公开完整下载及隔离运行核验通过；ARM64 暂不发布。Windows 停止修复只限定辅助 PowerShell 的系统模块搜索，未放宽归属证明或超时门槛。Linux glibc 下限为 **2.30**。见[Windows 发行说明](releases/0.1.19.md)和[Linux 发行说明](releases/linux-0.1.19.md)。下方早期开发状态保留为历史。
 
 
@@ -104,9 +106,9 @@ runtime 构建工具的 schema 2 改进与 desktop 的固定引擎源码分别�
 
 `rivloom_history` 支持状态读取、按轮/步骤/关键词检索及固定版本分页回读；搜索每页最多 10 条预览，正文页整体最多 32 KiB 的 UTF-8 JSON，包含元数据和转义，分页偏移继续使用 UTF-16 单位。默认交接携带当前需求、有效条目、当前步骤与直接依赖的进度/文件来源；缩短的检查点明确标记，保留取回引用。完整原始需求与有效条目放不下时拒绝准备，不静默裁掉关键约束。
 
-兼容节点通过 `workflow-history-v1` 协商按需读取。远端仅能读取自己已接受、仍在执行的当前会话，校验已配对的可信身份、执行 ID 和上下文摘要；结束、停止、授权撤销及回收站状态拒绝后续读取，已送达内容无法撤回。旧节点沿用完整历史 JSON 附件，新本地/兼容远端执行不再默认生成累计附件。现有会话记录和导出保留；这不代表已解决 Runtime 历史清理或回收旧文件。
+兼容节点通过 `workflow-history-v1` 协商按需读取。远端仅能读取自己已接受、仍在执行的当前会话，校验已配对的可信身份、执行 ID 和上下文摘要；结束、停止、授权撤销及回收站状态拒绝后续读取，已送达内容无法撤回。旧节点沿用完整历史 JSON 附件，新本地/兼容远端执行不再默认生成累计附件。现有会话记录和导出保留。0.1.20 永久删除会话时，通过固定 Runtime 接口清理已记录归属、空闲且未被其他保留任务共享的会话及子会话，并核对删除结果；失败保留进度供重试。不扫描孤儿、项目原文件或远端副本，不自动 VACUUM。
 
-会话创建者可调用 `GET /api/workflows/:id/context` 查看状态，`POST /api/workflows/:id/history` 检索/读取，`POST /api/workflows/:id/context/notes` 确认或替代带来源的条目，`GET /api/workflows/:id/context/notes?offset=…` 分页查看修订记录。写入要求 `expectedVersion` 和可重复提交的 `requestID`；模型整理只允许当前规划执行。专用查看/编辑界面尚未加入。架构取舍见 [ADR 0015](adr/0015-workflow-context-and-history.md)。
+会话创建者可调用 `GET /api/workflows/:id/context` 查看状态，`POST /api/workflows/:id/history` 检索/读取，`POST /api/workflows/:id/context/notes` 确认或替代带来源的条目，`GET /api/workflows/:id/context/notes?offset=…` 分页查看修订记录。写入要求 `expectedVersion` 和可重复提交的 `requestID`；模型整理只允许当前规划执行。0.1.20 已提供上下文查看与编辑界面，支持确认、修订、撤回、来源及修改历史查看，并可显式保存已确认条目为项目记忆。历史读取设计见 [ADR 0015](adr/0015-workflow-context-and-history.md)，项目记忆与维护边界见 [ADR 0016](adr/0016-context-memory-and-runtime-retention.md)。
 
 验证命令：`npm run test:workflow-history` 和 `npm run test:workflow-history:remote` 使用实际固定 Runtime 与隔离模拟模型，分别验证本地及同机双服务跨节点读取、修订、权限和重启。仍须执行现有工作流与发布验收。
 
@@ -121,7 +123,7 @@ SDK 使用公开导出 `@opencode-ai/sdk/v2`（这里的 v2 是 SDK 导出入口
 | 流式输出         | `event.subscribe`、`message.part.delta`                                    |
 | 断线状态恢复     | `session.status`、`session.messages`、`permission.list`、`question.list`   |
 | 操作审批         | `permission.reply`，仅 once/reject                                         |
-| AI 主动提问      | `question.reply` / `question.reject`（实现完成，真实提问分支尚未专项验证） |
+| AI 主动提问      | `question.reply` / `question.reject`（本机等待补充与续聊已验收；远端普通任务分支未完成三机覆盖） |
 | 停止             | `session.abort`，然后拒绝残留权限请求和问题                                |
 | 结果             | `session.messages`，业务层保存可显示的执行记录                             |
 | 引擎差异         | `session.diff`；有返回则展示，本机实测可能为空                             |

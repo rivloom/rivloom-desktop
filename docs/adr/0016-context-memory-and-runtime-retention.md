@@ -1,6 +1,6 @@
 # ADR 0016: Explicit project memory and observable context
 
-Date: 2026-09-21. Updated: 2026-09-22. Status: implemented for 0.1.20; scoped physical-device acceptance completed, cloud build and release acceptance pending.
+Date: 2026-09-21. Updated: 2026-09-22. Status: released in 0.1.20; scoped physical-device acceptance and exact-source Windows/Linux release gates completed. See [release verification](../releases/0.1.20-verification.md).
 
 ## Decision
 
@@ -32,4 +32,4 @@ The local ordinary-task continuation path now stops a waiting or interrupted exe
 
 Isolated Runtime cleanup tests verify row removal, account isolation and durable retries. Physical acceptance deleted only disposable test conversations; it does not establish the state of a remote Node's underlying Runtime database. Mixed 0.1.19/new-node checks cover history compatibility and the expected refusal of unsupported long-Wiki reads by an old executor. Upgrade participating executors for the full new knowledge paging behavior.
 
-These observations do not establish general real-provider recall quality or release readiness. Operating-system reboot, power loss and a crash while generating a compaction summary were explicitly deferred. The model still chooses relevant references and can interpret a valid source incorrectly. Existing request-input limits and Runtime tool-output truncation limits are unchanged. Cloud CI, installation, public download and signing acceptance remain tied to the actual 0.1.20 release artifact.
+These physical-device observations do not establish general real-provider recall quality or replace release-artifact acceptance. Operating-system reboot, power loss and a crash while generating a compaction summary were explicitly deferred. The model still chooses relevant references and can interpret a valid source incorrectly. Existing request-input limits and Runtime tool-output truncation limits are unchanged. Cloud CI, Windows installation, public downloads, Windows update signatures, the production website and R2 retention were separately verified for the final 0.1.20 artifacts; see the linked release verification for their exact scope.

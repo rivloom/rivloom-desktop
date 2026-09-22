@@ -1,10 +1,12 @@
 # 候选运行时与许可证校验
 
-**2026-09-19 当前源码（未发布）：** Windows 使用自有 runtime 的固定源码构建，详见 [引擎构建与升级](ENGINE.md)。canonical pin 已迁移为 `shared/engine-source.json`；不再通过 npm 安装官方 Windows 引擎。gate 核对共享 source lock 字节、SDK/plugin、生产者 manifest、通过的 smoke、当次 EXE、许可与构建 receipt；保留原 Node、完整 npm/Rust 许可和包前后字节树门槛。发行报告新增 `engineSource` 提交/tree/lock/receipt 摘要，原8文件候选契约不变。已发布包和下方历史结果不因此改变。
+**2026-09-22 · 当前正式版 0.1.20。** 固定核心 `9b07cf4` 的 Windows/Linux x64 包已完成各自来源和发行验收；本次 Windows 候选还经独立静态解包，逐项核对完整 Runtime 树、实际引擎字节与构建记录。详见 [0.1.20 发行验收](releases/0.1.20-verification.md)。以下开发与旧候选记录保留为历史。
+
+**2026-09-19 开发记录（当时未发布）：** Windows 使用自有 runtime 的固定源码构建，详见 [引擎构建与升级](ENGINE.md)。canonical pin 已迁移为 `shared/engine-source.json`；不再通过 npm 安装官方 Windows 引擎。gate 核对共享 source lock 字节、SDK/plugin、生产者 manifest、通过的 smoke、当次 EXE、许可与构建 receipt；保留原 Node、完整 npm/Rust 许可和包前后字节树门槛。发行报告新增 `engineSource` 提交/tree/lock/receipt 摘要，原8文件候选契约不变。已发布包和下方历史结果不因此改变。
 
 更新：2026-09-05。入口为 `scripts/ci-verify-runtime.ts`，夹具测试为 `tests/ci-runtime.test.ts`。校验针对已准备的目录，生成清单本身不算通过。
 
-## 最新真实候选验证（2026-09-05）
+## 历史真实候选验证（2026-09-05）
 
 已对干净源码提交 `86463bf286c6d488fe25e77d9b1e897d58506658` 完成真实 Preview 准备、构建前 gate、Tauri Release/NSIS、构建后 gate 与候选记录。运行环境为本地 Windows x64，`environment: local`、`cloudRun: false`；Node 24.19.0、Rust/Cargo 1.98.1 已核对，新增工具链没有改变默认 stable。原生 Release 编译耗时 2m 53s，NSIS 退出 0，日志 `.data/verification/ci-local-native-build.log`。
 

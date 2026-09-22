@@ -1,5 +1,12 @@
 # Rivloom Linux 0.1.20：x64 命令行执行节点
 
+**2026-09-22 已正式发布。** 源码 [`ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3`](https://github.com/rivloom/rivloom-desktop/commit/ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3)；[原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/35712264986)与[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35713081497)通过，[GitHub Release](https://github.com/rivloom/rivloom-desktop/releases/tag/linux-v0.1.20-ef9e4e75ef0d-35712264986)。公开完整下载及 WSL x64 启动/重启/SIGTERM、官网双语命令和 R2 检查已完成；范围与限制见 [0.1.20 发行验收](0.1.20-verification.md)。
+
+| 文件 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| [Rivloom_0.1.20_linux_x64.tar.gz](https://downloads.rivloom.com/releases/linux/linux-v0.1.20-ef9e4e75ef0d-35712264986/Rivloom_0.1.20_linux_x64.tar.gz) | 126095020 | `9aff7ff6386a2be45f88ad505d09765a116556f7afdd9fc97d4fb0ab9a98d69f` |
+| [SHA256SUMS.txt](https://downloads.rivloom.com/releases/linux/linux-v0.1.20-ef9e4e75ef0d-35712264986/SHA256SUMS.txt) | 98 | `a275d32130812e10b7dfd812975b763d63e9ddd69cfe338acddbe758a7b8b9c9` |
+
 ## 功能与运行环境
 
 沿用 SSH 初始化、可信节点配对、显式项目/模型授权和加密任务执行。本版接入项目记忆、Wiki/Skill 的固定版本分页读取与历史维护，并修复知识工具完成后的交接检查；功能和权限边界见[0.1.20 说明](0.1.20.md)。上下文查看和编辑界面由 Windows 桌面提供。
