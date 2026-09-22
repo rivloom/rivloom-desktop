@@ -143,3 +143,116 @@ test('diagnostic parser forwards only bounded allowlisted fields', () => {
   assert.equal(parseWindowsEngineStopDiagnostic('unrelated engine stderr'), undefined);
   assert.equal(parseWindowsEngineStopDiagnostic('RIVLOOM_ENGINE_STOP invalid JSON'), undefined);
 });
+
+test('cold owned inventory borrows time within the unchanged total stop budget', async () => {
+  let elapsed = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async (recorded: ProcessRow[] | undefined, timeout: number) => {
+      assert.equal(recorded, undefined); assert.equal(timeout, 3200);
+      elapsed += 2500; return tree;
+    },
+    kill: async (pid: number, timeout: number) => {
+      assert.equal(pid, 100); assert.equal(timeout, 2200); kills++;
+      elapsed += 75; return 0;
+    },
+    isRootRunning: () => true,
+  });
+  assert.deepEqual(result, { stopped: true, code: 0, proof: 'taskkill', recorded: 3 });
+  assert.equal(kills, 1); assert.equal(elapsed, 2575);
+});
+
+test('nonzero taskkill requires timely post-inventory using only the remaining shared budget', async () => {
+  let elapsed = 0, reads = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async (recorded: ProcessRow[] | undefined, timeout: number) => {
+      if (++reads === 1) { assert.equal(timeout, 3200); elapsed += 3100; return tree; }
+      assert.deepEqual(recorded, tree); assert.equal(timeout, 600);
+      elapsed += 599; return [];
+    },
+    kill: async (pid: number, timeout: number) => {
+      assert.equal(pid, 100); assert.equal(timeout, 2200); kills++;
+      elapsed += 2100; return 128;
+    },
+  });
+  assert.deepEqual(result, { stopped: true, code: 128, proof: 'observed-exit', recorded: 3 });
+  assert.equal(reads, 2); assert.equal(kills, 1); assert.equal(elapsed, 5799);
+});
+
+test('a late successful post-inventory cannot certify exit or reset the shared deadline', async () => {
+  for (const postDuration of [600, 601, 1800]) {
+    let elapsed = 0, reads = 0, kills = 0;
+    const events: Record<string, unknown>[] = [];
+    const result = await stopWindowsEngineTree(100, 50, {
+      now: () => elapsed,
+      snapshot: async (_recorded: ProcessRow[] | undefined, timeout: number) => {
+        if (++reads === 1) { elapsed += 3100; return tree; }
+        assert.equal(timeout, 600); elapsed += postDuration; return [];
+      },
+      kill: async () => { kills++; elapsed += 2100; return 128; },
+      onDiagnostic: (event: Record<string, unknown>) => events.push(event),
+    });
+    assert.deepEqual(result, { stopped: false, code: 128, proof: 'unproven', recorded: 3 });
+    assert.equal(reads, 2); assert.equal(kills, 1);
+    assert(events.some(event => event.phase === 'after' && event.reason === 'timeout'));
+  }
+});
+
+test('late pre-inventory is discarded while exactly one remaining-budget cleanup remains unproven', async () => {
+  let elapsed = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async () => { elapsed += 3700; return tree; },
+    kill: async (pid: number, timeout: number) => {
+      assert.equal(pid, 100); assert.equal(timeout, 2100); assert(timeout > 0);
+      kills++; elapsed += 40; return 0;
+    },
+  });
+  assert.deepEqual(result, { stopped: false, code: 0, proof: 'unproven', recorded: 0 });
+  assert.equal(kills, 1);
+});
+
+test('late taskkill success cannot become exit proof and never triggers another PID kill or query', async () => {
+  let elapsed = 0, reads = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async () => { reads++; elapsed += 3000; return tree; },
+    kill: async (_pid: number, timeout: number) => {
+      assert.equal(timeout, 2200); kills++; elapsed += 2200; return 0;
+    },
+  });
+  assert.deepEqual(result, { stopped: false, code: null, proof: 'unproven', recorded: 3 });
+  assert.equal(reads, 1); assert.equal(kills, 1);
+});
+
+test('deadline exhaustion never launches a zero-timeout command or retargets a PID', async () => {
+  for (const expiresBeforeKill of [true, false]) {
+    let elapsed = 0, reads = 0, kills = 0;
+    const result = await stopWindowsEngineTree(100, 50, {
+      now: () => elapsed,
+      snapshot: async (_recorded: ProcessRow[] | undefined, timeout: number) => {
+        assert(timeout > 0); reads++; elapsed += 100; return tree;
+      },
+      kill: async (_pid: number, timeout: number) => {
+        assert(timeout > 0); kills++; elapsed += 50; return 128;
+      },
+      onDiagnostic: (event: Record<string, unknown>) => {
+        if (event.phase === (expiresBeforeKill ? 'before' : 'kill')) elapsed = 5800;
+      },
+    });
+    assert.equal(result.stopped, false); assert.equal(result.proof, 'unproven');
+    assert.equal(reads, 1); assert.equal(kills, expiresBeforeKill ? 0 : 1);
+  }
+});
+
+test('time spent before the final verdict cannot certify an expired successful kill', async () => {
+  let elapsed = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async () => tree,
+    kill: async () => 0,
+    onDiagnostic: (event: Record<string, unknown>) => { if (event.phase === 'kill') elapsed = 5800; },
+  });
+  assert.deepEqual(result, { stopped: false, code: 0, proof: 'unproven', recorded: 3 });
+});

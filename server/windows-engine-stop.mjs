@@ -102,7 +102,7 @@ function run(file, args, timeout, env = process.env) {
   });
 }
 
-async function windowsSnapshot(rootPID, recorded) {
+async function windowsSnapshot(rootPID, recorded, timeout) {
   const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const ids = recorded ? recorded.map((item) => item.pid) : [rootPID];
   if (!ids.length || !ids.every(validPID)) throw new Error('Invalid owned process inventory.');
@@ -110,14 +110,14 @@ async function windowsSnapshot(rootPID, recorded) {
   // leave PowerShell; missing creation times are retained so validation fails.
   const output = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
     `${windowsPowerShellPrelude}$ErrorActionPreference="Stop"; $all=@(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate -ErrorAction Stop); if($all.Count -eq 0){throw "Process inventory unavailable"}; $ids=[Collections.Generic.HashSet[int]]::new(); @(${ids.join(',')}) | ForEach-Object {[void]$ids.Add($_)}; do {$count=$ids.Count; foreach($p in $all) {if($ids.Contains([int]$p.ParentProcessId)) {[void]$ids.Add([int]$p.ProcessId)}}} while($ids.Count -ne $count); ConvertTo-Json -Compress -InputObject @($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object {[pscustomobject]@{pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;created=if($null -ne $_.CreationDate){$_.CreationDate.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)}else{""}}})`,
-  ], 1800, windowsPowerShellEnvironment());
+  ], timeout, windowsPowerShellEnvironment());
   return processSnapshot(JSON.parse(output.trim()));
 }
 
-async function killTree(rootPID) {
+async function killTree(rootPID, timeout) {
   const taskkill = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
   try {
-    await run(taskkill, ['/PID', String(rootPID), '/T', '/F'], 2200);
+    await run(taskkill, ['/PID', String(rootPID), '/T', '/F'], timeout);
     return 0;
   } catch (error) {
     // A timeout, signal, missing command or query error is not a taskkill exit code.
@@ -128,39 +128,56 @@ async function killTree(rootPID) {
 
 export async function stopWindowsEngineTree(rootPID, hostPID, options = {}) {
   if (!validPID(rootPID) || !validPID(hostPID)) throw new Error('Invalid owned process identity.');
-  const snapshot = options.snapshot || ((recorded) => windowsSnapshot(rootPID, recorded));
+  const snapshot = options.snapshot || ((recorded, timeout) => windowsSnapshot(rootPID, recorded, timeout));
   const kill = options.kill || killTree;
-  const started = performance.now();
+  const now = options.now || (() => performance.now());
+  const started = now(), deadline = started + 5800;
+  // Reuse the original total command budget. Cold CIM startup may borrow time
+  // from the later checks; the host's separate 7000 ms deadline is unchanged.
+  const timeoutError = () => Object.assign(new Error('Windows process stop deadline exceeded.'), { killed: true });
+  const timed = async (maximum, work) => {
+    const since = now(), timeout = Math.min(maximum, Math.floor(deadline - since));
+    // execFile treats zero as no timeout. Never start a command after expiry.
+    if (timeout <= 0) throw timeoutError();
+    const value = await work(timeout);
+    // A delayed callback cannot turn an expired operation into exit proof.
+    if (now() >= deadline || now() - since >= timeout) throw timeoutError();
+    return value;
+  };
   const report = (phase, outcome, since, detail = {}) => {
-    try { options.onDiagnostic?.({ phase, outcome, durationMs: Math.max(0, Math.round(performance.now() - since)), ...detail }); }
+    try { options.onDiagnostic?.({ phase, outcome, durationMs: Math.max(0, Math.round(now() - since)), ...detail }); }
     catch { /* Diagnostics must not alter cleanup or its proof. */ }
   };
   const done = (result) => {
+    if (result.stopped && now() >= deadline) {
+      report('deadline', 'failed', started, { reason: 'timeout' });
+      result = { ...result, stopped: false, proof: 'unproven' };
+    }
     report('result', result.stopped ? 'ok' : 'failed', started, { code: result.code, proof: result.proof, recorded: result.recorded });
     return result;
   };
   let owned;
-  const before = performance.now();
+  const before = now();
   try {
-    owned = ownedProcessTree(await snapshot(), rootPID, hostPID);
+    owned = ownedProcessTree(await timed(3200, timeout => snapshot(undefined, timeout)), rootPID, hostPID);
     report('before', 'ok', before, { recorded: owned.length });
   } catch (error) { report('before', 'failed', before, { reason: failureReason(error, 'invalid_inventory') }); }
-  // Exactly one kill request, always to the owned engine PID; never kill by name,
-  // enumerate-and-kill individual PIDs, or retry against a potentially reused PID.
+  // At most one kill request within the deadline, always to the owned engine PID;
+  // never kill by name, enumerate-and-kill PIDs, or retry a potentially reused PID.
   if (options.isRootRunning && !options.isRootRunning()) {
     report('root-check', 'skipped', started, { reason: 'root_exited' });
     return done({ stopped: false, code: null, proof: 'unproven', recorded: owned?.length || 0 });
   }
-  const killing = performance.now();
+  const killing = now();
   let code = null, reason;
-  try { code = await kill(rootPID); } catch (error) { reason = failureReason(error, 'command_failed'); }
+  try { code = await timed(2200, timeout => kill(rootPID, timeout)); } catch (error) { reason = failureReason(error, 'command_failed'); }
   const validCode = Number.isSafeInteger(code) && code >= 0;
   report('kill', validCode ? 'ok' : 'failed', killing, { code: validCode ? code : null, ...(!validCode ? { reason: reason || 'invalid_result' } : {}) });
   if (!owned || !validCode) return done({ stopped: false, code, proof: 'unproven', recorded: owned?.length || 0 });
   if (code === 0) return done({ stopped: true, code, proof: 'taskkill', recorded: owned.length });
-  const after = performance.now();
+  const after = now();
   try {
-    const stopped = recordedTreeExited(owned, await snapshot(owned));
+    const stopped = recordedTreeExited(owned, await timed(1800, timeout => snapshot(owned, timeout)));
     report('after', stopped ? 'ok' : 'failed', after, stopped ? {} : { reason: 'survivor' });
     return done({ stopped, code, proof: stopped ? 'observed-exit' : 'unproven', recorded: owned.length });
   } catch (error) {

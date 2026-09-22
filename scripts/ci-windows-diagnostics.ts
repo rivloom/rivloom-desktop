@@ -138,7 +138,7 @@ if (process.platform !== 'win32') {
   if (cimOnly) {
   // Run after real lifecycle checks; never prewarm their cold-stop path.
   // Fresh PowerShell processes, same read-only CIM enumeration and isolated TEMP.
-  // This timing observation never overrides the real 1800ms owned-stop gate.
+  // This timing observation never overrides the real shared owned-stop deadline.
   const temporary = resolve('.data/verification/ci-windows-diagnostics/cim-temp');
   mkdirSync(temporary, { recursive: true });
   // Match engineEnv's system whitelist; no model, account or provider settings.
@@ -160,7 +160,8 @@ if (process.platform !== 'win32') {
     const observed = (result.stdout || '').trim().match(/^[1-9]\d{0,6}\|(True|False)$/);
     const inventoryAvailable = !result.error && result.status === 0 && !!observed;
     console.log(JSON.stringify({ kind: 'cim-module-diagnostic', environment, freshPowerShell: true, readOnly: true, durationMs, timeoutMs: 8000,
-      stopBudgetMs: 1800, withinStopBudget: inventoryAvailable && durationMs < 1800, inventoryAvailable,
+      initialSnapshotBudgetMs: 3200, totalStopBudgetMs: 5800,
+      withinInitialSnapshotBudget: inventoryAvailable && durationMs < 3200, inventoryAvailable,
       actualSystemModulesOnly: observed ? observed[1] === 'True' : null,
       status: result.status, timedOut: (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT', stderrPresent: !!result.stderr }));
   }
