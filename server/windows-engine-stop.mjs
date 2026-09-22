@@ -132,8 +132,8 @@ export async function stopWindowsEngineTree(rootPID, hostPID, options = {}) {
   const kill = options.kill || killTree;
   const now = options.now || (() => performance.now());
   const started = now(), deadline = started + 5800;
-  // Reuse the original total command budget. Cold CIM startup may borrow time
-  // from the later checks; the host's separate 7000 ms deadline is unchanged.
+  // Reuse the original total command budget without a shorter pre-inventory cap.
+  // Every later command uses only the time left; the host deadline stays 7000 ms.
   const timeoutError = () => Object.assign(new Error('Windows process stop deadline exceeded.'), { killed: true });
   const timed = async (maximum, work) => {
     const since = now(), timeout = Math.min(maximum, Math.floor(deadline - since));
@@ -159,7 +159,7 @@ export async function stopWindowsEngineTree(rootPID, hostPID, options = {}) {
   let owned;
   const before = now();
   try {
-    owned = ownedProcessTree(await timed(3200, timeout => snapshot(undefined, timeout)), rootPID, hostPID);
+    owned = ownedProcessTree(await timed(5800, timeout => snapshot(undefined, timeout)), rootPID, hostPID);
     report('before', 'ok', before, { recorded: owned.length });
   } catch (error) { report('before', 'failed', before, { reason: failureReason(error, 'invalid_inventory') }); }
   // At most one kill request within the deadline, always to the owned engine PID;

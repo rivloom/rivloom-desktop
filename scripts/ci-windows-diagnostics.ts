@@ -160,8 +160,8 @@ if (process.platform !== 'win32') {
     const observed = (result.stdout || '').trim().match(/^[1-9]\d{0,6}\|(True|False)$/);
     const inventoryAvailable = !result.error && result.status === 0 && !!observed;
     console.log(JSON.stringify({ kind: 'cim-module-diagnostic', environment, freshPowerShell: true, readOnly: true, durationMs, timeoutMs: 8000,
-      initialSnapshotBudgetMs: 3200, totalStopBudgetMs: 5800,
-      withinInitialSnapshotBudget: inventoryAvailable && durationMs < 3200, inventoryAvailable,
+      initialSnapshotBudgetMs: 5800, totalStopBudgetMs: 5800,
+      withinInitialSnapshotBudget: inventoryAvailable && durationMs < 5800, inventoryAvailable,
       actualSystemModulesOnly: observed ? observed[1] === 'True' : null,
       status: result.status, timedOut: (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT', stderrPresent: !!result.stderr }));
   }

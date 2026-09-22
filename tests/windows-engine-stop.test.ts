@@ -149,7 +149,7 @@ test('cold owned inventory borrows time within the unchanged total stop budget',
   const result = await stopWindowsEngineTree(100, 50, {
     now: () => elapsed,
     snapshot: async (recorded: ProcessRow[] | undefined, timeout: number) => {
-      assert.equal(recorded, undefined); assert.equal(timeout, 3200);
+      assert.equal(recorded, undefined); assert.equal(timeout, 5800);
       elapsed += 2500; return tree;
     },
     kill: async (pid: number, timeout: number) => {
@@ -162,12 +162,51 @@ test('cold owned inventory borrows time within the unchanged total stop budget',
   assert.equal(kills, 1); assert.equal(elapsed, 2575);
 });
 
+test('cold inventory beyond the former phase cap still leaves a bounded successful cleanup', async () => {
+  let elapsed = 0, kills = 0;
+  const snapshotBudgets: number[] = [];
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async (_recorded: ProcessRow[] | undefined, timeout: number) => {
+      snapshotBudgets.push(timeout); elapsed += 4000; return tree;
+    },
+    kill: async (pid: number, timeout: number) => {
+      assert.equal(pid, 100); assert.equal(timeout, 1800); kills++;
+      elapsed += 900; return 0;
+    },
+    isRootRunning: () => true,
+  });
+  assert.deepEqual(result, { stopped: true, code: 0, proof: 'taskkill', recorded: 3 });
+  assert.deepEqual(snapshotBudgets, [5800]);
+  assert.equal(kills, 1); assert.equal(elapsed, 4900);
+});
+
+test('inventory that uses the entire shared budget never starts cleanup or certifies late evidence', async () => {
+  for (const duration of [5800, 5801]) {
+    let elapsed = 0, reads = 0, kills = 0;
+    const snapshotBudgets: number[] = [];
+    const events: Record<string, unknown>[] = [];
+    const result = await stopWindowsEngineTree(100, 50, {
+      now: () => elapsed,
+      snapshot: async (_recorded: ProcessRow[] | undefined, timeout: number) => {
+        snapshotBudgets.push(timeout); reads++; elapsed += duration; return tree;
+      },
+      kill: async () => { kills++; return 0; },
+      onDiagnostic: (event: Record<string, unknown>) => events.push(event),
+    });
+    assert.deepEqual(result, { stopped: false, code: null, proof: 'unproven', recorded: 0 });
+    assert.deepEqual(snapshotBudgets, [5800]);
+    assert.equal(reads, 1); assert.equal(kills, 0);
+    assert(events.some(event => event.phase === 'before' && event.reason === 'timeout'));
+  }
+});
+
 test('nonzero taskkill requires timely post-inventory using only the remaining shared budget', async () => {
   let elapsed = 0, reads = 0, kills = 0;
   const result = await stopWindowsEngineTree(100, 50, {
     now: () => elapsed,
     snapshot: async (recorded: ProcessRow[] | undefined, timeout: number) => {
-      if (++reads === 1) { assert.equal(timeout, 3200); elapsed += 3100; return tree; }
+      if (++reads === 1) { assert.equal(timeout, 5800); elapsed += 3100; return tree; }
       assert.deepEqual(recorded, tree); assert.equal(timeout, 600);
       elapsed += 599; return [];
     },
@@ -199,18 +238,53 @@ test('a late successful post-inventory cannot certify exit or reset the shared d
   }
 });
 
-test('late pre-inventory is discarded while exactly one remaining-budget cleanup remains unproven', async () => {
+test('failed pre-inventory leaves exactly one remaining-budget cleanup that cannot prove exit', async () => {
   let elapsed = 0, kills = 0;
   const result = await stopWindowsEngineTree(100, 50, {
     now: () => elapsed,
-    snapshot: async () => { elapsed += 3700; return tree; },
+    snapshot: async () => { elapsed += 5000; throw new Error('CIM unavailable'); },
     kill: async (pid: number, timeout: number) => {
-      assert.equal(pid, 100); assert.equal(timeout, 2100); assert(timeout > 0);
+      assert.equal(pid, 100); assert.equal(timeout, 800); assert(timeout > 0);
       kills++; elapsed += 40; return 0;
     },
   });
   assert.deepEqual(result, { stopped: false, code: 0, proof: 'unproven', recorded: 0 });
   assert.equal(kills, 1);
+});
+
+test('long cold inventory and nonzero taskkill still require timely complete exit evidence', async () => {
+  let elapsed = 0, reads = 0, kills = 0;
+  const result = await stopWindowsEngineTree(100, 50, {
+    now: () => elapsed,
+    snapshot: async (recorded: ProcessRow[] | undefined, timeout: number) => {
+      if (++reads === 1) { assert.equal(timeout, 5800); elapsed += 4000; return tree; }
+      assert.deepEqual(recorded, tree); assert.equal(timeout, 800); elapsed += 799; return [];
+    },
+    kill: async (pid: number, timeout: number) => {
+      assert.equal(pid, 100); assert.equal(timeout, 1800); kills++;
+      elapsed += 1000; return 128;
+    },
+  });
+  assert.deepEqual(result, { stopped: true, code: 128, proof: 'observed-exit', recorded: 3 });
+  assert.equal(reads, 2); assert.equal(kills, 1); assert.equal(elapsed, 5799);
+});
+
+test('taskkill uses only the budget left after a long inventory and rejects its boundary or late success', async () => {
+  for (const duration of [799, 800, 801]) {
+    let elapsed = 0, reads = 0, kills = 0;
+    const result = await stopWindowsEngineTree(100, 50, {
+      now: () => elapsed,
+      snapshot: async () => { reads++; elapsed += 5000; return tree; },
+      kill: async (pid: number, timeout: number) => {
+        assert.equal(pid, 100); assert.equal(timeout, 800); kills++;
+        elapsed += duration; return 0;
+      },
+    });
+    assert.deepEqual(result, duration < 800
+      ? { stopped: true, code: 0, proof: 'taskkill', recorded: 3 }
+      : { stopped: false, code: null, proof: 'unproven', recorded: 3 });
+    assert.equal(reads, 1); assert.equal(kills, 1);
+  }
 });
 
 test('late taskkill success cannot become exit proof and never triggers another PID kill or query', async () => {

@@ -1,6 +1,8 @@
 # Linux 命令行执行节点
 
-**2026-09-22 · Linux x64 0.1.19 已正式发布。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，使用固定核心 `9b07cf4` 的自有 runtime；[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、原生 x64 CI、公开包 curl/wget 各自完整下载与 SHA256、全树来源核验、隔离初始化/启动/重启/SIGTERM 均通过，官网双语命令已匹配。系统要求为内核至少 4.18、glibc 至少 **2.30**、libstdc++ 至少 6.0.25；ARM64 暂不发布，继续手动升级。见[本版发行说明](releases/linux-0.1.19.md)与[R2 保留审计](releases/0.1.19-r2-retention.md)。下方早期开发与 0.1.18 发行段落保留为历史。
+本文介绍随包 Linux x64 节点。安装版本用 `rivloom --version` 核对；对外发行、下载地址及校验值以[官网下载页](https://rivloom.com/download/)和对应发行记录为准。0.1.20 功能与边界见[版本说明](releases/linux-0.1.20.md)。核心固定 `9b07cf4`，运行要求为内核至少 4.18、glibc 至少 **2.30**、libstdc++ 至少 6.0.25；ARM64 暂不发布。
+
+**2026-09-22 历史发行：Linux x64 0.1.19。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，使用固定核心 `9b07cf4` 的自有 runtime；[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、原生 x64 CI、公开包 curl/wget 各自完整下载与 SHA256、全树来源核验、隔离初始化/启动/重启/SIGTERM 均通过，官网双语命令已匹配。继续手动升级。见[0.1.19 发行说明](releases/linux-0.1.19.md)与[R2 保留审计](releases/0.1.19-r2-retention.md)。下方早期开发与 0.1.18 发行段落保留为历史。
 
 
 Linux 端用于局域网内没有图形界面的服务器和迷你主机。通过 SSH 初始化和管理，让 Rivloom 桌面端发现、配对并派发任务；Linux 端在本机已授权的项目目录内执行，不需要桌面环境。
@@ -9,7 +11,7 @@ Linux 端用于局域网内没有图形界面的服务器和迷你主机。通�
 
 The 0.1.19 CLI adds `--thinking auto|LEVEL` to `execution enable`. Discover supported levels using `models list`. Auto uses model/runtime defaults without changing models; saved settings apply to subsequently admitted tasks.
 
-**2026-09-19 开发记录（已随 0.1.19 发行）：** Linux x64 改用自有 runtime 固定源码构建的 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 同步为1.18.31。不再使用官方 npm Linux 可执行包。源码构建、来源核验和升级步骤见 [引擎说明](ENGINE.md)。ARM64 自有构建暂缓；当前新构建命令只接受 x64。当时仅为本地候选；当前已发行状态以本页顶部为准。
+**2026-09-19 开发记录（已随 0.1.19 发行）：** Linux x64 改用自有 runtime 固定源码构建的 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 同步为1.18.31。不再使用官方 npm Linux 可执行包。源码构建、来源核验和升级步骤见 [引擎说明](ENGINE.md)。ARM64 自有构建暂缓；当前新构建命令只接受 x64。当时仅为本地候选；当前对外发行状态以官网下载页和对应发行记录为准。
 
 **新引擎的运行基线：** x86_64 glibc Linux，内核至少4.18、glibc至少 **2.30**，系统 `libstdc++.so.6` 提供 `GLIBCXX_3.4.25` 或更新版本。自编译 ELF 本体最高引用 `GLIBC_2.17`，但实际嵌入并在运行时释放的 `libfff_c.so` 要求 `GLIBC_2.30`，因此整包不能沿用旧版的2.28门槛；Node.js仍决定内核和libstdc++基线。当前本地原生验证环境为 WSL Ubuntu x86_64、glibc2.39，满足ABI下限不等于所有旧发行版已经实测。Alpine/musl、32位和ARM64不在本次交付范围。
 
@@ -17,9 +19,9 @@ The 0.1.19 CLI adds `--thinking auto|LEVEL` to `execution enable`. Discover supp
 
 ## 下载与解压
 
-从 [官网下载页](https://rivloom.com/download/) 选择 Linux x86_64，并复制页面给出的完整 curl / wget 命令。当前发行文件也可从 [GitHub Linux 0.1.19](https://github.com/rivloom/rivloom-desktop/releases/tag/linux-v0.1.19-c6d273d1f4bc-35629694382) 获取，固定公开下载地址和 SHA-256 见 [发行说明](releases/linux-0.1.19.md)。校验通过后解压，无需 `sudo`，也不执行下载下来的安装脚本。
+从 [官网下载页](https://rivloom.com/download/) 选择 Linux x86_64，并复制页面给出的完整 curl / wget 命令和该版本的 SHA256；也可从 [GitHub 发行列表](https://github.com/rivloom/rivloom-desktop/releases)选择相同版本的 Linux 条目。校验通过后解压，无需 `sudo`，也不执行下载下来的安装脚本。
 
-文件名为 `Rivloom_<版本>_linux_x64.tar.gz`。解压后的顶层目录是 `rivloom/`，包含启动入口 `bin/rivloom`、固定 Node.js、OpenCode 引擎、应用和依赖许可。0.1.18 首版内置官方引擎；当前 0.1.19 将自有 ELF 和来源记录放入 `app/vendor/rivloom-opencode/linux-x64/<commit12>/`。包内带运行时，不要求额外安装 Node.js 或 npm。
+文件名为 `Rivloom_<版本>_linux_x64.tar.gz`。解压后的顶层目录是 `rivloom/`，包含启动入口 `bin/rivloom`、固定 Node.js、OpenCode 引擎、应用和依赖许可。0.1.18 首版内置官方引擎；自 0.1.19 起，自有 ELF 和来源记录放入 `app/vendor/rivloom-opencode/linux-x64/<commit12>/`。包内带运行时，不要求额外安装 Node.js 或 npm。
 
 已发布 0.1.18 的运行要求为 x86_64 glibc Linux，内核至少 4.18、glibc 至少 2.28，系统 `libstdc++.so.6` 提供 `GLIBCXX_3.4.25`（libstdc++ 6.0.25）或更新版本。这是随包 [Node.js 24.19.0 的官方运行基线](https://github.com/nodejs/node/blob/v24.19.0/BUILDING.md#platform-list)；已核对固定 OpenCode baseline 二进制的 glibc 依赖没有高于该门槛。优先使用仍受发行商支持的发行版，不支持 Alpine/musl、32 位系统。满足 ABI 门槛不表示所有旧发行版都已实测。
 

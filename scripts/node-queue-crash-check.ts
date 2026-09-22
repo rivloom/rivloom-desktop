@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import type { Task } from '../shared/types.ts';
 import type { NodeQueueSnapshot } from '../shared/node-queue.ts';
 import { modelFixture, ServiceClient, until } from './m34-fixtures.ts';
+import { freezeServiceExitProof, waitForServiceExit } from './service-exit-proof.ts';
 
 const root = resolve(
   '.data/verification',
@@ -197,7 +198,13 @@ try {
     assert(secondSession);
     assert.equal(after.tasks.find((t) => t.id === original.id)?.state, 'interrupted');
     assert.equal(after.tasks.find((t) => t.id === original.id)?.sessionID, null);
+    const serviceChild = client.child;
+    assert(serviceChild?.pid && serviceChild.exitCode === null && serviceChild.signalCode === null);
+    const exitProof = await freezeServiceExitProof(serviceChild.pid, client.base, client.output);
+    writeFileSync(join(directory, 'final-exit-proof.json'), JSON.stringify({ ...exitProof, confirmedClosed: false }, null, 2));
     await client.stop();
+    const closed = await waitForServiceExit(exitProof, () => ({ exitCode: serviceChild.exitCode, signalCode: serviceChild.signalCode }));
+    writeFileSync(join(directory, 'final-exit-proof.json'), JSON.stringify({ ...exitProof, ...closed }, null, 2));
     const officialAfter = databaseRows(
       join(directory, 'engine/data/opencode/opencode.db'),
       'SELECT id FROM session',
@@ -214,6 +221,7 @@ try {
       intentBefore,
       queueBefore,
       marker,
+      finalExit: closed,
       modelRequests: model.requests,
       checks: [
         'persistent creation intent',

@@ -11,6 +11,7 @@ export const logicFiles = [
   'tests/task-context.test.ts',
   'tests/task-stream.test.ts',
   'tests/windows-engine-stop.test.ts',
+  'tests/service-exit-proof.test.ts',
   'tests/engine-artifact.test.ts',
   'tests/workflow-activity.test.ts',
   'tests/workflow-message-edits.test.ts',
