@@ -7,11 +7,14 @@ import { createSocket } from 'node:dgram';
 import { modelFixture, ServiceClient, pairServices, until, type FixtureModelReply } from './m34-fixtures.ts';
 import type { Workflow, WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceReference } from '../shared/resources.ts';
+import type { KnowledgeRef, KnowledgeUsagePage, LocalKnowledgeEntry } from '../shared/knowledge.ts';
 import { conversations } from '../shared/conversations.ts';
 
 const root = resolve('.data', 'workflow-service', String(Date.now())); mkdirSync(root, { recursive: true });
 const assertions: string[] = []; const pass = (message: string) => { assertions.push(message); console.log('PASS', message); };
 let ownNode = ''; let otherNode = ''; let outputDirectory = ''; let remoteDirectory = ''; let resourceReference: ResourceReference | null = null;
+let handoffMemory: (KnowledgeRef & { revision: string }) | null = null;
+const handoffMemoryBody = 'HANDOFF_KNOWLEDGE_PROOF-' + randomUUID();
 let systemBoundRequests = 0;
 let releaseParallel!: () => void;
 const parallelHeld = new Promise<void>((ok) => { releaseParallel = ok; });
@@ -82,6 +85,13 @@ function workflowReply(input: any): FixtureModelReply {
       JSON.parse(typeof m.content === 'string' ? m.content : m.content.map((p: any) => p.text || '').join('')));
     if (!results.length) return { toolName: 'rivloom_history', arguments: { action: 'state' } };
     assert(results[0].goal?.id, 'Both handoff participants must read their authorized workflow state');
+    assert(handoffMemory);
+    if (results.length === 1) return { toolName: 'rivloom_knowledge_search', arguments: { brainID: handoffMemory.brainID, text: 'Handoff proof' } };
+    assert(results[1].entries.some((entry: any) => entry.id === handoffMemory!.id), 'Each participant must discover the shared knowledge source');
+    if (results.length === 2) return { toolName: 'rivloom_knowledge_read', arguments: handoffMemory };
+    assert.equal(results[2].content, handoffMemoryBody);
+    assert.equal(results[2].entry.revision, handoffMemory.revision);
+    assert.equal(results[2].nextOffset, null);
   }
   if (userText.includes('HANDOFF_STEP') && !userText.includes('HANDOFF_CHECKPOINT')) return { toolName: 'StructuredOutput', arguments: {
     kind: 'handoff', nodeID: otherNode, reason: 'The next operation belongs on the material Node', checkpoint: userText.includes('RESTART_TARGET') ? 'HANDOFF_CHECKPOINT RESTART_TARGET' : 'HANDOFF_CHECKPOINT', files: [], processesStopped: true } };
@@ -113,7 +123,10 @@ const discovery = { port, mdns: false };
 let status = 'failed'; let failure = '';
 try {
   for (const client of clients) fixture.configure(client.root);
-  await Promise.all(clients.map((client, i) => client.start({ discovery, logPath: join(root, `service-${i}.log`) })));
+  await origin.start({ discovery, logPath: join(root, 'service-0.log') });
+  const established = await until(() => origin.network(), (network) => network.brains.some(b => b.hosted && b.state === 'established'), 'fixture Brain established');
+  const brainID = established.brains.find(b => b.hosted && b.state === 'established')!.id;
+  await worker.start({ discovery, logPath: join(root, 'service-1.log') });
   const readyNodes = await Promise.all(clients.map((client) => until(() => client.network(), (network) => !!network.local, 'local Node identity')));
   ownNode = readyNodes[0].local!.id; otherNode = readyNodes[1].local!.id;
   const folders: import('../shared/types.ts').Project[] = [];
@@ -223,16 +236,34 @@ try {
   const queried = await completed((await create('CASE_QUERY')).id); assert.equal(queried.state, 'completed', JSON.stringify(queried));
   assert.equal(queried.planner.attempts.length, 2); assert.equal(queried.planner.queryRounds, 1);
   pass('The official planner can request a bounded catalog query and continue from its evidence');
-  const handoff = await completed((await create('CASE_HANDOFF')).id); assert.equal(handoff.state, 'completed', JSON.stringify(handoff));
+  for (const [client, peerID] of [[origin, otherNode], [worker, ownNode]] as const)
+    await until(() => client.network(), network => network.brains.some(b => b.id === brainID) &&
+      !!network.paired?.some(peer => peer.id === peerID && peer.trusted && peer.online && peer.channelReady &&
+        peer.brains.some(b => b.id === brainID && b.masterNodeID === ownNode)), 'handoff Brain membership');
+  const memory = await origin.call<LocalKnowledgeEntry>('/knowledge/memory', { name: 'Handoff proof', description: 'Synthetic handoff knowledge',
+    category: 'Fixture/Handoff', projectID: null, body: handoffMemoryBody });
+  await origin.call('/knowledge/share', { id: memory.id, revision: memory.revision, updatedAt: memory.updatedAt, brains: [brainID] });
+  handoffMemory = { brainID, nodeID: ownNode, id: memory.id, revision: memory.revision };
+  const handoff = await completed((await create('CASE_HANDOFF')).id);
+  const handoffTasks = (await Promise.all(clients.map(client => client.bootstrap())))
+    .map(bootstrap => bootstrap.tasks.filter(task => task.collaboration?.workflowID === handoff.id));
+  writeFileSync(join(root, 'knowledge-handoff.json'), JSON.stringify({ workflow: handoff, tasks: handoffTasks, reference: handoffMemory }, null, 2));
+  assert.equal(handoff.state, 'completed', JSON.stringify(handoff));
   assert.equal(handoff.handoffs.length, 1); assert.equal(handoff.steps[0].attempts.length, 2);
   assert.equal(handoff.steps[0].attempts[1].nodeID, otherNode); assert.equal(handoff.handoffs[0].phase, 'completed');
   for (const client of clients) {
     const execution = (await client.bootstrap()).tasks.find(t => t.collaboration?.workflowID === handoff.id && t.collaboration.role === 'executor');
     assert(execution);
     assert(execution.messages.some(m => m.parts?.some(p => p.type === 'tool' && p.name === 'rivloom_history')));
+    for (const tool of ['rivloom_knowledge_search', 'rivloom_knowledge_read'])
+      assert(execution.messages.some(m => m.tools.some(t => t.name === tool && t.status === 'completed')), `${tool} must finish through the official Runtime`);
+    const usage = await client.call<KnowledgeUsagePage>(`/tasks/${execution.id}/context/knowledge`);
+    assert.equal(usage.entries.length, 1); assert.equal(usage.entries[0].reference.id, memory.id);
+    assert.equal(usage.entries[0].revision, memory.revision); assert.equal(usage.entries[0].nextOffset, null);
+    assert.equal(usage.entries[0].contentBytes, Buffer.byteLength(handoffMemoryBody));
     assert.equal(execution.collaborationOutcome?.quiescence.confirmed, true);
   }
-  pass('A quiescent execution transfers to the selected Node with a distinct attempt and saved business checkpoint');
+  pass('Both official sessions discover and read shared Wiki; the source transfers with a distinct attempt, recorded reads and verified quiescence');
   const material = await completed((await create('CASE_RESOURCE', { mode: 'locked', nodeID: ownNode })).id);
   assert.equal(material.state, 'completed', JSON.stringify(material)); assert(material.steps[0].attempts.every((a) => a.nodeID === ownNode));
   const attached = material.steps[0].attempts.at(-1)!.inputFiles[0]; assert(attached);

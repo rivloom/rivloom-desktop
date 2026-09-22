@@ -55,6 +55,22 @@ export function isPendingLocalTaskMessage(draft: ConversationDraft): boolean {
   }
 }
 
+/** New work confirms a stop first; replaying a submitted request must never abort that request. */
+export async function submitLocalTaskMessage<T>(
+  task: Pick<Task, 'id' | 'state' | 'sessionID'>,
+  draft: ConversationDraft,
+  stop: () => Promise<Pick<Task, 'id' | 'state' | 'sessionID'>>,
+  submit: () => Promise<T>,
+): Promise<T> {
+  if (!isPendingLocalTaskMessage(draft) &&
+    ['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted'].includes(task.state)) {
+    const stopped = await stop();
+    if (stopped.id !== task.id || stopped.state !== 'stopped' || !task.sessionID || stopped.sessionID !== task.sessionID)
+      throw new Error(t('等待原执行确认停止，暂不能重试。'));
+  }
+  return submit();
+}
+
 /** Keep pre-upgrade HTTP retries byte-for-byte compatible; editing rotates the request ID. */
 export function conversationReasoningFields(draft: ConversationDraft, reasoningEffort: ReasoningEffort) {
   if (reasoningEffort === null && draft.requestSignature) {

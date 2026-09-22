@@ -1,5 +1,7 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+**2026-09-22 · 0.1.20 发行准备。** 已获正式发布授权。本轮将上下文查看、显式项目记忆、Wiki 分页与授权、历史维护及普通会话恢复纳入正式构建；服务矩阵新增 `context-knowledge`、`context-recovery`、`runtime-history`。功能已完成限定范围的本地及三机验收；本次源码的云端 CI、安装与公开下载/签名验证仍须按实际结果记录，不能沿用 0.1.19 的发行证据。核心固定 `9b07cf4`，ARM64 暂缓。
+
 **2026-09-22 · 0.1.19 正式发布与收尾完成。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640` 的 Windows x64 与 Linux x64 0.1.19 已发行。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)、[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)及同提交 CI 通过；Windows 隔离安装/启动/重启/卸载、公开完整下载与原公钥签名核验通过，Linux 原生构建及公开包验收通过。官网双语下载页已部署并复核，ARM64 暂不发布。核心固定 `9b07cf4`，Windows 停止验证限定辅助 PowerShell 的系统模块来源，保留既有进程归属、退出证明与时间门槛。[Windows 发行说明](releases/0.1.19.md)、[Linux 发行说明](releases/linux-0.1.19.md)及[R2 保留审计](releases/0.1.19-r2-retention.md)：保留 62、暂缓 0、删除 0 个；检查完成，删除 0 个。以下准备状态与旧版本记录保留为历史。
 
 

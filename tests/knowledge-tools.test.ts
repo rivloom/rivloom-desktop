@@ -51,6 +51,8 @@ test('skills load instructions before assets, pin revisions and materialize with
     const read = (args: object) => f.tools.call(f.task.sessionID, f.task.directory, 'rivloom_knowledge_read', { ...ref, ...args });
     await assert.rejects(read({ file: 'helper.js' }), /instructions_first/);
     await read({});
+    await assert.rejects(read({ file: 'helper.js', revision: entry.revision, materialize: true, offset: 9999 }), /invalid_offset/);
+    assert(!existsSync(join(f.task.directory, '.rivloom-knowledge')));
     const result = await read({ file: 'helper.js', materialize: true }) as { localPath: string };
     assert(existsSync(join(f.task.directory, result.localPath)));
     assert.match(readFileSync(join(f.task.directory, result.localPath), 'utf8'), /never execute/);
@@ -69,5 +71,87 @@ test('private engine bridge rejects missing auth, browser origins and unknown se
     assert.equal(response.status, 200); assert(!JSON.stringify(await response.json()).includes(config.token));
     f.active(false);
     assert.equal((await fetch(config.url, { method: 'POST', body, headers: { Authorization: `Bearer ${config.token}` } })).status, 409);
+  } finally { await bridge.close(); f.close(); }
+});
+
+for (const [name, content] of [
+  ['Chinese', '长期知识'.repeat(8000)], ['emoji', '😀🚀'.repeat(8000)],
+  ['escaped JSON', '汉"\\\n\t😀'.repeat(4500)],
+] as const) test(`knowledge reads round-trip ${name} within 32 KiB and record exact successful ranges`, async () => {
+  const f = fixture();
+  try {
+    const entry = f.store.saveMemory({ name, description: '分页资料', category: 'Projects/Fixture', body: content, projectID: f.task.projectID }, 'user');
+    const ref = { brainID: null, nodeID: entry.nodeID, id: entry.id };
+    const call = (args: object) => f.tools.call(f.task.sessionID, f.task.directory, 'rivloom_knowledge_read', { ...ref, ...args });
+    await f.tools.call(f.task.sessionID, f.task.directory, 'rivloom_knowledge_search', {});
+    assert.equal(f.tools.usage(f.task.id).total, 0);
+    await assert.rejects(call({ revision: 'f'.repeat(64) }), /revision_changed/);
+    await assert.rejects(call({ offset: 1 }), /revision_required/);
+    assert.equal(f.tools.usage(f.task.id).total, 0);
+    let offset = 0, joined = '', pages = 0;
+    while (true) {
+      const page = await call({ revision: entry.revision, offset }) as { content: string; nextOffset: number | null; totalCharacters: number; offsetUnit: string };
+      assert(Buffer.byteLength(JSON.stringify(page)) <= 32 * 1024);
+      assert.equal(Buffer.from(page.content).toString('utf8'), page.content); assert.equal(page.offsetUnit, 'utf16');
+      assert.equal(page.totalCharacters, content.length); joined += page.content; pages++;
+      if (page.nextOffset === null) break;
+      assert(page.nextOffset > offset); offset = page.nextOffset;
+    }
+    assert(pages > 1); assert.equal(joined, content);
+    const usage = f.tools.usage(f.task.id);
+    assert.equal(usage.total, pages); assert.equal(usage.entries[0].nextOffset, null);
+    assert(usage.entries.every(v => v.revision === entry.revision && v.sessionID === f.task.sessionID && v.reference.id === entry.id));
+    assert(!JSON.stringify(usage).includes('content":')); assert(!JSON.stringify(usage).includes(f.task.directory));
+    const reopened = new KnowledgeTools(f.store, f.network, () => f.task);
+    try { assert.deepEqual(reopened.usage(f.task.id), usage); } finally { reopened.close(); }
+    await assert.rejects(call({ revision: entry.revision, offset: content.length + 1 }), /invalid_offset/);
+    assert.equal(f.tools.usage(f.task.id).total, pages);
+    f.tools.removeTasks([f.task.id]); assert.equal(f.tools.usage(f.task.id).total, 0);
+  } finally { f.close(); }
+});
+
+test('long Skill instructions require all pages before assets and paginate supporting-file metadata', async () => {
+  const f = fixture();
+  try {
+    const source = join(f.root, 'paged-skill'); mkdirSync(source);
+    writeFileSync(join(source, 'SKILL.md'), '---\nname: paged\ndescription: Large instructions\n---\n' + '执行约束'.repeat(20_000));
+    for (let i = 0; i < 25; i++) writeFileSync(join(source, `support-${i}.md`), `support ${i}`);
+    const entry = await f.store.registerSkill(source, null);
+    const ref = { brainID: null, nodeID: entry.nodeID, id: entry.id, revision: entry.revision };
+    const read = (args: object) => f.tools.call(f.task.sessionID, f.task.directory, 'rivloom_knowledge_read', { ...ref, ...args });
+    let page = await read({}) as { nextOffset: number | null; files: { path: string }[]; nextManifestOffset: number | null };
+    assert.equal(page.files.length, 20); assert.equal(page.nextManifestOffset, 20);
+    await assert.rejects(read({ file: 'support-0.md' }), /instructions_first/);
+    while (page.nextOffset !== null) page = await read({ offset: page.nextOffset }) as typeof page;
+    assert.equal((await read({ file: 'support-0.md' }) as { content: string }).content, 'support 0');
+    const last = await read({ manifestOffset: 20 }) as typeof page;
+    assert.equal(last.files.length, 6); assert.equal(last.nextManifestOffset, null);
+  } finally { f.close(); }
+});
+
+test('knowledge bridge binds tools to engine account and rechecks identity before recording a read', async () => {
+  const f = fixture(); const allowed = join(f.root, 'account-a'); let run = 'run-one';
+  const bridge = await startKnowledgeBridge(() => f.tools, undefined, undefined, (root, session, directory) => {
+    if (root !== allowed.toLowerCase() && root !== allowed || session !== f.task.sessionID || directory !== f.task.directory)
+      throw new Error('context_execution_changed');
+    return run;
+  });
+  try {
+    const entry = f.store.saveMemory({ name: 'Scoped', description: '', category: 'Tests', body: 'PRIVATE-ACCOUNT-SOURCE', projectID: null }, 'user');
+    const input = { name: 'rivloom_knowledge_read', sessionID: f.task.sessionID, directory: f.task.directory,
+      args: { brainID: null, nodeID: entry.nodeID, id: entry.id, revision: entry.revision } };
+    const request = (config: NonNullable<ReturnType<typeof knowledgeEngineConfig>>) => fetch(config.url, {
+      method: 'POST', headers: { Authorization: `Bearer ${config.token}` }, body: JSON.stringify(input),
+    });
+    assert.equal((await request(knowledgeEngineConfig()!)).status, 403);
+    assert.equal((await request(knowledgeEngineConfig(join(f.root, 'account-b'))!)).status, 409);
+    assert.equal(f.tools.usage(f.task.id).total, 0);
+    assert.equal((await request(knowledgeEngineConfig(allowed)!)).status, 200);
+    assert.equal(f.tools.usage(f.task.id).total, 1);
+    const original = f.network.file.bind(f.network);
+    f.network.file = async (...args) => { const result = await original(...args); run = 'run-two'; return result; };
+    const response = await request(knowledgeEngineConfig(allowed)!);
+    assert.equal(response.status, 409); assert(!JSON.stringify(await response.json()).includes('PRIVATE-ACCOUNT-SOURCE'));
+    assert.equal(f.tools.usage(f.task.id).total, 1);
   } finally { await bridge.close(); f.close(); }
 });

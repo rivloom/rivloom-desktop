@@ -3,6 +3,7 @@ import type { Bootstrap } from '../shared/types.ts';
 import { conversations } from '../shared/conversations.ts';
 import { conversationDirectory, historyCanTrash, historyExpiry, historyMembers, type HistoryMembers, type TrashEntry } from '../shared/conversation-history.ts';
 import type { NodeQueueEntry } from '../shared/node-queue.ts';
+import { RuntimeHistoryError, type RuntimeHistory } from './runtime-history.ts';
 
 export type HistoryData = Pick<Bootstrap, 'tasks' | 'network' | 'workflows' | 'projects' | 'conversationPreferences'>;
 type StoredHistory = TrashEntry & { members: HistoryMembers; fileIDs: string[] };
@@ -30,9 +31,11 @@ export function historyFileIDs(value: unknown): string[] {
 }
 export class ConversationHistory {
   private db: DatabaseSync;
+  private cleaning = new Map<string, Promise<void>>();
   private options: { data: () => HistoryData; queue: () => NodeQueueEntry[]; busy: (members: HistoryMembers) => boolean;
     files?: (members: HistoryMembers) => string[];
-    purge: (members: HistoryMembers, fileIDs: string[], protectedIDs: Set<string>) => void; clock?: () => number };
+    purge: (members: HistoryMembers, fileIDs: string[], protectedIDs: Set<string>) => void | Promise<void>;
+    runtime?: RuntimeHistory; clock?: () => number };
   constructor(db: DatabaseSync, options: ConversationHistory['options']) {
     this.db = db; this.options = options; createHistorySchema(db);
   }
@@ -91,28 +94,51 @@ export class ConversationHistory {
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  purge(key: string) {
+  purge(key: string): Promise<void> {
+    const previous = this.cleaning.get(key);
+    if (previous) return previous;
+    const pending = this.performPurge(key).finally(() => this.cleaning.delete(key));
+    this.cleaning.set(key, pending); return pending;
+  }
+  private async performPurge(key: string) {
     const record = this.get(key);
     if (!record) throw new HistoryError(404, '回收站中没有此会话。');
     if (this.options.busy(record.members)) throw new HistoryError(409, '相关记录正在处理，请稍后重试。');
     // Persist the journal before touching separate stores; retries after a crash are idempotent.
     record.purging = true;
-    this.db.prepare('UPDATE conversation_trash SET body=? WHERE key=?').run(JSON.stringify(record), key);
-    this.db.prepare('UPDATE conversation_retired SET permanent=1 WHERE conversation_key=?').run(key);
+    record.cleanup = { state: 'pending', attempts: (record.cleanup?.attempts || 0) + 1,
+      lastAttemptAt: new Date((this.options.clock || Date.now)()).toISOString() };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE conversation_trash SET body=? WHERE key=?').run(JSON.stringify(record), key);
+      this.db.prepare('UPDATE conversation_retired SET permanent=1 WHERE conversation_key=?').run(key);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    try {
+    this.options.runtime?.prepare(key, record.members);
+    await this.options.runtime?.purge(key, record.members);
+    if (this.options.busy(record.members)) throw new HistoryError(409, '相关记录正在处理，请稍后重试。');
     const data = this.options.data(), m = record.members;
     const retained = { tasks: data.tasks.filter((v) => !m.local.includes(v.id)),
       workflows: data.workflows?.filter((v) => !m.workflow.includes(v.id)),
       remotes: data.network.remoteTasks.filter((v) => !m.remote.includes(v.id)),
       brains: data.network.brainTasks.filter((v) => !m.brain.includes(v.id)) };
-    this.options.purge(m, record.fileIDs, new Set(historyFileIDs(retained)));
+    await this.options.purge(m, record.fileIDs, new Set(historyFileIDs(retained)));
+    this.options.runtime?.finish(key);
     this.db.prepare('DELETE FROM conversation_trash WHERE key=?').run(key);
+    } catch (error) {
+      record.cleanup.state = 'failed';
+      record.cleanup.error = error instanceof RuntimeHistoryError ? error.code : 'cleanup_failed';
+      this.db.prepare('UPDATE conversation_trash SET body=? WHERE key=?').run(JSON.stringify(record), key);
+      throw new HistoryError(503, '会话清理尚未完成，记录已保留，请稍后重试。');
+    }
   }
-  sweep(expiredOnly = true) {
+  async sweep(expiredOnly = true) {
     let deleted = 0; const failed: string[] = [];
     const now = (this.options.clock || Date.now)();
     for (const record of this.records()) {
       if (expiredOnly && !record.purging && Date.parse(record.expiresAt) > now) continue;
-      try { this.purge(record.key); deleted++; } catch { failed.push(record.key); }
+      try { await this.purge(record.key); deleted++; } catch { failed.push(record.key); }
     }
     return { deleted, failed };
   }

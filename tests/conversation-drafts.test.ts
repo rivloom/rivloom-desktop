@@ -19,6 +19,7 @@ import {
   isPendingLocalTaskMessage,
   conversationReasoningFields,
   localTaskCanContinue,
+  submitLocalTaskMessage,
 } from '../src/conversation-drafts.ts';
 
 test('thinking choices survive draft restore and submission but reset on a model change', () => {
@@ -220,6 +221,55 @@ test('only the assignee of an idle ordinary local task can use task continuation
     assert.equal(localTaskCanContinue({ assigneeID: 'executor', state }, 'executor'), false);
   }
   assert.equal(localTaskCanContinue(undefined, 'executor'), false);
+});
+
+test('new local follow-ups confirm the same session stopped before submission and retain their draft on failure', async () => {
+  const draft = updateConversationDraft(createConversationDraft(), { text: 'Continue after checking the interrupted execution' });
+  const saved = JSON.stringify(draft);
+  for (const state of ['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted'] as const) {
+    const task = { id: 'task', sessionID: 'session', state };
+    const calls: string[] = [];
+    let release!: () => void;
+    const stopping = new Promise<void>(done => { release = done; });
+    const pending = submitLocalTaskMessage(task, draft, async () => {
+      calls.push('stop'); await stopping;
+      return { ...task, state: 'stopped' };
+    }, async () => { calls.push('message'); return 'submitted'; });
+    await Promise.resolve();
+    assert.deepEqual(calls, ['stop'], `${state}: no message before stop acknowledgement`);
+    release();
+    assert.equal(await pending, 'submitted');
+    assert.deepEqual(calls, ['stop', 'message']);
+  }
+  const task = { id: 'task', sessionID: 'session', state: 'interrupted' as const };
+  let submissions = 0;
+  const submit = async () => { submissions++; };
+  await assert.rejects(submitLocalTaskMessage(task, draft, async () => { throw new Error('Stop could not be confirmed'); }, submit), /Stop could not be confirmed/);
+  for (const response of [{ ...task, state: 'running' as const }, { ...task, state: 'stopped' as const, sessionID: 'other' },
+    { ...task, state: 'stopped' as const, id: 'other' }])
+    await assert.rejects(submitLocalTaskMessage(task, draft, async () => response, submit));
+  assert.equal(submissions, 0);
+  assert.equal(JSON.stringify(draft), saved, 'Failed stop must not consume the text or rotate its retry identity');
+});
+
+test('idle continuation and exact request replay do not stop or replace a previous submission', async () => {
+  const fresh = updateConversationDraft(createConversationDraft(), { text: 'Follow-up' });
+  const pending = prepareConversationRequest(fresh, { messageKind: 'local-task', model: 'account/model' });
+  let stops = 0, submissions = 0;
+  const stop = async () => { stops++; throw new Error('Unexpected stop'); };
+  for (const state of ['ready', 'stopped', 'failed', 'review', 'accepted'] as const)
+    await submitLocalTaskMessage({ id: 'task', sessionID: 'session', state }, fresh, stop, async () => { submissions++; });
+  const retryID = pending.requestID, signature = pending.requestSignature;
+  for (const state of ['running', 'interrupted'] as const) {
+    await assert.rejects(submitLocalTaskMessage({ id: 'task', sessionID: 'session', state }, pending, stop, async () => {
+      submissions++;
+      assert.equal(pending.requestID, retryID);
+      assert.equal(pending.requestSignature, signature);
+      throw new Error('Message submission is uncertain');
+    }), /submission is uncertain/);
+  }
+  assert.equal(stops, 0);
+  assert.equal(submissions, 7);
 });
 
 test('saved drafts restore content, routing, options, uploaded metadata and the exact retry identity', () => {

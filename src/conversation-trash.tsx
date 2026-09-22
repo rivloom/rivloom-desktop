@@ -18,9 +18,10 @@ export function ConversationTrash({ entries, busy, restore, purge, empty }: {
       <div className="trash-summary"><strong>{entry.title}</strong><span title={entry.directory}>{entry.directory}</span>
         <small>{t('移入时间：{{date}}', { date: date(entry.deletedAt) })}</small>
         <small>{entry.purging ? t('正在永久删除，未完成的清理会自动重试。') : t('自动删除：{{date}}', { date: date(entry.expiresAt) })}</small>
+        {entry.cleanup?.state === 'failed' && <small role="status">{t('引擎历史清理尚未完成，记录保留等待重试。')} {entry.cleanup.error === 'runtime_busy' ? t('引擎会话仍在执行。') : entry.cleanup.error === 'runtime_shared' ? t('另一个保留的会话仍在使用此记录。') : t('请确认本机引擎可用后重试。')}</small>}
       </div><div className="trash-actions">
         <Button disabled={busy || entry.purging} onClick={() => restore(entry)}><RotateCcw size={15} />{t('恢复会话')}</Button>
-        <Button variant="danger" disabled={busy} onClick={() => purge(entry)}><Trash2 size={15} />{t('永久删除')}</Button>
+        <Button variant="danger" disabled={busy} onClick={() => purge(entry)}><Trash2 size={15} />{entry.cleanup ? t('重试清理') : t('永久删除')}</Button>
       </div></li>)}</ul> : <div className="trash-empty"><Trash2 size={30} /><h3>{t('回收站为空')}</h3><p>{t('删除的会话会先移到这里，你可以在保留期内恢复。')}</p></div>}
   </section>;
 }

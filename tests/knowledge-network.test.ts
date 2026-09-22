@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { KnowledgeStore } from '../server/knowledge-store.ts';
 import { KnowledgeNetwork, type KnowledgeTransport } from '../server/knowledge-network.ts';
+import { KnowledgeTools, type KnowledgeTask } from '../server/knowledge-tools.ts';
 import type { BrainTopology, RivloomNode } from '../shared/types.ts';
 
 function fixture() {
@@ -82,4 +83,28 @@ test('relay rejects tampered chunks and revocation while an awaited read is retu
     };
     await assert.rejects(f.networks[0].manifest(ref), /not_authorized/);
   } finally { f.close(); }
+});
+
+test('shared Wiki pages retain exact source identity and withdrawal denies later reads without exposing private entries', async () => {
+  const f = fixture();
+  const task: KnowledgeTask = { id: randomUUID(), sessionID: 'ses_shared_knowledge', directory: f.root, projectID: randomUUID(),
+    privateLocal: false, brainIDs: [f.brainID], canWriteMemory: false };
+  const tools = new KnowledgeTools(f.stores[0], f.networks[0], () => task);
+  try {
+    const entry = f.stores[2].saveMemory({ name: 'Shared long', description: '', category: 'Work', body: '跨节点知识'.repeat(6400), projectID: null }, 'user');
+    const privateEntry = f.stores[2].saveMemory({ name: 'Private', description: '', category: 'Work', body: 'PRIVATE-UNSHARED', projectID: null }, 'user');
+    f.stores[2].share(entry.id, [f.brainID], entry.revision);
+    const ref = { brainID: f.brainID, nodeID: f.ids[2], id: entry.id, revision: entry.revision };
+    const first = await tools.call(task.sessionID, task.directory, 'rivloom_knowledge_read', ref) as { content: string; nextOffset: number };
+    assert(Buffer.byteLength(JSON.stringify(first)) <= 32 * 1024); assert(first.nextOffset > 0);
+    const usage = tools.usage(task.id); assert.equal(usage.total, 1); assert.equal(usage.entries[0].reference.nodeID, f.ids[2]);
+    assert.equal(usage.entries[0].revision, entry.revision);
+    await assert.rejects(tools.call(task.sessionID, task.directory, 'rivloom_knowledge_read', { ...ref, id: privateEntry.id, revision: privateEntry.revision }), /not_shared/);
+    await assert.rejects(tools.call(task.sessionID, task.directory, 'rivloom_knowledge_read', { ...ref, brainID: null }), /not_authorized/);
+    f.stores[2].withdrawMemory(entry.id, entry.revision);
+    await assert.rejects(tools.call(task.sessionID, task.directory, 'rivloom_knowledge_read', { ...ref, offset: first.nextOffset }), /memory_withdrawn/);
+    assert.equal(tools.usage(task.id).total, 1);
+    assert.equal((await f.networks[0].search({ brainID: f.brainID })).entries.length, 0);
+    assert(!JSON.stringify(usage).includes('PRIVATE-UNSHARED'));
+  } finally { tools.close(); f.close(); }
 });

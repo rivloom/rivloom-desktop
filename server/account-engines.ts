@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { engineRoot, dataRoot, startEngine } from './engine.ts';
 import { ProviderConfigStore } from './provider-config.ts';
 import { ProviderAccountStore } from './provider-accounts.ts';
@@ -11,6 +12,7 @@ export class AccountEnginePool {
   private running = new Map<string, Promise<Engine>>();
   private ready = new Map<string, Engine>();
   private closing = false;
+  private maintenanceQueue = new Map<string, Promise<unknown>>();
   onExit: (id: string) => void = () => {};
   readonly accounts: ProviderAccountStore;
   private launch: typeof startEngine;
@@ -27,6 +29,8 @@ export class AccountEnginePool {
     return engine.client;
   }
   async get(id: string) {
+    if (this.closing) throw new Error('Account engines are shutting down.');
+    await this.maintenanceQueue.get(id)?.catch(() => {});
     if (this.closing) throw new Error('Account engines are shutting down.');
     const account = this.accounts.get(id);
     if (!account) throw new Error('Account not found.');
@@ -62,10 +66,35 @@ export class AccountEnginePool {
     if (id) await this.get(id);
     return this.context.run(id, work);
   }
+  /** Cleanup an explicitly recorded session even after its account credentials were disconnected. */
+  maintenance<T>(id: string, work: (client: Engine['client']) => Promise<T>): Promise<T> {
+    const previous = this.maintenanceQueue.get(id);
+    const pending = (previous || Promise.resolve()).catch(() => {}).then(async () => {
+      if (this.closing) throw new Error('Account engines are shutting down.');
+      const running = this.running.get(id);
+      if (running) {
+        const engine = await running;
+        if (engine.child.exitCode !== null || engine.child.signalCode !== null) throw new Error('Account engine exit is unresolved.');
+        return work(engine.client);
+      }
+      const root = this.accounts.directory(id);
+      if (!existsSync(root)) throw new Error('Recorded account Runtime directory is unavailable.');
+      const key = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+      if (key(realpathSync(root)) !== key(join(realpathSync(this.accounts.root), 'accounts', id)))
+        throw new Error('Account Runtime directory is outside its registered scope.');
+      const engine = await this.launch(dataRoot, 0, root, { maintenance: true });
+      try { return await work(engine.client); }
+      finally { engine.close(); await engine.waitForExit(); }
+    });
+    this.maintenanceQueue.set(id, pending);
+    void pending.finally(() => { if (this.maintenanceQueue.get(id) === pending) this.maintenanceQueue.delete(id); }).catch(() => {});
+    return pending;
+  }
   async dispose() {
     for (const engine of this.ready.values()) await engine.client.global.dispose();
   }
   async remove(id: string) {
+    await this.maintenanceQueue.get(id)?.catch(() => {});
     const pending = this.running.get(id);
     if (!pending) return;
     const engine = await pending;
@@ -76,6 +105,7 @@ export class AccountEnginePool {
   }
   async close(wait = false) {
     this.closing = true;
+    await Promise.allSettled(this.maintenanceQueue.values());
     const engines = await Promise.allSettled(this.running.values());
     const exits: Promise<void>[] = [];
     for (const result of engines)

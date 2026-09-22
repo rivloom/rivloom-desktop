@@ -8,8 +8,12 @@ import { modelFixture, ServiceClient, until } from './m34-fixtures.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Task } from '../shared/types.ts';
 import type { Workflow } from '../shared/workflows.ts';
+import { testEnvironment } from './ci-workspace.ts';
 
 const root = resolve('.data/conversation-history-service', `${Date.now()}-${randomUUID()}`); mkdirSync(root, { recursive: true });
+const home = join(root, 'home'); mkdirSync(home);
+process.env = { ...testEnvironment(root), HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'),
+  RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'disabled' };
 const fixture = await modelFixture(); const client = new ServiceClient(join(root, 'application'));
 const assertions: string[] = []; const pass = (value: string) => { assertions.push(value); console.log('PASS', value); };
 let status = 'failed';
@@ -72,7 +76,12 @@ try {
   await until(async () => fixture.pendingRequests, (value) => value > 0, 'loopback model request');
   await client.call('/history/trash', { key: `local:${running.id}` }, 409);
   await client.call(`/tasks/${running.id}/stop`, {});
-  await until(() => client.bootstrap(), (b) => b.tasks.find((v) => v.id === running.id)?.state === 'stopped', 'task stopped');
+  const settled = await until(() => client.bootstrap(), (b) => b.tasks.find((v) => v.id === running.id)?.state === 'stopped', 'task stopped');
+  const sessionID = settled.tasks.find(value => value.id === running.id)!.sessionID; assert(sessionID);
+  const runtimeDB = join(client.root, 'engine', 'data', 'opencode', 'opencode.db');
+  const beforePurge = new DatabaseSync(runtimeDB, { readOnly: true });
+  assert(beforePurge.prepare('SELECT 1 FROM session WHERE id=?').get(sessionID));
+  assert(Number(beforePurge.prepare('SELECT count(*) n FROM message WHERE session_id=?').get(sessionID)?.n) > 0); beforePurge.close();
   await until(() => client.call('/history/trash', { key: `local:${running.id}` }), () => true, 'settled task can enter recycle bin');
   pass('Running official-engine work cannot be deleted; explicitly stopped work can enter the recycle bin');
   await client.call('/history/trash', { key });
@@ -89,7 +98,12 @@ try {
   assert.equal(db.prepare('SELECT 1 FROM node_queue WHERE local_task_id=?').get(running.id), undefined);
   assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 4);
   db.close(); assert.equal(readFileSync(original, 'utf8'), 'keep original');
+  const afterPurge = new DatabaseSync(runtimeDB, { readOnly: true });
+  for (const [table, column] of [['session', 'id'], ['message', 'session_id'], ['part', 'session_id'], ['event', 'aggregate_id'], ['event_sequence', 'aggregate_id']] as const)
+    assert.equal(afterPurge.prepare(`SELECT count(*) n FROM ${table} WHERE ${column}=?`).get(sessionID)?.n, 0, `${table} retained purged history`);
+  afterPurge.close();
   pass('Manual and bulk purge remove live SQL bodies, activities, engine bindings and ended queues while retaining unrelated history, project originals and monotonic numbering');
+  pass('Permanent deletion also removes the actual pinned Runtime session, messages, parts and event history');
   const workflowRequest = { requestID: randomUUID(), title: 'HISTORY_WORKFLOW', description: 'History workflow fixture', projectID: project.id,
     model: 'fixture/m34', approvalMode: 'ask', target: { mode: 'automatic' } };
   const workflow = await client.call<Workflow>('/workflows', workflowRequest, 201);

@@ -34,6 +34,10 @@ export function installWorkflowAPI(app: Express, runtime: WorkflowRuntime, netwo
   app.get('/api/workflows/:id', (req, res) => res.json(visible(req)));
   app.get('/api/workflows/:id/diagnostics', (req, res) => res.json(runtime.diagnostics(visible(req))));
   app.get('/api/workflows/:id/context', (req, res) => res.json(runtime.store.history.state(visible(req))));
+  app.get('/api/workflows/:id/context/reads', (req, res) => res.json(runtime.store.history.reads(visible(req).id)));
+  app.post('/api/workflows/:id/context/notes/withdraw', (req, res) => {
+    try { res.json(runtime.store.history.withdraw(visible(req), req.body)); } catch (value) { error(value); }
+  });
   app.post('/api/workflows/:id/history', (req, res) => {
     try { res.json(runtime.store.history.query(visible(req), req.body)); } catch (value) { error(value); }
   });

@@ -37,11 +37,12 @@ export default async function RivloomKnowledgePlugin({ directory }) {
         brainID: z.string().nullable().optional(), offset: z.number().optional(),
       }),
     rivloom_knowledge_read: request('rivloom_knowledge_read',
-      'Load a discovered Skill or memory using its exact brainID (null for local), nodeID and id. Initially omit file to read instructions and a supporting-file manifest. Fetch each needed supporting file separately. materialize=true writes that verified Skill file into the task working directory for ordinary approved tools to use. Never installs or executes scripts.', {
+      'Read a discovered Skill or Wiki memory using its exact brainID (null for local), nodeID, id and revision. Results fit 32 KiB of JSON. Follow nextOffset with the same revision for remaining text; offsets are UTF-16 units, not fixed page sizes. Initially omit file and finish the instructions before supporting files. The main file also lists supporting files; follow nextManifestOffset as manifestOffset for more. materialize=true writes a verified Skill file into the current directory for ordinary approved tools, never installs or executes it.', {
         brainID: z.string().nullable(), nodeID: z.string(), id: z.string(), file: z.string().optional(), materialize: z.boolean().optional(),
+        revision: z.string().optional(), offset: z.number().optional(), manifestOffset: z.number().optional(),
       }),
     rivloom_memory_save: request('rivloom_memory_save',
-      'Save sourced facts to local progressive Wiki memory with a category such as People/Alice/Work or Projects/Website/Decisions. No automatic sharing. For updates read first and pass id plus expectedRevision. projectID is the current project UUID, or null for Node-wide memory when permitted. Never store secrets or invented personal facts.', {
+      'Save reusable sourced facts to local Wiki memory; do not persist temporary task requirements. No automatic sharing or user confirmation. For updates read first and pass id plus expectedRevision. Owner-confirmed session memories require the owner to replace or withdraw them. projectID is the current project UUID, or null for Node-wide memory when permitted. Never store secrets or invented personal facts.', {
         id: z.string().optional(), expectedRevision: z.string().optional(), name: z.string(), description: z.string(),
         category: z.string(), body: z.string(), projectID: z.string().nullable(),
       }),

@@ -11,6 +11,9 @@ import {
 } from './ci-workspace.ts';
 
 export const serviceChecks = {
+  'context-knowledge': 'scripts/context-knowledge-check.ts',
+  'context-recovery': 'scripts/context-recovery-check.ts',
+  'runtime-history': 'scripts/runtime-history-check.ts',
   'context-continuity': 'scripts/context-continuity-check.ts',
   'context-service': 'scripts/context-service-check.ts',
   'workflow-history': 'scripts/workflow-history-check.ts',

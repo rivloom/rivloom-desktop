@@ -5,10 +5,11 @@ import { lstat, readdir, open } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { knowledgeLimits, knowledgePath, knowledgeID, memoryInputSchema, safeKnowledgePath,
   type LocalKnowledgeEntry, type KnowledgeManifest, type KnowledgeFile, type KnowledgeListing,
-  type MemoryInput, type MemoryOrganization } from '../shared/knowledge.ts';
+  type MemoryInput, type MemoryOrganization, type MemoryProvenance } from '../shared/knowledge.ts';
 
 export const knowledgeHash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 type Stored = LocalKnowledgeEntry & { files: KnowledgeFile[]; body: string | null; origin: string };
+export type MemoryAction = { key: string; hash: string };
 const secret = /(^|[._-])(auth|credentials?|secrets?|tokens?)([._-]|$)|\.(pem|key|p12|pfx|kdbx|sqlite|db|log)$/i;
 const excluded = new Set(['node_modules', 'vendor', 'target', 'dist', '__pycache__', 'opencode.json', 'opencode.jsonc']);
 function permittedFile(path: string) {
@@ -80,6 +81,7 @@ export class KnowledgeStore {
     this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS entries(id TEXT PRIMARY KEY,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS versions(id TEXT NOT NULL,revision TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(id,revision));
+      CREATE TABLE IF NOT EXISTS memory_actions(key TEXT PRIMARY KEY,hash TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,body TEXT NOT NULL);`);
   }
   private all(): Stored[] { return this.db.prepare('SELECT body FROM entries ORDER BY id').all().map((row) => JSON.parse(String(row.body))); }
@@ -92,15 +94,17 @@ export class KnowledgeStore {
     return { id, nodeID, kind, name, description, category, revision, updatedAt };
   }
   private local(value: Stored): LocalKnowledgeEntry {
-    return { ...this.meta(value), projectID: value.projectID, sharedBrains: value.sharedBrains, source: value.source, error: value.error };
+    return { ...this.meta(value), projectID: value.projectID, sharedBrains: value.sharedBrains, source: value.source, error: value.error,
+      ...(value.provenance ? { provenance: value.provenance } : {}), ...(value.withdrawnAt ? { withdrawnAt: value.withdrawnAt } : {}) };
   }
-  private persist(value: Stored, history = false) {
+  private persist(value: Stored, history = false, action?: MemoryAction) {
     if (this.closed) throw new Error('knowledge_closed');
     if (!this.db.prepare('SELECT id FROM entries WHERE id=?').get(value.id) && this.all().length >= knowledgeLimits.entries) throw new Error('knowledge_catalog_full');
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare('INSERT INTO entries VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(value.id, JSON.stringify(value));
       if (history) this.db.prepare('INSERT OR IGNORE INTO versions VALUES (?,?,?)').run(value.id, value.revision, JSON.stringify(value));
+      if (action) this.db.prepare('INSERT INTO memory_actions VALUES (?,?,?)').run(action.key, action.hash, JSON.stringify(this.local(value)));
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.onChange(); this.scheduleOrganization();
@@ -140,27 +144,55 @@ export class KnowledgeStore {
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.onChange(); return values.map((v) => this.local(v));
   }
-  saveMemory(raw: MemoryInput, origin: string) {
+  memoryAction(action: MemoryAction): LocalKnowledgeEntry | null {
+    const row = this.db.prepare('SELECT hash,body FROM memory_actions WHERE key=?').get(action.key);
+    if (!row) return null;
+    if (row.hash !== action.hash) throw new Error('knowledge_operation_conflict');
+    const value = JSON.parse(String(row.body));
+    if (value.removed === true) throw new Error('knowledge_not_found');
+    return value;
+  }
+  saveMemory(raw: MemoryInput, origin: string, options: { provenance?: MemoryProvenance; action?: MemoryAction } = {}) {
     const input = memoryInputSchema.parse(raw); const previous = input.id ? this.get(input.id) : null;
     if (previous && (previous.kind !== 'memory' || previous.revision !== input.expectedRevision)) throw new Error('knowledge_revision_conflict');
+    if (previous && origin.startsWith('task:') && (previous.provenance || previous.withdrawnAt)) throw new Error('knowledge_confirmation_required');
     const bytes = Buffer.from(input.body, 'utf8');
     const files = [{ path: 'MEMORY.md', bytes: bytes.length, sha256: knowledgeHash(bytes) }];
-    const revision = knowledgeHash(JSON.stringify([input.name, input.description, input.category, input.projectID, files]));
+    const provenance = options.provenance || previous?.provenance;
+    const revision = knowledgeHash(JSON.stringify([input.name, input.description, input.category, input.projectID, files,
+      ...(options.provenance ? [{ ...options.provenance, promotedRevision: undefined }] : [])]));
     const value: Stored = { id: input.id || randomUUID(), nodeID: this.nodeID, kind: 'memory', name: input.name,
       description: input.description, category: input.category, projectID: input.projectID, body: input.body,
-      files, revision, source: 'wiki', origin, updatedAt: new Date().toISOString(), sharedBrains: previous?.sharedBrains || [], error: null };
-    this.persist(value, true); return this.local(value);
+      files, revision, source: 'wiki', origin, updatedAt: new Date().toISOString(), sharedBrains: previous?.sharedBrains || [], error: null,
+      ...(provenance ? { provenance: options.provenance ? { ...provenance, promotedRevision: revision } : provenance } : {}) };
+    this.persist(value, true, options.action); return this.local(value);
+  }
+  withdrawMemory(id: string, expectedRevision: string, action?: MemoryAction) {
+    const value = this.get(id);
+    if (value.kind !== 'memory' || value.revision !== expectedRevision) throw new Error('knowledge_revision_conflict');
+    if (value.withdrawnAt) throw new Error('knowledge_memory_withdrawn');
+    const at = new Date().toISOString();
+    const next: Stored = { ...value, revision: knowledgeHash(JSON.stringify([value.revision, 'withdrawn', at])),
+      withdrawnAt: at, updatedAt: at, error: 'knowledge_memory_withdrawn' };
+    this.persist(next, true, action); return this.local(next);
   }
   history(id: string) {
     this.get(id);
     return this.db.prepare('SELECT body FROM versions WHERE id=? ORDER BY rowid DESC').all(id).map((row) => {
-      const value: Stored = JSON.parse(String(row.body)); return { ...this.meta(value), body: value.body, origin: value.origin };
+      const value: Stored = JSON.parse(String(row.body)); return { ...this.meta(value), body: value.body, origin: value.origin,
+        ...(value.provenance ? { provenance: value.provenance } : {}), ...(value.withdrawnAt ? { withdrawnAt: value.withdrawnAt } : {}) };
     });
   }
   remove(id: string, revision: string) {
     const value = this.get(id); if (value.revision !== revision) throw new Error('knowledge_revision_conflict');
     this.db.exec('BEGIN IMMEDIATE');
-    try { this.db.prepare('DELETE FROM entries WHERE id=?').run(id); this.db.prepare('DELETE FROM versions WHERE id=?').run(id); this.db.exec('COMMIT'); }
+    try {
+      this.db.prepare('DELETE FROM entries WHERE id=?').run(id);
+      this.db.prepare('DELETE FROM versions WHERE id=?').run(id);
+      // Keep only a content-free receipt tombstone so an old retry cannot recreate a removed memory.
+      this.db.prepare("UPDATE memory_actions SET body=? WHERE json_extract(body,'$.id')=?").run('{"removed":true}', id);
+      this.db.exec('COMMIT');
+    }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.onChange(); this.scheduleOrganization();
   }

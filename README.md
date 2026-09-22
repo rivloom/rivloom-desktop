@@ -8,13 +8,13 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows 正式版为 **0.1.18**，新增关闭到托盘、托盘直接退出、任务等待与队列诊断，以及局域网连接检测和修复。已发布安装包使用官方 OpenCode 1.18.25，保留已有模型账号、设备信任及任务记录。详见 [版本说明](docs/releases/0.1.18.md)，安装包见[官网下载页](https://rivloom.com/download/)。
+当前 Windows 正式版为 **0.1.19**，包含执行过程展示、会话上下文连续性、带来源的约束与历史按需读取、32 KiB 历史分页，以及队列取消、模型默认值和节点连接修复。已发布安装包使用固定自有 OpenCode 1.18.31，保留已有模型账号、设备信任及任务记录。详见 [版本说明](docs/releases/0.1.19.md)，安装包见[官网下载页](https://rivloom.com/download/)。
 
-**0.1.19 发行候选（2026-09-21）：** 当前源码包含执行过程展示、会话上下文连续性、带来源的约束与历史按需读取、32 KiB 历史分页，以及队列取消、模型默认值和已连接节点执行修复。Windows 与 Linux x64 源码已接入固定自有 OpenCode 1.18.31，SDK/plugin 同步对齐，核心保持 `9b07cf4`。首次构建运行 `npm.cmd run engine:prepare`，或由 `desktop:prepare` 自动执行；详见[引擎构建流程](docs/ENGINE.md)和 [0.1.19 说明](docs/releases/0.1.19.md)。候选源码不代表安装包已发布，公开下载以通过发布验收的记录为准；ARM64 暂缓。
+**0.1.20 发行准备（2026-09-22）：** 当前源码新增上下文查看与编辑、显式项目记忆、Wiki/Skill 分页联通、可重试的 Runtime 历史清理，以及普通会话中断后续聊和知识工具交接修复。三台 Windows 设备已完成限定范围的合成资料功能验收；云端构建、安装及公开发行仍须按本版产物单独验收，详见 [0.1.20 说明](docs/releases/0.1.20.md)。Windows 与 Linux x64 核心保持 `9b07cf4`，SDK/plugin 为 1.18.31。首次构建运行 `npm.cmd run engine:prepare`，或由 `desktop:prepare` 自动执行；详见[引擎构建流程](docs/ENGINE.md)。ARM64 暂缓。
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.18 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.18.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南已实际上线，提供下载、校验值和 curl / wget 命令。Windows 下载及签名更新保持不变。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；已发布正式包使用未修改的官方 **OpenCode 1.18.25**，随包 Node.js 为 **24.19.0**。
+**Linux x86_64 命令行执行节点 0.1.19 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.19.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南提供下载、校验值和 curl / wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；Windows 与 Linux 正式包使用 **OpenCode 1.18.31-rivloom.9b07cf442a7e**，随包 Node.js 为 **24.19.0**。
 
 ## 从源码运行
 
@@ -63,7 +63,7 @@ npm.cmd run test:knowledge
 | [rivloom-opencode-runtime](https://github.com/rivloom/rivloom-opencode-runtime) | OpenCode fork，后续引擎源码维护与固定版本发行 |
 | [rivloom-codex-runtime](https://github.com/rivloom/rivloom-codex-runtime) | Codex fork，后续引擎源码维护与接入 |
 
-两个 runtime fork 已建立，当前桌面尚未消费它们的发行物。后续维护方式见 [ADR 0011](docs/adr/0011-open-source-and-runtime-fork.md)。
+Windows 与 Linux x64 已从 OpenCode fork 的固定源码构建随包引擎，不追踪其最新 HEAD；Codex runtime 尚未接入。维护方式见[引擎说明](docs/ENGINE.md)及 [ADR 0011](docs/adr/0011-open-source-and-runtime-fork.md)。
 
 ## 安全与许可
 

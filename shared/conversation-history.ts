@@ -6,7 +6,9 @@ import { t } from './i18n.ts';
 import { directoryDisplayName, type DirectoryAliases } from './directory-aliases.ts';
 
 export type HistoryMembers = { local: string[]; remote: string[]; brain: string[]; workflow: string[]; requests: string[] };
-export type TrashEntry = { key: string; title: string; directory: string; deletedAt: string; expiresAt: string; purging: boolean };
+export type TrashEntry = { key: string; title: string; directory: string; deletedAt: string; expiresAt: string; purging: boolean;
+  cleanup?: { state: 'pending' | 'failed'; attempts: number; lastAttemptAt: string;
+    error?: 'runtime_unavailable' | 'runtime_busy' | 'runtime_shared' | 'runtime_scope_invalid' | 'runtime_delete_unconfirmed' | 'cleanup_failed' } };
 export function historyExpiry(at: string): string {
   const date = new Date(at);
   const day = date.getUTCDate();

@@ -16,7 +16,11 @@ export function historyAttempt(value: Workflow, executionID: string, digest: str
   return attempt;
 }
 export function historyOperation(store: WorkflowStore, value: Workflow, attempt: WorkflowAttempt, name: unknown, args: unknown) {
-  if (name === 'rivloom_history') return store.history.query(value, args);
+  if (name === 'rivloom_history') {
+    const result = store.history.query(value, args);
+    if ('content' in result) store.history.recordRead(value.id, attempt.executionID, result);
+    return result;
+  }
   if (name === 'rivloom_context_note' && attempt.context.role === 'planner') return store.history.note(value, args, 'inferred');
   throw new Error('context_history_not_authorized');
 }

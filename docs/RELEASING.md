@@ -1,5 +1,7 @@
 # 官网分发与安全更新方案
 
+**2026-09-22 · 0.1.20 发行准备。** 用户已授权正式发布已验收的上下文系统功能，并完成 Windows / Linux x64、官网、签名更新与 R2 保留检查。当前仍需本次源码的同提交云端构建和发行验收；下方 0.1.19 结果属于此前版本。核心固定 `9b07cf4`，ARM64 暂缓；整机重启、断电、压缩生成中崩溃未覆盖，已按用户要求暂缓。发行说明见 [Windows 0.1.20](releases/0.1.20.md) 和 [Linux 0.1.20](releases/linux-0.1.20.md)。
+
 **2026-09-22 · 0.1.19 正式发布与收尾完成。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640` 的 Windows x64 与 Linux x64 0.1.19 已发行。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)、[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)及同提交 CI 通过；Windows 隔离安装/启动/重启/卸载、公开完整下载与原公钥签名核验通过，Linux 原生构建及公开包验收通过。官网双语下载页已部署并复核，ARM64 暂不发布。核心固定 `9b07cf4`，Windows 停止验证限定辅助 PowerShell 的系统模块来源，保留既有进程归属、退出证明与时间门槛。[Windows 发行说明](releases/0.1.19.md)、[Linux 发行说明](releases/linux-0.1.19.md)及[R2 保留审计](releases/0.1.19-r2-retention.md)：保留 62、暂缓 0、删除 0 个；检查完成，删除 0 个。以下准备状态与旧版本记录保留为历史。
 
 

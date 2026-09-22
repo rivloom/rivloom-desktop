@@ -1,6 +1,6 @@
 # ADR 0015: Sourced workflow state and on-demand history
 
-Date: 2026-09-21. Status: implemented locally in the user-authorized development scope; release acceptance is separate.
+Date: 2026-09-21. Updated: 2026-09-22. Status: implemented; the history foundation shipped in 0.1.19. The extensions in ADR 0016 target 0.1.20 with separate release acceptance.
 
 ## Context
 
@@ -25,13 +25,15 @@ New local and compatible remote executions no longer receive cumulative transcri
 - SQLite and the existing authenticated transport avoid new services, vector stores and unattended model calls. Exact substring search is predictable; semantic relevance and extraction quality remain model-dependent.
 - History reads add tool round trips and require the coordinator to be reachable. Each read returns at most 32 KiB of serialized UTF-8 JSON, including metadata and JSON escaping. Offsets and totalCharacters remain UTF-16 units; callers must follow the returned nextOffset, since page character counts vary. Page boundaries preserve surrogate pairs. The existing request/response fields and capability remain compatible with older coordinators returning smaller pages. Searches return at most ten previews. The full active note set is bounded by count and serialized bytes.
 - The 32 KiB budget fits below the pinned Runtime's default 50 KiB tool-output truncation threshold and the existing authenticated history reply limit; those limits are unchanged. It bounds each read, not total stored history or cumulative model context. User-input limits are separate and unchanged.
-- Workflow records and Runtime messages remain authoritative and retained. This removes default duplicate transcript files; it does not solve all historical database growth or reclaim old files. New tables cascade with workflow deletion. Runtime session cleanup remains a separate task.
+- Workflow records and Runtime messages remain authoritative and retained. This removes default duplicate transcript files; it does not solve all historical database growth or reclaim old files. New tables cascade with workflow deletion. [ADR 0016](0016-context-memory-and-runtime-retention.md) adds verified Runtime session cleanup to the existing recycle-bin policy.
 - Existing workflow records migrate lazily into the index. Original records are not rewritten or discarded for this feature.
-- Dedicated context viewing/editing UI and integration with long-term memory/Wiki are later work. These APIs and model tools provide the second-stage foundation.
+- These APIs and model tools provide the foundation for context viewing/editing and explicit project-memory promotion in [ADR 0016](0016-context-memory-and-runtime-retention.md), while keeping release acceptance separate.
 
 ## Validation
 
 Logic tests cover pagination, source/version identity, note conflicts, user-confirmation boundaries, late clarifications, 500-round indexing, deletion, engine-account isolation, authenticated remote execution scopes and legacy file compatibility. `npm run test:workflow-history` and `npm run test:workflow-history:remote` exercise actual fixed Runtime processes with a local synthetic provider. `node scripts/ci-services.ts workflow` covers the existing workflow service behavior. These checks do not establish real-model recall quality, physical multi-machine acceptance, Linux-native execution or installation/release readiness.
+
+Subsequent acceptance on three physical Windows Nodes exercised paged history and Wiki reads, explicit continuation and consecutive handoffs with synthetic content and a real provider. This verifies those observed cases, not general recall quality or all failure modes. The additional context, memory and recovery acceptance scope is recorded in [ADR 0016](0016-context-memory-and-runtime-retention.md); each new binary still requires its own platform and release gates.
 
 ## Alternatives
 

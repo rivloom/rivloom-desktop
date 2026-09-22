@@ -2,6 +2,11 @@ import { t, systemText } from './i18n.ts';
 export function workflowError(value: string | null | undefined) {
   if (!value) return '';
   const messages: Record<string, string> = {
+    context_state_version_conflict: t('上下文已变化，请刷新并核对后重试。'),
+    context_note_conflict: t('上下文已变化，请刷新并核对后重试。'),
+    context_note_not_replaceable: t('条目已被替代或撤回，请刷新后重试。'),
+    context_note_source_changed: t('摘录与来源不一致，请核对原文。'),
+    context_state_limit: t('会话条目已达容量上限，请先撤回不再适用的条目。'),
     workflow_retry_changed: t('步骤状态已变化，请刷新后重试。'),
     workflow_retry_unconfirmed: t('暂时无法确认上次执行已停止，请检查源 Node 在线且已更新后再重试。'),
     workflow_message_queue_full: t('最多同时排队 50 条消息，请等待部分消息完成。'),

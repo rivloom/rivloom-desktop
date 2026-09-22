@@ -35,7 +35,7 @@ test('three-calendar-month retention clamps month ends and preserves UTC time', 
   assert.equal(historyExpiry('2026-08-31T10:00:00Z'), '2026-11-30T10:00:00.000Z');
   assert.equal(historyExpiry(at), '2026-12-10T01:00:00.000Z');
 });
-test('trash survives restart, restores original identity, and expires at the exact boundary', () => {
+test('trash survives restart, restores original identity, and expires at the exact boundary', async () => {
   const path = join(root(), 'history.sqlite'), input = data(), key = `local:${input.tasks[0].id}`;
   let time = Date.parse(at), purges = 0;
   const options = { data: () => input, queue: () => [], busy: () => false, clock: () => time,
@@ -47,8 +47,8 @@ test('trash survives restart, restores original identity, and expires at the exa
   history.restore(key); assert.equal(history.filter(input).tasks[0].id, key.slice(6));
   assert.equal(history.retired('local', key.slice(6)), false);
   history.trash(key, input); time = Date.parse(history.list()[0].expiresAt) - 1;
-  assert.equal(history.sweep().deleted, 0); time++;
-  assert.equal(history.sweep().deleted, 1); assert.equal(purges, 1); assert.deepEqual(history.list(), []);
+  assert.equal((await history.sweep()).deleted, 0); time++;
+  assert.equal((await history.sweep()).deleted, 1); assert.equal(purges, 1); assert.deepEqual(history.list(), []);
   assert.equal(history.retired('local', key.slice(6), true), true);
   assert.throws(() => history.assertAvailable('local', key.slice(6)), { status: 410 }); db.close();
 });
@@ -89,14 +89,14 @@ test('archived rounds remain one conversation and cleanup fences every queued re
   input.workflows[0].messages![1].state = 'cancelled'; assert.equal(historyCanTrash(items[0], input), true);
   round.planner.attempts[0].phase = 'unknown'; assert.equal(historyCanTrash(items[0], input), false, 'uncertain archived data must remain protected');
 });
-test('failed purge is journaled, cannot restore, and safely retries without losing other conversations', () => {
+test('failed purge is journaled, cannot restore, and safely retries without losing other conversations', async () => {
   const input = data(), key = `local:${input.tasks[0].id}`, db = new DatabaseSync(':memory:'); let fail = true;
   const other = local(); input.tasks.push(other);
   const history = new ConversationHistory(db, { data: () => input, queue: () => [], busy: () => false,
     purge: (members) => { if (fail) throw new Error('disk'); input.tasks = input.tasks.filter((v) => !members.local.includes(v.id)); } });
-  history.trash(key, input); assert.deepEqual(history.sweep(false), { deleted: 0, failed: [key] });
+  history.trash(key, input); assert.deepEqual(await history.sweep(false), { deleted: 0, failed: [key] });
   assert.equal(history.list()[0].purging, true); assert.throws(() => history.restore(key), { status: 409 });
-  fail = false; assert.equal(history.sweep().deleted, 1); assert.deepEqual(input.tasks, [other]); db.close();
+  fail = false; assert.equal((await history.sweep()).deleted, 1); assert.deepEqual(input.tasks, [other]); db.close();
 });
 test('working directory groups preserve recency and separate ambiguous remote projects', () => {
   const input = data(), second = local(); second.projectID = 'p2'; input.tasks.push(second);

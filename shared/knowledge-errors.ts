@@ -1,6 +1,11 @@
 import { t } from './i18n.ts';
 export function knowledgeError(message: string) {
   if (!message.startsWith('knowledge_')) return '';
+  if (/note_unconfirmed|confirmation_required/.test(message)) return t('请先确认会话条目，再保存到项目记忆。');
+  if (/note_not_active/.test(message)) return t('条目已被替代或撤回，请刷新后重试。');
+  if (/project_required/.test(message)) return t('此会话没有关联项目，不能保存为项目记忆。');
+  if (/memory_withdrawn/.test(message)) return t('这条项目记忆已撤回，后续读取已停止。');
+  if (/operation_conflict/.test(message)) return t('上下文已变化，请刷新并核对后重试。');
   if (/revision|catalog_changed|source_changed/.test(message)) return t('内容已更新，请重新打开并核对后再操作。运行中的任务保留原版本。');
   if (/not_shared|not_authorized|wrong_project|owner_only/.test(message)) return t('此内容未向当前范围分享，或你没有操作权限。');
   if (/offline|unavailable|timeout/.test(message)) return t('来源 Node 或 Brain 暂时不可用，无法确认最新版。请恢复连接后重试。');

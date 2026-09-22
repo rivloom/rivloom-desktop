@@ -1,0 +1,35 @@
+# ADR 0016: Explicit project memory and observable context
+
+Date: 2026-09-21. Updated: 2026-09-22. Status: implemented for 0.1.20; scoped physical-device acceptance completed, cloud build and release acceptance pending.
+
+## Decision
+
+Extend the existing sourced workflow history and local knowledge library. Do not add a second memory database, embedding service, background model extraction or automatic full-Wiki prompt injection.
+
+The conversation context panel distinguishes the current request, user-confirmed constraints and decisions, inferred notes, historical reads and Runtime preparation observations. Owners can confirm or revise a sourced note, withdraw it and inspect its preserved history. Version checks protect concurrent edits; retries of the same UI intent reuse their request identity. Already admitted prompts cannot be recalled.
+
+Only an explicit owner action promotes an active, confirmed note into the workflow's local project memory. The server obtains and verifies the workflow, note and exact retained source revision and quote; caller-provided content cannot manufacture user confirmation. The saved memory carries provenance in local metadata and its versioned body. Replacement requires the current revision and the same project/workflow. Withdrawal blocks future reads while keeping prior revisions and conversation history. Session notes and promoted project memories have separate lifecycles. The model cannot replace an owner-promoted memory or promote inferred notes itself.
+
+Knowledge reads use revision-pinned, 32 KiB serialized-JSON pages, with UTF-16 offsets and surrogate-safe boundaries. Supporting-file metadata is paginated separately. Skill materialization happens only after argument validation and existing access checks. Project scope, Brain sharing and source availability checks remain mandatory on every page; history-read authorization does not grant access to another Node's private Wiki. The private bridge binds each tool invocation to its Runtime root and active task/session/directory before and after asynchronous work.
+
+The server retains metadata after successfully processing a read or materialize operation, without copying its content. Searches, rejected operations and owner source previews are excluded. The ledger is written before response delivery; a later bridge authorization check or transport can still fail. The panel labels these as processed reads, not proof that the Runtime or provider received the response or that a model understood it. Runtime observations show rule revision matching, restoration and compaction preparation, not complete model input or token usage. Remote execution observations remain on the executing Node.
+
+## History maintenance
+
+The existing three-calendar-month recycle-bin policy remains. Permanent deletion first persists a fence and a cleanup journal, then uses the official pinned Runtime session API. A success response is insufficient: the caller verifies that the parent and every recorded descendant return 404. Partial deletion retains descendant identities for retry. Sessions shared by retained tasks, active sessions and descendants outside the recorded project directory are deferred.
+
+Only task routes and prior context-run bindings identify eligible sessions, including those from earlier accounts. An offline primary Runtime leaves visible pending cleanup. A cold or disconnected account can use a restricted maintenance Runtime with isolated configuration, no project plugins, no providers, no model-catalog fetch and denied execution permissions. Normal account startup waits for maintenance to finish. Cleanup invokes no inference. Failure remains visible in the recycle bin and retries after restart or on an explicit retry.
+
+Do not infer orphan ownership, delete project originals or remote copies, change retention duration, or automatically VACUUM. Shared source memory survives conversation deletion because it has a separate owner-controlled lifecycle.
+
+## Validation and limits
+
+Logic coverage includes note withdrawal, provenance, version conflicts, idempotent promotion, revoked page access, metadata-only read ledgers, account isolation, recursive session deletion and durable retry. The `context-knowledge`, `runtime-history` and `context-recovery` service checks use the pinned Runtime with isolated synthetic providers. Recovery checks preserve the original session through a middle-node restart, require an explicit continuation and complete subsequent handoffs without automatic replay. Existing compaction and knowledge-sharing checks remain in place.
+
+Physical Windows acceptance used three paired Nodes and new synthetic material. It covered owner confirmation and project-memory replacement/withdrawal, fresh-conversation recall of the replacement, paged history and Wiki access, access revocation and consecutive handoffs. Knowledge-tool quiescence was verified after fixing the synchronous knowledge-tool allowlist; active and unknown tools retain their stop checks. Two real-provider compactions preserved the tested goals, constraints and source content; the second summary omitted the last-page completion state and caused one repeated page read, so this is not a claim of perfect recall or zero rereads.
+
+The local ordinary-task continuation path now stops a waiting or interrupted execution and confirms the same task/session is stopped before submitting a new message. Uncertain retries retain the original request identity and body without another stop. Native local acceptance covered completed and waiting-input continuations, exact-request replay without new messages, conflicting-body rejection, and an explicit continuation after the user exited and reopened the application. Remote native checks covered workflow continuations; they do not establish that the ordinary-task branch ran on all three devices. Isolated UI checks cover uncertain retry behavior without manufacturing a physical network failure.
+
+Isolated Runtime cleanup tests verify row removal, account isolation and durable retries. Physical acceptance deleted only disposable test conversations; it does not establish the state of a remote Node's underlying Runtime database. Mixed 0.1.19/new-node checks cover history compatibility and the expected refusal of unsupported long-Wiki reads by an old executor. Upgrade participating executors for the full new knowledge paging behavior.
+
+These observations do not establish general real-provider recall quality or release readiness. Operating-system reboot, power loss and a crash while generating a compaction summary were explicitly deferred. The model still chooses relevant references and can interpret a valid source incorrectly. Existing request-input limits and Runtime tool-output truncation limits are unchanged. Cloud CI, installation, public download and signing acceptance remain tied to the actual 0.1.20 release artifact.

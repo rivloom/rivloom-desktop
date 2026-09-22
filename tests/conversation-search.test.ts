@@ -136,7 +136,7 @@ test('title, device and directory matches retain order and favor a content previ
   assert.notEqual(searchTargetID({ kind: 'step', roundID: 'x:y', stepID: 'z', attempt: 1 }), searchTargetID({ kind: 'step', roundID: 'x', stepID: 'y:z', attempt: 1 }));
 });
 
-test('history filtering, restore and permanent deletion cannot leave searchable retained copies', () => {
+test('history filtering, restore and permanent deletion cannot leave searchable retained copies', async () => {
   const db = new DatabaseSync(':memory:');
   try {
     const workflow = fixture(); completed(workflow, 'Only visible while retained');
@@ -147,7 +147,7 @@ test('history filtering, restore and permanent deletion cannot leave searchable 
     const key = `workflow:${workflow.id}`; assert.equal(query().size, 1);
     history.trash(key, data); assert.equal(query().size, 0);
     history.restore(key); assert.equal(query().size, 1);
-    history.trash(key, data); history.purge(key); assert.equal(query().size, 0);
+    history.trash(key, data); await history.purge(key); assert.equal(query().size, 0);
     // The index never adds records from another source or a formerly authorized snapshot.
     assert.equal(find([], 'retained').size, 0);
   } finally { db.close(); }

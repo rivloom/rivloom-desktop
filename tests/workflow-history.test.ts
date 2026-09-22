@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { WorkflowStore, workflowStep } from '../server/workflows.ts';
 import type { Workflow, WorkflowRound } from '../shared/workflows.ts';
-import { WorkflowHistoryAccess, type HistoryRemoteExecution } from '../server/workflow-history-access.ts';
+import { WorkflowHistoryAccess, historyOperation, type HistoryRemoteExecution } from '../server/workflow-history-access.ts';
 import { workflowContextDigest } from '../server/workflow-contexts.ts';
 
 function fixture() {
@@ -17,6 +17,44 @@ function fixture() {
 function archive(value: Workflow): WorkflowRound {
   return { ...structuredClone(value), requestID: value.roundRequestID || value.requestID, createdAt: value.roundCreatedAt || value.createdAt };
 }
+test('owner withdrawal retains provenance, advances revision and is idempotent across restart', () => {
+  const { db, store, value } = fixture();
+  try {
+    const state = store.history.state(value);
+    const input = { requestID: randomUUID(), expectedVersion: state.version, kind: 'constraint', text: 'Keep originals',
+      source: { id: state.goal.id, revision: state.goal.revision, quote: '保留原图' } };
+    const note = store.history.note(value, input, 'user');
+    const withdraw = { requestID: randomUUID(), expectedVersion: note.version, id: note.id };
+    assert.throws(() => store.history.withdraw(value, { ...withdraw, expectedVersion: state.version }), /version_conflict/);
+    const saved = store.history.withdraw(value, withdraw);
+    assert.equal(store.history.state(value).notes.length, 0);
+    assert.equal(store.history.state(value).version, note.version + 1);
+    assert.deepEqual(new WorkflowStore(db).history.withdraw(value, withdraw), saved);
+    assert.deepEqual(store.history.note(value, input, 'user'), saved);
+    assert.equal(store.history.audit(value)[0].source.quote, '保留原图');
+    assert.throws(() => store.history.withdraw(value, { ...withdraw, expectedVersion: note.version + 1 }), /note_conflict/);
+    assert.throws(() => store.history.note(value, { ...input, requestID: randomUUID(), expectedVersion: note.version + 1, supersedes: note.id }, 'inferred'), /not_replaceable/);
+  } finally { db.close(); }
+});
+test('read ledger excludes search and owner views, bounds metadata and cascades with conversation', () => {
+  const { db, store, value } = fixture();
+  try {
+    const ref = store.history.state(value).goal;
+    const attempt = { executionID: randomUUID() } as Parameters<typeof historyOperation>[2];
+    const query = { action: 'read', id: ref.id, revision: ref.revision, offset: 0 };
+    store.history.query(value, query);
+    historyOperation(store, value, attempt, 'rivloom_history', { action: 'search' });
+    assert.equal(store.history.reads(value.id).length, 0);
+    assert.throws(() => historyOperation(store, value, attempt, 'rivloom_history', { ...query, revision: '0'.repeat(64) }));
+    assert.equal(store.history.reads(value.id).length, 0);
+    for (let i = 0; i < 205; i++) historyOperation(store, value, attempt, 'rivloom_history', query);
+    const rows = new WorkflowStore(db).history.reads(value.id);
+    assert.equal(rows.length, 200); assert.equal(rows[0].executionID, attempt.executionID);
+    assert.equal(rows[0].revision, ref.revision); assert.equal('content' in rows[0], false);
+    db.prepare('DELETE FROM workflows WHERE id=?').run(value.id);
+    assert.equal(store.history.reads(value.id).length, 0);
+  } finally { db.close(); }
+});
 for (const [name, source] of [
   ['ASCII', 'history '.repeat(12_000)],
   ['Chinese', '历史分页汉字'.repeat(6_000)],

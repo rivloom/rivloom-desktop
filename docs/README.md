@@ -5,12 +5,13 @@
 ## 使用与功能
 
 - [随包使用说明](../DESKTOP-README.md)、[安全边界](../SECURITY.md)
-- [Linux 命令行执行节点（x64 0.1.18 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与上线验收](releases/linux-0.1.18.md)
+- [Linux 命令行执行节点（x64 0.1.19 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与上线验收](releases/linux-0.1.19.md)
 - [模型接入与选择](MODEL-ACCESS.md)、[输入区](COMPOSER.md)
 - [连续会话](CONVERSATION-CONTINUITY.md)、[历史管理](CONVERSATION-HISTORY.md)、[内容搜索](CONVERSATION-SEARCH.md)
 - [右键菜单](CONTEXT-MENUS.md)、[消息复制](MESSAGE-COPY.md)
 - [Agent 基础工具（未发布源码）](AGENT-TOOLS.md)：快捷访问、草稿、模板、导出、会话查找、排队消息编辑与项目改动
 - [共享 Skills 与 Wiki 记忆](KNOWLEDGE-LIBRARY.md)
+- [0.1.20 上下文与项目记忆发行说明](releases/0.1.20.md)、[上下文、记忆与历史维护设计](adr/0016-context-memory-and-runtime-retention.md)；实际发布状态以根目录说明和官网下载页为准
 - [恢复与成果](WORKFLOW-RECOVERY-RESULTS.md)、[协作文件](COLLABORATION-FILES.md)
 - [应用内更新](DESKTOP-UPDATES.md)
 

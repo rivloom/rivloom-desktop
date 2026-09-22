@@ -94,7 +94,7 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
   );
   return rules;
 }
-type EngineScope = { workspace?: boolean; providerID?: string };
+type EngineScope = { workspace?: boolean; providerID?: string; maintenance?: boolean };
 export function engineDatabasePath(root: string) {
   const directory = resolve(root, 'data', 'opencode');
   const legacy = join(directory, 'opencode.db'), preview = join(directory, 'opencode-rivloom.db');
@@ -125,10 +125,10 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
     TMP: 'temp',
     TMPDIR: 'temp',
   })) {
-    env[key] = join(root, folder);
+    env[key] = scope.maintenance && key !== 'XDG_DATA_HOME' ? join(root, 'maintenance', folder) : join(root, folder);
     mkdirSync(env[key]!, { recursive: true });
   }
-  const knowledge = root === engineRoot || scope.workspace ? knowledgeEngineConfig(root) : null;
+  const knowledge = !scope.maintenance && (root === engineRoot || scope.workspace) ? knowledgeEngineConfig(root) : null;
   if (knowledge) {
     prepareEnginePluginDependencies(root);
     env.RIVLOOM_KNOWLEDGE_BRIDGE_URL = knowledge.url;
@@ -154,6 +154,18 @@ export function engineEnv(password?: string, root = engineRoot, scope: EngineSco
   const providerConfig = join(root, 'rivloom-providers.json');
   if (!existsSync(providerConfig)) writeFileSync(providerConfig, '{"provider":{}}', { mode: 0o600 });
   env.OPENCODE_CONFIG = providerConfig;
+  if (scope.maintenance) {
+    // Keep the existing session database, while isolating all executable configuration.
+    for (const flag of ['OPENCODE_DISABLE_AUTOUPDATE', 'OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_PROJECT_CONFIG',
+      'OPENCODE_DISABLE_DEFAULT_PLUGINS', 'OPENCODE_DISABLE_EXTERNAL_SKILLS', 'OPENCODE_DISABLE_CLAUDE_CODE',
+      'OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER']) env[flag] = 'true';
+    const config = { autoupdate: false, share: 'disabled', snapshot: false, provider: {}, enabled_providers: [],
+      plugin: [], mcp: {}, permission: { '*': 'deny' }, agent: { build: { permission: { '*': 'deny' } } } };
+    const maintenanceConfig = join(root, 'maintenance', 'config.json');
+    writeFileSync(maintenanceConfig, JSON.stringify(config), { mode: 0o600 });
+    env.OPENCODE_CONFIG = maintenanceConfig;
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
+  }
   if (password) {
     env.OPENCODE_SERVER_PASSWORD = password;
     env.OPENCODE_SERVER_USERNAME = 'rivloom';

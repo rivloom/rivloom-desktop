@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { jsonBytes } from '../shared/collaboration.ts';
-import { contextNoteSchema, historyQuerySchema, historyReadMaxBytes, type ContextNote } from '../shared/workflow-history.ts';
+import { contextNoteSchema, historyQuerySchema, historyReadMaxBytes, type ContextNote, type HistoryRead } from '../shared/workflow-history.ts';
+import { z } from 'zod';
 import type { Workflow, WorkflowRound, WorkflowStep } from '../shared/workflows.ts';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -54,7 +55,9 @@ export class WorkflowHistory {
         workflow_id TEXT PRIMARY KEY REFERENCES workflows(id) ON DELETE CASCADE, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS workflow_notes (
         workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, id TEXT NOT NULL,
-        request_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(workflow_id,id), UNIQUE(workflow_id,request_id));`);
+        request_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(workflow_id,id), UNIQUE(workflow_id,request_id));
+      CREATE TABLE IF NOT EXISTS workflow_history_reads (
+        workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, id TEXT PRIMARY KEY, body TEXT NOT NULL);`);
   }
   sync(value: Workflow, changedRoundID?: string) {
     this.db.exec('SAVEPOINT workflow_history_sync');
@@ -120,7 +123,7 @@ export class WorkflowHistory {
     this.sync(value);
     const state = this.stateVersion(value.id)!;
     const goal = this.entry(value.id, `${state.roundID}/request`), criteria = this.entry(value.id, `${state.roundID}/criteria`);
-    return { ...state, goal, criteria, notes: this.notes(value.id).filter(note => !note.supersededBy),
+    return { ...state, goal, criteria, notes: this.notes(value.id).filter(note => !note.supersededBy && !note.withdrawn),
       progress: value.steps.map(s => ({ stepID: s.id, title: s.title, state: s.state, reference: this.reference(value, s) })),
       note: 'The current request overrides conflicting older material. Inferred notes are not user confirmations. File references do not imply local availability.' };
   }
@@ -156,7 +159,7 @@ export class WorkflowHistory {
     this.sync(value); const input = parsed.data;
     const previous = this.notes(value.id).find(n => n.requestID === input.requestID);
     if (previous) {
-      const { id, version, createdAt, round, supersededBy, authority: previousAuthority, ...original } = previous;
+      const { id, version, createdAt, round, supersededBy, withdrawn, authority: previousAuthority, ...original } = previous;
       if (JSON.stringify(original) !== JSON.stringify(input) || authority !== previousAuthority) throw new Error('context_note_conflict');
       return previous;
     }
@@ -164,7 +167,7 @@ export class WorkflowHistory {
     if (state.version !== input.expectedVersion) throw new Error('context_state_version_conflict');
     const source = this.entry(value.id, input.source.id, input.source.revision);
     if (source.revision !== input.source.revision || !source.content.includes(input.source.quote)) throw new Error('context_note_source_changed');
-    const notes = this.notes(value.id).filter(n => !n.supersededBy), old = notes.find(n => n.id === input.supersedes);
+    const notes = this.notes(value.id).filter(n => !n.supersededBy && !n.withdrawn), old = notes.find(n => n.id === input.supersedes);
     if (input.supersedes && (!old || authority === 'inferred' && old.authority === 'user')) throw new Error('context_note_not_replaceable');
     const note: ContextNote = { ...input, id: randomUUID(), version: state.version + 1, authority, round: state.round,
       createdAt: new Date().toISOString(), supersededBy: null };
@@ -183,6 +186,38 @@ export class WorkflowHistory {
     return note;
   }
   audit(value: Workflow, offset = 0) { this.sync(value); return this.notes(value.id).slice(offset, offset + 50); }
+  withdraw(value: Workflow, raw: unknown) {
+    const input = z.object({ requestID: z.string().uuid(), expectedVersion: z.number().int().min(1), id: z.string().uuid() }).strict().parse(raw);
+    this.sync(value);
+    const notes = this.notes(value.id), note = notes.find(n => n.id === input.id);
+    const prior = notes.find(n => n.withdrawn?.requestID === input.requestID);
+    if (prior) {
+      if (prior.id !== input.id || prior.withdrawn!.expectedVersion !== input.expectedVersion) throw new Error('context_note_conflict');
+      return prior;
+    }
+    const state = this.stateVersion(value.id)!;
+    if (input.expectedVersion !== state.version) throw new Error('context_state_version_conflict');
+    if (!note || note.supersededBy || note.withdrawn) throw new Error('context_note_not_replaceable');
+    const result: ContextNote = { ...note, withdrawn: { requestID: input.requestID, expectedVersion: input.expectedVersion, at: new Date().toISOString() } };
+    this.db.exec('SAVEPOINT workflow_note_withdraw');
+    try {
+      this.db.prepare('UPDATE workflow_notes SET body=? WHERE workflow_id=? AND id=?').run(JSON.stringify(result), value.id, note.id);
+      this.db.prepare('UPDATE workflow_state SET body=? WHERE workflow_id=?').run(JSON.stringify({ ...state, version: state.version + 1 }), value.id);
+      this.db.exec('RELEASE workflow_note_withdraw');
+    } catch (error) { this.db.exec('ROLLBACK TO workflow_note_withdraw; RELEASE workflow_note_withdraw'); throw error; }
+    return result;
+  }
+  recordRead(workflowID: string, executionID: string, result: ReturnType<typeof readPage>) {
+    const record: HistoryRead = { id: randomUUID(), executionID, at: new Date().toISOString(), sourceID: result.id,
+      revision: result.revision, offset: result.offset, nextOffset: result.nextOffset,
+      totalCharacters: result.totalCharacters, contentBytes: Buffer.byteLength(result.content) };
+    this.db.prepare('INSERT INTO workflow_history_reads VALUES (?,?,?)').run(workflowID, record.id, JSON.stringify(record));
+    this.db.prepare('DELETE FROM workflow_history_reads WHERE workflow_id=? AND id NOT IN (SELECT id FROM workflow_history_reads WHERE workflow_id=? ORDER BY rowid DESC LIMIT 200)').run(workflowID, workflowID);
+  }
+  reads(workflowID: string) {
+    return this.db.prepare('SELECT body FROM workflow_history_reads WHERE workflow_id=? ORDER BY rowid DESC').all(workflowID)
+      .map(row => JSON.parse(String(row.body)) as HistoryRead);
+  }
   /** Supporting excerpts are shortened by field; source identities always survive. */
   handoff(value: Workflow, step: WorkflowStep, preview = 600) {
     const state = this.state(value);

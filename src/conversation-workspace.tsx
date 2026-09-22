@@ -43,6 +43,7 @@ import { SearchNavigation, SearchText, searchMatchLabel } from './conversation-s
 import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import { KnowledgeLibrary } from './knowledge-library';
+import { ConversationContext } from './conversation-context';
 import type { Workflow } from '../shared/workflows';
 import { workflowAllSteps, workflowPendingMessages } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
@@ -128,6 +129,7 @@ import {
   createdConversationKey,
   initializeConversationDraftModel,
   isPendingLocalTaskMessage,
+  submitLocalTaskMessage,
   localTaskCanContinue,
   prepareConversationRequest,
   updateConversationDraft,
@@ -584,6 +586,7 @@ export function ConversationWorkspace({
   const operation = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [contextItem, setContextItem] = useState<Conversation | null>(null);
   const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | null>(null);
   const [modelSetupReturn, setModelSetupReturn] = useState<string | null>(null);
   useEffect(() => { if (view === 'chat') setModelSetupReturn(null); }, [view]);
@@ -826,7 +829,7 @@ export function ConversationWorkspace({
   const canWriteLocal = !!task && [task.creatorID, task.assigneeID].includes(data.user.id);
   const canContinueLocal = localTaskCanContinue(task, data.user.id);
   const localTaskModelChoice = !!task && task.assigneeID === data.user.id && !task.collaboration && !task.remoteOrigin;
-  const useLocalTaskMessages = localTaskModelChoice && (canContinueLocal || isPendingLocalTaskMessage(draftState));
+  const useLocalTaskMessages = localTaskModelChoice && (task?.state !== 'open' || isPendingLocalTaskMessage(draftState));
   const workflowModelChoice = !!current?.workflow && current.workflow.creatorID === data.user.id &&
     (current.workflow.target.mode === 'automatic' || current.workflow.target.nodeID === local?.id);
   const continuationModelChoice = workflowModelChoice || localTaskModelChoice;
@@ -1295,15 +1298,17 @@ export function ConversationWorkspace({
           setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID, createWorkflowDraft));
           return;
         } else if (task && useLocalTaskMessages) {
-          const body = { text, ...(continuationModel ? { model: continuationModel } : {}), ...conversationReasoningFields(draftState, draftState.reasoningEffort ?? null), confirmed: true };
-          const prepared = prepareConversationRequest(
-            { ...draftState, ...(continuationModel ? { model: continuationModel } : {}) },
-            { ...body, messageKind: 'local-task' },
-          );
-          setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
-          await api(`/tasks/${task.id}/messages`, { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
-          scrollPinned.current = true;
-          setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID));
+          await submitLocalTaskMessage(task, draftState, () => api<Task>(`/tasks/${task.id}/stop`, {}), async () => {
+            const body = { text, ...(continuationModel ? { model: continuationModel } : {}), ...conversationReasoningFields(draftState, draftState.reasoningEffort ?? null), confirmed: true };
+            const prepared = prepareConversationRequest(
+              { ...draftState, ...(continuationModel ? { model: continuationModel } : {}) },
+              { ...body, messageKind: 'local-task' },
+            );
+            setDrafts((previous) => ({ ...previous, [draftKey]: prepared }));
+            await api(`/tasks/${task.id}/messages`, { ...body, requestID: prepared.requestID }, { timeoutMilliseconds: 15_000 });
+            scrollPinned.current = true;
+            setDrafts((previous) => clearSubmittedDraft(previous, draftKey, prepared.requestID));
+          });
           return;
         } else if (task) {
           if (task.assigneeID !== data.user.id)
@@ -1662,6 +1667,7 @@ export function ConversationWorkspace({
         </nav>
       </aside>
       <main className="conversation-center">
+        {contextItem && <ConversationContext item={all.find(item => item.key === contextItem.key) || contextItem} tasks={data.tasks} owner={data.user.owner} close={() => setContextItem(null)} />}
         <header className="conversation-header">
           <button
             className="icon-button mobile-nav"
@@ -1704,6 +1710,7 @@ export function ConversationWorkspace({
             </div>}
           </div>
           {view === 'chat' && <div className="workspace-header-tools">
+            {current && <button type="button" className="icon-button" title={t('会话上下文')} aria-label={t('会话上下文')} onClick={() => setContextItem(current)}><BookOpen size={17} /></button>}
             {current && <button type="button" className="icon-button" title={t('在当前会话中查找')} aria-label={t('在当前会话中查找')} onClick={openFind}><Search size={17} /></button>}
             {reviewProject && <button type="button" className="icon-button" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => setChangesProject(reviewProject)}><GitCompareArrows size={17} /></button>}
             {current && <button type="button" className="icon-button" title={t('导出会话')} aria-label={t('导出会话')} onClick={() => setExportItem(current)}><Download size={17} /></button>}
@@ -1894,10 +1901,11 @@ export function ConversationWorkspace({
                         ) && (
                           <Button
                             disabled={busy || !data.engine.ready}
-                            onClick={() => void perform(() => runLocal(task))}
+                            onClick={() => localTaskModelChoice && task.sessionID
+                              ? focusComposer() : void perform(() => runLocal(task))}
                           >
                             <Play size={14} />
-                            {task.sessionID ? t('继续执行') : t('开始执行')}
+                            {localTaskModelChoice && task.sessionID ? t('发送补充要求') : task.sessionID ? t('继续执行') : t('开始执行')}
                           </Button>
                         )}
                       {running && (task || canRemoteControl) && (

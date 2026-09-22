@@ -66,9 +66,13 @@ import {
   setTaskInputMaterializer,
   setTaskKnowledgeContext,
   taskContexts,
+  engineClient,
 } from './task-service.ts';
 import { validateProject, redact } from './artifacts.ts';
-import { dataRoot } from './engine.ts';
+import { dataRoot, engineRoot } from './engine.ts';
+import { accountEngines } from './account-engines.ts';
+import { RuntimeHistory } from './runtime-history.ts';
+import { WorkflowKnowledge } from './workflow-knowledge.ts';
 import { remoteExecutionSummary } from './remote-execution-summary.ts';
 import { acquireDataLock } from './process-lock.ts';
 import {
@@ -172,6 +176,8 @@ setTaskKnowledgeContext((value, directory) => {
 const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQueue, policies: executionPolicies,
   resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()) });
 const conversationHistory = new ConversationHistory(db, {
+  runtime: new RuntimeHistory(db, { engineRoot, withClient: (binding, work) => binding.accountID
+    ? accountEngines.maintenance(binding.accountID, work) : work(engineClient()) }),
   data: () => ({ tasks: tasks(), workflows: workflowRuntime.store.list(), projects: projects(), network: nodeNetwork.snapshot() }),
   queue: () => nodeQueue.list(),
   files: (m) => [...nodeNetwork.files.historyFiles(m), ...historyFileIDs(workspacePreferences.draftsForConversations(
@@ -188,6 +194,7 @@ const conversationHistory = new ConversationHistory(db, {
       if (!m.local.includes(String(row.task_id))) for (const id of historyFileIDs(JSON.parse(String(row.body)))) protectedIDs.add(id);
     nodeNetwork.files.purgeHistory(m, files, protectedIDs);
     nodeNetwork.purgeHistory(m);
+    knowledge?.tools.removeTasks(m.local);
     db.exec('BEGIN IMMEDIATE');
     try {
       nodeQueue.purgeHistory(m);
@@ -206,10 +213,13 @@ const conversationHistory = new ConversationHistory(db, {
   },
 });
 nodeNetwork.setHistoryRetired((id) => !!db.prepare('SELECT 1 FROM conversation_retired WHERE id=? LIMIT 1').get(id));
-function sweepConversationHistory() {
+let historySweeping = false;
+async function sweepConversationHistory() {
+  if (historySweeping) return;
   const release = updateMaintenance.enterOperation();
   if (!release) return;
-  try { const result = conversationHistory.sweep(); if (result.deleted) changed(); } finally { release(); }
+  historySweeping = true;
+  try { await conversationHistory.sweep(); } finally { historySweeping = false; changed(); release(); }
 }
 const historyCleanup = setInterval(sweepConversationHistory, 60 * 60 * 1000);
 historyCleanup.unref();
@@ -617,6 +627,22 @@ app.use('/api', (req, _res, next) => {
   next();
 });
 installWorkflowAPI(app, workflowRuntime, nodeNetwork, who);
+const workflowMemory = (req: Request) => {
+  requireNetworkOwner(req);
+  const value = workflowRuntime.store.get(String(req.params.id));
+  requireThat(value && value.creatorID === who(req).id, 404, '协作任务不存在。');
+  requireThat(knowledge, 503, 'knowledge_unavailable');
+  return { value, memory: new WorkflowKnowledge(knowledge!.store, workflowRuntime.store.history) };
+};
+app.get('/api/workflows/:id/context/memory', (req, res) => {
+  const { value, memory } = workflowMemory(req); res.json(memory.list(value));
+});
+app.post('/api/workflows/:id/context/memory', (req, res) => {
+  const { value, memory } = workflowMemory(req); res.json(memory.promote(value, req.body)); changed();
+});
+app.post('/api/workflows/:id/context/memory/withdraw', (req, res) => {
+  const { value, memory } = workflowMemory(req); res.json(memory.withdraw(value, req.body)); changed();
+});
 installKnowledgeAPI(app, () => knowledge, who, projects);
 installProjectChangesAPI(app, who, projects);
 installPromptTemplateAPI(app, who, new PromptTemplateStore(db));
@@ -690,14 +716,14 @@ app.post('/api/history/restore', (req, res) => {
   const { key } = z.object({ key: z.string().min(1).max(100) }).strict().parse(req.body);
   conversationHistory.restore(key); changed(); res.json({ ok: true });
 });
-app.post('/api/history/purge', (req, res) => {
+app.post('/api/history/purge', async (req, res) => {
   requireNetworkOwner(req);
   const { key } = z.object({ key: z.string().min(1).max(100), confirmed: z.literal(true) }).strict().parse(req.body);
-  conversationHistory.purge(key); changed(); res.json({ ok: true });
+  try { await conversationHistory.purge(key); res.json({ ok: true }); } finally { changed(); }
 });
-app.post('/api/history/empty', (req, res) => {
+app.post('/api/history/empty', async (req, res) => {
   requireNetworkOwner(req); z.object({ confirmed: z.literal(true) }).strict().parse(req.body);
-  const result = conversationHistory.sweep(false); changed(); res.json(result);
+  try { res.json(await conversationHistory.sweep(false)); } finally { changed(); }
 });
 app.get('/api/ui/sidebar-widths', (req, res) =>
   res.json(workspacePreferences.sidebarWidths(who(req).id)),
@@ -2071,6 +2097,11 @@ app.get('/api/tasks/:id', (req, res) =>
   res.json({ task: visibleTask(req), activities: activities(String(req.params.id)) }),
 );
 app.get('/api/tasks/:id/context', (req, res) => res.json(taskContexts.list(visibleTask(req).id)));
+app.get('/api/tasks/:id/context/knowledge', (req, res) => {
+  const taskID = visibleTask(req).id;
+  const offset = z.coerce.number().int().min(0).max(1_000_000).parse(req.query.offset || 0);
+  res.json(knowledge?.tools.usage(taskID, offset) || { entries: [], total: 0, nextOffset: null });
+});
 app.post('/api/tasks/:id/claim', (req, res) => {
   const t = visibleTask(req);
   requireThat(who(req).id === t.assigneeID, 403, '只有指定接受人可以接受任务');
@@ -2245,6 +2276,8 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return void res.status(error.status).json({ error: error.message });
   if (error instanceof NodeQueueError)
     return void res.status(error.status).json({ error: error.message });
+  if (error instanceof Error && /^(knowledge|context)_[a-z_]+$/.test(error.message))
+    return void res.status(409).json({ error: error.message });
   res.status(500).json({ error: '操作未完成。请检查任务状态、项目文件夹及引擎连接后重试。' });
 });
 const server = createServer(app);
@@ -2276,9 +2309,9 @@ try {
     const result = await workflowRuntime.historyTool(before.taskID, body.name, body.args);
     if (taskContexts.authorize(root, body.sessionID, body.directory).id !== before.id) throw new Error('context_execution_changed');
     return result;
-  });
-  void nodeNetwork.start().then(() => { configureResources(); sweepConversationHistory(); });
-  void initializeEngine();
+  }, (root, sessionID, directory) => taskContexts.authorize(root, sessionID, directory).id);
+  void nodeNetwork.start().then(() => { configureResources(); });
+  void initializeEngine().then(() => sweepConversationHistory());
   workflowRuntime.start();
 }
 let closing = false;

@@ -68,3 +68,25 @@ test('finished workflow history tools permit handoff while active or unknown too
     assert.deepEqual(await check([history, { tool, state: { status: 'completed' } }]),
       { confirmed: false, reason: 'workflow_external_work_unconfirmed' });
 });
+
+test('finished managed knowledge calls permit handoff without relaxing active or unknown tool checks', async () => {
+  const tools: WorkflowToolRecord[] = [
+    { tool: 'rivloom_knowledge_search', state: { status: 'completed' } },
+    { tool: 'rivloom_knowledge_read', state: { status: 'completed', input: { offset: 0 } } },
+    { tool: 'rivloom_knowledge_read', state: { status: 'completed', input: { materialize: true } } },
+    { tool: 'rivloom_memory_save', state: { status: 'completed' } },
+  ];
+  const check = (calls: WorkflowToolRecord[]) => checkWorkflowQuiescence({ directory: '.', tools: calls });
+  for (const tool of tools) {
+    for (const status of ['completed', 'error'])
+      assert.deepEqual(await check([{ ...tool, state: { ...tool.state, status } }]),
+        { confirmed: true, reason: 'synchronous_tools_completed' }, `${tool.tool}: ${status}`);
+    for (const status of ['pending', 'running'])
+      assert.deepEqual(await check([{ ...tool, state: { ...tool.state, status } }]),
+        { confirmed: false, reason: 'workflow_tools_active' }, `${tool.tool}: ${status}`);
+  }
+  assert.deepEqual(await check(tools), { confirmed: true, reason: 'synchronous_tools_completed' });
+  for (const tool of ['rivloom_knowledge_read_custom', 'rivloom_memory_save_async', 'task', 'bash', 'unrecognized_plugin'])
+    assert.deepEqual(await check([...tools, { tool, state: { status: 'completed' } }]),
+      { confirmed: false, reason: 'workflow_external_work_unconfirmed' }, tool);
+});
