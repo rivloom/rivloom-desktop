@@ -1,6 +1,6 @@
 # Rivloom 使用说明
 
-Rivloom 是 Windows x64 上的人与 AI 任务工作区。本包版本为 0.1.19，已携带 Node.js 和由 Rivloom 从固定源码编译的 OpenCode 引擎，无需另外安装这两项；项目自身需要的工具链和模型提供方网络仍需准备。应用内签名更新频道已上线。Windows Authenticode 代码签名尚未配置。
+Rivloom 是 Windows x64 上的人与 AI 任务工作区。当前安装版本可在“关于 Rivloom”中查看，安装包文件名也包含版本号。软件已携带 Node.js 和由 Rivloom 从固定源码编译的 OpenCode 引擎，无需另外安装这两项；项目自身需要的工具链和模型提供方网络仍需准备。应用内签名更新频道已上线。Windows Authenticode 代码签名尚未配置。
 
 从 0.1.4 起，对外安装包和 Release 统一使用 Rivloom 名称，应用身份为 `com.rivloom.desktop`。此前 Rivloom UI Preview 使用独立身份，安装新版不会自动导入它的会话或设置；旧 Preview 安装和数据继续保留。请先在新版确认所需配置，勿把改名视为旧数据迁移或升级兼容性已经验收。
 
