@@ -448,6 +448,9 @@ fn main() {
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
                 .title("Rivloom").inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
                 .visible(false)
+                // Let WebView2 deliver FileList drops to the existing attachment uploader.
+                // Tauri's native handler otherwise intercepts HTML5 file drops on Windows.
+                .disable_drag_drop_handler()
                 .data_directory(data_dir.join("webview"))
                 .on_navigation(move |target| target.origin().ascii_serialization() == allowed_origin)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)

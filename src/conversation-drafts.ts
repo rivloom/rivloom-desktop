@@ -2,6 +2,7 @@ import type { ReasoningEffort } from '../shared/model-reasoning.ts';
 import { t } from '../shared/i18n.ts';
 import type { WorkflowTarget } from '../shared/workflows.ts';
 import type { Task } from '../shared/types.ts';
+import { quotedMessageText, type MessageQuote } from './message-quote.ts';
 export type ConversationRouting =
   { kind: 'local' } | { kind: 'automatic' } | { kind: 'node'; nodeID: string; name: string } |
   { kind: 'workflow'; target: WorkflowTarget; name?: string };
@@ -9,6 +10,7 @@ export type ConversationRouting =
 export type ConversationDraft = {
   files?: import('./task-file-upload.ts').DraftTaskFile[];
   text: string;
+  quote?: MessageQuote | null;
   routing: ConversationRouting;
   requestID: string;
   /** Undefined marks an older draft; null follows the conversation's default model policy. */
@@ -85,7 +87,7 @@ export function conversationReasoningFields(draft: ConversationDraft, reasoningE
 /** Match textarea maxLength, including its UTF-16 length convention. Never modify the draft. */
 export function conversationInputUsage(draft: ConversationDraft, existingConversation: boolean) {
   const limit = !existingConversation && draft.routing.kind !== 'local' && draft.routing.kind !== 'workflow' ? 4000 : 12000;
-  const length = draft.text.length;
+  const length = quotedMessageText(draft.text, draft.quote).length;
   const remaining = limit - length;
   return {
     length,
@@ -104,12 +106,13 @@ function routingIdentity(routing: ConversationRouting) {
 
 export function updateConversationDraft(
   draft: ConversationDraft,
-  change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'files' | 'model' | 'reasoningEffort'>>,
+  change: Partial<Pick<ConversationDraft, 'text' | 'quote' | 'routing' | 'files' | 'model' | 'reasoningEffort'>>,
   newRequestID: () => string = () => crypto.randomUUID(),
 ): ConversationDraft {
   const next = { ...draft, ...change, ...(change.model !== undefined && change.model !== draft.model && change.reasoningEffort === undefined ? { reasoningEffort: null } : {}) };
   if (
     next.text.trim() === draft.text.trim() &&
+    next.quote?.text === draft.quote?.text && next.quote?.author === draft.quote?.author &&
     next.model === draft.model && next.reasoningEffort === draft.reasoningEffort &&
     JSON.stringify((next.files || []).map((f) => f.id)) ===
       JSON.stringify((draft.files || []).map((f) => f.id)) &&
@@ -137,7 +140,7 @@ export function prepareConversationRequest(
 ): ConversationDraft {
   const requestSignature = JSON.stringify(
     canonical({
-      text: draft.text.trim(),
+      text: quotedMessageText(draft.text.trim(), draft.quote),
       routing: routingIdentity(draft.routing),
       options,
     }),

@@ -3,6 +3,7 @@ import { createWorkflowDraft, type ConversationDraft } from './conversation-draf
 import { validTaskFileDescriptor } from '../shared/task-files.ts';
 import { validWorkflowTarget } from '../shared/workflows.ts';
 import { t } from '../shared/i18n.ts';
+import { validMessageQuote } from './message-quote.ts';
 import type { ApprovalMode } from '../shared/types.ts';
 import { normalizeComposerSendMode, type ComposerSendMode } from './composer-keyboard.ts';
 
@@ -16,7 +17,8 @@ export function latestDrafts(local: string | null, server?: string | null): Draf
 }
 export function encodeDrafts(snapshot: DraftSnapshot) {
   return JSON.stringify({ version: 1, ...snapshot, drafts: Object.fromEntries(Object.entries(snapshot.drafts).map(([key, value]) => [key, {
-    ...value, files: (value.files || []).map((f) => ({ ...f, file: { name: f.file.name, size: f.file.size, type: f.file.type } })),
+    // Preserve the user's removal intent if the app closes before discard responds.
+    ...value, files: (value.files || []).filter(f => !f.removing).map((f) => ({ ...f, file: { name: f.file.name, size: f.file.size, type: f.file.type } })),
   }])) });
 }
 export function decodeDrafts(text: string | null): DraftSnapshot {
@@ -38,9 +40,10 @@ export function decodeDrafts(text: string | null): DraftSnapshot {
           error: f.state === 'complete' && validTaskFileDescriptor(f.descriptor) ? null : t('上传尚未完成，请移除此附件后重新选择。'),
           file: { name: f.file.name, size: f.file.size, type: f.file.type || '' },
         }));
-      const { model, reasoningEffort, ...rest } = draft;
+      const { model, reasoningEffort, quote, ...rest } = draft;
       const validModel = model === null || typeof model === 'string' && model.length > 0 && model.length <= 200;
-      drafts[key] = { ...rest, files, ...(validModel ? { model } : {}), ...(validReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}) };
+      drafts[key] = { ...rest, files, ...(validModel ? { model } : {}), ...(validReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
+        ...(validMessageQuote(quote) ? { quote: { text: quote.text, author: quote.author } } : quote ? { requestID: crypto.randomUUID(), requestSignature: undefined } : {}) };
     }
     const settings = value.settings;
     if (settings && !validReasoningEffort(settings.reasoningEffort)) delete settings.reasoningEffort;

@@ -103,7 +103,7 @@ export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, edi
         {needsDetail && <div className="workflow-diagnostic-actions">
           {navigate && nodeID && <Button onClick={() => navigate('diagnostics', nodeID === ownID ? undefined : nodeID)}>{t('查看连接诊断')}</Button>}
           {navigate && data.user.owner && reasons.some((r) => ['project_unavailable', 'model_unavailable', 'engine_unavailable'].includes(r.code)) &&
-            <Button onClick={() => navigate('models')}>{t('打开模型与执行设置')}</Button>}
+            <Button onClick={() => navigate('models')}>{t('打开模型设置')}</Button>}
           {navigate && data.user.owner && (item.queue?.local || reasons.some((r) => r.code === 'queue_unavailable')) &&
             <Button onClick={() => navigate('queue')}>{t('查看本机队列')}</Button>}
           {!step.attempts.length && !terminal && step.id !== 'planner' && value.state !== 'stopping' &&

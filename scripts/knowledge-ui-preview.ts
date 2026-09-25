@@ -30,7 +30,8 @@ writeFileSync(join(remoteSkillDirectory, 'references', 'checklist.md'), '# 交�
 const remoteSkill = await source.registerSkill(remoteSkillDirectory, null); source.share(remoteSkill.id, [brainID], remoteSkill.revision);
 const app = express(); app.use(express.json({ limit: '512kb' })); let data: Bootstrap;
 installKnowledgeAPI(app, () => ({ store: local, network }), () => data.user, () => [project]);
-const preview = await startSearchPreview(resolve('dist'), async (req, res, value) => {
+const distIndex = process.argv.indexOf('--dist');
+const preview = await startSearchPreview(resolve(distIndex === -1 ? 'dist' : process.argv[distIndex + 1]), async (req, res, value) => {
   data = value; data.projects = [project]; data.user.name = '知识库验收';
   data.network.local = peer(nodeID, '我的 Node'); data.network.brains = [brain];
   if (!req.url?.startsWith('/api/knowledge')) return false;

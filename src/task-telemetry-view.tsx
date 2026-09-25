@@ -31,8 +31,8 @@ export function TaskTelemetryView({ task }: {
   const completed = available ? todos.items.filter(item => item.status === 'completed').length : 0;
   return <details className="task-telemetry">
     <summary>
-      <span>{t('用量与执行清单')}</span>
-      {available && <span className="task-telemetry-count">{t('已完成 {{done}} / {{total}} 项', { done: completed, total: todos.items.length })}</span>}
+      <span>{available && todos.items.length ? t('用量与清单') : t('用量')}</span>
+      {available && todos.items.length > 0 && <span className="task-telemetry-count">{t('已完成 {{done}} / {{total}} 项', { done: completed, total: todos.items.length })}</span>}
     </summary>
     <div className="task-telemetry-body">
       <section aria-label={t('引擎会话用量')}>

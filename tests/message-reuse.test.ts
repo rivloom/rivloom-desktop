@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ConversationDraft } from '../src/conversation-drafts.ts';
-import { applyMessageReuse, reuseMessageText, type MessageReuseIntent } from '../src/message-reuse.ts';
+import { applyMessageReuse, type MessageReuseIntent } from '../src/message-reuse.ts';
+import { quotedMessageText } from '../src/message-quote.ts';
 
 function draft(text = ''): ConversationDraft { return { text, requestID: 'old-request', requestSignature: 'issued-request', routing: { kind: 'workflow', target: { mode: 'locked', nodeID: 'target' } }, files: [] }; }
 function intent(value: ConversationDraft, extra: Partial<MessageReuseIntent> = {}): MessageReuseIntent {
@@ -30,9 +31,10 @@ test('stale draft identity or edited text cannot be overwritten by an open reuse
 });
 test('quotes preserve text, blank lines and code delimiters while exposing the added length', () => {
   const source = 'Hello\r\n\r\n```js\n🙂\n```';
-  assert.equal(reuseMessageText(source, 'quote'), '> Hello\n> \n> ```js\n> 🙂\n> ```\n\n');
-  const value = draft(), result = applyMessageReuse(value, intent(value, { text: source, mode: 'quote' }), true, () => 'new');
-  assert(result.ok); assert.equal(result.length, result.draft.text.length); assert.equal(result.limit, 12000);
+  const value = draft('My own words'), result = applyMessageReuse(value, intent(value, { text: source, mode: 'quote' }), true, () => 'new');
+  assert(result.ok); assert.equal(result.draft.text, 'My own words');
+  assert.deepEqual(result.draft.quote, { text: source, author: 'assistant' });
+  assert.equal(result.length, quotedMessageText(value.text, result.draft.quote).length); assert.equal(result.limit, 12000);
 });
 test('input limits reject oversize source or append atomically, without silent truncation or new request allocation', () => {
   let identities = 0;

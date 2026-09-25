@@ -4,6 +4,8 @@ import { validWorkflowMessageEdit, type Workflow, type WorkflowMessage } from '.
 import { api } from './api';
 import { Button, Field, Modal } from './ui';
 import { useUnsavedChangesGuard } from './unsaved-changes-confirm';
+import { quotedMessageText, splitQuotedMessage } from './message-quote';
+import { MessageQuoteCard } from './message-quote-view';
 import './pending-message-editor.css';
 
 export type PendingMessageEditorProps = {
@@ -15,11 +17,14 @@ export type PendingMessageEditorProps = {
 };
 export function PendingMessageEditor({ workflowID, message, onSaved, close }: PendingMessageEditorProps) {
   const snapshot = useRef({ workflowID, message });
-  const [text, setText] = useState(message.text), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const input = useRef<HTMLTextAreaElement>(null);
+  const [text, setText] = useState(() => splitQuotedMessage(message.text).text), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [quote, setQuote] = useState(() => splitQuotedMessage(message.text).quote);
+  const submittedText = quotedMessageText(text, quote);
   const saving = useRef(false);
-  const guard = useUnsavedChangesGuard(text !== snapshot.current.message.text, busy, close);
-  const request = { requestID: snapshot.current.message.requestID, expectedText: snapshot.current.message.text, text };
-  const valid = validWorkflowMessageEdit(request);
+  const guard = useUnsavedChangesGuard(submittedText !== snapshot.current.message.text, busy, close);
+  const request = { requestID: snapshot.current.message.requestID, expectedText: snapshot.current.message.text, text: submittedText };
+  const valid = !!text.trim() && validWorkflowMessageEdit(request);
   return <Modal title={t('编辑待执行消息')} close={guard.requestClose} className="pending-message-editor">
     <p className="muted">{t('仅修改尚未开始执行的正文，附件和排队位置保持不变。保存不会继续已暂停的队列。')}</p>
     <form onSubmit={event => {
@@ -34,11 +39,12 @@ export function PendingMessageEditor({ workflowID, message, onSaved, close }: Pe
             : t('保存结果尚未确认，编辑内容仍保留。请重试或关闭后核对队列中的消息。'));
         }).finally(() => { saving.current = false; setBusy(false); });
     }}>
-      <Field label={t('消息正文')}><textarea autoFocus required rows={10} maxLength={12_000} value={text} disabled={busy} onChange={event => setText(event.target.value)} /></Field>
-      <p className="pending-message-edit-count">{text.length} / 12000</p>
+      {quote && <MessageQuoteCard quote={quote} disabled={busy} remove={() => { setQuote(undefined); input.current?.focus(); }} />}
+      <Field label={t('消息正文')}><textarea ref={input} autoFocus required rows={10} maxLength={12_000} value={text} disabled={busy} onChange={event => setText(event.target.value)} /></Field>
+      <p className="pending-message-edit-count">{submittedText.length} / 12000</p>
       {!!snapshot.current.message.inputFiles.length && <p className="muted">{t('保留 {{count}} 个附件。', { count: snapshot.current.message.inputFiles.length })}</p>}
       {error && <p role="alert" className="error">{error}</p>}
-      <div className="modal-actions"><Button disabled={busy} onClick={guard.requestClose}>{t('取消')}</Button><Button type="submit" variant="primary" disabled={busy || !valid || text === request.expectedText}>{busy ? t('正在保存…') : t('保存修改')}</Button></div>
+      <div className="modal-actions"><Button disabled={busy} onClick={guard.requestClose}>{t('取消')}</Button><Button type="submit" variant="primary" disabled={busy || !valid || submittedText === request.expectedText}>{busy ? t('正在保存…') : t('保存修改')}</Button></div>
     </form>
     {guard.confirmation}
   </Modal>;

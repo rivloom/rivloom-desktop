@@ -61,6 +61,8 @@ test('local readiness points to the missing model and explains the separate rece
   const value = diagnoseLocal(data);
   assert.equal(value.checks.find((c) => c.code === 'model')?.action, 'models');
   assert.equal(value.checks.find((c) => c.code === 'execution')?.state, 'warning');
+  assert.equal(value.checks.find((c) => c.code === 'execution')?.action, 'execution');
+  assert.equal(value.checks.find((c) => c.code === 'project')?.action, 'execution');
   assert.equal(
     diagnoseLocal(data, false).checks.find((c) => c.code === 'backend')?.state,
     'blocked',

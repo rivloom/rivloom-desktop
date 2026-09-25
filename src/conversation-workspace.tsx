@@ -6,18 +6,20 @@ import { executionSummaryText, executionStateText } from './system-display';
 import { TaskFilePicker, TaskFilesPanel } from './task-files';
 import { LanguageSwitcher } from './language-switcher';
 import { draftFilesReady } from './task-file-upload';
-import { CopyButton } from './copy-button';
 import { CommandPalette } from './command-palette';
 import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
 import { workspaceShortcutLabels, type WorkspaceCommand } from './workspace-commands';
 import { primaryShortcut } from './keyboard-platform';
 import { ComposerSendPreference } from './composer-send-preference';
+import { ConversationStarters } from './conversation-starters';
 import { composerSendHint, shouldSendComposer, type ComposerSendMode } from './composer-keyboard';
 import { conversationDraftKeys, hasConversationDraft } from './conversation-draft-indicators';
 import { ConversationExportDialog } from './conversation-export-view';
 import { MessageReuseActions } from './message-reuse-view';
 import { applyMessageReuse, type MessageReuseIntent } from './message-reuse';
 import { TaskTelemetryView } from './task-telemetry-view';
+import { MessageQuoteCard, UserMessageText } from './message-quote-view';
+import { quotedMessageText } from './message-quote';
 import { MessageTrace, MessageSpeed } from './message-trace';
 import { ProjectChangesView } from './project-changes-view';
 import { PromptTemplateLibrary } from './prompt-template-library';
@@ -84,6 +86,7 @@ import {
   LoaderCircle,
   ListOrdered,
   PanelLeft,
+  PanelRight,
   FileCode2,
   Bot,
   ShieldCheck,
@@ -501,27 +504,21 @@ const Transcript = memo(function Transcript({
           <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
             tabIndex={-1} data-search-target={searchTargetID(message.id === firstUser?.id || message.id === 'requirement'
               ? { kind: 'requirement' } : { kind: 'message', messageID: message.id })}>
-            {message.role === 'assistant' ? <div className="chat-message-byline">
-              <Bot size={17} />
-              <strong>Rivloom</strong>
-              <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />
-              {text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
-            </div> : text.trim() && <CopyButton text={text} label={t('复制这条消息')} iconOnly className="message-copy" />}
-            {message.role === 'user' ? text && <div className="chat-message-text"><SearchText text={text} query={searchQuery} /></div> :
+            {message.role === 'assistant' && text.trim() && <div className="chat-message-byline"><strong>Rivloom</strong></div>}
+            {message.role === 'user' ? text && <UserMessageText text={text} searchQuery={searchQuery} /> :
               <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} searchQuery={searchQuery} />}
-            {text.trim() && <MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} />}
+            {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} />
+              {message.role === 'assistant' && <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />}</div>}
           </article>
         );
       })}
       {!task && summary && (
         <article className="chat-message assistant" tabIndex={-1} data-search-target={searchTargetID({ kind: 'summary' })}>
           <div className="chat-message-byline">
-            <Bot size={17} />
             <strong>{t('执行结果')}</strong>
-            <CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" />
           </div>
           <MessageMarkdown text={summary} searchQuery={searchQuery} />
-          <MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} />
+          <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} /></div>
         </article>
       )}
       {task && activeStates.includes(task.state) && (
@@ -546,7 +543,7 @@ export function ConversationWorkspace({
   connectionError: string;
 }) {
   const rivloomVersion = useRivloomVersion();
-  const [view, setView] = useState<'chat' | 'network' | 'models' | 'attention' | 'diagnostics' | 'trash' | 'knowledge'>(
+  const [view, setView] = useState<'chat' | 'network' | 'models' | 'execution' | 'attention' | 'diagnostics' | 'trash' | 'knowledge'>(
     'chat',
   );
   const [diagnosticTarget, setDiagnosticTarget] = useState<string | null>(null);
@@ -587,7 +584,10 @@ export function ConversationWorkspace({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [contextItem, setContextItem] = useState<Conversation | null>(null);
-  const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | null>(null);
+  const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | 'language' | null>(null);
+  const utilitiesMenu = useContextMenu();
+  const conversationMenu = useContextMenu();
+  const [networkCollapsed, setNetworkCollapsed] = useState(false);
   const [modelSetupReturn, setModelSetupReturn] = useState<string | null>(null);
   useEffect(() => { if (view === 'chat') setModelSetupReturn(null); }, [view]);
   const [queueSnapshot, setQueueSnapshot] = useState<NodeQueueSnapshot | null>(null);
@@ -624,7 +624,8 @@ export function ConversationWorkspace({
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [mention, setMention] = useState<ActiveNodeMention | null>(null);
+  const [mention, setMention] = useState<(ActiveNodeMention & { fromToolbar?: boolean }) | null>(null);
+  const dismissedMention = useRef<{ text: string; cursor: number } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [deleteNodeID, setDeleteNodeID] = useState<string | null>(null);
   const [queueConfirmation, setQueueConfirmation] = useState<
@@ -729,7 +730,7 @@ export function ConversationWorkspace({
   }, [current?.key, draftKey, draftModelSeed, draftReasoningSeed]);
   const draft = draftState.text;
   const inputUsage = conversationInputUsage(draftState, !!current);
-  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'model' | 'reasoningEffort'>>) =>
+  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'model' | 'reasoningEffort' | 'quote'>>) =>
     setDrafts((previous) => ({
       ...previous,
       [draftKey]: updateConversationDraft(previous[draftKey] || draftState, change),
@@ -754,6 +755,7 @@ export function ConversationWorkspace({
   const remarkNode = peers.find((node) => node.id === remarkNodeID) || null;
   const mentionNodes = mention ? recentNodeMentions(peers, mention.query).slice(0, 8) : [];
   const rail = showNetworkRail(peers);
+  const railVisible = rail && !networkCollapsed && view === 'chat';
   const currentQueueEntry = current
     ? queueSnapshot?.entries.find((entry) => queueConversation(entry, all)?.key === current.key)
     : undefined;
@@ -1032,6 +1034,7 @@ export function ConversationWorkspace({
     }
   }
   const open = useCallback((item: Conversation | null) => {
+    dismissedMention.current = null;
     setSearchSelection(null);
     setFindOpen(false);
     selectedRef.current = item?.key || null;
@@ -1086,7 +1089,7 @@ export function ConversationWorkspace({
     { kind: 'action', id: 'project-changes', label: t('查看项目改动'), disabled: !reviewProject, run: () => reviewProject && setChangesProject(reviewProject) },
     { kind: 'action', id: 'find-current', label: t('在当前会话中查找'), shortcut: primaryShortcut('F'), disabled: !current, run: () => { setView('chat'); openFind(); } },
     ...draftKeys.map((key): WorkspaceCommand => ({ kind: 'draft', id: key, label: all.find((item) => item.key === key)?.title || t('新会话'),
-      detail: drafts[key]?.text.slice(0, 100) || t('附件草稿'), run: () => { open(all.find((item) => item.key === key) || null); focusComposer(); } })),
+      detail: drafts[key]?.text.slice(0, 100) || drafts[key]?.quote?.text.slice(0, 100) || t('附件草稿'), run: () => { open(all.find((item) => item.key === key) || null); focusComposer(); } })),
     ...all.map((item): WorkspaceCommand => ({ kind: 'conversation', id: item.key, label: item.title, detail: conversationState(item), run: () => open(item) })),
   ];
   useWorkspaceShortcuts({ openPalette: () => setPaletteOpen(true), newConversation: () => { open(null); focusComposer(); },
@@ -1131,8 +1134,12 @@ export function ConversationWorkspace({
     const node = peers.find((candidate) => candidate.id === nodeID);
     if (!node || !mention) return;
     const mode = mention.mode || 'preferred'; const prefix = nodeMentionPrefix(mode);
-    const next = `${draft.slice(0, mention.start)}${prefix}${node.name} ${draft.slice(mention.end)}`;
-    const cursor = mention.start + node.name.length + prefix.length + 1;
+    const previousName = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
+    const next = mention.fromToolbar
+      ? (previousName ? replaceBoundNodeMention(draft, previousName, mode, node.name) : draft)
+      : `${draft.slice(0, mention.start)}${prefix}${node.name} ${draft.slice(mention.end)}`;
+    const cursor = mention.fromToolbar ? Math.min(mention.start, next.length) : mention.start + node.name.length + prefix.length + 1;
+    dismissedMention.current = { text: next, cursor };
     changeDraft({ text: next, routing: { kind: 'workflow', target: { mode, nodeID: node.id }, name: node.name } });
     setMention(null);
     setMentionIndex(0);
@@ -1141,8 +1148,20 @@ export function ConversationWorkspace({
       inputRef.current?.setSelectionRange(cursor, cursor);
     });
   }
-  function showMention(mode: 'preferred' | 'locked') {
+  function closeMention() {
+    dismissedMention.current = { text: draft, cursor: inputRef.current?.selectionStart ?? draft.length };
+    setMention(null);
+  }
+  function showMention(mode: 'preferred' | 'locked', fromToolbar = false) {
+    if (operation.current) return;
+    dismissedMention.current = null;
     const input = inputRef.current; const cursor = input?.selectionStart ?? draft.length;
+    if (fromToolbar || mention?.fromToolbar) {
+      setMention({ start: cursor, end: cursor, query: '', mode, fromToolbar: true });
+      setMentionIndex(0);
+      requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(cursor, cursor); });
+      return;
+    }
     const active = mention || activeNodeMention(draft, cursor, peers);
     const start = active?.start ?? cursor; const end = active?.end ?? cursor;
     const padding = start > 0 && !/\s/.test(draft[start - 1]) ? ' ' : '';
@@ -1274,9 +1293,9 @@ export function ConversationWorkspace({
   }
   async function send(event: FormEvent, continueScheduling = false) {
     event.preventDefault();
-    const text = draft.trim();
+    const text = quotedMessageText(draft.trim(), draftState.quote);
     if (
-      !text ||
+      !draft.trim() ||
       busy ||
       !canWrite ||
       inputUsage.overLimit ||
@@ -1319,9 +1338,9 @@ export function ConversationWorkspace({
               await runLocal(updated, text);
           }
         } else await control({ kind: 'supplement', text });
-        setDraft('');
+        changeDraft({ text: '', quote: null });
       } else {
-        const title = text
+        const title = draft.trim()
           .split('\n')
           .find((line) => line.trim())!
           .slice(0, 120);
@@ -1391,19 +1410,31 @@ export function ConversationWorkspace({
       else inputRef.current?.focus();
     });
   }
+  const composerMentionTools = !current && data.user.owner && (
+    <div className="composer-device-ear">
+      {targetNodeID && <span className="composer-target-chip">
+        <button type="button" disabled={busy} aria-haspopup="dialog"
+          title={t('目标 Node：{{value1}}（{{value2}}）', { value1: targetName, value2: targetNodeID })}
+          onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}>
+          <span>{targetMode === 'locked' ? t('锁定') : t('首选')}</span><strong>{targetName}</strong>
+        </button>
+        <button type="button" disabled={busy} aria-label={t('清除设备选择')}
+          onClick={() => { changeTargetMode(null); setMention(null); focusComposer(); }}><X size={13} /></button>
+      </span>}
+      <button type="button" className={`composer-tool composer-mention${mention ? ' active' : ''}${targetNodeID ? ' has-target' : ''}`}
+        disabled={busy || !canWrite} aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
+        aria-haspopup="dialog" aria-expanded={!!mention} aria-controls={mention ? 'node-mention-menu' : undefined}
+        onClick={() => mention ? closeMention() : showMention(targetMode === 'locked' ? 'locked' : 'preferred', true)}>
+        <AtSign size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
   const composerToolbar = (
     <>
       <div className={`composer-choices ${current ? 'continuing' : ''}`}>
         {!current ? (
           <>
-            {targetNodeID ? (
-              <button type="button" className="composer-directed-location" disabled={busy} aria-haspopup="dialog"
-                title={t('目标 Node：{{value1}}（{{value2}}）', { value1: targetName, value2: targetNodeID })}
-                onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}>
-                <AtSign size={15} />
-                <span>{targetMode === 'locked' ? t('锁定') : t('首选')} · {targetName}</span>
-              </button>
-            ) : (
+            {!targetNodeID && (
               <label className="composer-select">
                 <FolderOpen size={15} />
                 <select
@@ -1411,6 +1442,7 @@ export function ConversationWorkspace({
                   disabled={busy}
                   value={projectID}
                   onChange={(event) => {
+                    dismissedMention.current = null;
                     if (event.target.value === '__add__') setModal('folder');
                     else setProjectID(event.target.value);
                   }}
@@ -1435,15 +1467,9 @@ export function ConversationWorkspace({
               <ReasoningPicker model={data.engine.models.find(entry => entry.id === model)} value={reasoningEffort}
                 onChange={setReasoningEffort} disabled={busy || !data.engine.ready} /></>
             )}
-            {data.user.owner && <button type="button" className="composer-options" disabled={busy}
-              aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
-              aria-expanded={!!mention} aria-controls={mention ? 'node-mention-options' : undefined}
-              onClick={() => mention ? setMention(null) : showMention('preferred')}>
-              <AtSign size={16} />
-            </button>}
             <button
               type="button"
-              className={`composer-options ${options ? 'active' : ''}`}
+              className={`composer-options composer-labeled ${options ? 'active' : ''}`}
               aria-label={t('会话设置')}
               title={t('会话设置')}
               aria-haspopup="dialog"
@@ -1452,6 +1478,7 @@ export function ConversationWorkspace({
               onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}
             >
               <Settings2 size={16} />
+              <span>{t('设置')}</span>
             </button>
           </>
         ) : (
@@ -1486,7 +1513,7 @@ export function ConversationWorkspace({
           </>
         )}
       </div>
-      <button type="button" className="composer-options" disabled={busy || !canWrite} title={t('提示词模板')} aria-label={t('提示词模板')} onClick={() => { setMention(null); setModal('templates'); }}><BookOpen size={16} /></button>
+      <button type="button" className="composer-options composer-labeled" disabled={busy || !canWrite} title={t('提示词模板')} aria-label={t('提示词模板')} onClick={() => { setMention(null); setModal('templates'); }}><BookOpen size={16} /><span>{t('模板')}</span></button>
       <button
         type="submit"
         className="send-message"
@@ -1502,12 +1529,13 @@ export function ConversationWorkspace({
         }
       >
         {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
+        <span>{t('发送')}</span>
       </button>
     </>
   );
 
   return (
-    <ResizableWorkspace hasNetwork={rail} sidebarOpen={mobileSidebar}>
+    <ResizableWorkspace hasNetwork={railVisible} sidebarOpen={mobileSidebar}>
       {mobileSidebar && (
         <button
           className="sidebar-scrim"
@@ -1536,10 +1564,10 @@ export function ConversationWorkspace({
           </span>
           <ChevronDown size={15} />
         </button>
-        <button className="new-conversation" onClick={() => open(null)}>
+        <button className="new-conversation" title={`${t('新会话')} · ${workspaceShortcutLabels['new-conversation']}`} onClick={() => { open(null); focusComposer(); }}>
           <Plus size={18} />
           {t('新会话')}
-          <span>↗</span>
+          <kbd aria-hidden="true">{workspaceShortcutLabels['new-conversation']}</kbd>
         </button>
         <button type="button" className="workspace-command-entry" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog">
           <Search size={15} /><span>{t('快速访问')}</span><kbd>{workspaceShortcutLabels.palette}</kbd>
@@ -1624,9 +1652,6 @@ export function ConversationWorkspace({
           {data.user.owner && <button className={view === 'knowledge' ? 'active' : ''} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
             <BookOpen size={17} />{t('技能与记忆')}<ChevronRight size={14} />
           </button>}
-          {data.user.owner && <button className={view === 'trash' ? 'active' : ''} onClick={() => { setView('trash'); setMobileSidebar(false); setNotice(''); }}>
-            <Trash2 size={17} />{t('回收站')}<span className="attention-count">{data.conversationTrash?.length || 0}</span>
-          </button>}
           <button
             className={view === 'attention' ? 'active' : ''}
             onClick={() => openAttention('attention')}
@@ -1636,7 +1661,7 @@ export function ConversationWorkspace({
             <span className="attention-count">{attention.snapshot?.items.length ?? '—'}</span>
           </button>
           <button
-            className={view === 'network' || view === 'models' ? 'active' : ''}
+            className={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'active' : ''}
             onClick={() => {
               setView('models');
               setMobileSidebar(false);
@@ -1646,29 +1671,26 @@ export function ConversationWorkspace({
             {t('设备与模型')}
             <ChevronRight size={14} />
           </button>
-          <button
-            className={view === 'diagnostics' ? 'active' : ''}
-            onClick={() => {
-              setDiagnosticTarget(null);
-              setView('diagnostics');
-              setMobileSidebar(false);
-            }}
-          >
-            <DiagnosticIcon size={17} />
-            {t('连接诊断')}
-            <ChevronRight size={14} />
+          <button type="button" className={view === 'trash' ? 'active' : ''} {...utilitiesMenu.trigger}>
+            <MoreHorizontal size={17} />{t('更多')}<ChevronRight size={14} />
           </button>
-          <button type="button" onClick={() => setModal('shortcuts')}><Keyboard size={17} />{t('键盘与输入')}<ChevronRight size={14} /></button>
+          <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
+            ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
+              select: () => { setView('trash'); setMobileSidebar(false); setNotice(''); } }] : []),
+            { id: 'diagnostics', label: t('连接诊断'), icon: <DiagnosticIcon size={16} />,
+              select: () => { setDiagnosticTarget(null); setView('diagnostics'); setMobileSidebar(false); } },
+            { id: 'shortcuts', label: t('键盘与输入'), icon: <Keyboard size={16} />, select: () => setModal('shortcuts') },
+            { id: 'language', label: t('界面语言'), select: () => setModal('language') },
+          ]} />
           <div className="sidebar-signature">
             <Wordmark />
             <AboutRivloomEntry version={rivloomVersion} onClick={() => setModal('about')} />
           </div>
-          <LanguageSwitcher />
         </nav>
       </aside>
       <main className="conversation-center">
         {contextItem && <ConversationContext item={all.find(item => item.key === contextItem.key) || contextItem} tasks={data.tasks} owner={data.user.owner} close={() => setContextItem(null)} />}
-        <header className="conversation-header">
+        <header className={`conversation-header${view === 'chat' ? '' : ' settings-header'}`}>
           <button
             className="icon-button mobile-nav"
             aria-label={t('打开会话栏')}
@@ -1690,7 +1712,7 @@ export function ConversationWorkspace({
             <span title={view === 'chat' ? current?.title : undefined}>
               {view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站') : view === 'network'
                 ? t('设备与模型')
-                : view === 'models'
+                : view === 'models' || view === 'execution'
                   ? t('设备与模型')
                   : view === 'attention'
                     ? t('待办中心')
@@ -1710,12 +1732,17 @@ export function ConversationWorkspace({
             </div>}
           </div>
           {view === 'chat' && <div className="workspace-header-tools">
-            {current && <button type="button" className="icon-button" title={t('会话上下文')} aria-label={t('会话上下文')} onClick={() => setContextItem(current)}><BookOpen size={17} /></button>}
-            {current && <button type="button" className="icon-button" title={t('在当前会话中查找')} aria-label={t('在当前会话中查找')} onClick={openFind}><Search size={17} /></button>}
-            {reviewProject && <button type="button" className="icon-button" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => setChangesProject(reviewProject)}><GitCompareArrows size={17} /></button>}
-            {current && <button type="button" className="icon-button" title={t('导出会话')} aria-label={t('导出会话')} onClick={() => setExportItem(current)}><Download size={17} /></button>}
+            {current && <button type="button" className="workspace-tool" title={t('在当前会话中查找')} aria-label={t('在当前会话中查找')} onClick={openFind}><Search size={16} /><span>{t('查找')}</span></button>}
+            {reviewProject && <button type="button" className="workspace-tool" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => setChangesProject(reviewProject)}><GitCompareArrows size={16} /><span>{t('改动')}</span></button>}
+            {current && <>
+              <button type="button" className="icon-button" title={t('更多会话操作')} aria-label={t('更多会话操作')} {...conversationMenu.trigger}><MoreHorizontal size={18} /></button>
+              <ContextMenu menu={conversationMenu} label={t('更多会话操作')} actions={[
+                { id: 'context', label: t('会话上下文'), icon: <BookOpen size={16} />, select: () => setContextItem(current) },
+                { id: 'export', label: t('导出会话'), icon: <Download size={16} />, select: () => setExportItem(current) },
+              ]} />
+            </>}
           </div>}
-          {view === 'chat' && data.user.owner && !rail && (
+          {view === 'chat' && data.user.owner && !railVisible && (
             <button
               className="local-queue-entry"
               onClick={() => setModal('queue')}
@@ -1726,6 +1753,13 @@ export function ConversationWorkspace({
               <span>{t('本机队列')}</span>
             </button>
           )}
+          {rail && view === 'chat' && <button type="button" className={`network-rail-toggle ${railVisible ? 'active' : ''}`}
+            aria-label={railVisible ? t('收起队列与设备') : t('展开队列与设备')}
+            title={railVisible ? t('收起队列与设备') : t('展开队列与设备')}
+            aria-expanded={railVisible} aria-controls={railVisible ? 'conversation-network-sidebar' : undefined}
+            onClick={() => setNetworkCollapsed(value => !value)}>
+            <PanelRight size={17} /><span>{t('队列与设备')}</span>
+          </button>}
           <span className="header-status" title={connected ? t('已连接') : t('正在重连')} aria-label={connected ? t('已连接') : t('正在重连')}>
             <i className={`status-dot ${connected ? 'online' : ''}`} />
             <span>{connected ? t('已连接') : t('正在重连')}</span>
@@ -1767,7 +1801,7 @@ export function ConversationWorkspace({
                   reuse={{ draft: draftState, onApply: reuseMessage, disabled: busy || !canWrite }}
                   searchMatch={currentMatch} searchQuery={currentMatch ? activeSearchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
-                    {currentReceipt && (
+                    {currentReceipt && !(task?.state === 'accepted' && !task.remoteOrigin) && (
                       <section
                         className={`task-receipt ${currentReceipt.tone}`}
                         role="status"
@@ -1775,9 +1809,7 @@ export function ConversationWorkspace({
                       >
                         {currentReceipt.syncing ? (
                           <LoaderCircle size={16} className="spin" />
-                        ) : (
-                          <ListOrdered size={16} />
-                        )}
+                        ) : null}
                         <div>
                           <strong>{currentReceipt.label}</strong>
                           <p>{currentReceipt.detail}</p>
@@ -1803,7 +1835,6 @@ export function ConversationWorkspace({
                       </section>
                     )}
                     <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} />
-                    {task && <TaskTelemetryView task={task} />}
                     {task?.error && <p className="error">{systemText(task.error)}</p>}
                     {approvals.map((approval) => (
                       <section className="chat-approval" key={approval.id}>
@@ -1922,11 +1953,12 @@ export function ConversationWorkspace({
                         </Button>
                       )}
                     </div>
+                    <div className="conversation-support">
+                    {task && <TaskTelemetryView task={task} />}
                     {current && (
                       <details className="conversation-details">
                         <summary>
-                          {t('会话详情与执行记录')}
-                          <ChevronDown size={14} />
+                          {t('执行记录')}
                         </summary>
                         <dl>
                           <dt>{t('来源')}</dt>
@@ -2000,6 +2032,7 @@ export function ConversationWorkspace({
                       scope={current.brainTask ? 'brain' : current.remote ? 'remote' : 'local'}
                       taskID={current.brainTask?.id || current.remote?.id || current.localTask!.id}
                     />
+                    </div>
                   </div>
                 ) : (
                   <div className="blank-conversation">
@@ -2012,8 +2045,13 @@ export function ConversationWorkspace({
                     <p>
                       {awaitingCreatedConversation
                         ? t('正在等待会话状态更新。')
-                        : t('从一个想法、一段问题，或一项工作开始。')}
+                        : t('说说你的目标，Rivloom 帮你一步步完成。')}
                     </p>
+                    {!awaitingCreatedConversation && <ConversationStarters disabled={busy || !canWrite}
+                      choose={(text) => {
+                        if (!reuseMessage({ text, mode: 'reuse', placement: 'append', expectedDraft: draftState }))
+                          setNotice(t('未能填入示例，请先检查草稿长度后重试。'));
+                      }} />}
                   </div>
                 )}
               </div>
@@ -2034,6 +2072,25 @@ export function ConversationWorkspace({
                 className={`conversation-composer ${!canWrite ? 'read-only' : ''}`}
                 onSubmit={send}
               >
+                <TaskFilePicker
+                  key={draftKey}
+                  files={draftState.files || []}
+                  disabled={busy || !canWrite}
+                  unavailableReason={current && !current.workflow ? t('此旧版会话不支持消息附件，请新建会话后添加。') : undefined}
+                  composer
+                  onChange={(update) =>
+                    setDrafts((previous) => {
+                      const saved = previous[draftKey] || emptyDraft.current;
+                      return {
+                        ...previous,
+                        [draftKey]: updateConversationDraft(saved, { files: update(saved.files || []) }),
+                      };
+                    })
+                  }
+                >{composerMentionTools}</TaskFilePicker>
+                <div className="composer-surface">
+                {draftState.quote && <MessageQuoteCard quote={draftState.quote} disabled={busy || !canWrite}
+                  remove={() => { changeDraft({ quote: null }); focusComposer(); }} />}
                 <textarea
                   ref={inputRef}
                   aria-label={t('会话消息')}
@@ -2060,7 +2117,7 @@ export function ConversationWorkspace({
                             ? t('当前只能查看此会话的执行状态')
                             : current
                               ? t('继续对话，补充你的要求…')
-                              : t('有什么想交给 Rivloom？')
+                              : t('描述你想完成的事，也可以添加文件…')
                   }
                   value={draft}
                   onChange={(event) => {
@@ -2076,6 +2133,8 @@ export function ConversationWorkspace({
                     } else setMention(null);
                   }}
                   onSelect={(event) => {
+                    if (mention?.fromToolbar || (dismissedMention.current?.text === event.currentTarget.value &&
+                        dismissedMention.current.cursor === event.currentTarget.selectionStart)) return;
                     if (!current && data.user.owner && !composing.current) {
                       setMention(
                         activeNodeMention(
@@ -2125,7 +2184,7 @@ export function ConversationWorkspace({
                     }
                     if (event.key === 'Escape' && mention) {
                       event.preventDefault();
-                      setMention(null);
+                      closeMention();
                       return;
                     }
                     if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!mention, disabled: !canWrite || busy })) {
@@ -2159,12 +2218,16 @@ export function ConversationWorkspace({
                 {mention && (
                   <div
                     className="node-mention-menu"
+                    id="node-mention-menu"
                     role="dialog"
                     aria-label={t('选择执行 Node')}
+                    onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeMention(); inputRef.current?.focus(); } }}
                   >
                     <div className="node-mention-heading">
                       <AtSign size={14} />
                       <span>{mention.query ? t('匹配的 Node') : t('最近使用的 Node')}</span>
+                      <button type="button" className="node-mention-close" aria-label={t('关闭设备选择')}
+                        onClick={() => { closeMention(); inputRef.current?.focus(); }}><X size={14} /></button>
                     </div>
                     <div className="node-mention-mode">{(['preferred', 'locked'] as const).map((mode) => <button type="button" key={mode}
                       aria-pressed={(mention.mode || 'preferred') === mode} onMouseDown={(e) => e.preventDefault()} onClick={() => showMention(mode)}>
@@ -2215,27 +2278,8 @@ export function ConversationWorkspace({
                     </div>
                   </div>
                 )}
-                {(!current || current.workflow) ? (
-                  <TaskFilePicker
-                    key={draftKey}
-                    files={draftState.files || []}
-                    disabled={busy || !canWrite}
-                    composer
-                    onChange={(update) =>
-                      setDrafts((previous) => {
-                        const saved = previous[draftKey] || emptyDraft.current;
-                        return {
-                          ...previous,
-                          [draftKey]: updateConversationDraft(saved, {
-                            files: update(saved.files || []),
-                          }),
-                        };
-                      })
-                    }
-                  >
-                    {composerToolbar}
-                  </TaskFilePicker>
-                ) : <div className="composer-toolbar">{composerToolbar}</div>}
+                <div className="composer-toolbar">{composerToolbar}</div>
+                </div>
               </form>
               {!current && options && (
                 <Modal title={t('会话设置')} close={closeComposerSettings} className="composer-settings-modal">
@@ -2348,27 +2392,17 @@ export function ConversationWorkspace({
             </div>
           </>
         ) : (
-          <div className="conversation-settings-page">
-            {modelSetupReturn !== null && (view === 'models' || view === 'diagnostics') && <div className="model-onboarding-return" role="status">
+          <div className="conversation-settings-page"><div className="settings-content">
+            {modelSetupReturn !== null && ['models', 'execution', 'network', 'diagnostics'].includes(view) && <div className="model-onboarding-return" role="status">
               <span>{t('草稿已保留。完成设置后，返回会话选择模型并发送。')}</span>
               <Button onClick={returnFromModelSetup}>{t('返回会话')}</Button>
             </div>}
-            {(view === 'models' || view === 'network') && (
+            {['models', 'execution', 'network', 'diagnostics'].includes(view) && (
               <nav className="device-settings-tabs" aria-label={t('设备设置分类')}>
-                <button
-                  type="button"
-                  aria-current={view === 'models' ? 'page' : undefined}
-                  onClick={() => setView('models')}
-                >
-                  {t('模型与执行')}
-                </button>
-                <button
-                  type="button"
-                  aria-current={view === 'network' ? 'page' : undefined}
-                  onClick={() => setView('network')}
-                >
-                  {t('节点与 Brain')}
-                </button>
+                <button type="button" aria-current={view === 'models' ? 'page' : undefined} onClick={() => setView('models')}><Bot size={16} />{t('模型')}</button>
+                {data.user.owner && <button type="button" aria-current={view === 'execution' ? 'page' : undefined} onClick={() => setView('execution')}><FolderOpen size={16} />{t('执行与文件夹')}</button>}
+                <button type="button" aria-current={view === 'network' ? 'page' : undefined} onClick={() => setView('network')}><Network size={16} />{t('设备连接')}</button>
+                <button type="button" aria-current={view === 'diagnostics' ? 'page' : undefined} onClick={() => setView('diagnostics')}><DiagnosticIcon size={16} />{t('连接诊断')}</button>
               </nav>
             )}
             {view === 'knowledge' ? <KnowledgeLibrary projects={data.projects} /> : view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
@@ -2394,8 +2428,10 @@ export function ConversationWorkspace({
                 owner={data.user.owner}
                 engineReady={data.engine.ready}
                 onChanged={() => void refresh()}
-                executionSettings={
-                  data.user.owner && (
+              />
+            ) : view === 'execution' ? (
+                  data.user.owner && <>
+                    <div className="page-heading"><div><h1>{t('执行与文件夹')}</h1><p>{t('设置这台电脑如何接收任务，以及可使用的模型和工作目录。')}</p></div></div>
                     <section className="network-section local-execution-settings">
                       <div className="section-title">
                         <h2>{t('本机执行能力')}</h2>
@@ -2411,11 +2447,16 @@ export function ConversationWorkspace({
                           saveExecutionPolicy: networkActions.onSaveExecutionPolicy,
                         }}
                       />
+                    </section>
+                    <section className="settings-card execution-capacity"><header><h2>{t('同时执行的任务')}</h2></header>
                       <ExecutionConcurrencySettings policy={data.executionPolicy} onChanged={() => void refresh()} />
+                    </section>
+                    <section className="settings-card execution-directories"><header><h2>{t('工作文件夹')}</h2>
                       <Button onClick={() => setModal('folder')}>
                         <FolderOpen size={16} />
                         {t('添加执行文件夹')}
                       </Button>
+                      </header>
                       <ResourceDiscovery
                         nodes={data.resourceDirectory || []}
                         refresh={refresh}
@@ -2424,9 +2465,7 @@ export function ConversationWorkspace({
                         projects={data.projects}
                       />
                     </section>
-                  )
-                }
-              />
+                  </>
             ) : (
               <>
                 <NodeNetworkView
@@ -2441,18 +2480,13 @@ export function ConversationWorkspace({
                   hideExecutionPolicy
                   {...networkActions}
                 />
-                {data.user.owner && (
-                  <Button onClick={() => setModal('folder')}>
-                    <FolderOpen size={16} />
-                    {t('添加执行文件夹')}
-                  </Button>
-                )}
+
               </>
             )}
-          </div>
+          </div></div>
         )}
       </main>
-      {rail && (
+      {railVisible && (
         <aside
           id="conversation-network-sidebar"
           className="network-rail"
@@ -2501,6 +2535,7 @@ export function ConversationWorkspace({
             </Button>}
         </div>
       </Modal>}
+      {modal === 'language' && <Modal title={t('界面语言')} close={() => setModal(null)}><LanguageSwitcher /></Modal>}
       {modal === 'shortcuts' && <Modal title={t('键盘与输入')} close={() => setModal(null)} className="workspace-shortcuts-modal">
         <ComposerSendPreference value={sendMode} onChange={setSendMode} />
         <dl className="workspace-shortcuts">

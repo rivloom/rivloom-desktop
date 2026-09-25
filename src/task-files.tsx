@@ -7,6 +7,7 @@ import { desktop, chooseTaskFileDestination, revealTaskFile, openTaskFile } from
 import { ContextMenu, useContextMenu } from './context-menu';
 import { FilePreviewButton } from './file-preview';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
+import { composerFileSelectionError, containsDroppedDirectory, isFileTransfer } from './composer-files';
 import {
   taskFileBytesLabel,
   taskFileMaximumBytes,
@@ -22,6 +23,7 @@ export function TaskFilePicker({
   files,
   onChange,
   disabled = false,
+  unavailableReason,
   label = t('添加附件'),
   composer = false,
   children,
@@ -29,13 +31,19 @@ export function TaskFilePicker({
   files: DraftTaskFile[];
   onChange: (update: (previous: DraftTaskFile[]) => DraftTaskFile[]) => void;
   disabled?: boolean;
+  unavailableReason?: string;
   label?: string;
   composer?: boolean;
   children?: ReactNode;
 }) {
   const input = useRef<HTMLInputElement>(null),
     running = useRef(new Set<string>());
+  const latestFiles = useRef(files);
+  latestFiles.current = files;
+  const queue = useRef(Promise.resolve());
   const [error, setError] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [notice, setNotice] = useState('');
   const usageID = useId();
   const limitID = useId();
   const selectedBytes = files.reduce((sum, item) => sum + item.file.size, 0);
@@ -52,11 +60,15 @@ export function TaskFilePicker({
         total: taskFileBytesLabel(taskFileBatchBytes),
       })
     : '';
+  function updateFiles(update: (previous: DraftTaskFile[]) => DraftTaskFile[]) {
+    latestFiles.current = update(latestFiles.current);
+    onChange(update);
+  }
   async function upload(item: DraftTaskFile) {
     if (running.current.has(item.id)) return;
     running.current.add(item.id);
     const update = (value: Partial<DraftTaskFile>) =>
-      onChange((previous) => previous.map((f) => (f.id === item.id ? { ...f, ...value } : f)));
+      updateFiles((previous) => previous.map((f) => (f.id === item.id ? { ...f, ...value } : f)));
     update({ state: 'preparing', error: null });
     try {
       await uploadTaskFile(item, update);
@@ -66,14 +78,20 @@ export function TaskFilePicker({
       running.current.delete(item.id);
     }
   }
+  function enqueue(item: DraftTaskFile) {
+    updateFiles(previous => previous.map(file => file.id === item.id ? { ...file, state: 'preparing', error: null } : file));
+    queue.current = queue.current.then(() => upload(item));
+  }
   function select(selected: FileList | File[] | null) {
-    if (!selected || disabled || running.current.size) return;
+    if (!selected?.length) return;
+    if (disabled || unavailableReason) {
+      setError(unavailableReason || t('当前无法添加附件，请稍后再试。'));
+      return;
+    }
     const chosen = [...selected];
-    if (
-      files.length + chosen.length > taskFileUploadCount ||
-      [...files.map((f) => f.file), ...chosen].reduce((n, f) => n + f.size, 0) > taskFileBatchBytes
-    ) {
-      setError(t('每批最多 5 个文件，合计 1000 MiB。'));
+    const selectionError = composerFileSelectionError(latestFiles.current.map(file => file.file), chosen);
+    if (selectionError) {
+      setError(selectionError);
       return;
     }
     setError('');
@@ -84,58 +102,85 @@ export function TaskFilePicker({
       receivedBytes: 0,
       error: null,
     }));
-    onChange((previous) => [...previous, ...items]);
-    // Bounded sequential uploads keep UI requests available during larger selections.
-    void (async () => {
-      for (const item of items) await upload(item);
-    })();
+    updateFiles((previous) => [...previous, ...items]);
+    setNotice(t('已添加 {{count}} 个附件', { count: items.length }));
+    // Share one queue across selections, including files added while an upload runs.
+    for (const item of items) enqueue(item);
   }
+  const interactions = useRef({ select, disabled, unavailableReason });
+  interactions.current = { select, disabled, unavailableReason };
   useEffect(() => {
     const form = composer ? input.current?.closest('form') : null;
     if (!form) return;
+    const region = form.closest('.conversation-center') || form;
+    const inside = (target: EventTarget | null) => target instanceof Node && region.contains(target) &&
+      !(target instanceof Element && target.closest('[role="dialog"]'));
+    const reset = () => { setDragging(false); form.classList.remove('file-drag-over'); };
     const paste = (event: ClipboardEvent) => {
       const selected = event.clipboardData?.files;
-      if (!selected?.length || disabled) return;
-      event.preventDefault(); select(selected);
+      if (!selected?.length) return;
+      event.preventDefault(); interactions.current.select(selected);
     };
     const over = (event: DragEvent) => {
-      if (!event.dataTransfer?.types.includes('Files')) return;
-      event.preventDefault(); if (!disabled) form.classList.add('file-drag-over');
+      if (!isFileTransfer(event.dataTransfer)) return;
+      // Prevent external files from navigating the WebView, including outside the composer.
+      event.preventDefault();
+      const accepted = inside(event.target) && !interactions.current.disabled && !interactions.current.unavailableReason;
+      if (event.dataTransfer) event.dataTransfer.dropEffect = accepted ? 'copy' : 'none';
+      setDragging(accepted);
+      form.classList.toggle('file-drag-over', accepted);
     };
-    const leave = (event: DragEvent) => { if (!(event.relatedTarget instanceof Node) || !form.contains(event.relatedTarget)) form.classList.remove('file-drag-over'); };
+    const leave = (event: DragEvent) => { if (!inside(event.relatedTarget)) reset(); };
     const drop = (event: DragEvent) => {
-      if (!event.dataTransfer?.types.includes('Files')) return;
-      event.preventDefault(); form.classList.remove('file-drag-over'); if (!disabled) select(event.dataTransfer.files);
+      if (!isFileTransfer(event.dataTransfer)) return;
+      event.preventDefault(); reset();
+      if (!inside(event.target) || !event.dataTransfer) return;
+      if (containsDroppedDirectory(Array.from(event.dataTransfer.items))) {
+        setError(t('暂不支持拖入文件夹，请选择其中的文件。')); return;
+      }
+      interactions.current.select(event.dataTransfer.files);
     };
-    form.addEventListener('paste', paste); form.addEventListener('dragover', over); form.addEventListener('dragleave', leave); form.addEventListener('drop', drop);
-    return () => { form.removeEventListener('paste', paste); form.removeEventListener('dragover', over); form.removeEventListener('dragleave', leave); form.removeEventListener('drop', drop); form.classList.remove('file-drag-over'); };
-  }, [composer, disabled, files, onChange]);
+    form.addEventListener('paste', paste);
+    window.addEventListener('dragover', over); window.addEventListener('drop', drop);
+    region.addEventListener('dragleave', leave as EventListener);
+    window.addEventListener('dragend', reset); window.addEventListener('blur', reset);
+    return () => {
+      form.removeEventListener('paste', paste);
+      window.removeEventListener('dragover', over); window.removeEventListener('drop', drop);
+      region.removeEventListener('dragleave', leave as EventListener);
+      window.removeEventListener('dragend', reset); window.removeEventListener('blur', reset);
+      form.classList.remove('file-drag-over');
+    };
+  }, [composer]);
   async function remove(item: DraftTaskFile) {
+    if (latestFiles.current.find(file => file.id === item.id)?.removing) return;
+    updateFiles(previous => previous.map(file => file.id === item.id ? { ...file, removing: true } : file));
     try {
       if (item.descriptor) await api(`/task-files/uploads/${item.id}/discard`, {});
-      onChange((previous) => previous.filter((f) => f.id !== item.id));
+      updateFiles((previous) => previous.filter((f) => f.id !== item.id));
+      setError('');
+      setNotice(t('已移除附件 {{name}}', { name: item.file.name }));
     } catch (e) {
+      updateFiles(previous => previous.map(file => file.id === item.id ? { ...file, removing: false } : file));
       setError(e instanceof Error ? e.message : t('文件未能移除。'));
     }
   }
   const controls = (
     <>
-      <div className={composer ? 'composer-toolbar' : 'task-file-picker-controls'}>
+      <div className={composer ? 'composer-input-tools' : 'task-file-picker-controls'}>
         <button
           type="button"
-          className={composer ? 'composer-options composer-attach' : 'file-action'}
+          className={composer ? `composer-tool composer-attach${files.length ? ' has-files' : ''}` : 'file-action'}
+          data-state={files.some(file => file.state === 'failed') ? 'failed' : files.some(file => ['preparing', 'uploading'].includes(file.state)) ? 'uploading' : 'ready'}
           aria-label={label}
-          title={composer ? `${label} · ${t('也可粘贴或拖入文件')}\n${limits}` : undefined}
+          title={unavailableReason || (composer ? `${label} · ${t('也可粘贴或拖入文件')}\n${limits}` : undefined)}
           aria-describedby={files.length ? `${limitID} ${usageID}` : limitID}
-          disabled={
-            disabled ||
-            (!draftFilesReady(files) &&
-              files.some((f) => ['preparing', 'uploading'].includes(f.state)))
-          }
+          disabled={disabled || !!unavailableReason}
           onClick={() => input.current?.click()}
         >
-          <Paperclip size={15} />
-          {!composer && label}
+          <Paperclip size={16} aria-hidden="true" />
+          {!composer && <span>{label}</span>}
+          {composer && files.length > 0 && <span className="composer-file-count">{files.length}</span>}
         </button>
         <p
           id={usageID}
@@ -166,21 +211,23 @@ export function TaskFilePicker({
         }}
       />
       {!composer && controls}
+      {composer && <span className="composer-accessible-note" role="status" aria-live="polite">{notice}</span>}
+      {composer && dragging && <div className="composer-drop-overlay" role="status"><Paperclip size={22} /><strong>{t('松开以添加附件')}</strong><span>{t('文件会附在这条消息中')}</span></div>}
       {!!files.length && (
         <ul className="task-file-list" aria-label={t('已选文件')}>
           {files.map((item) => (
-            <li key={item.id}>
+            <li key={item.id} data-state={item.state}>
               <FileText size={17} />
               <span className="file-details">
                 <strong title={item.file.name}>{item.file.name}</strong>
                 <small>
                   {taskFileBytesLabel(item.file.size)} ·{' '}
-                  {item.state === 'complete'
+                  {item.removing ? t('正在移除') : item.state === 'complete'
                     ? t('已备妥')
                     : item.state === 'failed'
                       ? t('上传失败')
                       : item.state === 'preparing'
-                        ? t('正在校验')
+                        ? t('准备上传')
                         : t('上传 {{value1}}%', {
                             value1: Math.round(
                               (item.receivedBytes / Math.max(item.file.size, 1)) * 100,
@@ -192,21 +239,24 @@ export function TaskFilePicker({
                     {systemText(item.error)}
                   </span>
                 )}
+                {['preparing', 'uploading'].includes(item.state) && <progress
+                  aria-label={t('上传 {{name}}', { name: item.file.name })}
+                  max={Math.max(item.file.size, 1)} value={item.receivedBytes} />}
               </span>
               {item.state === 'complete' && item.descriptor && <FilePreviewButton iconOnly file={item.descriptor} path={`/task-files/uploads/${item.id}`} />}
               {item.state === 'failed' && item.file.arrayBuffer && (
                 <button
                   type="button"
-                  disabled={disabled}
+                  disabled={disabled || item.removing}
                   aria-label={t('重试 {{value1}}', { value1: item.file.name })}
-                  onClick={() => void upload(item)}
+                  onClick={() => enqueue(item)}
                 >
                   <RotateCw size={15} />
                 </button>
               )}
               <button
                 type="button"
-                disabled={disabled || ['preparing', 'uploading'].includes(item.state)}
+                disabled={disabled || item.removing || ['preparing', 'uploading'].includes(item.state)}
                 aria-label={t('移除 {{value1}}', { value1: item.file.name })}
                 onClick={() => void remove(item)}
               >

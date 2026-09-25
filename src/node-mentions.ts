@@ -35,10 +35,10 @@ export function boundNodeMentionMode(text: string, name: string): 'preferred' | 
   }
   return null;
 }
-export function replaceBoundNodeMention(text: string, name: string, mode: 'preferred' | 'locked' | null) {
+export function replaceBoundNodeMention(text: string, name: string, mode: 'preferred' | 'locked' | null, replacementName = name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return text.replace(new RegExp(`(^|\\s)@@?${escaped}(?=\\s|$)`, 'u'), (_whole, before: string) =>
-    mode ? `${before}${nodeMentionPrefix(mode)}${name}` : before);
+    mode ? `${before}${nodeMentionPrefix(mode)}${replacementName}` : before);
 }
 
 export function isNodeMentionComposing(

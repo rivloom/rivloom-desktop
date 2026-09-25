@@ -77,6 +77,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
       <button disabled={busy} aria-current={tab === 'memory' ? 'page' : undefined} onClick={() => switchTab('memory')}>{t('Wiki 记忆')}</button>
       <button disabled={busy} aria-current={tab === 'rules' ? 'page' : undefined} onClick={() => switchTab('rules')}>{t('本机与目录说明')}</button>
     </nav>
+    <p className="knowledge-section-description">{tab === 'skill' ? t('把常用工作方法添加为技能，任务需要时即可使用。') : tab === 'memory' ? t('保存可复用的信息，让后续任务了解你的偏好与项目背景。') : t('为本机或指定文件夹设置长期遵循的工作说明。')}</p>
     {error && <p className="knowledge-error" role="alert">{knowledgeError(error) || error}</p>}
     {notice && <p className="knowledge-notice" role="status">{notices[notice]}</p>}
     {tab === 'rules' ? <div className="knowledge-rules-list"><p>{t('本机说明适用于本机发起的任务；工作目录说明随对应目录加载。Wiki 正文只在需要时读取。')}</p>
@@ -89,6 +90,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
       <div className="knowledge-toolbar"><label><span className="sr-only">{t('知识库来源')}</span><select disabled={busy} value={scope} onChange={(e) => { setScope(e.target.value); setCategory(''); }}>
         <option value="local">{t('我的 Node')}</option>{library.brains.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select></label><input aria-label={t('搜索技能与记忆')} placeholder={t('搜索名称、用途或分类')} value={query} onChange={(e) => setQuery(e.target.value)} />
+      {(query || category) && <Button onClick={() => { setQuery(''); setCategory(''); }}>{t('清除筛选')}</Button>}
       {scope === 'local' && <Button disabled={busy} onClick={() => tab === 'skill' ? setRegister({ directory: '', projectID: null }) :
         setEditor({ name: '', description: '', category: category || '', body: '', projectID: null })}><Plus size={15} />{tab === 'skill' ? t('添加 Skill') : t('新建记忆')}</Button>}
     </div>
@@ -125,8 +127,8 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
             </div>}
           </article>;
         })}
-        {!rows.length && <div className="knowledge-empty"><BookOpen size={30} /><p>{busy ? t('正在读取目录…') : t('此范围还没有匹配的内容。')}</p>
-          {scope === 'local' && <small>{tab === 'skill' ? t('添加含 SKILL.md 的文件夹，再选择要分享的 Brain。') : t('按人物、工作、项目等分类保存记忆，正文按需读取。')}</small>}</div>}
+        {!rows.length && <div className="knowledge-empty"><BookOpen size={30} /><p>{busy ? t('正在读取目录…') : query || category ? t('没有找到匹配的内容') : tab === 'skill' ? t('还没有添加技能') : t('还没有保存记忆')}</p>
+          {query || category ? <small>{t('换一个关键词，或清除筛选查看全部内容。')}</small> : scope === 'local' && <small>{tab === 'skill' ? t('添加含 SKILL.md 的文件夹，再选择要分享的 Brain。') : t('按人物、工作、项目等分类保存记忆，正文按需读取。')}</small>}</div>}
         {shared.next !== null && scope !== 'local' && <Button disabled={busy} onClick={() => void perform(async () => {
           const result = await api<KnowledgeSearch>('/knowledge/search', { brainID: scope, kind: tab, text: query, category, offset: shared.next });
           setShared((old) => ({ ...result, entries: [...old.entries, ...result.entries] }));

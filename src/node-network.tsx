@@ -656,13 +656,16 @@ export function ExecutionPolicyCard({
       <div>
         <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
         <strong>{policy.enabled ? t('本机执行能力已开放') : t('本机执行能力已关闭')}</strong>
+        <p>{t('开放后，自动调度可把其他设备的任务安排到本机。模型、工作目录和审批方式由你设置。')}</p>
         <p>{t('已保存的审批模式：{{mode}}', { mode: approvalModeLabels[policy.approvalMode] })}</p>
+        <details><summary>{t('了解执行规则')}</summary>
         <p>
           {t(
             '旧版受信邀请可接收后等待；自动调度只在能力开放且有空闲槽位时接受执行。 模型和审批模式由本机管理，路径与凭据不外传。Portable 任务使用独立普通文件夹。',
           )}
         </p>
         <p>{t('新任务默认沿用已保存的审批模式；本机发起时可单独选择。已有任务继续使用创建时的模式。')}</p>
+        </details>
       </div>
       <form onSubmit={submit}>
         <label>
@@ -1121,12 +1124,10 @@ export function NodeNetworkView({
     <>
       <div className="page-heading network-page-heading">
         <div>
-          <span className="eyebrow">LOCAL-FIRST INTELLIGENCE</span>
           <h1>
-            {t('节点与 Brain')}
-            <span className="heading-dot">.</span>
+            {t('设备连接')}
           </h1>
-          <p>{t('Brain 自动形成并保持独立；受信 Node 可同时为多个 Brain 提供执行资源。')}</p>
+          <p>{t('发现并配对其他电脑，让任务在你的设备之间协作。')}</p>
         </div>
         <div className={`discovery-status ${online ? 'online' : ''}`}>
           {online ? <Radio size={18} /> : <WifiOff size={18} />}
@@ -1159,6 +1160,7 @@ export function NodeNetworkView({
         </div>
       </div>
 
+      <details className="network-advanced local-node-details"><summary>{t('本机设备信息')}<span>{network.local?.name}</span></summary>
       <section className="network-section">
         <div className="section-title">
           <div>
@@ -1178,7 +1180,9 @@ export function NodeNetworkView({
           </div>
         )}
       </section>
+      </details>
 
+      <details className="network-advanced"><summary>{t('任务协作与 Brain')}</summary>
       <section className="network-section">
         <div className="section-title">
           <div>
@@ -1212,6 +1216,7 @@ export function NodeNetworkView({
           </div>
         )}
       </section>
+      </details>
 
       {owner && !conversationsInSidebar && (
         <section className="network-section">

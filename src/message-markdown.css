@@ -24,8 +24,8 @@
 .markdown-table th, .markdown-table td { border: 1px solid #dfe3e9; padding: 7px 11px; text-align: left; min-width: 80px; }
 .markdown-table th { background: #f2f4f6; font-weight: 600; }
 .markdown-image-label { color: #717985; font-size: .9em; }
-.workflow-round { margin-bottom: 16px; }
-.workflow-round-divider { display: flex; align-items: center; gap: 10px; color: #7a8290; font-size: 11px; margin: 12px 0 10px; }
+.workflow-round { margin-bottom: 32px; }
+.workflow-round-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; margin: 24px 0 20px; }
 .workflow-round-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 .workflow-message-queue { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e2e6eb; }
 .workflow-queue-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13px; }

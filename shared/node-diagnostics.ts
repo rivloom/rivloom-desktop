@@ -2,7 +2,7 @@ import { t } from './i18n.ts';
 import type { Bootstrap, RivloomNode } from './types.ts';
 
 export type DiagnosticState = 'ok' | 'warning' | 'blocked' | 'unknown';
-export type DiagnosticAction = 'retry' | 'network' | 'models' | 'queue' | 'attention';
+export type DiagnosticAction = 'retry' | 'network' | 'models' | 'execution' | 'queue' | 'attention';
 export type DiagnosticCheck = {
   code: string;
   state: DiagnosticState;
@@ -147,7 +147,7 @@ export function diagnoseLocal(data: Bootstrap, connected = true): NodeDiagnostic
           state: 'warning',
           title: t('接收的任务会等待执行'),
           detail: t('本机执行能力已关闭；可信任务仍可收件。本机会话不受此接收开关限制。'),
-          action: 'network',
+          action: 'execution',
         },
   );
   if (!policy.projectID || !data.projects.some((p) => p.id === policy.projectID))
@@ -156,7 +156,7 @@ export function diagnoseLocal(data: Bootstrap, connected = true): NodeDiagnostic
       state: 'warning',
       title: t('接收任务的执行文件夹未配置'),
       detail: t('在本机执行能力中选择文件夹。'),
-      action: 'network',
+      action: 'execution',
     });
   return {
     nodeID: network.local?.id || null,

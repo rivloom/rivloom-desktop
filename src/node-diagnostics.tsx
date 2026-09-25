@@ -32,6 +32,9 @@ const actionLabels: Record<DiagnosticAction, string> = {
   get models() {
     return t('打开模型设置');
   },
+  get execution() {
+    return t('执行与文件夹');
+  },
   get queue() {
     return t('查看本机队列');
   },
@@ -196,7 +199,7 @@ export function NodeDiagnosticsView({
                   <strong>{check.title}</strong>
                   <p>{check.detail}</p>
                 </div>
-                {check.action && (
+                {check.action && (check.action !== 'execution' || data.user.owner) && (
                   <button
                     className="button"
                     disabled={busy || (check.action === 'retry' && !data.user.owner)}

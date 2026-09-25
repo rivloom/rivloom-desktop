@@ -16,9 +16,10 @@ export type DraftTaskFile = {
   receivedBytes: number;
   error: string | null;
   descriptor?: TaskFileDescriptor;
+  removing?: boolean;
 };
 export const draftFilesReady = (files: DraftTaskFile[] = []) =>
-  files.every((file) => file.state === 'complete');
+  files.every((file) => file.state === 'complete' && !file.removing);
 export async function uploadTaskFile(
   item: DraftTaskFile,
   progress: (value: Partial<DraftTaskFile>) => void,

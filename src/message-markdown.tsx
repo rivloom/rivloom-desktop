@@ -14,13 +14,13 @@ function plainText(value: ReactNode): string {
   if (value && typeof value === 'object' && 'props' in value) return plainText((value.props as { children?: ReactNode }).children);
   return '';
 }
-export const MessageMarkdown = memo(function MessageMarkdown({ text, searchQuery = '' }: { text: string; searchQuery?: string }) {
+export const MessageMarkdown = memo(function MessageMarkdown({ text, searchQuery = '', compact = false }: { text: string; searchQuery?: string; compact?: boolean }) {
   useTranslation('ui', { i18n });
   return <div className="message-markdown"><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, [rehypeSearch, { query: searchQuery }]]} skipHtml components={{
-    a: ({ href, children }) => href && /^https?:\/\//i.test(href)
+    a: ({ href, children }) => !compact && href && /^https?:\/\//i.test(href)
       ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="markdown-image-label">{alt || t('图片')}</span>,
-    pre: ({ children }) => <div className="markdown-code"><div className="markdown-code-toolbar"><span>{t('代码')}</span>
+    pre: ({ children }) => compact ? <pre>{children}</pre> : <div className="markdown-code"><div className="markdown-code-toolbar"><span>{t('代码')}</span>
       <CopyButton text={plainText(children).replace(/\n$/, '')} label={t('复制代码')} /></div><pre>{children}</pre></div>,
     table: ({ children }) => <div className="markdown-table"><table>{children}</table></div>,
   }}>{text}</Markdown></div>;

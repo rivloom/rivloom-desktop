@@ -1,6 +1,6 @@
 import { reasoningLabel } from './reasoning-picker';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, FileText, GitBranch, Pause, Play, ShieldCheck, Square } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, GitBranch, Pause, Play, ShieldCheck, Square } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types';
 import type { Workflow, WorkflowAttempt, WorkflowStep, WorkflowStepPlan, WorkflowMessage } from '../shared/workflows';
@@ -10,6 +10,7 @@ import { workflowError } from '../shared/workflow-errors.ts';
 import { Button, Field, Modal } from './ui';
 import { CopyButton } from './copy-button';
 import { MessageReuseActions, type MessageReuseActionsProps } from './message-reuse-view';
+import { UserMessageText } from './message-quote-view';
 import { TaskTelemetryView } from './task-telemetry-view';
 import { MessageTrace, TaskTrace } from './message-trace';
 import { PendingMessageEditor } from './pending-message-editor';
@@ -79,12 +80,11 @@ export function WorkflowView(props: WorkflowViewProps) {
       {value.queueError && <p className="workflow-error" role="alert">{workflowError(value.queueError)}</p>}
       {queued.map((message, i) => <article className="chat-message user workflow-queue-message" key={message.requestID}
         tabIndex={-1} data-search-target={searchTargetID({ kind: 'queued', messageID: message.requestID })}>
-        <CopyButton text={message.text} label={t('复制这条消息')} iconOnly className="message-copy" />
-        <div className="chat-message-text"><SearchText text={message.text} query={props.searchQuery} /></div>
+        <UserMessageText text={message.text} searchQuery={props.searchQuery} />
         <small className="workflow-queued-model">{t('本机执行模型：{{model}}', { model: message.model === undefined ? t('沿用前一轮模型') :
           message.model === null ? t('默认模型') : props.data.engine.models.find((item) => item.id === message.model)?.name || message.model })}{message.reasoningEffort !== undefined && <> · {t('思考：{{level}}', { level: reasoningLabel(message.reasoningEffort) })}</>}</small>
         {message.inputFiles.map((file) => <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
-        <footer><span>{t('排队第 {{count}} 条', { count: i + 1 })}</span>
+        <footer><span>{t('排队第 {{count}} 条', { count: i + 1 })}</span><CopyButton text={message.text} label={t('复制这条消息')} />
           <Button disabled={busy} onClick={() => setEditingMessage(structuredClone(message))}>{t('编辑待执行消息')}</Button>
           <Button disabled={busy} onClick={() => void control('cancel', message.requestID)}>{t('取消排队')}</Button></footer>
       </article>)}
@@ -148,11 +148,11 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
   const edit = (step: WorkflowStep) => { setEditingVersion(value.version); setEditing({ id: step.id, title: step.title, instructions: step.instructions, dependsOn: [...step.dependsOn],
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements }); };
   return <div className="workflow-conversation">
-    <article className="chat-message user" aria-label={t('你')} tabIndex={-1} data-search-target={searchTargetID({ kind: 'requirement', roundID })}><CopyButton text={value.description} label={t('复制这条消息')} iconOnly className="message-copy" />
-      <div className="chat-message-text"><SearchText text={value.description} query={searchQuery} /></div>
-      {reuse && <MessageReuseActions {...reuse} text={value.description} existingConversation />}
+    <article className="chat-message user" aria-label={t('你')} tabIndex={-1} data-search-target={searchTargetID({ kind: 'requirement', roundID })}>
+      <UserMessageText text={value.description} searchQuery={searchQuery} />
       {(value.messages?.find((m) => m.requestID === value.roundRequestID)?.inputFiles || (!value.roundRequestID || value.roundRequestID === value.requestID ? value.inputFiles : [])).map((file) =>
         <FilePreviewButton key={file.id} file={file} path={`/task-files/uploads/${file.id}`} />)}
+      <div className="message-actions-row">{reuse ? <MessageReuseActions {...reuse} text={value.description} existingConversation /> : <CopyButton text={value.description} label={t('复制这条消息')} />}</div>
     </article>
     <WorkflowActivity value={value} nodeName={nodeName} showStep={showStep} expanded={expanded} processID={processID} processTrigger={processTrigger} closeProcess={closeProcess} />
     {attentionExecutions.map(entry => <section className="workflow-step-attention" key={entry.attempt.executionID}>
@@ -164,12 +164,13 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
     {recentExecutions.filter(entry => !entry.local).map(entry => <WorkflowRecentOutput key={entry.attempt.executionID} entry={entry} nodeName={nodeName} showStep={showStep} />)}
     <section className={`workflow-overview ${value.state}`} aria-label={complete ? t('最终结果') : t('任务进展')}>
       {(complete || results.length > 0) && <div className="workflow-results">
+        <div className="chat-message-byline workflow-answer-byline"><strong>Rivloom</strong></div>
         {!complete && <p className="workflow-partial-label">{t('已完成的部分')}</p>}
         {results.map(({ step, attempt, summary }) => <article className="workflow-result" key={step.id} tabIndex={-1}
           data-search-target={searchTargetID({ kind: 'response', roundID, stepID: step.id, attempt: attempt.number })}>
           {results.length > 1 && <h3>{step.title}</h3>}
-          {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} searchQuery={searchQuery} /><CopyButton text={summary} label={t('复制执行结果')} iconOnly className="message-copy" /></div>}
-          {summary && reuse && <MessageReuseActions {...reuse} text={summary} existingConversation allowReuse={false} />}
+          {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} searchQuery={searchQuery} /></div>}
+          {summary && <div className="message-actions-row">{reuse ? <MessageReuseActions {...reuse} text={summary} existingConversation allowReuse={false} /> : <CopyButton text={summary} label={t('复制执行结果')} />}</div>}
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可打开执行详情查看记录。')}</p>}
       </div>}
@@ -224,8 +225,8 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
       <p className="workflow-detail-meta">{workflowStepLabel(selectedStep, selectedAttempt)} · {selectedAttempt ? nodeName(selectedAttempt.nodeID) : t('待分配')}
         {selectedAttempt && ` · ${t('第 {{count}} 次执行', { count: selectedAttempt.number })}`}</p>
       {checkpoint && <article className="chat-message assistant" tabIndex={-1}
-        data-search-target={searchTargetID({ kind: 'step', roundID, stepID: selectedStep.id, attempt: selectedAttempt?.number })}><div className="chat-message-byline"><Bot size={16} /><strong>{t('本步骤的结果')}</strong><CopyButton text={checkpoint} label={t('复制执行结果')} iconOnly className="message-copy" /></div>
-        <MessageMarkdown text={checkpoint} searchQuery={searchQuery} /></article>}
+        data-search-target={searchTargetID({ kind: 'step', roundID, stepID: selectedStep.id, attempt: selectedAttempt?.number })}><div className="chat-message-byline"><strong>{t('本步骤的结果')}</strong></div>
+        <MessageMarkdown text={checkpoint} searchQuery={searchQuery} /><div className="message-actions-row"><CopyButton text={checkpoint} label={t('复制执行结果')} /></div></article>}
       {selectedAttempt?.error && selectedAttempt.phase !== 'stopped' && <p className="workflow-error">{workflowError(selectedAttempt.error)}</p>}
       {current.local && <TaskTelemetryView task={current.local} />}
       <details className="workflow-execution-detail"><summary>{t('查看步骤要求与执行记录')}<ChevronDown size={14} /></summary>

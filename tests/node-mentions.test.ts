@@ -53,6 +53,13 @@ test('preferred and locked mentions preserve exact names, ignore code and follow
   assert.equal(replaceBoundNodeMention(`@@${name} edit`, name, null), ' edit');
 });
 
+test('toolbar selection updates an existing bound mention without inserting text into an ordinary draft', () => {
+  const name = 'Studio [B].1';
+  assert.equal(replaceBoundNodeMention('整理这份附件。', name, 'preferred', '新设备'), '整理这份附件。');
+  assert.equal(replaceBoundNodeMention(`@${name} 整理这份附件。`, name, 'locked', '新设备'), '@@新设备 整理这份附件。');
+  assert.equal(replaceBoundNodeMention(`@${name}2 keep`, name, 'locked', '新设备'), `@${name}2 keep`);
+});
+
 test('busy mentions remain selectable and use only fresh Node queue counts', () => {
   const at = '2026-09-05T08:00:00.000Z';
   const peer = node('a', {

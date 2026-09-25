@@ -5,7 +5,7 @@
 .workflow-result + .workflow-result { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 9px; }
 .workflow-result h3 { color: var(--ink); margin: 0 0 6px; font-size: 13px; }
 .workflow-result-response { display: flex; align-items: flex-start; gap: 8px; }
-.workflow-result-response .message-markdown { flex: 1; min-width: 0; color: var(--ink); font-size: 14px; }
+.workflow-result-response .message-markdown { flex: 1; min-width: 0; color: var(--ink); font-size: 15px; line-height: 1.8; }
 .workflow-result-response > .copy-control { flex-shrink: 0; }
 .workflow-result .task-files-panel { margin-bottom: 0; }
 .workflow-partial-label { font-size: 12px; color: var(--muted); margin: 0 0 8px; }

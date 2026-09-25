@@ -17,6 +17,8 @@ import { ConversationWorkspace } from './conversation-workspace';
 import type { Bootstrap, NodeNetwork } from '../shared/types';
 import './styles.css';
 import './conversation-workspace.css';
+import './workspace-settings.css';
+import './chat-refinement.css';
 function Auth({ onLogin }: { onLogin: () => void }) {
   const [setup, setSetup] = useState(false);
   const [join, setJoin] = useState(false);

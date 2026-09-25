@@ -9,21 +9,21 @@
     U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 :root {
-  --font-ui: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-ui: 'Manrope', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
   font-family: var(--font-ui);
   font-synthesis: none;
   color-scheme: light;
   text-rendering: auto;
   color: var(--ink);
   background: var(--canvas);
-  --ink: #1b2a41;
-  --text: #35445b;
-  --muted: #53627a;
-  --canvas: #f3f5f9;
+  --ink: #203047;
+  --text: #394a60;
+  --muted: #5d6d80;
+  --canvas: #f5f7fa;
   --surface: #ffffff;
-  --surface-soft: #f8faff;
-  --sidebar: #f0f3f8;
-  --line: #e1e7f0;
+  --surface-soft: #f8f9fc;
+  --sidebar: #f5f7fa;
+  --line: #e2e7ee;
   --line-strong: #c1ccdd;
   --accent: #285fe3;
   --accent-hover: #1e4ec6;

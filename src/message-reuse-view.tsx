@@ -4,6 +4,9 @@ import { t } from '../shared/i18n.ts';
 import type { ConversationDraft } from './conversation-drafts';
 import { applyMessageReuse, type MessageReuseIntent, type MessageReuseMode, type MessageReusePlacement, type MessageReuseResult } from './message-reuse';
 import { Button, Modal } from './ui';
+import { CopyButton } from './copy-button';
+import { splitQuotedMessage } from './message-quote';
+import { MessageQuoteCard } from './message-quote-view';
 import './message-reuse.css';
 
 export type MessageReuseActionsProps = {
@@ -37,24 +40,26 @@ export function MessageReuseActions({ text, draft, existingConversation, onApply
     setSelection(null); setError('');
   }
   function choose(mode: MessageReuseMode) {
-    const selected = { text, mode, expectedDraft: { text: draft.text, requestID: draft.requestID } };
+    const selected = { text, mode, quoteAuthor: allowReuse ? 'user' as const : 'assistant' as const, expectedDraft: { text: draft.text, requestID: draft.requestID } };
     setError('');
-    if (draft.text.length) setSelection(selected);
+    if (mode === 'reuse' && draft.text.length) setSelection(selected);
     else apply({ ...selected, placement: 'append' });
   }
   const candidate = (placement: MessageReusePlacement): MessageReuseIntent => ({ ...selection!, placement, replaceConfirmed: placement === 'replace' });
   const append = selection ? preview(candidate('append')) : null;
   const replace = selection ? preview(candidate('replace')) : null;
   return <span className={`message-reuse-actions ${className}`}>
-    {allowReuse && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={reuseLabel || t('复用要求')} aria-label={reuseLabel || t('复用要求')}
-      disabled={disabled || !text.trim()} onClick={() => choose('reuse')}><PencilLine size={13} />{!iconOnly && <span>{reuseLabel || t('复用要求')}</span>}</button>}
-    {showQuote && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={t('引用到输入框')} aria-label={t('引用到输入框')}
-      disabled={disabled || !text.trim()} onClick={() => choose('quote')}><Quote size={13} />{!iconOnly && <span>{t('引用到输入框')}</span>}</button>}
+    {showQuote && <CopyButton text={text} label={t('复制这条消息')} iconOnly={iconOnly} />}
+    {showQuote && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={t('引用这条消息')} aria-label={t('引用这条消息')}
+      disabled={disabled || !text.trim()} onClick={() => choose('quote')}>{iconOnly ? <Quote size={13} /> : <span>{t('引用')}</span>}</button>}
+    {allowReuse && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={reuseLabel || t('重新编辑')} aria-label={reuseLabel || t('重新编辑')}
+      disabled={disabled || !text.trim()} onClick={() => choose('reuse')}>{iconOnly ? <PencilLine size={13} /> : <span>{reuseLabel || t('重新编辑')}</span>}</button>}
     {!selection && error && <span className="message-reuse-error" role="alert">{error}</span>}
-    {selection && <Modal title={selection.mode === 'reuse' ? reuseLabel || t('复用要求') : t('引用到输入框')} close={() => { setSelection(null); setError(''); }} className="message-reuse-modal">
+    {selection && <Modal title={reuseLabel || t('重新编辑')} close={() => { setSelection(null); setError(''); }} className="message-reuse-modal">
       <p>{t('原消息保持不变。选择如何放入输入框，确认发送后才会执行。')}</p>
       <p className="muted">{t('当前附件和设备选择会保留。')}</p>
-      <label className="field"><span>{t('要加入的正文')}</span><textarea readOnly value={selection.text} rows={6} /></label>
+      {splitQuotedMessage(selection.text).quote && <MessageQuoteCard quote={splitQuotedMessage(selection.text).quote!} />}
+      <label className="field"><span>{t('要加入的正文')}</span><textarea readOnly value={splitQuotedMessage(selection.text).text} rows={6} /></label>
       {append && !append.ok && <p className="error" role="status">{failure(append)}</p>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="modal-actions"><Button onClick={() => { setSelection(null); setError(''); }}>{t('取消')}</Button>

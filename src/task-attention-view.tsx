@@ -157,6 +157,8 @@ export function TaskAttentionView({
           {t('刷新')}
         </button>
       </div>
+      <details className="notification-settings">
+      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{quiet ? t('免打扰中') : prefs?.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
       <div className="attention-preferences">
         <Bell size={18} />
         <label>
@@ -210,6 +212,7 @@ export function TaskAttentionView({
         <small>{t('在此设备播放，也提醒远端 Node 完成的任务。关闭桌面通知或开启免打扰时保持静音。')}</small>
       </div>
       {soundError && <p className="attention-notice" role="status">{t('提示音未播放，请检查系统音量并点击试听。')}</p>}
+      </details>
       {error && (
         <p className="error" role="alert">
           {t('待办暂未刷新：{{value1}}。下方保留上次状态。', { value1: systemText(error) })}
