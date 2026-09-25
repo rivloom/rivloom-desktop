@@ -8,6 +8,8 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
+源码正在准备 **0.1.21**，包含聊天与设置页优化、独立引用卡片、文件拖入及输入框左右附件/设备入口，详见 [0.1.21 更新说明](docs/releases/0.1.21.md)。该版本尚未正式发布。
+
 当前 Windows 正式版为 **0.1.20**，新增上下文查看与编辑、显式项目记忆、Wiki/Skill 固定版本分页、可重试的 Runtime 历史清理，并修复普通会话中断后续聊和知识工具交接。历史与知识正文页最多 32 KiB 的 UTF-8 JSON。详见 [版本说明](docs/releases/0.1.20.md)及[发行验收与范围](docs/releases/0.1.20-verification.md)，安装包见[官网下载页](https://rivloom.com/download/)。
 
 **2026-09-22 发行验收：** 两平台源码为 [`ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3`](https://github.com/rivloom/rivloom-desktop/commit/ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3)。同提交云端 CI、Windows 候选安装与独立静态核验、公开下载与原公钥更新签名、Linux 原生构建与公开包隔离运行、官网及 R2 保留检查已完成。三台 Windows 设备的功能测试范围及未覆盖项见[验收说明](docs/releases/0.1.20-verification.md)。Windows 与 Linux x64 核心保持 `9b07cf4`，SDK/plugin 为 1.18.31。首次构建运行 `npm.cmd run engine:prepare`，或由 `desktop:prepare` 自动执行；详见[引擎构建流程](docs/ENGINE.md)。ARM64 暂缓。
