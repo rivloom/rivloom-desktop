@@ -1,22 +1,30 @@
 # Windows 桌面端
 
-**2026-09-19 当前源码（未发布）：** 安装包准备阶段使用自有 OpenCode runtime 固定源码，SDK/plugin 基线 1.18.31，详见[引擎](ENGINE.md)。`engine:prepare` 从固定提交构建、校验并缓存，`desktop:prepare` 自动调用；不再依赖官方 Windows npm EXE。正式版本/下载仍见 [README](../README.md)。下文旧 M2/M3.5 验收段落仅作历史，不能替代本轮云 CI、安装或发行记录。
+**当前正式版：Windows x64 0.1.22（2026-09-26）。** 源码 [9b3f07f759b278bbed8dbcd910ea12889188bb0a](https://github.com/rivloom/rivloom-desktop/commit/9b3f07f759b278bbed8dbcd910ea12889188bb0a)；同源码 Windows CI、[云端安装/启动/重启/卸载与发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36217929723)（attempt 2）、独立候选全树核验、公开完整下载和原公钥更新签名通过。官网与 R2 收尾完成（保留 81、暂缓 0、可删除 0、删除 0 个）。核心固定 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0。界面显示实际桌面版本，任务完成提示音已包含在当前发行；相关说明见[0.1.22 更新](releases/0.1.22.md)与[验收范围](releases/0.1.22-verification.md)。更新渠道签名已由原 updater 公钥核验，Authenticode 发布者签名尚未配置。本轮未新增原生 WebView2 视觉、真实模型或完整跨版本升级矩阵验收；官网 CUA 不可用，未新增官网截图或浏览器视觉验收。
 
 产品交付形态是 Tauri 桌面客户端。React 只负责窗口内界面；浏览器入口保留作内部调试，不是给客户的启动方式。
 
-用户已启动 M2/M5 官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据为 `.data/verification/ci-runtime-precommit.json`。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和维护者本地官网交接记录。
+## 历史准备记录
 
-当前可供检查的 M3.5 交付预览仍为 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装。已有构建、手动升级与文档修订包证据不代表接入了 updater，也不代替本轮新候选的验收；精确产物和版本状态以维护者本地界面交接记录、维护者本地里程碑记录 和维护者本地验证记录 为准。
+以下保留早期构建和预览说明，不代表当前未发布，也不替代本次安装、公开下载或更新验收。
+
+**2026-09-19 历史开发记录（已随 0.1.19 发行）：** 安装包准备阶段使用自有 OpenCode runtime 固定源码，SDK/plugin 基线 1.18.31，详见[引擎](ENGINE.md)。`engine:prepare` 从固定提交构建、校验并缓存，`desktop:prepare` 自动调用；不再依赖官方 Windows npm EXE。正式版本/下载仍见 [README](../README.md)。下文旧 M2/M3.5 验收段落仅作历史，不能替代本轮云 CI、安装或发行记录。
+
+**历史 M2/M5 第一轮准备：** 当时用户已启动官网、CI 与发行接口第一轮实施。桌面四份 Windows 工作流与发行记录契约已落地；真实 runtime prepare 与只读 gate 已通过，核对 Node/OpenCode 哈希和版本、88 个运行依赖、267 个 Rust 依赖及 722 份 notices，证据保存在维护者本地验证记录。Rust/Cargo 1.98.1 已安装并核对版本，本轮原生构建尚未执行，桌面云 runner 仍待验证；细项见 [CI](CI.md)。官网首版已推送，用户已授权 Cloudflare 仅访问官网仓库并部署/绑定 `rivloom.com`；云 CI 修复与重试、Cloudflare 连接和域名绑定正在推进，尚无上线成功或公开下载声明。updater、R2 分发及签名未实施；完整边界见 [RELEASING](RELEASING.md)、[ADR-0006](adr/0006-website-distribution-and-safe-updates.md) 和维护者本地官网交接记录。
+
+**历史 M3.5 预览：** 当时可供检查的交付预览为 `Rivloom_M3.5_Node_P0_Preview_0.1.3_docs1_x64_setup.exe`，未签名、未安装。已有构建、手动升级与文档修订包证据不代表接入了 updater，也不代替本轮新候选的验收；精确产物和版本状态以维护者本地界面交接记录、维护者本地里程碑记录 和维护者本地验证记录 为准。
 
 ## 当前实现
 
-### 任务完成提示音（当前源码，未发布）
+### 任务完成提示音（已发布）
 
 在侧栏「待办中心」选择「任务完成提示音」：轻柔双音、清脆铃声、简短提示或关闭，支持试听并按操作者保存。任务在本机或远端 Linux Node 完成后，由接收通知的 Windows 桌面播放一次；同批完成合并提醒，重复同步与重新打开应用不补播旧任务。关闭桌面通知或开启免打扰会静音，试听仍由用户主动触发。Windows 使用随包的三段原创短音频，不依赖联网；Linux 无界面执行节点无需声卡。
 
 In **Attention center → Task completion sound**, choose Soft chime, Clear bell, Quick pulse, or Off, and preview the selection. Preferences are saved per operator. The Windows desktop plays once for newly completed local or remote tasks; duplicate polling and previously observed completions do not replay sounds. Desktop notification settings and Do Not Disturb also control automatic playback. Linux execution nodes do not play audio.
 
-### 桌面基础能力
+### 桌面基础能力（早期 M2/M3.5 实现记录）
+
+以下保留早期能力记录，其中窗口关闭、托盘、模型接入和原生桥范围不代表现行实现；当前使用说明见[随包说明](../DESKTOP-README.md)及[0.1.22 发行验收](releases/0.1.22-verification.md)。
 
 - 原生 Windows 窗口、图标、最小尺寸、单实例聚焦。
 - 原生文件夹选择器，用于选择本机已审核的普通项目文件夹；不要求 Git，不建立文件快照或内容哈希。选择目录仍需确认信任，不能代替沙箱。
@@ -79,7 +87,9 @@ npm.cmd run test:installer
 
 内部 Web 调试需显式使用 `npm run server:dev` 或 `npm run server:start`，默认 `127.0.0.1:4310`。桌面和内部 Web 不要共用数据目录运行。
 
-## 交付限制
+## 交付限制（早期 M2/M3.5 内测记录）
+
+以下“内测、未实施更新、暂无托盘”等描述仅指当时预览包；当前包的安装/更新签名与未覆盖范围以上方当前状态和0.1.22验收为准。
 
 - 这是未签名的内测包，尚未完成代码签名、自动更新、干净 Windows 虚拟机安装/升级/卸载矩阵和商业发行审查。不要关闭系统安全防护来运行它。
 - WebView2 已安装的机器可直接使用；缺失时 NSIS 使用 Microsoft 的联网 bootstrapper，不承诺离线安装。配置依据 [Tauri Windows 安装器文档](https://v2.tauri.app/distribute/windows-installer/) 和 [配置参考](https://v2.tauri.app/reference/config/)。
