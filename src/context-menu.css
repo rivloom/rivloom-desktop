@@ -3,7 +3,8 @@
 .context-menu > button > svg { flex: 0 0 15px; width: 15px; height: 15px; }
 .context-menu > button > span { min-width: 0; overflow-wrap: anywhere; }
 .context-menu small { display: block; max-width: 220px; margin-top: 3px; font-size: 10px; line-height: 1.5; }
-.context-menu > button:hover, .context-menu > button:focus { outline: none; background: var(--surface-soft); }
+.context-menu > button:hover, .context-menu > button:focus-visible { background: var(--surface-soft); }
+.context-menu > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .context-menu > button[aria-disabled="true"] { color: var(--muted); opacity: .65; cursor: default; }
 .context-menu > button.danger { color: #b44338; border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; padding-top: 12px; }
 .context-more.icon-button { flex: 0 0 26px; width: 26px; height: 28px; color: var(--muted); opacity: 0; pointer-events: none; }

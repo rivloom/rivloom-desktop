@@ -51,7 +51,7 @@ function versionLabel(state: RivloomVersionState) {
   return t('版本不可用');
 }
 
-/** A small clickable replacement for the sidebar's fixed version text. */
+/** Keep version text beside the wordmark and the About action at the trailing edge. */
 export function AboutRivloomEntry({
   version,
   onClick,
@@ -60,7 +60,8 @@ export function AboutRivloomEntry({
   onClick: () => void;
 }) {
   const { state } = version;
-  return (
+  return <>
+    <span className="sidebar-version" title={versionLabel(state)}>{versionLabel(state)}</span>
     <button
       type="button"
       className="about-rivloom-entry"
@@ -73,9 +74,8 @@ export function AboutRivloomEntry({
       ) : (
         <Info size={13} />
       )}
-      <span>{versionLabel(state)}</span>
     </button>
-  );
+  </>;
 }
 
 export function AboutRivloom({

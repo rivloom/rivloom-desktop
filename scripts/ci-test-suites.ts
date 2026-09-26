@@ -21,6 +21,7 @@ export const logicFiles = [
   'tests/conversation-export.test.ts',
   'tests/message-reuse.test.ts',
   'tests/message-quote.test.ts',
+  'tests/rail-visibility.test.ts',
   'tests/project-changes.test.ts',
   'tests/prompt-templates.test.ts',
   'tests/task-telemetry.test.ts',

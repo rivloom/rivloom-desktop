@@ -25,6 +25,8 @@ import { ProjectChangesView } from './project-changes-view';
 import { PromptTemplateLibrary } from './prompt-template-library';
 import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
 import './workspace-foundations.css';
+import { activeQueueCount, railExpanded, toggledRailPreference, type RailPreference } from './rail-visibility';
+import { animateLayoutChange } from './motion';
 import { ModelPicker, modelReadinessMessage } from './model-picker';
 import { modelReadinessIssue, modelSendGuidance, type ModelReadinessIssue } from './model-onboarding';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
@@ -587,7 +589,7 @@ export function ConversationWorkspace({
   const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | 'language' | null>(null);
   const utilitiesMenu = useContextMenu();
   const conversationMenu = useContextMenu();
-  const [networkCollapsed, setNetworkCollapsed] = useState(false);
+  const [railPreference, setRailPreference] = useState<RailPreference>('auto');
   const [modelSetupReturn, setModelSetupReturn] = useState<string | null>(null);
   useEffect(() => { if (view === 'chat') setModelSetupReturn(null); }, [view]);
   const [queueSnapshot, setQueueSnapshot] = useState<NodeQueueSnapshot | null>(null);
@@ -755,7 +757,10 @@ export function ConversationWorkspace({
   const remarkNode = peers.find((node) => node.id === remarkNodeID) || null;
   const mentionNodes = mention ? recentNodeMentions(peers, mention.query).slice(0, 8) : [];
   const rail = showNetworkRail(peers);
-  const railVisible = rail && !networkCollapsed && view === 'chat';
+  const railQueueCount = activeQueueCount(queueSnapshot?.entries);
+  const railVisible = view === 'chat' && railExpanded(rail, railPreference, railQueueCount);
+  const railToggleLabel = railVisible ? t('收起队列与设备')
+    : railQueueCount > 0 ? `${t('展开队列与设备')} · ${t('{{count}} 项待执行', { count: railQueueCount })}` : t('展开队列与设备');
   const currentQueueEntry = current
     ? queueSnapshot?.entries.find((entry) => queueConversation(entry, all)?.key === current.key)
     : undefined;
@@ -1649,30 +1654,34 @@ export function ConversationWorkspace({
           )}
         </div>
         <nav className="conversation-settings" aria-label={t('设置')}>
-          {data.user.owner && <button className={view === 'knowledge' ? 'active' : ''} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
-            <BookOpen size={17} />{t('技能与记忆')}<ChevronRight size={14} />
+          {data.user.owner && <button className={view === 'knowledge' ? 'active' : ''} title={t('技能与记忆')} aria-label={t('技能与记忆')} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
+            <BookOpen size={17} /><span className="nav-label">{t('技能与记忆')}</span><ChevronRight size={14} />
           </button>}
           <button
             className={view === 'attention' ? 'active' : ''}
+            title={t('待办中心')}
+            aria-label={`${t('待办中心')} · ${attention.snapshot?.items.length ?? '—'}`}
             onClick={() => openAttention('attention')}
           >
             <Inbox size={17} />
-            {t('待办中心')}
-            <span className="attention-count">{attention.snapshot?.items.length ?? '—'}</span>
+            <span className="nav-label">{t('待办中心')}</span>
+            <span className="attention-count" aria-hidden="true">{attention.snapshot?.items.length ?? '—'}</span>
           </button>
           <button
             className={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'active' : ''}
+            title={t('设备与模型')}
+            aria-label={t('设备与模型')}
             onClick={() => {
               setView('models');
               setMobileSidebar(false);
             }}
           >
             <Settings2 size={17} />
-            {t('设备与模型')}
+            <span className="nav-label">{t('设备与模型')}</span>
             <ChevronRight size={14} />
           </button>
-          <button type="button" className={view === 'trash' ? 'active' : ''} {...utilitiesMenu.trigger}>
-            <MoreHorizontal size={17} />{t('更多')}<ChevronRight size={14} />
+          <button type="button" className={view === 'trash' ? 'active' : ''} title={t('更多')} aria-label={t('更多')} {...utilitiesMenu.trigger}>
+            <MoreHorizontal size={17} /><span className="nav-label">{t('更多')}</span><ChevronRight size={14} />
           </button>
           <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
             ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
@@ -1742,7 +1751,7 @@ export function ConversationWorkspace({
               ]} />
             </>}
           </div>}
-          {view === 'chat' && data.user.owner && !railVisible && (
+          {view === 'chat' && data.user.owner && !rail && (
             <button
               className="local-queue-entry"
               onClick={() => setModal('queue')}
@@ -1754,11 +1763,11 @@ export function ConversationWorkspace({
             </button>
           )}
           {rail && view === 'chat' && <button type="button" className={`network-rail-toggle ${railVisible ? 'active' : ''}`}
-            aria-label={railVisible ? t('收起队列与设备') : t('展开队列与设备')}
-            title={railVisible ? t('收起队列与设备') : t('展开队列与设备')}
+            aria-label={railToggleLabel} title={railToggleLabel}
             aria-expanded={railVisible} aria-controls={railVisible ? 'conversation-network-sidebar' : undefined}
-            onClick={() => setNetworkCollapsed(value => !value)}>
+            onClick={() => animateLayoutChange(() => setRailPreference(toggledRailPreference(railVisible)), 'rail')}>
             <PanelRight size={17} /><span>{t('队列与设备')}</span>
+            {!railVisible && railQueueCount > 0 && <b className="network-rail-count" aria-hidden="true">{railQueueCount}</b>}
           </button>}
           <span className="header-status" title={connected ? t('已连接') : t('正在重连')} aria-label={connected ? t('已连接') : t('正在重连')}>
             <i className={`status-dot ${connected ? 'online' : ''}`} />

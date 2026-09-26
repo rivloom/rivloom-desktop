@@ -1872,5 +1872,6 @@
   "重新编辑": "Edit again",
   "用量与清单": "Usage & checklist",
   "用量": "Usage",
-  "引用": "Quote"
+  "引用": "Quote",
+  "{{count}} 项待执行": "{{count}} queued to run"
 }

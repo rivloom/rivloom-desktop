@@ -1,20 +1,20 @@
 .about-rivloom-entry {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  min-width: 0;
-  max-width: 115px;
-  flex-shrink: 1;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  flex: 0 0 28px;
+  height: 28px;
   min-height: 28px;
-  padding: 4px 2px;
+  margin: 0 0 0 auto;
+  padding: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
-  text-align: right;
 }
 
 .about-rivloom-entry:hover {
@@ -22,7 +22,11 @@
   color: var(--accent-ink);
 }
 
-.about-rivloom-entry span {
+.sidebar-version {
+  min-width: 0;
+  max-width: 115px;
+  font-size: 11px;
+  line-height: 1.4;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -30,7 +34,7 @@
 
 .sidebar-signature {
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .about-rivloom-versions {

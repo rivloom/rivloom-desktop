@@ -12,6 +12,7 @@
 - [Agent 基础工具](AGENT-TOOLS.md)：快捷访问、草稿、模板、导出、会话查找、排队消息编辑与项目改动
 - [共享 Skills 与 Wiki 记忆](KNOWLEDGE-LIBRARY.md)
 - [0.1.21 聊天与工作区界面更新](releases/0.1.21.md)、[发行验收](releases/0.1.21-verification.md)、[R2 保留审计](releases/0.1.21-r2-retention.md)
+- [0.1.22 界面与交互精修（未发布）](releases/0.1.22.md)
 - [0.1.20 上下文与项目记忆发行说明](releases/0.1.20.md)、[发行验收与范围](releases/0.1.20-verification.md)、[上下文、记忆与历史维护设计](adr/0016-context-memory-and-runtime-retention.md)；实际发布状态以根目录说明和官网下载页为准
 - [恢复与成果](WORKFLOW-RECOVERY-RESULTS.md)、[协作文件](COLLABORATION-FILES.md)
 - [应用内更新](DESKTOP-UPDATES.md)

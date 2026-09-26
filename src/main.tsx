@@ -19,6 +19,7 @@ import './styles.css';
 import './conversation-workspace.css';
 import './workspace-settings.css';
 import './chat-refinement.css';
+import './ui-polish.css';
 function Auth({ onLogin }: { onLogin: () => void }) {
   const [setup, setSetup] = useState(false);
   const [join, setJoin] = useState(false);
