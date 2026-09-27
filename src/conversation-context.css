@@ -3,6 +3,7 @@
 .context-panel summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
 .context-toolbar, .context-actions, .context-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .context-toolbar { margin: 12px 0 16px; }
+.context-toolbar .button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
 .context-heading { justify-content: space-between; }
 .context-scroll { max-height: 68vh; overflow-y: auto; padding: 0 6px 8px 0; }
 .context-scroll section + section { margin-top: 24px; }

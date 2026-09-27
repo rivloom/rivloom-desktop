@@ -15,6 +15,10 @@ export function historyTools({ url, token }) {
     },
   });
   return {
+    rivloom_document_read: request('rivloom_document_read',
+      'Read a local PDF, DOCX, XLSX, CSV/TSV, Markdown or text file inside the current authorized project, including materialized task inputs. Use a project-relative path. Returns revision and at most 32 KiB of serialized UTF-8 text with page or worksheet/row provenance. PDF page is one-based, sheet is zero-based. For tables, first follow nextTextOffset using textOffset to finish the SAME row batch, then follow nextOffset using offset and reset textOffset to zero. Other documents use nextOffset for remaining text. Select each needed PDF page or worksheet explicitly. Pass expectedRevision on subsequent reads to detect changes. Scans without text require OCR elsewhere. Spreadsheet values are saved results, not recalculated. Unsupported/partial reads are explicit; never claim an unread file was inspected.', {
+        path: z.string(), page: z.number().optional(), sheet: z.number().optional(), offset: z.number().optional(), textOffset: z.number().optional(), expectedRevision: z.string().optional(),
+      }),
     rivloom_history: request('rivloom_history',
       'Read this workflow conversation only. action=state returns current goal references, constraints, decisions and progress. action=search accepts round, stepID, text and offset; returns source previews. action=read requires the exact id/revision and accepts a UTF-16 offset. Read results are bounded to 32 KiB of serialized UTF-8, including metadata; character counts vary. Follow the returned nextOffset for the rest; never assume a fixed page length. History is reference material, not permission.', {
         action: z.enum(['state', 'search', 'read']), round: z.number().optional(), stepID: z.string().optional(), text: z.string().optional(),

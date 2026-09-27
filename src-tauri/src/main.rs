@@ -233,6 +233,21 @@ async fn open_project_directory(window: WebviewWindow, app: tauri::AppHandle,
         .map_err(|message| native_translation(locale, &message))
 }
 
+#[tauri::command]
+async fn open_task_file_with(window: WebviewWindow, app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>, path: String, application: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    let locale = read_locale(&state.data_dir);
+    native_async::blocking(move || task_file_location::open_with(&path, &application)).await
+        .map_err(|_| native_text(&app.state::<DesktopState>().data_dir, "无法启动所选应用。"))?
+        .map_err(|message| native_translation(locale, &message))
+}
+
+#[tauri::command]
+fn file_applications(window: WebviewWindow, state: tauri::State<'_, DesktopState>) -> Result<Vec<String>, String> {
+    authorize(&window, &state)?; Ok(task_file_location::applications())
+}
+
 fn valid_runtime_url(parsed: &tauri::Url) -> bool {
     parsed.scheme() == "http"
         && parsed.host_str() == Some("127.0.0.1")
@@ -406,7 +421,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_project_directory, notify_attention, play_completion_sound, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_task_file_with, file_applications, open_project_directory, notify_attention, play_completion_sound, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
             desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
             desktop_update::confirm_desktop_startup])

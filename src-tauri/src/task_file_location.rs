@@ -118,10 +118,79 @@ mod tests {
             assert!(validate_kind(Path::new(path), true).is_err(), "{path}");
         }
     }
+    #[cfg(windows)]
+    #[test]
+    fn browser_actions_reject_unknown_applications_and_unsuitable_formats() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let folder = std::env::temp_dir().join(format!("rivloom-open-with-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&folder).unwrap();
+        let pdf = folder.join("synthetic.pdf");
+        std::fs::write(&pdf, b"synthetic test only").unwrap();
+        for application in ["../../calc.exe", "cmd /c", "https://example.invalid", ""] {
+            assert!(open_with(pdf.to_str().unwrap(), application).is_err());
+        }
+        let office = folder.join("synthetic.docx");
+        std::fs::write(&office, b"synthetic test only").unwrap();
+        assert!(open_with(office.to_str().unwrap(), "edge").is_err());
+        std::fs::remove_file(pdf).unwrap();
+        std::fs::remove_file(office).unwrap();
+        std::fs::remove_dir(folder).unwrap();
+    }
     #[test]
     #[ignore = "Opens Explorer on an explicitly supplied synthetic fixture"]
     fn reveal_fixture_in_explorer() {
         reveal(&std::env::var("RIVLOOM_REVEAL_FIXTURE").expect("Provide a synthetic fixture path"))
             .unwrap();
     }
+}
+
+#[cfg(windows)]
+fn browser_path(application: &str) -> Option<std::path::PathBuf> {
+    let suffix = match application {
+        "chrome" => "Google/Chrome/Application/chrome.exe",
+        "edge" => "Microsoft/Edge/Application/msedge.exe",
+        _ => return None,
+    };
+    ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"].iter()
+        .filter_map(std::env::var_os).map(|root| Path::new(&root).join(suffix))
+        .find(|path| path.is_absolute() && path.is_file())
+}
+
+pub fn applications() -> Vec<String> {
+    #[cfg(windows)]
+    { ["chrome", "edge"].iter().filter(|name| browser_path(name).is_some()).map(|name| name.to_string()).collect() }
+    #[cfg(not(windows))]
+    { Vec::new() }
+}
+
+#[cfg(windows)]
+pub fn open_with(path: &str, application: &str) -> Result<(), String> {
+    use std::os::windows::{ffi::OsStrExt, process::CommandExt};
+    use windows::{core::PCWSTR, Win32::{System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
+        UI::Shell::{SHOpenWithDialog, OPENASINFO, OAIF_EXEC, OAIF_HIDE_REGISTRATION}}};
+    let file = Path::new(path); validate(file)?;
+    if application == "choose" {
+        let wide: Vec<u16> = file.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().map_err(|_| "无法打开应用选择器。")?;
+            let info = OPENASINFO { pcszFile: PCWSTR(wide.as_ptr()), pcszClass: PCWSTR::null(), oaifInFlags: OAIF_EXEC | OAIF_HIDE_REGISTRATION };
+            let result = SHOpenWithDialog(None, &info); CoUninitialize();
+            // Cancellation leaves the file and default application unchanged.
+            if result.as_ref().is_err_and(|error| error.code().0 == 0x800704c7u32 as i32) { return Ok(()); }
+            return result.map_err(|_| "无法打开应用选择器。".into());
+        }
+    }
+    let extension = file.extension().and_then(|part| part.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !["pdf", "txt", "md", "csv", "tsv", "json", "log", "png", "jpg", "jpeg", "gif", "webp"].contains(&extension.as_str()) {
+        return Err("此格式不适合使用浏览器打开，请选择默认应用。".into());
+    }
+    let executable = browser_path(application).ok_or("未找到所选应用，请使用默认应用或选择其他应用。")?;
+    let url = tauri::Url::from_file_path(file).map_err(|_| "文件路径无效。")?;
+    std::process::Command::new(executable).arg(url.as_str()).creation_flags(0x08000000)
+        .spawn().map(|_| ()).map_err(|_| "无法启动所选应用。".into())
+}
+
+#[cfg(not(windows))]
+pub fn open_with(_path: &str, _application: &str) -> Result<(), String> {
+    Err("此平台暂不支持选择外部应用。".into())
 }

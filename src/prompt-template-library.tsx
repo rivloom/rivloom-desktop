@@ -126,7 +126,7 @@ export function PromptTemplateLibrary({ scopeKey, draft, existingConversation, o
       <p>{t('删除“{{title}}”？此操作不能撤销，已经插入的草稿和历史消息保持不变。', { title: removing.title })}</p>
       {error && <p className="error" role="alert">{error}</p>}
       <div className="modal-actions"><Button disabled={busy} onClick={() => setRemoving(null)}>{t('取消')}</Button>
-        <Button disabled={busy} onClick={() => {
+        <Button variant="danger" disabled={busy} onClick={() => {
           const current = generation.current, target = removing;
           void perform(async () => { await api(`/prompt-templates/${target.id}/delete`, { revision: target.revision });
             if (generation.current === current) { setTemplates(previous => previous.filter(template => template.id !== target.id)); setRemoving(null); } });

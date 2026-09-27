@@ -123,11 +123,12 @@ export function NodeProfileEditor({
     <Modal
       title={t('我的 Node')}
       subtitle={t('给这台机器一个容易辨认的名字和图标。')}
-      close={close}
+      close={() => { if (!busy) close(); }}
     >
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          if (busy || reading || !validNodeProfile({ name: name.trim(), icon })) return;
           if (await save({ name: name.trim(), icon })) close();
         }}
       >
@@ -138,6 +139,7 @@ export function NodeProfileEditor({
         <Field label={t('Node 名称')}>
           <input
             value={name}
+            disabled={busy}
             onChange={(e) => setName(e.target.value)}
             maxLength={80}
             required
@@ -151,6 +153,7 @@ export function NodeProfileEditor({
               key={value}
               aria-label={labels[value]}
               aria-pressed={icon === value}
+              disabled={busy || reading}
               onClick={() => setIcon(value)}
             >
               <NodeAvatar icon={value} />
@@ -163,7 +166,7 @@ export function NodeProfileEditor({
           <input
             type="file"
             accept="image/png,image/jpeg,image/webp"
-            disabled={reading}
+            disabled={busy || reading}
             onChange={(e) => void upload(e.target.files?.[0])}
           />
         </label>
@@ -179,7 +182,7 @@ export function NodeProfileEditor({
           </p>
         )}
         <div className="modal-actions">
-          <Button onClick={close}>{t('取消')}</Button>
+          <Button disabled={busy} onClick={close}>{t('取消')}</Button>
           <Button
             type="submit"
             variant="primary"
@@ -212,11 +215,12 @@ export function NodeRemarkEditor({
     <Modal
       title={t('Node 备注名')}
       subtitle={t('备注只保存在这台机器，不会同步给对方。')}
-      close={close}
+      close={() => { if (!busy) close(); }}
     >
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          if (busy || normalized && !validNodeRemark(normalized)) return;
           if (await save(normalized || null)) close();
         }}
       >
@@ -234,6 +238,7 @@ export function NodeRemarkEditor({
         <Field label={t('本地备注名')} hint={t('留空保存可删除备注；最多 80 个字符。')}>
           <input
             value={remark}
+            disabled={busy}
             onChange={(event) => setRemark(event.target.value)}
             maxLength={80}
             placeholder={t('例如：设计组工作站')}
@@ -246,7 +251,7 @@ export function NodeRemarkEditor({
           </p>
         )}
         <div className="modal-actions">
-          <Button onClick={close}>{t('取消')}</Button>
+          <Button disabled={busy} onClick={close}>{t('取消')}</Button>
           <Button
             type="submit"
             variant="primary"

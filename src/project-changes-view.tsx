@@ -63,13 +63,13 @@ export function ProjectChangesView({ project, close }: { project: Project; close
             <div className="project-changes-layout">
               <aside className="project-changes-list" aria-label={t('改动文件')}>
                 <label className="project-changes-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('筛选文件路径')} aria-label={t('筛选文件路径')} /></label>
-                <div role="list" className="project-change-file-list">
-                  {files.map(value => <button key={value.path} role="listitem" className={`project-change-file ${selected === value.path ? 'active' : ''}`} aria-current={selected === value.path ? 'true' : undefined}
+                <ul className="project-change-file-list">
+                  {files.map(value => <li key={value.path}><button type="button" className={`project-change-file ${selected === value.path ? 'active' : ''}`} aria-current={selected === value.path ? 'true' : undefined}
                     onClick={() => setSelected(value.path)} title={value.path}>
                     <File size={14} /><span>{value.path}</span><small title={value.conflict ? t('存在合并冲突') : value.untracked ? t('未跟踪') : t('暂存区 / 工作区状态')}>{value.index}{value.worktree}</small>
-                  </button>)}
-                  {!files.length && <p>{t('没有匹配的文件。')}</p>}
-                </div>
+                  </button></li>)}
+                  {!files.length && <li className="project-change-no-match">{t('没有匹配的文件。')}</li>}
+                </ul>
               </aside>
               <section className="project-change-detail" aria-label={t('文件差异')}>
                 <div className="project-change-detail-heading"><strong title={selected || ''}>{selected}</strong>

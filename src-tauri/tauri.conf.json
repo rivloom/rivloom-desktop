@@ -34,6 +34,8 @@
             "allow-choose-task-file-destination",
             "allow-reveal-task-file",
             "allow-open-task-file",
+            "allow-open-task-file-with",
+            "allow-file-applications",
             "allow-open-project-directory",
             "allow-notify-attention",
             "allow-play-completion-sound",

@@ -63,7 +63,7 @@ export async function checkWorkflowQuiescence(options: QuiescenceOptions): Promi
   // Managed history/knowledge calls await their requests and finish any local writes before returning.
   // Materializing a Skill writes a verified file; it never starts a process or executes the Skill.
   const synchronous = new Set(['read', 'glob', 'grep', 'list', 'edit', 'write', 'apply_patch', 'todowrite', 'todoread', 'question',
-    'StructuredOutput', 'rivloom_history', 'rivloom_context_note',
+    'StructuredOutput', 'rivloom_history', 'rivloom_context_note', 'rivloom_document_read',
     'rivloom_knowledge_search', 'rivloom_knowledge_read', 'rivloom_memory_save']);
   let media = false;
   for (const tool of options.tools) {

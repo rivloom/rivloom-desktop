@@ -187,10 +187,9 @@ async function providerChanged(actorID: string, provider: string, kind: ModelOpe
     throw new HttpError(503, '凭据操作已提交，但模型列表刷新失败。请重启应用后确认状态。');
   }
   if (
-    preferences.defaultModel &&
-    !engineStatus.models.some((m) => m.id === preferences.defaultModel)
+    kind === 'credential_removed' && preferences.defaultModel?.startsWith(provider + '/')
   ) {
-    preferences.defaultModel = null;
+    preferences.defaultModel = '';
     save();
   }
   operation(actorID, kind, provider, null, 'ok');
@@ -368,12 +367,9 @@ function busyReason() {
 }
 
 export function defaultModel() {
-  const desired = preferences.defaultModel || process.env.RIVLOOM_MODEL;
-  return (
-    engineStatus.models.find((model) => model.id === desired)?.id ||
-    engineStatus.models[0]?.id ||
-    ''
-  );
+  // A temporarily unavailable saved connection remains selected. Falling back to
+  // the first catalog entry could send an intranet task to an unrelated service.
+  return preferences.defaultModel ?? process.env.RIVLOOM_MODEL ?? engineStatus.models[0]?.id ?? '';
 }
 
 export function modelSettings(): ModelSettings {
@@ -435,7 +431,7 @@ export async function saveDeepSeek(actor: User, key: string | null) {
     for (const model of Object.keys(preferences.checks)) {
       if (model.startsWith('deepseek/')) delete preferences.checks[model];
     }
-    if (preferences.defaultModel?.startsWith('deepseek/')) preferences.defaultModel = null;
+    if (key === null && preferences.defaultModel?.startsWith('deepseek/')) preferences.defaultModel = '';
     save();
     let refreshResult = 'ok';
     try {

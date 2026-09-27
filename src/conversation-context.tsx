@@ -19,7 +19,7 @@ export function ConversationContext({ item, tasks, owner, close }: {
   item: Conversation; tasks: Task[]; owner: boolean; close: () => void;
 }) {
   const [data, setData] = useState<Snapshot | null>(null), [error, setError] = useState('');
-  const [busy, setBusy] = useState(false), [tab, setTab] = useState<'state' | 'reads' | 'runs'>('state');
+  const [busy, setBusy] = useState(true), [tab, setTab] = useState<'state' | 'reads' | 'runs'>('state');
   const [edit, setEdit] = useState<Edit | null>(null);
   const [promote, setPromote] = useState<ContextNote | null>(null), [name, setName] = useState('');
   const [targetMemory, setTargetMemory] = useState('');
@@ -61,15 +61,15 @@ export function ConversationContext({ item, tasks, owner, close }: {
   const short = (revision: string) => revision.slice(0, 12);
   const state = data?.state;
   return <Modal title={t('会话上下文')} subtitle={item.title} close={close} className="context-panel">
-    <div className="context-toolbar" aria-label={t('上下文视图')}>
-      <Button disabled={tab === 'state'} onClick={() => setTab('state')}>{t('目标与记忆')}</Button>
-      <Button disabled={tab === 'reads'} onClick={() => setTab('reads')}>{t('读取记录')}</Button>
-      <Button disabled={tab === 'runs'} onClick={() => setTab('runs')}>{t('执行与压缩')}</Button>
+    <div className="context-toolbar" role="group" aria-label={t('上下文视图')}>
+      <button type="button" className="button" aria-pressed={tab === 'state'} onClick={() => setTab('state')}>{t('目标与记忆')}</button>
+      <button type="button" className="button" aria-pressed={tab === 'reads'} onClick={() => setTab('reads')}>{t('读取记录')}</button>
+      <button type="button" className="button" aria-pressed={tab === 'runs'} onClick={() => setTab('runs')}>{t('执行与压缩')}</button>
       <Button disabled={busy} onClick={() => void act(async () => {})}>{t('刷新')}</Button>
     </div>
     {error && <p role="alert" className="context-error">{error}</p>}
     {busy && <p role="status">{t('正在加载…')}</p>}
-    <div className="context-scroll" aria-busy={busy}>
+    <div className="context-scroll" aria-busy={busy} hidden={!data}>
       {tab === 'state' && <>
         <section><h3>{t('当前目标')}</h3><p className="context-text">{(state?.goal.content || item.description).slice(0, 300)}</p>
           {(state?.goal.content || item.description).length > 300 && <details className="context-goal"><summary>{t('展开完整目标')}</summary><p className="context-text">{state?.goal.content || item.description}</p></details>}

@@ -14,7 +14,7 @@ import type { Task, User } from '../shared/types.ts';
 test('preview classification treats active documents as literal text and bounds all media ranges', () => {
   for (const name of ['page.HTML', 'image.svg', 'code.tsx']) assert.equal(filePreviewType(name).kind, 'text');
   assert.equal(filePreviewType('photo.PNG').kind, 'image'); assert.equal(filePreviewType('film.mp4').kind, 'video');
-  assert.equal(filePreviewType('document.pdf').kind, 'unsupported');
+  assert.equal(filePreviewType('document.pdf').kind, 'pdf');
   assert.deepEqual(previewRange('bytes=5-9', 100), { start: 5, end: 9 });
   assert.deepEqual(previewRange('bytes=-10', 100), { start: 90, end: 99 });
   assert.deepEqual(previewRange('bytes=90-', 100), { start: 90, end: 99 });
@@ -50,11 +50,19 @@ test('file previews enforce upload ownership and task membership, isolate HTML, 
     assert.match(draft.headers.get('content-security-policy')!, /sandbox/); assert.equal(draft.headers.get('x-content-type-options'), 'nosniff');
     assert.match(await draft.text(), /<script>/);
     assert.equal((await fetch(`${base}/uploads/${html.id}/preview`, { headers: { 'x-test-user': 'other' } })).status, 403);
+    assert.equal((await fetch(`${base}/uploads/${html.id}/document`, { headers: { 'x-test-user': 'other' } })).status, 403);
+    assert.equal((await fetch(`${base}/local/${taskID}/${html.id}/document`, { headers: { 'x-test-user': 'other' } })).status, 403);
     assert.equal((await fetch(`${base}/local/${anotherID}/${html.id}/preview`)).status, 403);
     assert.equal((await fetch(`${base}/local/${taskID}/${html.id}/preview`, { headers: { 'x-test-user': 'other' } })).status, 403);
     assert.equal((await fetch(`${base}/local/${taskID}/${html.id}/preview`, { headers: { 'x-test-user': 'reviewer' } })).status, 200);
     const large = await fetch(`${base}/uploads/${long.id}/preview`); assert.equal((await large.arrayBuffer()).byteLength, filePreviewTextBytes);
     assert.equal(large.headers.get('x-preview-truncated'), 'true');
+    const note = upload('notes.md', Buffer.from('original'));
+    const snapshot = await (await fetch(`${base}/uploads/${note.id}/document`)).json(); assert.equal(snapshot.text, 'original');
+    const copy = await fetch(`${base}/uploads/${note.id}/copy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'edited', expectedRevision: note.sha256 }) });
+    assert.equal(copy.status, 200); const copied = await copy.json(); assert.notEqual(copied.file.id, note.id);
+    assert.equal(files.content(note.id).toString(), 'original'); assert.equal(files.content(copied.file.id).toString(), 'edited');
+    assert.equal((await fetch(`${base}/uploads/${copied.file.id}/text`, { headers: { 'x-test-user': 'other' } })).status, 403);
     const range = await fetch(`${base}/uploads/${media.id}/preview`, { headers: { Range: 'bytes=3-7' } });
     assert.equal(range.status, 206); assert.equal(range.headers.get('content-range'), 'bytes 3-7/16'); assert.equal(await range.text(), '34567');
     assert.equal((await fetch(`${base}/uploads/${media.id}/preview`, { headers: { Range: 'bytes=100-' } })).status, 416);

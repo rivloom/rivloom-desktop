@@ -1,0 +1,22 @@
+.modal.project-files-modal { width: min(800px, calc(100vw - 32px)); max-width: min(800px, calc(100vw - 32px)); max-height: 85vh; }
+.project-files-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.project-files-controls :is(input,select,button) { font: inherit; border: 1px solid #dce3ed; border-radius: 7px; background: white; color: #34465e; padding: 8px; min-height: 36px; }.project-files-controls select { max-width: 240px; }.project-files-controls form { display: flex; flex: 1; gap: 5px; }.project-files-controls input { width: 100%; min-width: 80px; }.project-files-controls button { cursor: pointer; display: inline-flex; align-items: center; }
+.project-files-path { font-size: 12px; color: #65758a; overflow-wrap: anywhere; }
+.project-files-modal[open] { display: flex; flex-direction: column; overflow: hidden; }
+.project-files-modal .modal-heading, .project-files-controls, .project-files-path { flex-shrink: 0; }
+.project-files-modal .modal-heading > div { min-width: 0; }
+.project-files-modal .modal-heading p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-files-controls select { min-width: 0; flex: 1 1 170px; }
+.project-files-controls form { min-width: 0; flex-basis: 180px; }
+.project-files-controls button { justify-content: center; flex-shrink: 0; }
+.project-files-controls button:hover:enabled { background: #eef3fa; }
+.project-files-controls :is(input,select,button):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.project-files-controls button:disabled { opacity: .45; cursor: default; }
+.project-files-state { min-height: 180px; padding: 30px 20px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.7; }
+.project-files-state p { margin: 0; }
+.project-files-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin-bottom: 12px; border-radius: 7px; background: #fff2f2; color: #9f3939; font-size: 12px; line-height: 1.7; }
+.project-files-error span { overflow-wrap: anywhere; }
+.project-file-list { min-height: 0; overscroll-behavior: contain; }
+.project-file-list li > button > svg, .project-file-list li > button > small { flex-shrink: 0; }
+.project-file-list li > button:disabled { cursor: wait; }
+@media(max-width: 520px) { .modal.project-files-modal { max-height: calc(100dvh - 24px); padding: 20px; }.project-files-controls form { flex-basis: 100%; }.project-files-controls select { max-width: none; }.project-files-modal .project-file-list { max-height: none; flex: 1; } }
+.project-file-list { padding: 0; margin: 0; list-style: none; overflow: auto; max-height: 57vh; }.project-file-list li > button { width: 100%; display: flex; align-items: center; gap: 12px; background: white; border: 0; border-bottom: 1px solid #edf0f5; padding: 12px 8px; color: #34465e; font: inherit; text-align: left; cursor: pointer; }.project-file-list li > button:hover { background: #f1f5fb; }.project-file-list li > button:focus-visible { outline: 2px solid #557cae; outline-offset: -2px; }.project-file-list li span { flex: 1; min-width: 0; }.project-file-list strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }.project-file-list small { color: #66788c; font-size: 11px; overflow-wrap: anywhere; }

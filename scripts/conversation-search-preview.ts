@@ -105,7 +105,7 @@ export async function startSearchPreview(dist = resolve('dist'), extension?: (re
       const file = resolve(dist, '.' + (path === '/' ? '/index.html' : path));
       if (!file.startsWith(dist + sep)) return json(res, { error: 'Invalid path' }, 403);
       const bytes = await readFile(file);
-      res.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' } as Record<string, string>)[extname(file)] || 'application/octet-stream' });
+      res.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' } as Record<string, string>)[extname(file)] || 'application/octet-stream' });
       res.end(bytes);
     } catch { if (!res.headersSent) json(res, { error: 'Preview content unavailable' }, 404); else res.end(); }
   });

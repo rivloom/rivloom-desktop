@@ -1,6 +1,9 @@
 import { validReasoningEffort, reasoningSupported } from '../shared/model-reasoning.ts';
 import { installTaskFileAPI } from './task-file-api.ts';
 import { installProjectChangesAPI } from './project-changes-api.ts';
+import { installProjectFilesAPI } from './project-files-api.ts';
+import { readProjectFile } from './project-files.ts';
+import { readOffice, officeReadOptions, officeToolResult } from './office-files.ts';
 import { installPromptTemplateAPI } from './prompt-template-api.ts';
 import { PromptTemplateStore } from './prompt-templates.ts';
 import { TaskFileError } from './task-files.ts';
@@ -465,7 +468,7 @@ app.use((req, res, next) => {
   if (!dev)
     res.set(
       'Content-Security-Policy',
-      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${desktop ? ' ipc: http://ipc.localhost' : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
+      `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; font-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'${desktop ? ' ipc: http://ipc.localhost' : ''}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
     );
   if (req.path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     if (
@@ -645,6 +648,16 @@ app.post('/api/workflows/:id/context/memory/withdraw', (req, res) => {
 });
 installKnowledgeAPI(app, () => knowledge, who, projects);
 installProjectChangesAPI(app, who, projects);
+installProjectFilesAPI(app, who, projects);
+app.get('/api/model-settings/onboarding', (req, res) => {
+  const actor = who(req); requireThat(actor.owner, 403, '仅创建者可管理模型配置');
+  res.json({ dismissed: !!db.prepare('SELECT value FROM app_settings WHERE key=?').get(`connection-onboarding:${actor.id}`) });
+});
+app.post('/api/model-settings/onboarding', (req, res) => {
+  const actor = who(req); requireThat(actor.owner, 403, '仅创建者可管理模型配置');
+  db.prepare('INSERT INTO app_settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(`connection-onboarding:${actor.id}`, 'true');
+  res.json({ dismissed: true });
+});
 installPromptTemplateAPI(app, who, new PromptTemplateStore(db));
 function visibleTask(req: Request) {
   const t = task(String(req.params.id));
@@ -2304,8 +2317,16 @@ try {
   if (!users().length && !desktop && !headless)
     console.log(`首次初始化码保存在 ${join(dataRoot, 'setup-code.txt')}，请在页面中输入。`);
   knowledgeBridge = await startKnowledgeBridge(() => knowledge?.tools || null, (root, body) => taskContexts.call(root, body), async (root, raw) => {
-    const body = z.object({ sessionID: z.string(), directory: z.string(), name: z.enum(['rivloom_history', 'rivloom_context_note']), args: z.unknown() }).strict().parse(raw);
+    const body = z.object({ sessionID: z.string(), directory: z.string(), name: z.enum(['rivloom_history', 'rivloom_context_note', 'rivloom_document_read']), args: z.unknown() }).strict().parse(raw);
     const before = taskContexts.authorize(root, body.sessionID, body.directory);
+    if (body.name === 'rivloom_document_read') {
+      const args = officeReadOptions.extend({ path: z.string().min(1).max(2000), expectedRevision: z.string().length(64).optional() }).parse(body.args);
+      const file = await readProjectFile(body.directory, args.path);
+      if (args.expectedRevision && file.revision !== args.expectedRevision) throw new Error('office_changed');
+      const document = await readOffice(file.name, file.buffer, { page: args.page, sheet: args.sheet, offset: args.offset, textOffset: args.textOffset });
+      if (taskContexts.authorize(root, body.sessionID, body.directory).id !== before.id) throw new Error('context_execution_changed');
+      return officeToolResult(document, args.path);
+    }
     const result = await workflowRuntime.historyTool(before.taskID, body.name, body.args);
     if (taskContexts.authorize(root, body.sessionID, body.directory).id !== before.id) throw new Error('context_execution_changed');
     return result;

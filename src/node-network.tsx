@@ -638,16 +638,24 @@ export function ExecutionPolicyCard({
   actions: Pick<NetworkActions, 'owner' | 'busy' | 'saveExecutionPolicy'>;
 }) {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>(policy.approvalMode);
+  const [projectID, setProjectID] = useState(policy.projectID || projects[0]?.id || '');
   const [model, setModel] = useState(policy.model || models[0]?.id || '');
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(policy.reasoningEffort ?? null);
   useEffect(() => setApprovalMode(policy.approvalMode), [policy.approvalMode, policy.updatedAt]);
+  useEffect(() => setProjectID(policy.projectID || projects[0]?.id || ''), [policy.projectID, policy.updatedAt]);
+  useEffect(() => {
+    setModel(policy.model || models[0]?.id || '');
+    setReasoningEffort(policy.reasoningEffort ?? null);
+  }, [policy.model, policy.reasoningEffort, policy.updatedAt]);
+  const projectAvailable = projects.some((project) => project.id === projectID);
+  const modelAvailable = models.some((entry) => entry.id === model);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    if (actions.busy || !projectAvailable || !modelAvailable) return;
     actions.saveExecutionPolicy({
       enabled: true,
       approvalMode,
-      projectID: String(data.get('projectID') || '') || null,
+      projectID,
       model: model || null, reasoningEffort,
     });
   };
@@ -673,6 +681,7 @@ export function ExecutionPolicyCard({
           <select
             name="approvalMode"
             value={approvalMode}
+            disabled={actions.busy}
             onChange={(event) => setApprovalMode(event.target.value as ApprovalMode)}
           >
             <option value="ask">{t('请求批准（默认）')}</option>
@@ -693,8 +702,12 @@ export function ExecutionPolicyCard({
           <select
             name="projectID"
             required
-            defaultValue={policy.projectID || projects[0]?.id || ''}
+            value={projectID}
+            disabled={actions.busy}
+            onChange={(event) => setProjectID(event.target.value)}
           >
+            {projectID && !projectAvailable && <option value={projectID}>{t('已保存的项目暂不可用')}</option>}
+            {!projectID && !!projects.length && <option value="">{t('请选择工作目录')}</option>}
             {!projects.length && <option value="">{t('请先添加本地项目')}</option>}
             {projects.map((project) => (
               <option value={project.id} key={project.id}>
@@ -702,10 +715,13 @@ export function ExecutionPolicyCard({
               </option>
             ))}
           </select>
+          {projectID && !projectAvailable && <small role="status">{t('请重新选择可用的工作目录后保存。')}</small>}
         </label>
         <label>
           <span>{t('执行模型')}</span>
-          <select name="model" required value={model} onChange={event => { setModel(event.target.value); setReasoningEffort(null); }}>
+          <select name="model" required value={model} disabled={actions.busy} onChange={event => { setModel(event.target.value); setReasoningEffort(null); }}>
+            {model && !modelAvailable && <option value={model}>{t('已保存的模型暂不可用')} · {model}</option>}
+            {!model && !!models.length && <option value="">{t('请选择模型')}</option>}
             {!models.length && <option value="">{t('请先连接本机模型')}</option>}
             {models.map((model) => (
               <option value={model.id} key={model.id}>
@@ -713,17 +729,18 @@ export function ExecutionPolicyCard({
               </option>
             ))}
           </select>
+          {model && !modelAvailable && <small role="status">{t('请检查模型连接，或选择可用的模型后保存。')}</small>}
         </label>
         <ReasoningPicker model={models.find(entry => entry.id === model)} value={reasoningEffort} onChange={setReasoningEffort} disabled={actions.busy} />
         <label className="checkbox remote-preparation-confirmation">
-          <input type="checkbox" required />
+          <input type="checkbox" required disabled={actions.busy} />
           {t('我确认所有已配对设备都可把任务交给该项目；模型请求可能包含任务说明和项目代码。')}
         </label>
         <div className="remote-task-buttons">
           <button
             className="button primary compact"
             type="submit"
-            disabled={actions.busy || !projects.length || !models.length}
+            disabled={actions.busy || !projectAvailable || !modelAvailable}
           >
             <FolderOpen size={14} />
             {policy.enabled ? t('保存执行设置') : t('开启执行能力')}

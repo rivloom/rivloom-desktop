@@ -14,6 +14,7 @@ const engineLicense = {
 type UpstreamFile = typeof engineLicense;
 type NoticeSource =
   | { kind: 'installed-package'; file: string; sha256: string }
+  | { kind: 'distribution'; url: string; revision: string; packageVersionSource: string; sha256: string }
   | {
       kind: 'upstream';
       url: string;
@@ -37,6 +38,21 @@ function fallback(
   name: string,
   version: string,
 ): { files: UpstreamFile[]; versionSource: string } | undefined {
+  // These releases contain an MIT declaration and author attribution in package.json,
+  // but no separate license body. Keep that original declaration beside the exact
+  // SPDX standard text; do not invent a copyright holder or an upstream LICENSE.
+  if (name === 'binary' && version === '0.3.0' || name === 'launder' && version === '1.7.1') return {
+    files: [{ repository: 'spdx/license-list-data', revision: 'v3.27.0', file: 'text/MIT.txt', gitBlobSha1: 'd817195dad53ec992418c28ffca5fbd1cd86502a' }],
+    versionSource: `https://registry.npmjs.org/${name}/${version}`,
+  };
+  if (name === 'saxes' && version === '5.0.1') return {
+    files: [{ repository: 'lddubeau/saxes', revision: 'v5.0.1', file: 'LICENSE', gitBlobSha1: '187f3ba399862022f4e670b2a3a1dbc6d7e6a800' }],
+    versionSource: 'https://registry.npmjs.org/saxes/5.0.1',
+  };
+  if (name.startsWith('@napi-rs/canvas-') && version === '1.0.9') return {
+    files: [{ repository: 'Brooooooklyn/canvas', revision: 'b2723ffae4e74e8c9df752902b137ec4061530e9', file: 'LICENSE', gitBlobSha1: 'e0024071be828a07166aef9825c50a1912f652ac' }],
+    versionSource: 'https://registry.npmjs.org/@napi-rs%2fcanvas/1.0.9',
+  };
   if (name.startsWith('@msgpackr-extract/msgpackr-extract-') && version === '3.0.4')
     return { files: [{ repository: 'kriszyp/msgpackr-extract', revision: 'v3.0.4', file: 'LICENSE', gitBlobSha1: '97f48aa82439758947d14d8ea6926a29df9ff678' }],
       versionSource: `https://registry.npmjs.org/${name}/3.0.4` };
@@ -153,6 +169,11 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
       )
       .map((entry) => entry.name)
       .sort();
+    if (name === 'isarray' && info.version === '1.0.0') files.push('README.md'); // Contains the full original MIT notice.
+    if (name === 'pdfjs-dist') for (const directory of ['cmaps', 'standard_fonts', 'wasm']) {
+      for (const entry of await readdir(join(root, path, directory), { withFileTypes: true }))
+        if (entry.isFile() && /^(license|copying|notice)([.\-_]|$)/i.test(entry.name)) files.push(`${directory}/${entry.name}`);
+    }
     const originals: { file: string; bytes: Buffer; source: NoticeSource }[] = [];
     for (const file of files) {
       const bytes = await readFile(join(root, path, file));
@@ -163,12 +184,30 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
         source: { kind: 'installed-package', file, sha256: sha(bytes) },
       });
     }
+    const distribution = name === 'buffers' && info.version === '0.1.1'
+      ? { revision: '0.1.1-2', sha256: '97423a03bc4476a98de2bf3fa7efff55b3f338da76a7b3cbf747b4dc6f52a056' }
+      : name === 'chainsaw' && info.version === '0.1.0'
+        ? { revision: '0.1.0-4', sha256: 'bd34bc03a00662f25c448882c33a467aec2834cb2abe3be410822af63fb5f803' } : null;
+    if (!originals.length && distribution) {
+      // Original repositories are unavailable; Debian retains these exact-version
+      // copyright notices and records the upstream source/declaration.
+      const url = `https://sources.debian.org/data/main/n/node-${name}/${distribution.revision}/debian/copyright`;
+      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) }); assert(response.ok);
+      const bytes = Buffer.from(await response.arrayBuffer()); assert.equal(sha(bytes), distribution.sha256);
+      originals.push({ file: 'COPYRIGHT.debian', bytes, source: { kind: 'distribution', url,
+        revision: distribution.revision, packageVersionSource: `https://registry.npmjs.org/${name}/${info.version}`, sha256: sha(bytes) } });
+    }
     if (!originals.length) {
       const known = fallback(name, info.version);
       assert(
         known,
         `Missing license original without a reviewed version source: ${name}@${info.version}`,
       );
+      if (name === 'binary' || name === 'launder') {
+        assert.equal(installed.license, 'MIT'); assert(installed.author);
+        const bytes = await readFile(join(root, path, 'package.json'));
+        originals.push({ file: 'package.json', bytes, source: { kind: 'installed-package', file: 'package.json', sha256: sha(bytes) } });
+      }
       for (const file of known.files) {
         const url = sourceUrl(file);
         if (!fetched.has(url)) fetched.set(url, upstream(file));
@@ -197,7 +236,7 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
       license:
         info.license ||
         installed.license ||
-        (name.startsWith('opencode-') ? 'MIT (upstream)' : ''),
+        (name.startsWith('opencode-') ? 'MIT (upstream)' : distribution ? 'MIT (Debian copyright notice)' : ''),
       developmentOnly: !!info.dev,
       integrity: info.integrity,
       packagePaths: [path],

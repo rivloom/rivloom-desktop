@@ -25,9 +25,9 @@ export function ResourceDiscovery({ nodes, refresh, nodeName, localNodeID, proje
     } catch (cause) { setError(systemText(cause instanceof Error ? cause.message : String(cause))); }
     finally { setBusy(false); }
   }
-  return <section className="network-section resource-discovery" aria-label={t('资源目录')}>
+  return <section className="network-section resource-discovery" aria-label={t('资源目录')} aria-busy={busy}>
     <div className="section-title"><h2><FolderOpen size={17} />{t('资源目录')}</h2>
-      <Button disabled={busy} onClick={() => void update()}><RefreshCw size={14} />{t('更新目录')}</Button></div>
+      <Button disabled={busy} onClick={() => void update()}><RefreshCw size={14} className={busy ? 'spin' : ''} />{t('更新目录')}</Button></div>
     <p className="muted">{t('各机器已登记的工作目录。本机显示完整路径，其他机器显示对端登记的目录名称。')}</p>
     <div className="resource-directory-nodes">{nodes.map((node) => {
       const localProject = node.nodeID === localNodeID
@@ -37,7 +37,7 @@ export function ResourceDiscovery({ nodes, refresh, nodeName, localNodeID, proje
         <dl className="resource-workspace"><dt>{t('工作目录')}</dt><dd>
           {localProject?.directory || node.head?.workspaceName || (node.head?.state === 'unconfigured' ? t('尚未选择工作目录') : t('目录尚未确认'))}
         </dd></dl>
-        {node.head?.error && <p role="status">{systemText(node.head.error)}</p>}
+        {node.head?.error && <p className="resource-directory-error" role="status">{systemText(node.head.error)}</p>}
         {!!node.head?.capabilities.length && <details className="resource-capabilities">
           <summary>{t('工具与模型')} <span>{node.head.capabilities.length}</span></summary>
           <ul>{node.head.capabilities.map((cap) => <li key={cap.id}><span>{cap.name}</span><small>{cap.status === 'available' ? cap.version || t('可用') : cap.status === 'unavailable' ? t('未发现') : t('待确认')}</small></li>)}</ul>

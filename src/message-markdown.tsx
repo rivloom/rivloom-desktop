@@ -20,8 +20,8 @@ export const MessageMarkdown = memo(function MessageMarkdown({ text, searchQuery
     a: ({ href, children }) => !compact && href && /^https?:\/\//i.test(href)
       ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="markdown-image-label">{alt || t('图片')}</span>,
-    pre: ({ children }) => compact ? <pre>{children}</pre> : <div className="markdown-code"><div className="markdown-code-toolbar"><span>{t('代码')}</span>
-      <CopyButton text={plainText(children).replace(/\n$/, '')} label={t('复制代码')} /></div><pre>{children}</pre></div>,
-    table: ({ children }) => <div className="markdown-table"><table>{children}</table></div>,
+    pre: ({ children }) => compact ? <pre tabIndex={0} aria-label={t('代码')}>{children}</pre> : <div className="markdown-code"><div className="markdown-code-toolbar"><span>{t('代码')}</span>
+      <CopyButton text={plainText(children).replace(/\n$/, '')} label={t('复制代码')} /></div><pre tabIndex={0} aria-label={t('代码')}>{children}</pre></div>,
+    table: ({ children }) => <div className="markdown-table" tabIndex={0} role="region" aria-label={t('表格')}><table>{children}</table></div>,
   }}>{text}</Markdown></div>;
 });

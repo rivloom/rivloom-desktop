@@ -1,6 +1,6 @@
 import { t, systemText, language } from '../shared/i18n.ts';
 import { useEffect, useRef, useState } from 'react';
-import { Bell, BellOff, CheckCheck, ChevronRight, Inbox, Play, RefreshCw, Volume2 } from 'lucide-react';
+import { Bell, BellOff, CheckCheck, ChevronRight, CircleAlert, Inbox, Play, RefreshCw, Volume2 } from 'lucide-react';
 import { api } from './api';
 import { desktop, notifyAttention, takeNotificationTarget } from './desktop';
 import { reuseJson } from './desktop-refresh';
@@ -22,9 +22,12 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
   const [notificationError, setNotificationError] = useState('');
   const [soundError, setSoundError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
   const [revision, setRevision] = useState(0);
+  const [filter, setFilter] = useState('all');
   const openRef = useRef(open);
   openRef.current = open;
+  useEffect(() => { setSnapshot(null); setError(''); setFilter('all'); }, [identity]);
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -79,12 +82,13 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
         if (!cancelled) setError((cause as Error).message);
       } finally {
         if (!cancelled) {
+          setRefreshing(false);
           await takeTarget();
           timer = setTimeout(() => void poll(), 3000);
         }
       }
     }
-    setSnapshot(null);
+    setRefreshing(true);
     void poll();
     window.addEventListener('focus', takeTarget);
     return () => {
@@ -122,7 +126,10 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
     soundError,
     previewSound,
     saving,
+    refreshing,
     preferences,
+    filter,
+    setFilter,
     refresh: () => setRevision((v) => v + 1),
   };
 }
@@ -132,10 +139,9 @@ export function TaskAttentionView({
   open,
 }: {
   controller: ReturnType<typeof useTaskAttention>;
-  open: (key: string) => void;
+  open: (key: string, attentionKey?: string) => void;
 }) {
-  const { snapshot, error, notificationError, soundError, previewSound, saving, preferences, refresh } = controller;
-  const [filter, setFilter] = useState('all');
+  const { snapshot, error, notificationError, soundError, previewSound, saving, refreshing, preferences, refresh, filter, setFilter } = controller;
   const items = snapshot?.items || [];
   const prefs = snapshot?.preferences;
   const now = useDisplayClock(!!prefs?.quietUntil && prefs.quietUntil > Date.now());
@@ -148,17 +154,17 @@ export function TaskAttentionView({
           <span className="eyebrow">{t('需要你的处理')}</span>
           <h1>
             {t('待办')}
-            <span>{items.length}</span>
+            <span>{snapshot ? items.length : '—'}</span>
           </h1>
           <p>{t('审批和回答都从这里回到原会话。')}</p>
         </div>
-        <button className="button" onClick={refresh}>
-          <RefreshCw size={16} />
+        <button className="button" disabled={refreshing} onClick={refresh}>
+          <RefreshCw size={16} className={refreshing ? 'spin' : ''} />
           {t('刷新')}
         </button>
       </div>
       <details className="notification-settings">
-      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{quiet ? t('免打扰中') : prefs?.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
+      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{!prefs ? t('状态待确认') : quiet ? t('免打扰中') : prefs.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
       <div className="attention-preferences">
         <Bell size={18} />
         <label>
@@ -215,7 +221,7 @@ export function TaskAttentionView({
       </details>
       {error && (
         <p className="error" role="alert">
-          {t('待办暂未刷新：{{value1}}。下方保留上次状态。', { value1: systemText(error) })}
+          {snapshot ? t('待办暂未刷新：{{value1}}。下方保留上次状态。', { value1: systemText(error) }) : t('暂时无法读取待办：{{value1}}。', { value1: systemText(error) })}
         </p>
       )}
       {notificationError && (
@@ -240,19 +246,21 @@ export function TaskAttentionView({
             onClick={() => setFilter(key)}
           >
             {label}
-            <span>{key === 'all' ? items.length : items.filter((i) => i.kind === key).length}</span>
+            <span>{snapshot ? key === 'all' ? items.length : items.filter((i) => i.kind === key).length : '—'}</span>
           </button>
         ))}
       </div>
-      {!snapshot && !error ? (
-        <p className="attention-empty">{t('正在读取待办…')}</p>
+      {!snapshot ? (
+        error ? <div className="attention-empty" role="status"><CircleAlert size={32} /><strong>{t('待办暂时不可用')}</strong><span>{t('请刷新重试，确认待办状态后再继续处理。')}</span></div>
+          : <p className="attention-empty" role="status">{t('正在读取待办…')}</p>
       ) : filtered.length ? (
         <div className="attention-list">
           {filtered.map((item) => (
             <button
               className="attention-card"
               key={item.key}
-              onClick={() => open(item.conversationKey)}
+              data-attention-key={item.key}
+              onClick={() => open(item.conversationKey, item.key)}
             >
               <span className={`attention-kind ${item.kind}`}>
                 <Inbox size={16} />

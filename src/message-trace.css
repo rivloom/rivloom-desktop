@@ -3,7 +3,7 @@
 .trace-line > svg, .trace-line > .trace-pulse { flex-shrink: 0; }
 .trace-line:hover { color: var(--text); }
 .trace-line:focus-visible, .task-trace-heading button:focus-visible { outline: 2px solid var(--accent, #5284af); outline-offset: 3px; border-radius: 4px; }
-.trace-kind { flex-shrink: 0; font-weight: 500; color: #607c97; }
+.trace-kind { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: #607c97; }
 .trace-preview { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
 .trace-line small { flex-shrink: 0; font-size: 10px; }
 .trace-reasoning-body { margin: 5px 0 2px 21px; padding-left: 13px; border-left: 1px solid #b9cddd; color: var(--muted); font-size: 12px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; scrollbar-width: thin; }
@@ -36,4 +36,5 @@
 @keyframes trace-blink { to { opacity: 0; } }
 @keyframes trace-breathe { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .trace-cursor, .trace-pulse { animation: none; } }
-@media (max-width: 600px) { .task-trace-heading small, .trace-line > small { display: none; } .trace-tool-body { margin-left: 10px; padding: 10px; } }
+@media (max-width: 600px) { .task-trace-heading small { display: none; } .trace-tool-body { margin-left: 10px; padding: 10px; } }
+@media (hover: none), (pointer: coarse) { .trace-line, .task-trace-heading > button, .trace-earlier { min-height: 36px; } }

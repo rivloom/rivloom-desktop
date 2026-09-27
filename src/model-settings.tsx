@@ -91,6 +91,7 @@ export function ModelSettingsView({
   }, [testing]);
 
   const availableModels = useMemo(() => settings?.models || [], [settings]);
+  const defaultAvailable = availableModels.some((model) => model.id === selectedDefault);
   const latestCheck = testModel ? settings?.checks[testModel] : undefined;
   const actionsLocked = !owner || !engineReady || !!settings?.busy || busy;
 
@@ -154,7 +155,7 @@ export function ModelSettingsView({
           }}
           disabled={!owner || !settings.models.length}
         >
-          {!settings.models.length && <option value="">{t('暂无可用模型')}</option>}
+          {!defaultAvailable && <option value={selectedDefault}>{selectedDefault ? `${selectedDefault} · ${t('当前不可用')}` : t('暂无可用模型')}</option>}
           {settings.models.map((model) => (
             <option value={model.id} key={model.id}>
               {model.name}
@@ -165,7 +166,7 @@ export function ModelSettingsView({
       <div className="settings-actions">
         <button
           className="button primary"
-          disabled={!owner || busy || !selectedDefault || selectedDefault === settings.defaultModel}
+          disabled={!owner || busy || !defaultAvailable || selectedDefault === settings.defaultModel}
           onClick={() => void mutate('/model-settings/default', { model: selectedDefault })}
         >
           <Check size={16} />

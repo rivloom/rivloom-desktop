@@ -1,7 +1,7 @@
 .workspace-command-palette {
   width: min(620px, calc(100vw - 32px));
-  max-height: min(640px, calc(100dvh - 64px));
-  margin: min(16vh, 120px) auto auto;
+  max-height: min(640px, calc(100dvh - min(16dvh, 120px) - 24px));
+  margin: min(16dvh, 120px) auto auto;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--line);

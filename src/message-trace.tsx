@@ -56,7 +56,7 @@ function ToolCall({ part, active }: { part: Extract<MessagePart, { type: 'tool' 
   return <details className={`trace-tool ${live ? 'is-live' : ''} ${failed ? 'failed' : ''}`}>
     <summary className="trace-line">
       {live && <span className="trace-pulse" aria-hidden="true" />}
-      <span className="trace-kind">{part.name}</span><span className="trace-preview" title={preview}>{preview === part.name ? '' : preview}</span>
+      <span className="trace-kind" title={part.name}>{part.name}</span><span className="trace-preview" title={preview}>{preview === part.name ? '' : preview}</span>
       <small>{status}</small><ChevronRight size={12} className="trace-chevron" />
     </summary>
     <div className="trace-tool-body">

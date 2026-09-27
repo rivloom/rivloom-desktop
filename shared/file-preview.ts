@@ -1,7 +1,10 @@
-export type FilePreviewKind = 'image' | 'text' | 'audio' | 'video' | 'unsupported';
+export type FilePreviewKind = 'image' | 'text' | 'audio' | 'video' | 'pdf' | 'word' | 'table' | 'unsupported';
 export const filePreviewTextBytes = 256 * 1024;
 export function filePreviewType(name: string): { kind: FilePreviewKind; mime: string } {
   const ext = name.toLowerCase().split('.').pop() || '';
+  if (ext === 'pdf') return { kind: 'pdf', mime: 'application/pdf' };
+  if (ext === 'docx') return { kind: 'word', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+  if (ext === 'xlsx') return { kind: 'table', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
   const images: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
   const audio: Record<string, string> = { mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', flac: 'audio/flac' };
   const video: Record<string, string> = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' };

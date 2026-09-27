@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Circle, LoaderCircle, LockKeyhole, AlertCircle, ArrowRightLeft } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { Workflow } from '../shared/workflows.ts';
@@ -9,6 +9,7 @@ export function WorkflowGraph({ value, selected, select, nodeName }: {
   value: Workflow; selected: string | null; select: (node: WorkflowGraphNode) => void; nodeName: (id: string | null) => string;
 }) {
   const ref = useRef<HTMLDivElement>(null); const [width, setWidth] = useState(640);
+  const scroll = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current) return;
     const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
@@ -16,8 +17,21 @@ export function WorkflowGraph({ value, selected, select, nodeName }: {
   }, []);
   const graph = useMemo(() => workflowGraph(value), [value.steps, value.handoffs]);
   const layout = useMemo(() => layoutWorkflowGraph(graph, width), [graph, width]);
+  useLayoutEffect(() => {
+    const viewport = scroll.current, position = selected ? layout.positions.get(selected) : undefined;
+    if (!viewport || !position) return;
+    // Keep a selected step visible without scrolling the surrounding conversation.
+    const margin = 12;
+    const left = position.x < viewport.scrollLeft + margin ? position.x - margin
+      : position.x + position.width > viewport.scrollLeft + viewport.clientWidth - margin
+        ? position.x + position.width - viewport.clientWidth + margin : viewport.scrollLeft;
+    const top = position.y < viewport.scrollTop + margin ? position.y - margin
+      : position.y + position.height > viewport.scrollTop + viewport.clientHeight - margin
+        ? position.y + position.height - viewport.clientHeight + margin : viewport.scrollTop;
+    viewport.scrollTo({ left, top, behavior: 'instant' });
+  }, [selected, layout]);
   return <div className="workflow-graph" ref={ref} aria-label={t('任务依赖与转交图')}>
-    <div className="workflow-graph-scroll" tabIndex={0} role="region" aria-label={t('任务依赖与转交图')}>
+    <div className="workflow-graph-scroll" ref={scroll} tabIndex={0} role="region" aria-label={t('任务依赖与转交图')}>
       <ol className="workflow-graph-canvas" style={{ width: layout.width, height: layout.height }}>
         <svg aria-hidden="true" className="workflow-graph-lines" width={layout.width} height={layout.height}>
           {graph.edges.map((edge, index) => {
@@ -48,7 +62,7 @@ export function WorkflowGraph({ value, selected, select, nodeName }: {
                 <span>{status}</span><small>{node.attempt ? `#${node.attempt.number}` : '—'}</small>
               </span>
               <strong>{node.step.title}</strong>
-              <span className="workflow-step-node">{value.target.mode === 'locked' && <LockKeyhole size={12} />}{assigned ? nodeName(assigned) : t('待分配')}</span>
+              <span className="workflow-step-node">{value.target.mode === 'locked' && <LockKeyhole size={12} />}<span>{assigned ? nodeName(assigned) : t('待分配')}</span></span>
             </button>
           </li>;
         })}

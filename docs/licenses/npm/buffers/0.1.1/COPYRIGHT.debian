@@ -1,0 +1,34 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: buffers
+Upstream-Contact: James Halliday <mail@substack.net> (http://substack.net)
+Source: https://github.com/substack/node-buffers
+
+Files: *
+Copyright: 2015 James Halliday <mail@substack.net> (http://substack.net)
+Comment: License from package.json in upstream repo:
+ https://github.com/substack/node-buffers/commit/1b745ee35d33eb166e15ef1866073a07c6d7de87
+License: MIT
+
+Files: debian/*
+Copyright: 2015 Bas Couwenberg <sebastic@xs4all.nl>
+	   2017 Ying-Chun Liu (PaulLiu) <paulliu@dt42.io>
+License: MIT
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.

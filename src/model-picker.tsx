@@ -33,6 +33,7 @@ export function ModelPicker({
   engineError = null,
   owner = false,
   onSetup,
+  onManage,
 }: {
   models: AvailableModel[];
   value: string;
@@ -42,6 +43,7 @@ export function ModelPicker({
   engineError?: string | null;
   owner?: boolean;
   onSetup?: (issue: ModelReadinessIssue) => void;
+  onManage?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -364,6 +366,7 @@ export function ModelPicker({
                 {models.length ? t('没有匹配的模型') : t('尚未连接模型')}
               </p>
             )}
+            {owner && onManage && <button type="button" className="model-picker-manage" onClick={() => { setOpen(false); onManage(); }}>{t('管理连接')}</button>}
           </div>,
           document.body,
         )}

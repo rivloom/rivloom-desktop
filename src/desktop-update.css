@@ -17,5 +17,6 @@
 .desktop-update-settings > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .desktop-update-settings > div > strong { font-size: 13px; }
 .desktop-update-settings p, .desktop-update-settings small { margin: 0; font-size: 12px; color: var(--muted, #66788b); }
+.desktop-update-settings p.error { color: var(--danger, #ad3f3f); }
 .desktop-update-settings .text-button { justify-self: start; }
 @media (max-width: 520px) { .desktop-update-actions .button { flex: 1; } .desktop-update-notes { max-height: 200px; } .desktop-update-progress { right: 16px; bottom: 16px; } }

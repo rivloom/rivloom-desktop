@@ -217,3 +217,5 @@
   text-align: center;
   font-size: 12px;
 }
+.model-picker-manage { width: 100%; border: 0; border-top: 1px solid #e1e7f0; padding: 11px 14px; background: #f6f8fc; color: #3e5f8a; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.model-picker-manage:focus-visible { outline: 2px solid #557cae; outline-offset: -3px; }

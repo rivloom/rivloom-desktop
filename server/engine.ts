@@ -43,6 +43,7 @@ export const permissions: Config['permission'] = {
   rivloom_memory_save: 'ask',
   rivloom_history: 'allow',
   rivloom_context_note: 'allow',
+  rivloom_document_read: 'allow',
   external_directory: 'deny',
   webfetch: 'deny',
   websearch: 'deny',
@@ -61,6 +62,7 @@ export function sessionPermissions(mode: ApprovalMode): PermissionRuleset {
     { permission: 'rivloom_memory_save', pattern: '*', action: mode === 'ask' ? 'ask' : 'allow' },
     { permission: 'rivloom_history', pattern: '*', action: 'allow' },
     { permission: 'rivloom_context_note', pattern: '*', action: 'allow' },
+    { permission: 'rivloom_document_read', pattern: '*', action: 'allow' },
   ];
   if (mode === 'auto' || mode === 'full') {
     rules.push(

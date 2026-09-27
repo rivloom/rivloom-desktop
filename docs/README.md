@@ -9,6 +9,7 @@
 - [随包使用说明](../DESKTOP-README.md)、[安全边界](../SECURITY.md)
 - [Linux 命令行执行节点（x64 0.1.22 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与上线验收](releases/linux-0.1.22.md)
 - [模型接入与选择](MODEL-ACCESS.md)、[输入区](COMPOSER.md)
+- [办公文件预览、编辑与多环境模型连接（本地开发，未发布）](OFFICE-WORKSPACE.md)
 - [连续会话](CONVERSATION-CONTINUITY.md)、[历史管理](CONVERSATION-HISTORY.md)、[内容搜索](CONVERSATION-SEARCH.md)
 - [右键菜单](CONTEXT-MENUS.md)、[消息复制](MESSAGE-COPY.md)
 - [Agent 基础工具](AGENT-TOOLS.md)：快捷访问、草稿、模板、导出、会话查找、排队消息编辑与项目改动

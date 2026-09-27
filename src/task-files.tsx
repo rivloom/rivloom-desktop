@@ -114,7 +114,7 @@ export function TaskFilePicker({
     if (!form) return;
     const region = form.closest('.conversation-center') || form;
     const inside = (target: EventTarget | null) => target instanceof Node && region.contains(target) &&
-      !(target instanceof Element && target.closest('[role="dialog"]'));
+      !(target instanceof Element && target.closest('dialog, [role="dialog"]'));
     const reset = () => { setDragging(false); form.classList.remove('file-drag-over'); };
     const paste = (event: ClipboardEvent) => {
       const selected = event.clipboardData?.files;
@@ -219,7 +219,7 @@ export function TaskFilePicker({
             <li key={item.id} data-state={item.state}>
               <FileText size={17} />
               <span className="file-details">
-                <strong title={item.file.name}>{item.file.name}</strong>
+                <strong title={item.file.name}>{item.state === 'complete' && item.descriptor ? <FilePreviewButton file={item.descriptor} path={`/task-files/uploads/${item.id}`} /> : item.file.name}</strong>
                 <small>
                   {taskFileBytesLabel(item.file.size)} ·{' '}
                   {item.removing ? t('正在移除') : item.state === 'complete'
@@ -243,7 +243,6 @@ export function TaskFilePicker({
                   aria-label={t('上传 {{name}}', { name: item.file.name })}
                   max={Math.max(item.file.size, 1)} value={item.receivedBytes} />}
               </span>
-              {item.state === 'complete' && item.descriptor && <FilePreviewButton iconOnly file={item.descriptor} path={`/task-files/uploads/${item.id}`} />}
               {item.state === 'failed' && item.file.arrayBuffer && (
                 <button
                   type="button"
@@ -287,7 +286,7 @@ function TaskFileRow({ file, ready, busy, action, children }: {
     <button type="button" className="context-more icon-button" aria-label={t('文件操作：{{name}}', { name: file.name })} title={t('更多操作')} {...menu.trigger}><MoreHorizontal size={15} /></button>
     <ContextMenu menu={menu} label={t('文件操作')} actions={[
       { id: 'open', label: t('打开'), icon: <ExternalLink />, disabled: busy || !ready || !desktop, hint, select: () => action('open', file) },
-      { id: 'reveal', label: t('打开所在目录'), icon: <FolderOpen />, disabled: busy || !ready || !desktop, hint, select: () => action('reveal', file) },
+      { id: 'reveal', label: t('在文件夹中打开'), icon: <FolderOpen />, disabled: busy || !ready || !desktop, hint, select: () => action('reveal', file) },
       { id: 'save', label: t('另存为…'), icon: <Download />, disabled: busy || !ready, select: () => action('save', file) },
       { id: 'copy', label: t('复制路径'), icon: <Copy />, disabled: busy || !ready || !desktop, hint, select: () => action('copy', file) },
     ]} />
@@ -417,28 +416,8 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
         <TaskFileRow key={file.id} file={file} ready={!!value?.canSave && file.state === 'complete'} busy={busy}
           action={(kind, file) => void (kind === 'save' ? save(file) : locate(file, kind))}>
           <span className="file-details">
-            {file.state === 'complete' && <FilePreviewButton iconOnly file={file} path={`${path}/${file.id}`} />}
             {value?.canSave && file.state === 'complete' ? (
-              desktop ? (
-                <button
-                  type="button"
-                  className="task-file-link"
-                  disabled={busy}
-                  title={`${t('打开所在文件夹')} · ${taskFileBytesLabel(file.bytes)}`}
-                  onClick={() => void locate(file, 'reveal')}
-                >
-                  {file.name}
-                </button>
-              ) : (
-                <a
-                  className="task-file-link"
-                  href={`/api${path}/${file.id}/content`}
-                  download={file.name}
-                  title={t('下载 {{value1}}', { value1: file.name })}
-                >
-                  {file.name}
-                </a>
-              )
+              <FilePreviewButton file={file} path={`${path}/${file.id}`} source={file.sourceNodeID ? nodeName(file.sourceNodeID) : undefined} />
             ) : (
               <span className="task-file-name">{file.name}</span>
             )}

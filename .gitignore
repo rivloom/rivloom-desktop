@@ -32,6 +32,7 @@ src-tauri/gen/
 !/docs/LINUX.md
 !/docs/MESSAGE-COPY.md
 !/docs/MODEL-ACCESS.md
+!/docs/OFFICE-WORKSPACE.md
 !/docs/PROMPT-CACHING.md
 !/docs/R2-RETENTION.md
 !/docs/README.md

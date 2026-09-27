@@ -1,4 +1,5 @@
 import { t } from '../shared/i18n.ts';
+import { officeMessage } from './office-messages.ts';
 import { workflowError } from '../shared/workflow-errors.ts';
 import { knowledgeError } from '../shared/knowledge-errors.ts';
 import type { NodeNetwork } from '../shared/types';
@@ -41,7 +42,7 @@ export async function api<T>(
     const data = await response.json();
     if (!response.ok)
       throw new ApiError(
-        knowledgeError(data.error || '') || workflowError(data.error) || t('请求失败'),
+        /^office_/.test(data.error || '') ? officeMessage(data.error) : knowledgeError(data.error || '') || workflowError(data.error) || t('请求失败'),
         response.status,
         response.status === 409 && validQueueConfirmation(data.queueConfirmation)
           ? data.queueConfirmation

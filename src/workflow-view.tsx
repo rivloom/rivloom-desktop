@@ -250,18 +250,18 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
       </>}
       </div>
     </section>
-    {editing && <Modal title={t('修改尚未开始的步骤')} close={() => setEditing(null)} subtitle={t('依赖关系会重新检查；已开始的执行保留原要求。')}>
-      <form className="workflow-step-editor" onSubmit={(event) => { event.preventDefault();
+    {editing && <Modal title={t('修改尚未开始的步骤')} close={() => { if (!busy) setEditing(null); }} subtitle={t('依赖关系会重新检查；已开始的执行保留原要求。')}>
+      <form className="workflow-step-editor" onSubmit={(event) => { event.preventDefault(); if (busy) return;
         void perform(() => api(`/workflows/${value.id}/steps`, { version: editingVersion, step: editing })).then((ok) => { if (ok) setEditing(null); }); }}>
-        <Field label={t('步骤名称')}><input required maxLength={160} value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></Field>
-        <Field label={t('步骤要求')}><textarea required rows={5} maxLength={12000} value={editing.instructions} onChange={(e) => setEditing({ ...editing, instructions: e.target.value })} /></Field>
-        <Field label={t('首选执行 Node')}><select disabled={value.target.mode === 'locked'} value={editing.nodeID || ''} onChange={(e) => setEditing({ ...editing, nodeID: e.target.value || null })}>
+        <Field label={t('步骤名称')}><input autoFocus disabled={busy} required maxLength={160} value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></Field>
+        <Field label={t('步骤要求')}><textarea disabled={busy} required rows={5} maxLength={12000} value={editing.instructions} onChange={(e) => setEditing({ ...editing, instructions: e.target.value })} /></Field>
+        <Field label={t('首选执行 Node')}><select disabled={busy || value.target.mode === 'locked'} value={editing.nodeID || ''} onChange={(e) => setEditing({ ...editing, nodeID: e.target.value || null })}>
           <option value="">{t('自动选择')}</option>{[...(data.network.local ? [data.network.local] : []), ...(data.network.paired || [])].map((node) => <option key={node.id} value={node.id}>{nodeName(node.id)}</option>)}
         </select></Field>
-        <fieldset><legend>{t('前置步骤')}</legend>{value.steps.filter((s) => s.id !== editing.id).map((step) => <label key={step.id}>
+        <fieldset disabled={busy}><legend>{t('前置步骤')}</legend>{value.steps.filter((s) => s.id !== editing.id).map((step) => <label key={step.id}>
           <input type="checkbox" checked={editing.dependsOn.includes(step.id)} onChange={(e) => setEditing({ ...editing,
             dependsOn: e.target.checked ? [...editing.dependsOn, step.id] : editing.dependsOn.filter((id) => id !== step.id) })} />{step.title}
-        </label>)}</fieldset><Button type="submit" variant="primary" disabled={busy}>{t('保存修改')}</Button>
+        </label>)}</fieldset><Button type="submit" variant="primary" disabled={busy}>{busy ? t('正在保存…') : t('保存修改')}</Button>
       </form>
     </Modal>}
   </div>;

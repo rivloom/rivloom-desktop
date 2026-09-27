@@ -47,7 +47,7 @@ export async function startKnowledgeBridge(tools: () => KnowledgeTools | null, c
       guard();
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(result));
     } catch (error) {
-      const message = error instanceof Error && /^(knowledge|context)_[a-z_]+$/.test(error.message) ? error.message : 'knowledge_request_failed';
+      const message = error instanceof Error && /^(knowledge|context|office)_[a-z_]+$/.test(error.message) ? error.message : 'knowledge_request_failed';
       res.writeHead(409, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: message }));
     }
   });

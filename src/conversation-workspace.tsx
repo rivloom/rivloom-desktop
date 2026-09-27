@@ -8,6 +8,7 @@ import { LanguageSwitcher } from './language-switcher';
 import { draftFilesReady } from './task-file-upload';
 import { CommandPalette } from './command-palette';
 import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
+import { useSidebarDrawer } from './use-sidebar-drawer';
 import { workspaceShortcutLabels, type WorkspaceCommand } from './workspace-commands';
 import { primaryShortcut } from './keyboard-platform';
 import { ComposerSendPreference } from './composer-send-preference';
@@ -22,11 +23,13 @@ import { MessageQuoteCard, UserMessageText } from './message-quote-view';
 import { quotedMessageText } from './message-quote';
 import { MessageTrace, MessageSpeed } from './message-trace';
 import { ProjectChangesView } from './project-changes-view';
+import { ProjectFilesView } from './project-files-view';
+import { ConnectionSettings } from './connection-settings';
 import { PromptTemplateLibrary } from './prompt-template-library';
 import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
 import './workspace-foundations.css';
 import { activeQueueCount, railExpanded, toggledRailPreference, type RailPreference } from './rail-visibility';
-import { animateLayoutChange } from './motion';
+import { animateLayoutChange, prefersReducedMotion } from './motion';
 import { ModelPicker, modelReadinessMessage } from './model-picker';
 import { modelReadinessIssue, modelSendGuidance, type ModelReadinessIssue } from './model-onboarding';
 import { AboutRivloom, AboutRivloomEntry, useRivloomVersion } from './about-rivloom';
@@ -76,6 +79,8 @@ import {
   Plus,
   Search,
   Settings2,
+  Plug,
+  Monitor,
   BookOpen,
   Network,
   ChevronDown,
@@ -86,6 +91,7 @@ import {
   FolderOpen,
   X,
   LoaderCircle,
+  RefreshCw,
   ListOrdered,
   PanelLeft,
   PanelRight,
@@ -365,9 +371,9 @@ function QueuePanel({
           );
         })}
         {!entries.length && (
-          <div className="rail-empty">
-            <Check size={20} />
-            <span>{snapshot ? t('当前没有等待执行的会话') : t('正在读取本机队列')}</span>
+          <div className="rail-empty" role="status">
+            {error ? <ListOrdered size={20} /> : snapshot ? <Check size={20} /> : <LoaderCircle size={20} className="spin" />}
+            <span>{error ? t('队列状态暂不可用') : snapshot ? t('当前没有等待执行的会话') : t('正在读取本机队列')}</span>
           </div>
         )}
       </div>
@@ -550,6 +556,13 @@ export function ConversationWorkspace({
   );
   const [diagnosticTarget, setDiagnosticTarget] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [attentionReturnKey, setAttentionReturnKey] = useState<string | null>(null);
+  const attentionListPosition = useRef<{ top: number; key: string | null }>({ top: 0, key: null });
+  const attentionRestorePending = useRef(false);
+  const pendingHistoryReveal = useRef<string | null>(null);
+  const historyListRef = useRef<HTMLDivElement>(null);
+  const settingsPageRef = useRef<HTMLDivElement>(null);
+  const attentionBackRef = useRef<HTMLButtonElement>(null);
   const selectedRef = useRef(selected);
   const seenSelected = useRef<string | null>(null);
   selectedRef.current = selected;
@@ -570,6 +583,22 @@ export function ConversationWorkspace({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [exportItem, setExportItem] = useState<Conversation | null>(null);
   const [changesProject, setChangesProject] = useState<Project | null>(null);
+  const [projectFilesOpen, setProjectFilesOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [connectionOnboarding, setConnectionOnboarding] = useState(false);
+  const connectionGuideChecked = useRef(false);
+  useEffect(() => {
+    if (!data.user.owner || !data.engine.ready || connectionGuideChecked.current) return;
+    connectionGuideChecked.current = true;
+    void api<{ dismissed: boolean }>('/model-settings/onboarding').then(value => {
+      if (!value.dismissed && !data.engine.models.length) { setConnectionOnboarding(true); setConnectionsOpen(true); }
+    }).catch(() => { connectionGuideChecked.current = false; });
+  }, [data.user.owner, data.engine.ready, data.engine.models.length]);
+  const openConnections = () => { setConnectionOnboarding(false); setConnectionsOpen(true); };
+  const closeConnections = () => {
+    if (connectionOnboarding) void api('/model-settings/onboarding', {}).catch(() => {});
+    setConnectionsOpen(false); setConnectionOnboarding(false);
+  };
   const historySearchRef = useRef<HTMLInputElement>(null);
   const storageKey = draftStorageKey(data.user.id, data.network.local?.id || 'local');
   const [recovered] = useState(() => { try { return latestDrafts(localStorage.getItem(storageKey), data.conversationDrafts); }
@@ -584,6 +613,7 @@ export function ConversationWorkspace({
   const [busy, setBusy] = useState(false);
   const operation = useRef(false);
   const [error, setError] = useState('');
+  const [quoteReplacement, setQuoteReplacement] = useState<{ apply: () => boolean; error: string } | null>(null);
   const [notice, setNotice] = useState('');
   const [contextItem, setContextItem] = useState<Conversation | null>(null);
   const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | 'language' | null>(null);
@@ -625,6 +655,11 @@ export function ConversationWorkspace({
   }, [storageKey, drafts, projectID, model, reasoningEffort, approvalChoice, criteria, sendMode, connected]);
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
+  const pageHeadingRef = useRef<HTMLDivElement>(null);
+  const narrowSidebar = useSidebarDrawer(mobileSidebar, () => setMobileSidebar(false), sidebarRef, sidebarTriggerRef);
+  const [retryingConnection, setRetryingConnection] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [mention, setMention] = useState<(ActiveNodeMention & { fromToolbar?: boolean }) | null>(null);
   const dismissedMention = useRef<{ text: string; cursor: number } | null>(null);
@@ -683,16 +718,33 @@ export function ConversationWorkspace({
     () => conversations(data),
     [data.tasks, data.workflows, data.network.local?.id, data.network.remoteTasks, data.network.brainTasks, data.conversationPreferences],
   );
-  function openAttention(key: string) {
+  function openAttention(key: string, attentionKey?: string) {
     if (key === 'attention') {
-      setView('attention');
-      setMobileSidebar(false);
+      attentionRestorePending.current = true;
+      animateLayoutChange(() => {
+        setAttentionReturnKey(null);
+        setView('attention');
+        setMobileSidebar(false);
+        setError(''); setNotice('');
+      }, 'attention-return');
       return;
     }
     const item = all.find((candidate) => candidate.key === key);
-    if (item) open(item);
+    if (item) {
+      attentionListPosition.current.key = attentionKey || null;
+      animateLayoutChange(() => {
+        clearFilters();
+        const directoryKey = conversationDirectory(item, data).key;
+        setCollapsedGroups(previous => { const next = new Set(previous); next.delete(directoryKey); return next; });
+        open(item);
+        setAttentionReturnKey(item.key);
+        pendingHistoryReveal.current = item.key;
+      }, 'attention-open');
+    }
     else {
       setView('attention');
+      setAttentionReturnKey(null);
+      setMobileSidebar(false);
       setNotice(t('该通知对应的任务暂未出现在当前列表，请刷新待办。'));
     }
   }
@@ -700,6 +752,25 @@ export function ConversationWorkspace({
     `${data.network.local?.id || 'local'}:${data.user.id}`,
     openAttention,
   );
+  useLayoutEffect(() => {
+    if (view !== 'attention' || !attentionRestorePending.current || !attention.snapshot) return;
+    const page = settingsPageRef.current;
+    if (!page) return;
+    const position = attentionListPosition.current;
+    page.scrollTop = position.top;
+    const card = [...page.querySelectorAll<HTMLButtonElement>('[data-attention-key]')]
+      .find(button => button.dataset.attentionKey === position.key);
+    (card || page.querySelector<HTMLButtonElement>('.attention-filters [aria-pressed="true"]'))?.focus({ preventScroll: true });
+    attentionRestorePending.current = false;
+  }, [view, attention.snapshot]);
+  useEffect(() => {
+    if (view !== 'chat' && view !== 'attention') {
+      setAttentionReturnKey(null); pendingHistoryReveal.current = null;
+    }
+  }, [view]);
+  useLayoutEffect(() => {
+    if (view === 'chat' && attentionReturnKey === selected) attentionBackRef.current?.focus({ preventScroll: true });
+  }, [view, selected, attentionReturnKey]);
   const current = all.find((item) => item.key === selected);
   useEffect(() => {
     const available = new Set(['new', ...all.map((item) => item.key), ...(data.conversationTrash || []).map((item) => item.key)]);
@@ -820,6 +891,26 @@ export function ConversationWorkspace({
     [all, statusFilter, sourceFilter, searchQuery, searchResults, nodeName, draftsOnly, drafts],
   );
   const historyGroups = groupConversationHistory(visible, data, data.directoryAliases);
+  useLayoutEffect(() => {
+    if (view !== 'chat' || pendingHistoryReveal.current !== selected || !selected) return;
+    // The narrow-screen drawer is located when opened, without covering the conversation on arrival.
+    if (!mobileSidebar && window.matchMedia('(max-width: 740px)').matches) return;
+    const list = historyListRef.current;
+    const row = list && [...list.querySelectorAll<HTMLElement>('[data-conversation-key]')]
+      .find(element => element.dataset.conversationKey === selected);
+    if (!list || !row) return;
+    const bounds = list.getBoundingClientRect(), target = row.getBoundingClientRect();
+    const reduced = prefersReducedMotion();
+    if (target.top < bounds.top || target.bottom > bounds.bottom)
+      list.scrollTo({ top: list.scrollTop + target.top - bounds.top - (bounds.height - target.height) / 2, behavior: reduced ? 'instant' : 'smooth' });
+    const button = row.querySelector<HTMLButtonElement>('.conversation-item');
+    if (button && !reduced) button.animate([
+      { backgroundColor: '#dbe7ff', boxShadow: 'inset 3px 0 #376ae5' },
+      { backgroundColor: getComputedStyle(button).backgroundColor, boxShadow: 'inset 0 0 transparent' },
+    ], { duration: 1000, easing: 'ease-out' });
+    if (mobileSidebar) button?.focus({ preventScroll: true });
+    pendingHistoryReveal.current = null;
+  }, [view, selected, mobileSidebar, historyGroups]);
   const removeHistory = useCallback((item: Conversation) => setHistoryAction({ action: 'trash', key: item.key, title: item.title }), []);
   const renameHistory = useCallback((item: Conversation) => { setError(''); setRenameConversation({ key: item.key, title: item.title }); }, []);
   const pinHistory = (item: Conversation) => void perform(() => api('/ui/conversation', { key: item.key, pinned: !item.pinned }));
@@ -1039,6 +1130,8 @@ export function ConversationWorkspace({
     }
   }
   const open = useCallback((item: Conversation | null) => {
+    setAttentionReturnKey(null);
+    pendingHistoryReveal.current = null;
     dismissedMention.current = null;
     setSearchSelection(null);
     setFindOpen(false);
@@ -1059,6 +1152,10 @@ export function ConversationWorkspace({
     setMobileSidebar(true);
     requestAnimationFrame(() => { historySearchRef.current?.focus(); historySearchRef.current?.select(); });
   }
+  function showSettingsPage(next: typeof view) {
+    setView(next); setMobileSidebar(false);
+    requestAnimationFrame(() => pageHeadingRef.current?.focus({ preventScroll: true }));
+  }
   function openFind() { if (current) { setFindOpen(true); focusCurrentConversationFind(); } }
   const reuseMessage = (intent: MessageReuseIntent): boolean => {
     if (!canWrite || operation.current || (selectedRef.current || 'new') !== draftKey) return false;
@@ -1070,6 +1167,24 @@ export function ConversationWorkspace({
     setMention(null); focusComposer(); return true;
   };
   const reviewProjectID = current ? task?.projectID || current.workflow?.projectID : projectID;
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ text: string; accepted: boolean; onAccepted?: () => void }>).detail;
+      if (!detail || typeof detail.text !== 'string' || !detail.text.trim() || detail.text.length > 12000 || !canWrite || operation.current) return;
+      const apply = () => {
+        detail.accepted = reuseMessage({ text: detail.text, mode: 'quote', placement: 'append', quoteAuthor: 'user',
+          expectedDraft: { text: draftState.text, requestID: draftState.requestID } });
+        if (detail.accepted) { setProjectFilesOpen(false); setView('chat'); }
+        return detail.accepted;
+      };
+      if (draftState.quote) setQuoteReplacement({ error: '', apply: () => {
+        if (!apply()) return false;
+        detail.onAccepted?.(); return true;
+      } });
+      else apply();
+    };
+    window.addEventListener('rivloom:file-quote', receive); return () => window.removeEventListener('rivloom:file-quote', receive);
+  }, [draftKey, draftState, canWrite]);
   const reviewProject = data.user.owner ? data.projects.find((project) => project.id === reviewProjectID) : undefined;
   const currentDirectory = current ? conversationDirectory(current, data) : null;
   const currentDirectoryName = currentDirectory && currentDirectory.key !== 'unspecified'
@@ -1083,16 +1198,16 @@ export function ConversationWorkspace({
     { kind: 'action', id: 'search-conversations', label: t('搜索会话'), shortcut: workspaceShortcutLabels['search-conversations'], run: focusHistorySearch },
     { kind: 'action', id: 'focus-composer', label: t('聚焦输入框'), shortcut: workspaceShortcutLabels['focus-composer'], disabled: !canWrite, run: focusComposer },
     { kind: 'action', id: 'attention', label: t('待办中心'), run: () => openAttention('attention') },
-    { kind: 'action', id: 'models', label: t('设备与模型'), run: () => setView('models') },
-    { kind: 'action', id: 'knowledge', label: t('技能与记忆'), run: () => setView('knowledge') },
+    { kind: 'action', id: 'models', label: t('设备与模型'), run: () => showSettingsPage('models') },
+    { kind: 'action', id: 'knowledge', label: t('技能与记忆'), run: () => showSettingsPage('knowledge') },
     { kind: 'action', id: 'queue', label: t('本机执行队列'), run: () => setModal('queue') },
-    { kind: 'action', id: 'diagnostics', label: t('连接诊断'), run: () => { setDiagnosticTarget(null); setView('diagnostics'); } },
-    { kind: 'action', id: 'trash', label: t('回收站'), run: () => setView('trash') },
+    { kind: 'action', id: 'diagnostics', label: t('连接诊断'), run: () => { setDiagnosticTarget(null); showSettingsPage('diagnostics'); } },
+    { kind: 'action', id: 'trash', label: t('回收站'), run: () => showSettingsPage('trash') },
     { kind: 'action', id: 'shortcuts', label: t('键盘与输入'), run: () => setModal('shortcuts') },
     { kind: 'action', id: 'templates', label: t('提示词模板'), disabled: !canWrite, run: () => setModal('templates') },
     { kind: 'action', id: 'export-conversation', label: t('导出会话'), disabled: !current, run: () => current && setExportItem(current) },
     { kind: 'action', id: 'project-changes', label: t('查看项目改动'), disabled: !reviewProject, run: () => reviewProject && setChangesProject(reviewProject) },
-    { kind: 'action', id: 'find-current', label: t('在当前会话中查找'), shortcut: primaryShortcut('F'), disabled: !current, run: () => { setView('chat'); openFind(); } },
+    { kind: 'action', id: 'find-current', label: t('在当前会话中查找'), shortcut: primaryShortcut('F'), disabled: !current, run: () => { setView('chat'); setMobileSidebar(false); openFind(); } },
     ...draftKeys.map((key): WorkspaceCommand => ({ kind: 'draft', id: key, label: all.find((item) => item.key === key)?.title || t('新会话'),
       detail: drafts[key]?.text.slice(0, 100) || drafts[key]?.quote?.text.slice(0, 100) || t('附件草稿'), run: () => { open(all.find((item) => item.key === key) || null); focusComposer(); } })),
     ...all.map((item): WorkspaceCommand => ({ kind: 'conversation', id: item.key, label: item.title, detail: conversationState(item), run: () => open(item) })),
@@ -1467,7 +1582,7 @@ export function ConversationWorkspace({
               </label>
             )}
             {(!targetNodeID || targetNodeID === local?.id) && (
-              <><ModelPicker models={data.engine.models} value={model} onChange={value => { if (value !== model) setReasoningEffort(null); setModel(value); }} disabled={busy}
+              <><ModelPicker onManage={openConnections} models={data.engine.models} value={model} onChange={value => { if (value !== model) setReasoningEffort(null); setModel(value); }} disabled={busy}
                 engineReady={data.engine.ready} engineError={data.engine.error} owner={data.user.owner} onSetup={openModelSetup} />
               <ReasoningPicker model={data.engine.models.find(entry => entry.id === model)} value={reasoningEffort}
                 onChange={setReasoningEffort} disabled={busy || !data.engine.ready} /></>
@@ -1507,7 +1622,7 @@ export function ConversationWorkspace({
             )}
           </span>
           {continuationModelChoice && (
-            <><ModelPicker models={data.engine.models} value={continuationModel}
+            <><ModelPicker onManage={openConnections} models={data.engine.models} value={continuationModel}
               onChange={(value) => changeDraft({ model: value })}
               engineReady={data.engine.ready} engineError={data.engine.error} owner={data.user.owner} onSetup={openModelSetup}
               disabled={busy || !canWrite || (localTaskModelChoice && !canContinueLocal)} />
@@ -1549,9 +1664,13 @@ export function ConversationWorkspace({
         />
       )}
       <aside
+        ref={sidebarRef}
         id="conversation-history-sidebar"
         className="conversation-sidebar"
         aria-label={t('历史会话')}
+        role={narrowSidebar && mobileSidebar ? 'dialog' : undefined}
+        aria-modal={narrowSidebar && mobileSidebar ? true : undefined}
+        inert={narrowSidebar && !mobileSidebar}
       >
         <button
           className="node-identity-button"
@@ -1590,7 +1709,7 @@ export function ConversationWorkspace({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-                if (e.key === 'Escape') { e.preventDefault(); setSearch(''); setSearchSelection(null); }
+                if (e.key === 'Escape' && search) { e.preventDefault(); setSearch(''); setSearchSelection(null); }
                 if (e.key === 'Enter' && visible[0] && searchQuery === search.trim()) { e.preventDefault(); openHistory(visible[0]); }
               }}
             />
@@ -1606,9 +1725,9 @@ export function ConversationWorkspace({
             onClear={clearFilters}
           />
         </div>
-        {draftKeys.length > 0 && <div className="history-draft-tools">
-          <button type="button" aria-pressed={draftsOnly} onClick={() => setDraftsOnly(!draftsOnly)}>{t('草稿')}<span>{draftKeys.filter((key) => key !== 'new').length}</span></button>
-          {draftKeys.includes('new') && <button type="button" onClick={() => { open(null); focusComposer(); }}>{t('继续新会话草稿')}</button>}
+        {(draftsOnly || draftKeys.some(key => key !== 'new') || draftKeys.includes('new') && (selected !== null || view !== 'chat')) && <div className="history-draft-tools">
+          {(draftsOnly || draftKeys.some(key => key !== 'new')) && <button type="button" aria-pressed={draftsOnly} onClick={() => setDraftsOnly(!draftsOnly)}>{t('草稿')}<span>{draftKeys.filter((key) => key !== 'new').length}</span></button>}
+          {draftKeys.includes('new') && (selected !== null || view !== 'chat') && <button type="button" onClick={() => { open(null); focusComposer(); }}>{t('继续新会话草稿')}</button>}
         </div>}
         {search.trim() && <p className="conversation-search-count" role="status" aria-busy={searchQuery !== search.trim()}>
           {searchQuery !== search.trim() ? t('正在搜索…') : t('找到 {{count}} 条会话', { count: visible.length })}
@@ -1616,7 +1735,7 @@ export function ConversationWorkspace({
         {view === 'chat' && current && !visible.some((item) => item.key === current.key) && (
           <p className="history-selection-note">{t('当前打开的会话不在筛选结果中。')}</p>
         )}
-        <div className="conversation-history">
+        <div className="conversation-history" ref={historyListRef}>
           {historyGroups.map((group) => <section className="history-directory" key={group.key} aria-label={group.name}>
             <HistoryDirectoryHeading group={group} expanded={!collapsedGroups.has(group.key) || !!search.trim()} busy={busy} perform={perform}
               copied={() => setNotice(t('已复制到剪贴板'))}
@@ -1654,21 +1773,23 @@ export function ConversationWorkspace({
           )}
         </div>
         <nav className="conversation-settings" aria-label={t('设置')}>
-          {data.user.owner && <button className={view === 'knowledge' ? 'active' : ''} title={t('技能与记忆')} aria-label={t('技能与记忆')} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
-            <BookOpen size={17} /><span className="nav-label">{t('技能与记忆')}</span><ChevronRight size={14} />
+          {data.user.owner && <button className="office-nav-entry" title={t('模型连接')} aria-label={t('模型连接')} onClick={openConnections}><Plug size={17} /><span className="nav-label">{t('模型连接')}</span><ChevronRight size={14} /></button>}
+          {data.user.owner && <button className="office-nav-entry" title={t('项目文件')} aria-label={t('项目文件')} onClick={() => setProjectFilesOpen(true)}><FolderOpen size={17} /><span className="nav-label">{t('项目文件')}</span><ChevronRight size={14} /></button>}
+          {data.user.owner && <button className={`utility-nav-entry${view === 'knowledge' ? ' active' : ''}`} title={t('技能与记忆')} aria-label={t('技能与记忆')} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
+            <BookOpen size={17} /><span className="nav-label">{t('知识')}</span>
           </button>}
           <button
-            className={view === 'attention' ? 'active' : ''}
+            className={`utility-nav-entry${view === 'attention' ? ' active' : ''}`}
             title={t('待办中心')}
             aria-label={`${t('待办中心')} · ${attention.snapshot?.items.length ?? '—'}`}
             onClick={() => openAttention('attention')}
           >
             <Inbox size={17} />
-            <span className="nav-label">{t('待办中心')}</span>
-            <span className="attention-count" aria-hidden="true">{attention.snapshot?.items.length ?? '—'}</span>
+            <span className="nav-label">{t('待办')}</span>
+            {!!attention.snapshot?.items.length && <span className="attention-count" aria-hidden="true">{attention.snapshot.items.length}</span>}
           </button>
           <button
-            className={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'active' : ''}
+            className={`utility-nav-entry${['network', 'models', 'execution', 'diagnostics'].includes(view) ? ' active' : ''}`}
             title={t('设备与模型')}
             aria-label={t('设备与模型')}
             onClick={() => {
@@ -1676,12 +1797,11 @@ export function ConversationWorkspace({
               setMobileSidebar(false);
             }}
           >
-            <Settings2 size={17} />
-            <span className="nav-label">{t('设备与模型')}</span>
-            <ChevronRight size={14} />
+            <Monitor size={17} />
+            <span className="nav-label">{t('设备')}</span>
           </button>
-          <button type="button" className={view === 'trash' ? 'active' : ''} title={t('更多')} aria-label={t('更多')} {...utilitiesMenu.trigger}>
-            <MoreHorizontal size={17} /><span className="nav-label">{t('更多')}</span><ChevronRight size={14} />
+          <button type="button" className={`utility-nav-entry${view === 'trash' ? ' active' : ''}`} title={t('更多')} aria-label={t('更多')} {...utilitiesMenu.trigger}>
+            <MoreHorizontal size={17} /><span className="nav-label">{t('更多')}</span>
           </button>
           <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
             ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
@@ -1697,12 +1817,15 @@ export function ConversationWorkspace({
           </div>
         </nav>
       </aside>
-      <main className="conversation-center">
+      <main className="conversation-center" inert={narrowSidebar && mobileSidebar}>
         {contextItem && <ConversationContext item={all.find(item => item.key === contextItem.key) || contextItem} tasks={data.tasks} owner={data.user.owner} close={() => setContextItem(null)} />}
         <header className={`conversation-header${view === 'chat' ? '' : ' settings-header'}`}>
           <button
+            ref={sidebarTriggerRef}
             className="icon-button mobile-nav"
             aria-label={t('打开会话栏')}
+            aria-expanded={mobileSidebar}
+            aria-controls="conversation-history-sidebar"
             onClick={() => setMobileSidebar(true)}
           >
             <PanelLeft size={18} />
@@ -1716,7 +1839,7 @@ export function ConversationWorkspace({
               <ArrowLeft size={18} />
             </button>
           )}
-          <div className="conversation-heading">
+          <div className="conversation-heading" ref={pageHeadingRef} tabIndex={-1}>
             <div className="conversation-title-row">
             <span title={view === 'chat' ? current?.title : undefined}>
               {view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站') : view === 'network'
@@ -1777,9 +1900,10 @@ export function ConversationWorkspace({
         {(error || connectionError) && (
           <div className="workspace-alert error" role="alert">
             {systemText(error || connectionError)}
-            <button className="icon-button" aria-label={t('关闭错误')} onClick={() => setError('')}>
-              <X size={15} />
-            </button>
+            {error ? <button type="button" className="icon-button" aria-label={t('关闭错误')} onClick={() => setError('')}><X size={15} /></button>
+              : <button type="button" className="button compact" disabled={retryingConnection} onClick={() => {
+                setRetryingConnection(true); void refresh().finally(() => setRetryingConnection(false));
+              }}>{retryingConnection ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{t('重试')}</button>}
           </div>
         )}
         {notice && (
@@ -1787,6 +1911,10 @@ export function ConversationWorkspace({
             {notice}
           </div>
         )}
+        {view === 'chat' && current && attentionReturnKey === current.key && <div className="attention-return-bar">
+          <button ref={attentionBackRef} type="button" className="attention-return-button" onClick={() => openAttention('attention')}><ArrowLeft size={15} /><span>{t('返回待办')}</span></button>
+          {attention.snapshot && <span className="attention-return-count">{t('{{count}} 条待办', { count: attention.snapshot.items.length })}</span>}
+        </div>}
         {view === 'chat' ? (
           <>
             {findOpen && current && <CurrentConversationFind query={findQuery} onQuery={(query) => { setFindQuery(query); setSearchSelection(null); }} matches={currentMatches} activeID={currentMatch?.id || null} select={selectSearchMatch} close={() => { setFindOpen(false); setSearchSelection(null); }} />}
@@ -2401,7 +2529,9 @@ export function ConversationWorkspace({
             </div>
           </>
         ) : (
-          <div className="conversation-settings-page"><div className="settings-content">
+          <div className="conversation-settings-page" ref={settingsPageRef} onScroll={event => {
+            if (view === 'attention') attentionListPosition.current.top = event.currentTarget.scrollTop;
+          }}><div className="settings-content">
             {modelSetupReturn !== null && ['models', 'execution', 'network', 'diagnostics'].includes(view) && <div className="model-onboarding-return" role="status">
               <span>{t('草稿已保留。完成设置后，返回会话选择模型并发送。')}</span>
               <Button onClick={returnFromModelSetup}>{t('返回会话')}</Button>
@@ -2500,6 +2630,7 @@ export function ConversationWorkspace({
           id="conversation-network-sidebar"
           className="network-rail"
           aria-label={t('本机队列和机器状态')}
+          inert={narrowSidebar && mobileSidebar}
         >
           {data.user.owner ? (
             queuePanel()
@@ -2529,6 +2660,19 @@ export function ConversationWorkspace({
       {modal === 'templates' && <PromptTemplateLibrary scopeKey={storageKey} draft={draftState} existingConversation={!!current} onApply={reuseMessage} close={() => setModal(null)} />}
       {exportItem && <ConversationExportDialog item={exportItem} close={() => setExportItem(null)} />}
       {changesProject && data.user.owner && <ProjectChangesView project={changesProject} close={() => setChangesProject(null)} />}
+      {projectFilesOpen && data.user.owner && <ProjectFilesView projects={data.projects} initialProjectID={reviewProjectID || undefined} close={() => setProjectFilesOpen(false)} />}
+      {connectionsOpen && data.user.owner && <ConnectionSettings onboarding={connectionOnboarding} close={closeConnections}
+        changed={next => { if (next && !current && !draft.trim() && !draftState.files?.length && !draftState.quote) { setModel(next); setReasoningEffort(null); } void refresh(); }}
+        advanced={() => { closeConnections(); showSettingsPage('models'); }} />}
+      {quoteReplacement && <Modal title={t('替换当前引用卡片？')} close={() => setQuoteReplacement(null)}>
+        <p>{t('新的引用会替换现有引用，已输入的正文保持不变。')}</p>
+        {quoteReplacement.error && <p className="error" role="alert">{quoteReplacement.error}</p>}
+        <div className="modal-actions"><Button onClick={() => setQuoteReplacement(null)}>{t('取消')}</Button>
+          <Button variant="primary" disabled={busy || !canWrite} onClick={() => {
+            if (quoteReplacement.apply()) setQuoteReplacement(null);
+            else setQuoteReplacement(value => value && { ...value, error: t('草稿已变化，请关闭后重新选择消息。') });
+          }}>{t('替换引用')}</Button></div>
+      </Modal>}
       {modal === 'model-guide' && <Modal title={composerModelIssue ? modelReadinessMessage(composerModelIssue, data.user.owner).title : t('模型已可用')}
         close={() => { setModal(null); focusComposer(); }} className="model-onboarding-modal">
         <p>{composerModelIssue ? modelReadinessMessage(composerModelIssue, data.user.owner).description : t('返回会话选择模型后，再发送消息。')}</p>
@@ -2654,7 +2798,7 @@ export function ConversationWorkspace({
         <Modal
           title={t('选择工作文件夹')}
           subtitle={t('会话将在这个文件夹中执行。')}
-          close={() => setModal(null)}
+          close={() => { if (!busy) setModal(null); }}
         >
           <form
             onSubmit={(event) => {
@@ -2678,6 +2822,7 @@ export function ConversationWorkspace({
             <Field label={t('文件夹路径')}>
               <input
                 value={folderPath}
+                disabled={busy}
                 onChange={(e) => setFolderPath(e.target.value)}
                 required
                 placeholder="C:\projects\my-project"
@@ -2685,6 +2830,7 @@ export function ConversationWorkspace({
             </Field>
             {desktop && (
               <Button
+                disabled={busy}
                 onClick={() =>
                   void chooseProjectDirectory()
                     .then((path) => {
@@ -2700,18 +2846,19 @@ export function ConversationWorkspace({
             <Field label={t('显示名称（可选）')}>
               <input
                 value={folderName}
+                disabled={busy}
                 onChange={(e) => setFolderName(e.target.value)}
                 maxLength={60}
                 placeholder={t('默认使用文件夹名称')}
               />
             </Field>
             <label className="checkbox">
-              <input type="checkbox" required />
+              <input type="checkbox" required disabled={busy} />
               {t('我信任此文件夹及其配置，允许 AI 按审批设置读取和修改文件。')}
             </label>
             {error && <p className="error">{systemText(error)}</p>}
             <div className="modal-actions">
-              <Button onClick={() => setModal(null)}>{t('取消')}</Button>
+              <Button disabled={busy} onClick={() => setModal(null)}>{t('取消')}</Button>
               <Button type="submit" variant="primary" disabled={busy || !data.user.owner}>
                 {t('使用此文件夹')}
               </Button>

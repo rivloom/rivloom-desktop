@@ -1,5 +1,9 @@
 import type { Express, Request, Response } from 'express';
 import { filePreviewType, filePreviewTextBytes, previewRange } from '../shared/file-preview.ts';
+import { readOffice, officeReadOptions } from './office-files.ts';
+import { editableTextLimit, officeFileLimit, textEditable } from '../shared/office-files.ts';
+import { decodeOfficeText } from './office-parser.ts';
+import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Task, User } from '../shared/types.ts';
 import {
@@ -208,6 +212,51 @@ export function installTaskFileAPI(
     res.send(files.content(fileID));
   });
   app.get('/api/task-files/:scope/:taskID/:fileID/preview', (req, res) => preview(req, res, selectedFile(req).fileID));
+  const officeID = (req: Request) => {
+    if (req.params.scope === 'uploads') {
+      const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]); return id;
+    }
+    return selectedFile(req).fileID;
+  };
+  for (const prefix of ['/api/task-files/uploads/:fileID', '/api/task-files/:scope/:taskID/:fileID']) {
+    const select = (req: Request) => {
+      if (prefix.includes('/uploads/')) { const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]); return id; }
+      return officeID(req);
+    };
+    app.get(`${prefix}/document`, async (req, res) => {
+      const id = select(req), file = files.descriptorFor(id);
+      check(file.bytes <= officeFileLimit, 413, 'office_too_large');
+      res.set('Cache-Control', 'no-store').json(await readOffice(file.name, files.content(id), officeReadOptions.parse(req.query)));
+    });
+    app.get(`${prefix}/text`, (req, res) => {
+      const id = select(req), file = files.descriptorFor(id);
+      check(textEditable(file.name) && file.bytes <= editableTextLimit, 413, 'office_edit_unavailable');
+      const decoded = decodeOfficeText(files.content(id)); check(decoded.encoding === 'utf-8', 409, 'office_edit_unavailable');
+      res.set('Cache-Control', 'no-store').json({ text: decoded.text, revision: file.sha256 });
+    });
+    app.post(`${prefix}/copy`, (req, res) => {
+      const id = select(req), source = files.descriptorFor(id);
+      const body = z.object({ text: z.string().max(editableTextLimit), expectedRevision: z.string().length(64) }).strict().parse(req.body);
+      check(textEditable(source.name) && source.bytes <= editableTextLimit, 413, 'office_edit_unavailable');
+      check(body.expectedRevision === source.sha256, 409, 'office_changed');
+      const bytes = Buffer.from(body.text); check(bytes.length <= editableTextLimit && !body.text.includes('\0'), 413, 'office_edit_unavailable');
+      const file = { ...source, id: randomUUID(), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+      const actor = who(req).id; files.beginUpload(actor, file);
+      for (let offset = 0; offset < bytes.length; offset += taskFileChunkBytes) files.uploadChunk(actor, file.id, offset, bytes.subarray(offset, offset + taskFileChunkBytes).toString('base64'));
+      res.json({ file, path: `/task-files/uploads/${file.id}` });
+    });
+  }
+  app.get('/api/task-files/uploads/:fileID/content', (req, res) => {
+    const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]);
+    res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(files.descriptorFor(id).name)}` }).send(files.content(id));
+  });
+  app.post('/api/task-files/uploads/:fileID/location', async (req, res) => {
+    const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]); res.json(await files.location(id));
+  });
+  app.post('/api/task-files/uploads/:fileID/export', (req, res) => {
+    const id = z.string().uuid().parse(req.params.fileID); files.uploaded(who(req).id, [id]);
+    const input = z.object({ destination: z.string().min(1).max(2000) }).strict().parse(req.body); res.json(files.exportFile(id, input.destination));
+  });
   app.post('/api/task-files/:scope/:taskID/:fileID/export', (req, res) => {
     const { fileID } = selectedFile(req),
       input = z

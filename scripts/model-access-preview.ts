@@ -11,7 +11,7 @@ import {
 } from '../shared/model-providers.ts';
 import type { ModelSettings } from '../shared/types.ts';
 
-export async function startModelAccessPreview(dist = resolve('dist')) {
+export async function startModelAccessPreview(dist = resolve('dist'), extension?: Parameters<typeof startSearchPreview>[1]) {
   const providers: ProviderAccess[] = [
     { id: 'deepseek', name: 'DeepSeek', connected: false, apiKey: true, modelCount: 2, oauth: [] },
     {
@@ -99,6 +99,7 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
     ];
   };
   const preview = await startSearchPreview(dist, async (req, res, data) => {
+    if (extension && await extension(req, res, data)) return true;
     data.user.name = '模型接入演示 · 不使用真实凭据';
     const path = new URL(req.url || '/', 'http://127.0.0.1').pathname;
     if (!path.startsWith('/api/model-settings')) return false;
@@ -137,6 +138,7 @@ export async function startModelAccessPreview(dist = resolve('dist')) {
       return entry;
     };
     if (path.endsWith('/provider/custom')) {
+      if (body.shared !== true) return json({ error: 'Custom provider settings require shared: true.' }, 400);
       const checked = customProviderSchema.safeParse(body.provider);
       if (!checked.success)
         return json({ error: 'Check the provider ID, API URL, model IDs and limits.' }, 400);
