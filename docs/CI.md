@@ -1,5 +1,7 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+**2026-09-27 · 0.1.23 发行准备中。** 用户已授权将办公工作区与界面整改合并主干、版本递增及官网同步。核心与Node.js固定版本不变，沿用同提交Windows/Linux CI、Windows隔离安装、正式下载与原公钥更新签名、官网实际部署和R2保留检查；各项结果将在完成后记录。下方0.1.22为上一版验收，不替代本版新产物验收。
+
 **2026-09-26 · 0.1.22 正式发布与收尾完成。** Windows / Linux x64 同一源码 [9b3f07f759b278bbed8dbcd910ea12889188bb0a](https://github.com/rivloom/rivloom-desktop/commit/9b3f07f759b278bbed8dbcd910ea12889188bb0a)。同提交源码 CI、[Windows 安装与发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36217929723)（attempt 2）、[Linux 原生发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36229729384)、双平台公开完整下载、Windows 原公钥更新签名、Linux 隔离启动/重启/SIGTERM、官网实际部署和双语下载命令核对通过。R2 保留 81、暂缓 0、可删除 0、删除 0 个，检查完成，删除 0 个；未启用自动清理。核心固定 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0，ARM64 暂不发布。详见[本版验收与失败重跑记录](releases/0.1.22-verification.md)和[R2 审计](releases/0.1.22-r2-retention.md)。
 
 本版源码 CI：[Windows CI](https://github.com/rivloom/rivloom-desktop/actions/runs/36217814348)（最终 attempt 1）、[Windows official engine checks](https://github.com/rivloom/rivloom-desktop/actions/runs/36217814376)（最终 attempt 2）、[Windows discovery transport regression](https://github.com/rivloom/rivloom-desktop/actions/runs/36217814384)（最终 attempt 1）、[Linux headless CI](https://github.com/rivloom/rivloom-desktop/actions/runs/36217814357)（最终 attempt 1）。服务矩阵首轮 18 成功/2 失败，同源码只重跑失败两项后通过；Windows 候选首轮被门槛阻止，3 个发行依赖跳过，attempt 2 全部通过。保留失败记录和原有断言。更新渠道签名已由原 updater 公钥核验，Authenticode 发布者签名尚未配置。本轮未新增原生 WebView2 视觉、真实模型或完整跨版本升级矩阵验收；官网 CUA 不可用，未新增官网截图或浏览器视觉验收。

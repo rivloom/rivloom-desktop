@@ -99,6 +99,13 @@ function audit(name: string, workflow: any) {
         { arch: 'x64', runner: 'ubuntu-22.04' },
       ], 'First Linux release is native x64 only');
       assert.equal(job.strategy['fail-fast'], false);
+      const runs = job.steps.map((step: any) => step.run).filter(Boolean);
+      const prepare = runs.indexOf('npm run engine:prepare');
+      const officeTests = runs.indexOf('node --test tests/office-files.test.ts tests/project-files.test.ts');
+      const officeService = runs.indexOf('node scripts/ci-services.ts office');
+      const build = runs.indexOf('npm run linux:build');
+      assert(prepare >= 0 && officeTests > prepare && officeService > officeTests && build > officeService,
+        'Linux office parser and service checks must pass after engine preparation and before packaging');
     } else assert.equal(job['runs-on'], linuxRelease ? 'ubuntu-22.04' : 'windows-2022', 'Use disposable hosted runners');
     for (const step of job.steps ?? []) {
       if (!step.uses) continue;
@@ -193,4 +200,17 @@ test('Linux publication stays manually gated and binds cross-run artifacts to th
   mutate(w => { w.jobs.publish.needs = []; });
   mutate(w => { w.jobs['website-download'].if = 'always()'; });
   mutate(w => { w.jobs.publish.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with['run-id'] = '123'; });
+});
+
+test('Linux office coverage cannot be omitted or moved before its pinned engine preparation', () => {
+  for (const command of ['node --test tests/office-files.test.ts tests/project-files.test.ts', 'node scripts/ci-services.ts office']) {
+    const workflow = load('linux-ci.yml');
+    workflow.jobs.build.steps = workflow.jobs.build.steps.filter((step: any) => step.run !== command);
+    assert.throws(() => audit('linux-ci.yml', workflow), /Linux office parser and service checks/);
+  }
+  const workflow = load('linux-ci.yml');
+  const steps = workflow.jobs.build.steps;
+  const office = steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/ci-services.ts office'), 1)[0];
+  steps.unshift(office);
+  assert.throws(() => audit('linux-ci.yml', workflow), /Linux office parser and service checks/);
 });

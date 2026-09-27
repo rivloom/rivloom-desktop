@@ -47,6 +47,10 @@ jobs:
           g++ --version
       - name: Build and smoke the source-locked Rivloom Linux engine
         run: npm run engine:prepare
+      - name: Test native office parsers and project file boundaries
+        run: node --test tests/office-files.test.ts tests/project-files.test.ts
+      - name: Verify office document tools and report delivery with an isolated synthetic model
+        run: node scripts/ci-services.ts office
       - name: Test headless permissions, lifecycle and command interface
         run: node --test tests/headless-cli.test.ts tests/headless-runtime.test.ts
       - name: Test Linux node protocol with the platform-specific identity implementation
@@ -59,6 +63,14 @@ jobs:
         run: npm run linux:build
       - name: Verify extracted archive startup, restart, identity, authentication and SIGTERM
         run: npm run linux:smoke
+      - name: Preserve bounded office service results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-office-summary-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/ci/*.json
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rivloom-linux-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

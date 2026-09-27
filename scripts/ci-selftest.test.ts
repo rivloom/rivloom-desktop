@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { auditCoverage, auditNetworkCases, exactPattern, networkCases } from './ci-test-suites.ts';
 import { checkVersions } from './ci-version-check.ts';
 import { ciRoot, isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
-import { auditServiceMatrix, runServiceScript, serviceChecks } from './ci-services.ts';
+import { assertServicePlatform, auditServiceMatrix, runServiceScript, serviceChecks } from './ci-services.ts';
 
 const base = join(ciRoot, 'test-results');
 mkdirSync(base, { recursive: true });
@@ -111,6 +111,16 @@ test('service workflow audit rejects omitted, duplicate and unrecognized checks'
     () => auditServiceMatrix(workflow.replace('check: [', 'checks: [')),
     /one explicit check matrix/,
   );
+});
+
+test('office service supports native Linux without expanding Windows-only checks', () => {
+  for (const check of Object.keys(serviceChecks) as (keyof typeof serviceChecks)[]) {
+    assert.doesNotThrow(() => assertServicePlatform(check, 'win32', 'x64'));
+    if (check === 'office') assert.doesNotThrow(() => assertServicePlatform(check, 'linux', 'x64'));
+    else assert.throws(() => assertServicePlatform(check, 'linux', 'x64'), /require Windows/);
+  }
+  assert.throws(() => assertServicePlatform('office', 'linux', 'arm64'), /require x64/);
+  assert.throws(() => assertServicePlatform('office', 'darwin', 'x64'), /require Windows/);
 });
 
 test('CI runner preserves failure, skip, missing-selection and exact-name outcomes', () => {

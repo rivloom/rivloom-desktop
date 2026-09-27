@@ -11,6 +11,7 @@ import {
 } from './ci-workspace.ts';
 
 export const serviceChecks = {
+  office: 'scripts/office-service-check.ts',
   'context-knowledge': 'scripts/context-knowledge-check.ts',
   'context-recovery': 'scripts/context-recovery-check.ts',
   'runtime-history': 'scripts/runtime-history-check.ts',
@@ -31,6 +32,12 @@ export const serviceChecks = {
   'collaboration-files': 'scripts/collaboration-files-check.ts',
   'session-crash': 'scripts/node-queue-crash-check.ts',
 } as const;
+
+export function assertServicePlatform(check: keyof typeof serviceChecks, platform: NodeJS.Platform = process.platform, arch: string = process.arch) {
+  assert.equal(arch, 'x64', 'Official engine checks require x64');
+  assert(platform === 'win32' || (platform === 'linux' && check === 'office'),
+    'Only the office service check supports native Linux; other checks require Windows');
+}
 
 export function auditServiceMatrix(workflow: string) {
   // Keep this small literal matrix auditable without adding a YAML runtime dependency.
@@ -109,13 +116,12 @@ export async function runServiceScript(script: string, directory: string, timeou
 }
 
 async function main() {
-  assert.equal(process.platform, 'win32', 'Official engine checks require Windows');
-  assert.equal(process.arch, 'x64', 'Official engine checks require x64');
   const check = process.argv[2] as keyof typeof serviceChecks;
   assert(
     Object.hasOwn(serviceChecks, check),
     `Choose a service check: ${Object.keys(serviceChecks).join(', ')}`,
   );
+  assertServicePlatform(check);
   const directory = await isolatedWorkspace(`service-${check}`);
   const result = await runServiceScript(resolve(directory, serviceChecks[check]), directory);
   await saveReport(`service-${check}`, {

@@ -1,5 +1,7 @@
 # Rivloom 文档
 
+**2026-09-27 · 0.1.23 发行准备中。** [办公工作区与界面整改](releases/0.1.23.md)、[Linux 同版说明](releases/linux-0.1.23.md)已整理；同提交云端CI、正式包与公开分发仍须按本次结果验收。下面0.1.22是上一版已完成记录。
+
 **当前正式版：Windows / Linux x64 0.1.22。** 核心固定 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0；[验收与限制](releases/0.1.22-verification.md)、[R2 保留审计](releases/0.1.22-r2-retention.md)。更新渠道签名已由原 updater 公钥核验，Authenticode 发布者签名尚未配置。本轮未新增原生 WebView2 视觉、真实模型或完整跨版本升级矩阵验收；官网 CUA 不可用，未新增官网截图或浏览器视觉验收。
 
 这里保存随源码分发的说明。当前正式版以根目录 [README](../README.md) 和 [官网下载页](https://rivloom.com/download/) 为准；源码中的未发布功能以对应说明标注的状态为准。
