@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, User } from '../shared/types.ts';
 
 test('official session telemetry persists through polls, failures, stops, new runs and restart recovery', async () => {
+  mkdirSync(resolve('.data/verification'), { recursive: true });
   const root = mkdtempSync(resolve('.data/verification/task-telemetry-engine-'));
   const engineURL = new URL('../server/engine.ts', import.meta.url).href;
   const key = `telemetry-${randomUUID()}`;
