@@ -32,10 +32,17 @@ import { readTaskTelemetry } from './task-telemetry.ts';
 import { canContinueTask, isOrdinaryLocalTask, type TaskMessageRequest } from '../shared/task-continuation.ts';
 import { taskContinuationContext, taskMessageDigest, taskVisibleMessages } from './task-continuation.ts';
 import { uuid } from '../shared/collaboration.ts';
+import { nodeModelActivity, type ModelActivityTask } from './node-model-activity.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
 export function changed(taskID?: string) {
+  nodeModelActivity.observe(taskID, () => {
+    if (taskID && taskQueries.stateForID(taskID)) {
+      const value = task(taskID);
+      if (value.sessionID && value.runAfter) nodeModelActivity.observeTask(modelActivityTask(value));
+    }
+  });
   updates.emit('update', { taskID });
 }
 export const engineStatus = {
@@ -67,13 +74,26 @@ function taskExclusive<T>(taskID: string, work: () => Promise<T>) {
   return exclusive(taskID, () => accountEngines.run(taskAccount(task(taskID)), work));
 }
 function feedKey(directory: string) { return `${accountEngines.current()}\0${directory}`; }
+function modelActivityTask(value: Task): ModelActivityTask {
+  const accountID = taskAccount(value);
+  const model = engineStatus.models.find(model => model.id === value.model);
+  const providerID = value.model.split('/')[0];
+  const catalog = accountCatalog.get(accountID || providerID);
+  return { id: value.id, sessionID: value.sessionID, runAfter: value.runAfter, state: value.state,
+    feed: `${accountID}\0${project(value.projectID).directory}`,
+    connection: { id: accountID || providerID, name: model?.accountName || catalog?.account?.name || model?.providerName || providerID,
+      providerName: model?.providerName || catalog?.name || providerID } };
+}
 accountEngines.onExit = (id) => {
   engineStatus.models = engineStatus.models.filter(m => m.providerID !== id);
   engineStatus.connectedProviders = engineStatus.connectedProviders.filter(p => p !== id);
   const info = accountCatalog.get(id);
   if (info) accountCatalog.set(id, { ...info, connected: false, accountError: 'Account engine exited. Restart the application.' });
-  for (const t of taskQueries.inStates(activeStates)) if (taskAccount(t) === id)
+  for (const t of taskQueries.inStates(activeStates)) if (taskAccount(t) === id) {
+    nodeModelActivity.observe(t.id, () => nodeModelActivity.feedClosed(`${id}\0${project(t.projectID).directory}`));
     patchTask(t.id, { state: 'interrupted', error: 'Account engine exited. Restart the application.', approvals: [], questions: [], telemetry: inactiveTelemetry(t.telemetry) });
+    nodeModelActivity.observe(t.id, () => nodeModelActivity.observeTask(modelActivityTask(task(t.id))));
+  }
   changed();
 };
 let shuttingDown = false;
@@ -151,9 +171,10 @@ export async function initializeEngine() {
   try {
     engine = await startEngine(dataRoot);
     engine.child.once('exit', () => {
+      nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed());
       engineStatus.ready = false;
       engineStatus.error = 'OpenCode 服务已退出，请重启应用。';
-      for (const t of taskQueries.inStates(activeStates))
+      for (const t of taskQueries.inStates(activeStates)) {
         patchTask(t.id, {
           state: 'interrupted',
           error: engineStatus.error,
@@ -161,6 +182,8 @@ export async function initializeEngine() {
           questions: [],
           telemetry: inactiveTelemetry(t.telemetry),
         });
+        nodeModelActivity.observe(t.id, () => nodeModelActivity.observeTask(modelActivityTask(task(t.id))));
+      }
       changed();
     });
     await refreshEngineModels();
@@ -220,6 +243,7 @@ async function readSessionArtifacts(directory: string, sessionID: string) {
 
 export async function refreshEngineConfiguration() {
   // Auth changes must take effect in every project instance, not only the settings page.
+  nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed());
   for (const abort of streams.values()) abort.abort();
   streams.clear();
   permissionEvents.clear();
@@ -236,9 +260,11 @@ async function subscribe(directory: string) {
   const permissionFeed = permissionEvents.open(key);
   try {
     const feed = await client().event.subscribe({ directory }, { signal: abort.signal });
+    nodeModelActivity.observe(undefined, () => nodeModelActivity.feedOpened(key));
     void (async () => {
       try {
         for await (const event of feed.stream) {
+          nodeModelActivity.observe(undefined, () => { nodeModelActivity.feedSeen(key); nodeModelActivity.usageEvent(key, event); });
           if (event.type === 'permission.asked') permissionEvents.asked(key, event.properties, permissionFeed);
           if (event.type === 'permission.replied') permissionEvents.replied(key, event.properties.requestID, permissionFeed);
           const props = event.properties as Record<string, unknown>;
@@ -248,8 +274,12 @@ async function subscribe(directory: string) {
             (props.info as { sessionID?: string } | undefined)?.sessionID;
           const current = taskQueries.routeForSession(sessionID);
           if (!current || taskAccount(task(current.id)) !== accountEngines.current() || !activeStates.includes(current.state)) continue;
-          const frame = messageStream.event(task(current.id), event);
-          if (frame) streamFrame(frame);
+          const currentTask = task(current.id);
+          const frame = messageStream.event(currentTask, event);
+          if (frame) {
+            nodeModelActivity.observe(currentTask.id, () => nodeModelActivity.event(currentTask, event));
+            streamFrame(frame);
+          }
           if (
             event.type === 'permission.asked' ||
             event.type === 'question.asked' ||
@@ -263,11 +293,13 @@ async function subscribe(directory: string) {
         /* Polling below reconciles state and reopens the feed. */
       } finally {
         permissionEvents.close(key, permissionFeed);
+        if (streams.get(key) === abort) nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed(key));
         if (streams.get(key) === abort) streams.delete(key);
       }
     })();
   } catch (error) {
     permissionEvents.close(key, permissionFeed);
+    if (streams.get(key) === abort) nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed(key));
     if (streams.get(key) === abort) streams.delete(key);
     throw error;
   }
@@ -349,6 +381,7 @@ export async function sync(taskID: string) {
         { signal: AbortSignal.timeout(2500) })).data,
     });
     if (shuttingDown) return;
+    nodeModelActivity.observe(t.id, () => nodeModelActivity.snapshot(modelActivityTask({ ...t, ...patch }), rawMessages.data));
     if (
       JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error, t.telemetry]) !==
       JSON.stringify([messages, approvals, questions, patch.state, patch.error, patch.telemetry])
@@ -375,6 +408,7 @@ const timer = setInterval(async () => {
   monitoring = true;
   try {
     for (const t of taskQueries.inStates(activeStates)) {
+      nodeModelActivity.observe(t.id, () => nodeModelActivity.observeTask(modelActivityTask(t)));
       await accountEngines.run(taskAccount(t), () => subscribe(project(t.projectID).directory)).catch(() => {});
       await sync(t.id).catch(() => {});
     }
@@ -515,6 +549,7 @@ async function runTaskInContext(taskID: string, actor: User, addition?: string,
       },
       ...(t.collaboration ? { collaborationOutcome: undefined } : {}),
     });
+    nodeModelActivity.observe(t.id, () => nodeModelActivity.observeTask(modelActivityTask(task(t.id)), runAfter, true));
     changed(t.id);
     activity(
       t.id,
@@ -690,6 +725,7 @@ export async function stopTask(taskID: string, actor: User) {
         ...artifacts,
         error: null,
       });
+      nodeModelActivity.observe(t.id, () => nodeModelActivity.snapshot(modelActivityTask(task(t.id)), rawMessages));
       activity(
         t.id,
         actor.id,
@@ -832,6 +868,7 @@ export async function requestChanges(taskID: string, actor: User, note: string) 
 }
 export async function shutdownEngine(waitForExit = false) {
   shuttingDown = true;
+  nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed());
   if (frameTimer) clearTimeout(frameTimer);
   pendingFrames.clear();
   messageStream.clear();

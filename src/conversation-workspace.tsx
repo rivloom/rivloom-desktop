@@ -25,6 +25,7 @@ import { MessageTrace, MessageSpeed } from './message-trace';
 import { ProjectChangesView } from './project-changes-view';
 import { ProjectFilesView } from './project-files-view';
 import { ConnectionSettings } from './connection-settings';
+import { SidebarActivityEntries } from './node-activity';
 import { PromptTemplateLibrary } from './prompt-template-library';
 import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
 import './workspace-foundations.css';
@@ -79,8 +80,6 @@ import {
   Plus,
   Search,
   Settings2,
-  Plug,
-  Monitor,
   BookOpen,
   Network,
   ChevronDown,
@@ -101,7 +100,6 @@ import {
   ChevronRight,
   AtSign,
   Pause,
-  Inbox,
   Trash2,
   Pencil,
   Pin,
@@ -1773,33 +1771,11 @@ export function ConversationWorkspace({
           )}
         </div>
         <nav className="conversation-settings" aria-label={t('设置')}>
-          {data.user.owner && <button className="office-nav-entry" title={t('模型连接')} aria-label={t('模型连接')} onClick={openConnections}><Plug size={17} /><span className="nav-label">{t('模型连接')}</span><ChevronRight size={14} /></button>}
-          {data.user.owner && <button className="office-nav-entry" title={t('项目文件')} aria-label={t('项目文件')} onClick={() => setProjectFilesOpen(true)}><FolderOpen size={17} /><span className="nav-label">{t('项目文件')}</span><ChevronRight size={14} /></button>}
-          {data.user.owner && <button className={`utility-nav-entry${view === 'knowledge' ? ' active' : ''}`} title={t('技能与记忆')} aria-label={t('技能与记忆')} onClick={() => { setView('knowledge'); setMobileSidebar(false); }}>
-            <BookOpen size={17} /><span className="nav-label">{t('知识')}</span>
-          </button>}
-          <button
-            className={`utility-nav-entry${view === 'attention' ? ' active' : ''}`}
-            title={t('待办中心')}
-            aria-label={`${t('待办中心')} · ${attention.snapshot?.items.length ?? '—'}`}
-            onClick={() => openAttention('attention')}
-          >
-            <Inbox size={17} />
-            <span className="nav-label">{t('待办')}</span>
-            {!!attention.snapshot?.items.length && <span className="attention-count" aria-hidden="true">{attention.snapshot.items.length}</span>}
-          </button>
-          <button
-            className={`utility-nav-entry${['network', 'models', 'execution', 'diagnostics'].includes(view) ? ' active' : ''}`}
-            title={t('设备与模型')}
-            aria-label={t('设备与模型')}
-            onClick={() => {
-              setView('models');
-              setMobileSidebar(false);
-            }}
-          >
-            <Monitor size={17} />
-            <span className="nav-label">{t('设备')}</span>
-          </button>
+          <SidebarActivityEntries key={storageKey} identity={storageKey} owner={data.user.owner} connected={connected}
+            network={data.network} attentionItems={attention.snapshot?.items} view={view}
+            openConnections={openConnections} openProjectFiles={() => setProjectFilesOpen(true)}
+            openKnowledge={() => { setView('knowledge'); setMobileSidebar(false); }}
+            openAttention={() => openAttention('attention')} openDevices={() => { setView('models'); setMobileSidebar(false); }} />
           <button type="button" className={`utility-nav-entry${view === 'trash' ? ' active' : ''}`} title={t('更多')} aria-label={t('更多')} {...utilitiesMenu.trigger}>
             <MoreHorizontal size={17} /><span className="nav-label">{t('更多')}</span>
           </button>

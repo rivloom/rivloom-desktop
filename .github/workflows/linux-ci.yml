@@ -40,6 +40,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:linux
+      - name: Verify Node activity collection, owner access and synthetic task telemetry
+        run: node --test tests/node-model-activity.test.ts tests/operation-activity.test.ts tests/node-activity-api.test.ts tests/task-stream.test.ts tests/task-telemetry-engine.test.ts
       - name: Require native source build tools
         run: |
           command -v git python3 make g++

@@ -55,10 +55,18 @@ export class KnowledgeNetwork {
   }
   async handle(peer: string, raw: unknown): Promise<unknown> {
     const input = knowledgeRequestSchema.parse(raw); this.authorize(peer, input);
-    const result = input.sourceNodeID && input.sourceNodeID !== this.store.nodeID
-      ? await this.request(input.sourceNodeID, input)
-      : input.sourceNodeID === this.store.nodeID ? await this.source(input) : await this.catalog(input);
-    this.authorize(peer, input); return result;
+    const run = async () => {
+      const result = input.sourceNodeID && input.sourceNodeID !== this.store.nodeID
+        ? await this.request(input.sourceNodeID, input)
+        : input.sourceNodeID === this.store.nodeID ? await this.source(input) : await this.catalog(input);
+      this.authorize(peer, input); return result;
+    };
+    // Local callers already track the public search/read. Remote requests run on this Node too.
+    if (peer === this.store.nodeID) return run();
+    return this.store.activity.track(input.action === 'catalog' ? 'search' : 'read', run, (result) => {
+      const unavailable = result && typeof result === 'object' && 'unavailable' in result ? result.unavailable : null;
+      return Array.isArray(unavailable) && unavailable.length ? { status: 'partial', error: 'knowledge_source_unavailable' } : { status: 'completed' };
+    });
   }
   private async source(input: KnowledgeRequest) {
     if (input.action === 'catalog') {
@@ -104,43 +112,45 @@ export class KnowledgeNetwork {
   }
   async search(options: { brainID?: string | null; text?: string; kind?: 'skill' | 'memory'; category?: string;
     projectID?: string | null; privateLocal?: boolean; offset?: number; allowedBrainIDs?: string[] } = {}): Promise<KnowledgeSearch> {
-    if (this.closed) throw new Error('knowledge_closed');
-    const entries: KnowledgeSearch['entries'] = []; const unavailable: KnowledgeSearch['unavailable'] = [];
-    const snap = this.transport.snapshot();
-    if (options.brainID === undefined || options.brainID === null) {
-      if (options.privateLocal !== false) entries.push(...this.store.listLocal(options.projectID).filter((v) => !v.error).map((v) => {
-        const { id, nodeID, kind, name, description, category, revision, updatedAt } = v;
-        return { id, nodeID, kind, name, description, category, revision, updatedAt, brainID: null, nodeName: snap.local?.name || nodeID };
-      }));
-    }
-    const brains = options.brainID === null ? [] : snap.brains.filter((b) => (options.brainID === undefined || b.id === options.brainID) &&
-      (options.allowedBrainIDs === undefined || options.allowedBrainIDs.includes(b.id)));
-    if (options.brainID && !brains.length) throw new Error('knowledge_brain_unavailable');
-    for (const brain of brains) {
-      let offset: number | null = 0; let generation: string | undefined;
-      const collected: KnowledgeSearch['entries'] = [];
-      try {
-        do {
-          const payload: KnowledgeRequest = { action: 'catalog', brainID: brain.id, offset, ...(generation ? { generation } : {}) };
-          const page = pageSchema.parse(brain.masterNodeID === this.store.nodeID ? await this.handle(this.store.nodeID, payload) : await this.request(brain.masterNodeID, payload));
-          if (generation && generation !== page.generation || page.next !== null && page.next !== offset + page.entries.length) throw new Error('knowledge_invalid_catalog');
-          generation = page.generation; offset = page.next;
-          collected.push(...page.entries.map((v) => ({ ...v, brainID: brain.id,
-            nodeName: snap.local?.id === v.nodeID ? snap.local.name : snap.paired?.find((p) => p.id === v.nodeID)?.name || v.nodeID })));
-          if (collected.length > knowledgeLimits.entries) throw new Error('knowledge_catalog_full');
-          if (page.unavailable) unavailable.push(...page.unavailable);
-        } while (offset !== null);
-        entries.push(...collected);
-      } catch { unavailable.push({ nodeID: brain.masterNodeID, reason: 'knowledge_brain_unavailable' }); }
-    }
-    const unique = [...new Map(entries.map((v) => [`${v.brainID}:${v.nodeID}:${v.id}`, v])).values()];
-    const query = (options.text || '').toLocaleLowerCase(); const prefix = options.category || '';
-    const matches = unique.filter((v) => (!options.kind || v.kind === options.kind) &&
-      (!prefix || v.category === prefix || v.category.startsWith(`${prefix}/`)) &&
-      `${v.name}\n${v.description}\n${v.category}`.toLocaleLowerCase().includes(query));
-    const offset = options.offset || 0;
-    return { entries: matches.slice(offset, offset + knowledgeLimits.page), next: offset + knowledgeLimits.page < matches.length ? offset + knowledgeLimits.page : null,
-      unavailable: [...new Map(unavailable.map((v) => [v.nodeID, v])).values()] };
+    return this.store.activity.track('search', async () => {
+      if (this.closed) throw new Error('knowledge_closed');
+      const entries: KnowledgeSearch['entries'] = []; const unavailable: KnowledgeSearch['unavailable'] = [];
+      const snap = this.transport.snapshot();
+      if (options.brainID === undefined || options.brainID === null) {
+        if (options.privateLocal !== false) entries.push(...this.store.listLocal(options.projectID).filter((v) => !v.error).map((v) => {
+          const { id, nodeID, kind, name, description, category, revision, updatedAt } = v;
+          return { id, nodeID, kind, name, description, category, revision, updatedAt, brainID: null, nodeName: snap.local?.name || nodeID };
+        }));
+      }
+      const brains = options.brainID === null ? [] : snap.brains.filter((b) => (options.brainID === undefined || b.id === options.brainID) &&
+        (options.allowedBrainIDs === undefined || options.allowedBrainIDs.includes(b.id)));
+      if (options.brainID && !brains.length) throw new Error('knowledge_brain_unavailable');
+      for (const brain of brains) {
+        let offset: number | null = 0; let generation: string | undefined;
+        const collected: KnowledgeSearch['entries'] = [];
+        try {
+          do {
+            const payload: KnowledgeRequest = { action: 'catalog', brainID: brain.id, offset, ...(generation ? { generation } : {}) };
+            const page = pageSchema.parse(brain.masterNodeID === this.store.nodeID ? await this.handle(this.store.nodeID, payload) : await this.request(brain.masterNodeID, payload));
+            if (generation && generation !== page.generation || page.next !== null && page.next !== offset + page.entries.length) throw new Error('knowledge_invalid_catalog');
+            generation = page.generation; offset = page.next;
+            collected.push(...page.entries.map((v) => ({ ...v, brainID: brain.id,
+              nodeName: snap.local?.id === v.nodeID ? snap.local.name : snap.paired?.find((p) => p.id === v.nodeID)?.name || v.nodeID })));
+            if (collected.length > knowledgeLimits.entries) throw new Error('knowledge_catalog_full');
+            if (page.unavailable) unavailable.push(...page.unavailable);
+          } while (offset !== null);
+          entries.push(...collected);
+        } catch { unavailable.push({ nodeID: brain.masterNodeID, reason: 'knowledge_brain_unavailable' }); }
+      }
+      const unique = [...new Map(entries.map((v) => [`${v.brainID}:${v.nodeID}:${v.id}`, v])).values()];
+      const query = (options.text || '').toLocaleLowerCase(); const prefix = options.category || '';
+      const matches = unique.filter((v) => (!options.kind || v.kind === options.kind) &&
+        (!prefix || v.category === prefix || v.category.startsWith(`${prefix}/`)) &&
+        `${v.name}\n${v.description}\n${v.category}`.toLocaleLowerCase().includes(query));
+      const offset = options.offset || 0;
+      return { entries: matches.slice(offset, offset + knowledgeLimits.page), next: offset + knowledgeLimits.page < matches.length ? offset + knowledgeLimits.page : null,
+        unavailable: [...new Map(unavailable.map((v) => [v.nodeID, v])).values()] };
+    }, (result) => result.unavailable.length ? { status: 'partial', error: 'knowledge_source_unavailable' } : { status: 'completed' });
   }
   private async fetch(ref: KnowledgeRef, payload: Pick<KnowledgeRequest, 'action' | 'revision' | 'path' | 'offset'>) {
     knowledgeRefSchema.parse(ref);
@@ -153,26 +163,31 @@ export class KnowledgeNetwork {
     return brain.masterNodeID === this.store.nodeID ? this.handle(this.store.nodeID, input) : this.request(brain.masterNodeID, input);
   }
   async manifest(ref: KnowledgeRef): Promise<KnowledgeManifest> {
+    return this.store.activity.track('read', () => this.readManifest(ref));
+  }
+  private async readManifest(ref: KnowledgeRef): Promise<KnowledgeManifest> {
     const result = knowledgeManifestSchema.parse(await this.fetch(ref, { action: 'head' }));
     if (result.entry.id !== ref.id || result.entry.nodeID !== ref.nodeID) throw new Error('knowledge_wrong_source'); return result;
   }
   async file(ref: KnowledgeRef, manifest: KnowledgeManifest, path: string): Promise<Buffer> {
-    const file = manifest.files.find((v) => v.path === path); if (!file) throw new Error('knowledge_file_not_found');
-    const chunks: Buffer[] = []; let offset = 0;
-    do {
-      const value = chunkSchema.parse(await this.fetch(ref, { action: 'chunk', revision: manifest.entry.revision, path, offset }));
-      if (value.id !== ref.id || value.revision !== manifest.entry.revision || value.path !== path || value.offset !== offset) throw new Error('knowledge_invalid_chunk');
-      const bytes = Buffer.from(value.data, 'base64');
-      if (bytes.length > knowledgeLimits.chunkBytes || bytes.toString('base64') !== value.data || offset + bytes.length > file.bytes ||
-        value.next !== (offset + bytes.length < file.bytes ? offset + bytes.length : null) || bytes.length === 0 && offset < file.bytes) throw new Error('knowledge_invalid_chunk');
-      chunks.push(bytes); offset += bytes.length;
-      if (value.next === null) break;
-    } while (offset < file.bytes);
-    const bytes = Buffer.concat(chunks);
-    if (bytes.length !== file.bytes || knowledgeHash(bytes) !== file.sha256) throw new Error('knowledge_digest_mismatch');
-    // Re-check grant/latest after the last awaited chunk, including a zero-byte file.
-    if ((await this.manifest(ref)).entry.revision !== manifest.entry.revision) throw new Error('knowledge_revision_changed');
-    return bytes;
+    return this.store.activity.track('read', async () => {
+      const file = manifest.files.find((v) => v.path === path); if (!file) throw new Error('knowledge_file_not_found');
+      const chunks: Buffer[] = []; let offset = 0;
+      do {
+        const value = chunkSchema.parse(await this.fetch(ref, { action: 'chunk', revision: manifest.entry.revision, path, offset }));
+        if (value.id !== ref.id || value.revision !== manifest.entry.revision || value.path !== path || value.offset !== offset) throw new Error('knowledge_invalid_chunk');
+        const bytes = Buffer.from(value.data, 'base64');
+        if (bytes.length > knowledgeLimits.chunkBytes || bytes.toString('base64') !== value.data || offset + bytes.length > file.bytes ||
+          value.next !== (offset + bytes.length < file.bytes ? offset + bytes.length : null) || bytes.length === 0 && offset < file.bytes) throw new Error('knowledge_invalid_chunk');
+        chunks.push(bytes); offset += bytes.length;
+        if (value.next === null) break;
+      } while (offset < file.bytes);
+      const bytes = Buffer.concat(chunks);
+      if (bytes.length !== file.bytes || knowledgeHash(bytes) !== file.sha256) throw new Error('knowledge_digest_mismatch');
+      // Re-check grant/latest after the last awaited chunk, including a zero-byte file.
+      if ((await this.readManifest(ref)).entry.revision !== manifest.entry.revision) throw new Error('knowledge_revision_changed');
+      return bytes;
+    });
   }
   close() { this.closed = true; }
 }

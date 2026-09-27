@@ -130,6 +130,8 @@ import { KnowledgeNetwork } from './knowledge-network.ts';
 import { KnowledgeTools, type KnowledgeTask } from './knowledge-tools.ts';
 import { startKnowledgeBridge } from './knowledge-engine.ts';
 import { installKnowledgeAPI } from './knowledge-api.ts';
+import { installNodeActivityAPI } from './node-activity-api.ts';
+import { readNodeModelActivity } from './node-model-activity.ts';
 import { UpdateMaintenance, updateBlockers, canPrepareUpdate } from './update-maintenance.ts';
 import { ConversationHistory, HistoryError, historyFileIDs } from './conversation-history.ts';
 import { conversations } from '../shared/conversations.ts';
@@ -647,6 +649,8 @@ app.post('/api/workflows/:id/context/memory/withdraw', (req, res) => {
   const { value, memory } = workflowMemory(req); res.json(memory.withdraw(value, req.body)); changed();
 });
 installKnowledgeAPI(app, () => knowledge, who, projects);
+installNodeActivityAPI(app, who, () => ({ models: readNodeModelActivity(), knowledge: knowledge?.store.activity.snapshot() || [] }),
+  id => knowledge?.store.activity.dismiss(id) || false);
 installProjectChangesAPI(app, who, projects);
 installProjectFilesAPI(app, who, projects);
 app.get('/api/model-settings/onboarding', (req, res) => {

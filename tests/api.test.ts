@@ -7,6 +7,13 @@ import {
   updateConversationDraft,
 } from '../src/conversation-drafts.ts';
 
+test('safe office error codes survive translated messages without leaking arbitrary errors', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'office_changed' }), { status: 409 }));
+  await assert.rejects(api('/project-files/save', {}), (error: unknown) => error instanceof ApiError && error.code === 'office_changed' && error.status === 409);
+  assert.equal(new ApiError('failed', 500, undefined, 'C:/private/file').code, undefined);
+  assert.equal(new ApiError('failed', 500, undefined, `office_${'a'.repeat(101)}`).code, undefined);
+});
+
 test('caller cancellation aborts the request without reporting a delivery timeout', async (t) => {
   t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
     init.signal!.addEventListener('abort', () => reject(new DOMException('cancelled by caller', 'AbortError')), { once: true });

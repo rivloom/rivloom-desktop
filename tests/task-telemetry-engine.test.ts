@@ -11,14 +11,14 @@ test('official session telemetry persists through polls, failures, stops, new ru
   const root = mkdtempSync(resolve('.data/verification/task-telemetry-engine-'));
   const engineURL = new URL('../server/engine.ts', import.meta.url).href;
   const key = `telemetry-${randomUUID()}`;
-  let messages: unknown[] = [], todos: unknown = [], todoReads = 0, failTodos = false;
+  let messages: unknown[] = [], todos: unknown = [], todoReads = 0, failTodos = false, promptRequests = 0;
   let statuses: Record<string, { type: string }> = { session: { type: 'busy' } };
   const engine = { child: new EventEmitter(), close() {}, client: {
     provider: { list: async () => ({ data: { all: [], connected: [] } }) },
     event: { subscribe: async () => ({ stream: (async function* () {})() }) },
     session: { messages: async () => ({ data: messages }), status: async () => ({ data: statuses }),
       todo: async () => { todoReads++; if (failTodos) throw new Error('fixture read failure'); return { data: todos }; },
-      diff: async () => ({ data: [] }), abort: async () => { statuses = {}; return {}; }, promptAsync: async () => ({}) },
+      diff: async () => ({ data: [] }), abort: async () => { statuses = {}; return {}; }, promptAsync: async () => { promptRequests++; return {}; } },
     permission: { list: async () => ({ data: [] }) }, question: { list: async () => ({ data: [] }) },
   } };
   Object.assign(globalThis, { [key]: engine });
@@ -33,6 +33,7 @@ test('official session telemetry persists through polls, failures, stops, new ru
   const service = await import('../server/task-service.ts');
   const store = await import('../server/store.ts');
   const { readTaskTelemetry } = await import('../server/task-telemetry.ts');
+  const { readNodeModelActivity } = await import('../server/node-model-activity.ts');
   const owner: User = { id: randomUUID(), username: 'fixture', name: 'Fixture', owner: true };
   store.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(owner.id, owner.username, owner.name, 1, 'unused');
   const projectID = randomUUID();
@@ -42,7 +43,7 @@ test('official session telemetry persists through polls, failures, stops, new ru
     state: 'ready', version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     model: 'fixture/model', approvalMode: 'ask', sessionID: 'session', runAfter: 100,
     messages: [], approvals: [], questions: [], artifacts: [], diffSource: '', error: null };
-  const message = (runAfter: number, id = 'message') => ({ info: { id, role: 'assistant', time: { created: runAfter + 1 },
+  const message = (runAfter: number, id = 'message') => ({ info: { id, sessionID: 'session', role: 'assistant', time: { created: runAfter + 1 },
     cost: 0.25, tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 10 } } },
   parts: [{ id: `tool-${id}`, type: 'tool', tool: 'todowrite', state: { status: 'completed', time: { end: runAfter + 2 }, output: 'Todo written' } }] });
   try {
@@ -102,13 +103,36 @@ test('official session telemetry persists through polls, failures, stops, new ru
     messages = [...messages, message(current.runAfter, 'new-run')];
     await service.sync(value.id);
     assert.equal(store.task(value.id).telemetry?.todos.state, 'available');
+    assert.equal(readNodeModelActivity().inputTokensPerSecond, null, 'unfinished and historical snapshots are not new confirmed input');
     const terminal = message(current.runAfter, 'new-run');
     Object.assign(terminal.info.time, { completed: current.runAfter + 3 });
     messages = [...messages.slice(0, -1), terminal];
+    // A completed step can be observed while the session is still busy. Repeated
+    // ordinary active-task polls must not re-add that completed message's usage.
+    statuses = { session: { type: 'busy' } };
+    await service.sync(value.id);
+    let nodeActivity = readNodeModelActivity();
+    assert.equal(nodeActivity.inputTokensPerSecond, 100 / 60, 'the production sync hook counts only the new run, excluding cached history and cache counters');
+    assert.equal(nodeActivity.inputComplete, true);
+    assert.equal(nodeActivity.counts.active, 1, 'runTask registered the actual local execution');
+    assert.equal(nodeActivity.connections.length, 1);
+    assert.equal(nodeActivity.connections[0].id, 'fixture');
+    assert.equal(nodeActivity.connections[0].inputTokensPerSecond, 100 / 60);
+    assert.equal(nodeActivity.outputTokensPerSecond, null, 'HTTP message snapshots never become measured output deltas');
+    await service.sync(value.id);
+    assert.equal(readNodeModelActivity().inputTokensPerSecond, 100 / 60, 'a second active poll replaces rather than adds the same usage');
     statuses = {};
     await service.sync(value.id);
     assert.equal(store.task(value.id).state, 'accepted');
     assert.equal(store.task(value.id).telemetry?.todos.items[0].status, 'in_progress', 'engine completion never invents completion of its remaining checklist items');
+    nodeActivity = readNodeModelActivity();
+    assert.equal(nodeActivity.inputTokensPerSecond, 100 / 60, 'the terminal sync retains the same recent input without counting it twice');
+    assert.equal(nodeActivity.counts.active, 0, 'the production terminal hook retires active execution counts');
+    assert.equal(nodeActivity.counts.generating, 0);
+    assert.equal(nodeActivity.countsComplete, true);
+    assert.equal(nodeActivity.connections[0].counts.active, 0);
+    assert.equal(nodeActivity.connections[0].countsComplete, true);
+    assert.equal(promptRequests, 1, 'sampling and repeat polls never resubmit a model prompt');
     store.patchTask(value.id, { state: 'running' });
     await service.initializeEngine();
     current = store.task(value.id);

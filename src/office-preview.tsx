@@ -10,6 +10,7 @@ import { MessageMarkdown } from './message-markdown';
 import { api } from './api';
 import { desktop, chooseTaskFileDestination, openTaskFile, revealTaskFile, openTaskFileWith, fileApplications } from './desktop';
 import { officeMessage } from './office-messages';
+import { localActivity } from './local-activity';
 import './file-preview.css';
 const PdfPreview = lazy(() => import('./pdf-preview'));
 export function FilePreviewButton({ file, path, iconOnly = false, source }: { file: TaskFileDescriptor; path: string; iconOnly?: boolean; source?: string }) {
@@ -37,14 +38,16 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
     setSelectedCell(''); setSelectedText('');
   }, [path, page, sheet, offset]);
   useEffect(() => {
-    if (!kind) return; const abort = new AbortController(); setLoading(true); setError(''); setDocumentError(false); setDocument(null);
+    if (!kind) return; const abort = new AbortController(); let alive = true; setLoading(true); setError(''); setDocumentError(false); setDocument(null);
     const params = new URLSearchParams({ page: String(page), sheet: String(sheet), offset: String(offset) });
-    void fetch(`/api${path}/document?${params}`, { credentials: 'same-origin', signal: abort.signal }).then(async response => {
-      const value = await response.json(); if (!response.ok) throw new Error(value.error || 'office_unavailable');
-      if (!abort.signal.aborted) setDocument(value);
-    }).catch(error => { if (!abort.signal.aborted) { setError(officeMessage(error.message)); setDocumentError(true); } }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
-    return () => abort.abort();
-  }, [path, kind, page, sheet, offset, revision]);
+    const read = () => api<OfficeDocument>(`${path}/document?${params}`, undefined, { signal: abort.signal, timeoutMilliseconds: 35_000 }).then(value => {
+      if (alive) setDocument(value);
+    });
+    void (isProject ? localActivity.run('file-read', file.name, read) : read())
+      .catch(error => { if (alive) { setError(officeMessage(error.message)); setDocumentError(true); } }).finally(() => { if (alive) setLoading(false); });
+    // Project reads report their real result even after this view has closed.
+    return () => { alive = false; if (!isProject) abort.abort(); };
+  }, [path, kind, page, sheet, offset, revision, isProject, file.name]);
   useEffect(() => {
     const selection = () => { const value = window.getSelection();
       setSelectedText(value?.anchorNode && value.focusNode && content.current?.contains(value.anchorNode) && content.current.contains(value.focusNode) ? value.toString().slice(0, 11000) : ''); };
@@ -83,24 +86,29 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
     else if (application === 'copy') { await navigator.clipboard.writeText(value.path); setNotice(t('已复制到剪贴板')); }
     else if (application === 'default') await openTaskFile(value.path); else await openTaskFileWith(value.path, application);
   });
-  const edit = () => act(async () => { const value = await api<{ text: string; revision: string }>(`${path}/text`);
+  const edit = () => act(async () => {
+    const read = () => api<{ text: string; revision: string }>(`${path}/text`);
+    const value = await (isProject ? localActivity.run('file-read', file.name, read) : read());
     setText(value.text); setOriginal(value.text); setExpected(value.revision); setEditing(true); });
   const save = () => act(async () => {
-    if (isProject) { const value = await api<{ revision: string }>(`${path}/save`, { text, expectedRevision: expected }); setExpected(value.revision); }
+    if (isProject) { const value = await localActivity.run('file-save', file.name, () => api<{ revision: string }>(`${path}/save`, { text, expectedRevision: expected })); setExpected(value.revision); }
     else {
       const copyName = file.name.replace(/(\.[^.]+)$/, '-copy$1');
       const destination = desktop ? await chooseTaskFileDestination(copyName) : null;
       if (desktop && !destination) return;
-      const value = await api<{ file: TaskFileDescriptor; path: string }>(`${path}/copy`, { text, expectedRevision: expected });
-      if (destination) await api(`${value.path}/export`, { destination });
-      else { const link = window.document.createElement('a'); link.href = `/api${value.path}/content`; link.download = copyName; link.click(); }
+      const value = await localActivity.run('file-save', copyName, async () => {
+        const copy = await api<{ file: TaskFileDescriptor; path: string }>(`${path}/copy`, { text, expectedRevision: expected });
+        if (destination) await api(`${copy.path}/export`, { destination });
+        return copy;
+      });
+      if (!destination) { const link = window.document.createElement('a'); link.href = `/api${value.path}/content`; link.download = copyName; link.click(); }
       setFile(value.file); setPath(value.path); setExpected(value.file.sha256);
     }
     setOriginal(text); setEditing(false); setOffset(0); setRevision(value => value + 1);
     setNotice(isProject ? t('文件已保存') : t('已保存为新副本，历史文件保持原样。'));
   });
   const saveAs = () => act(async () => {
-    if (desktop) { const destination = await chooseTaskFileDestination(file.name); if (destination) { await api(`${path}/export`, { destination }); setNotice(t('文件已保存')); } }
+    if (desktop) { const destination = await chooseTaskFileDestination(file.name); if (destination) { await localActivity.run('file-save', file.name, () => api(`${path}/export`, { destination })); setNotice(t('文件已保存')); } }
     else { const a = window.document.createElement('a'); a.href = `/api${path}/content`; a.download = file.name; a.click(); }
   });
   const quote = () => {

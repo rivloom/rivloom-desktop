@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { knowledgeLimits, knowledgePath, knowledgeID, memoryInputSchema, safeKnowledgePath,
   type LocalKnowledgeEntry, type KnowledgeManifest, type KnowledgeFile, type KnowledgeListing,
   type MemoryInput, type MemoryOrganization, type MemoryProvenance } from '../shared/knowledge.ts';
+import { OperationActivityRegistry } from './operation-activity.ts';
 
 export const knowledgeHash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 type Stored = LocalKnowledgeEntry & { files: KnowledgeFile[]; body: string | null; origin: string };
@@ -69,6 +70,7 @@ function atomicText(path: string, text: string) {
 export class KnowledgeStore {
   readonly root: string;
   readonly nodeID: string;
+  readonly activity: OperationActivityRegistry;
   private db: DatabaseSync;
   private refreshes = new Map<string, Promise<void>>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +78,7 @@ export class KnowledgeStore {
   private onChange: () => void;
   constructor(root: string, nodeID: string, onChange = () => {}) {
     this.root = join(root, 'knowledge'); this.nodeID = nodeID; this.onChange = onChange;
+    this.activity = new OperationActivityRegistry(onChange);
     mkdirSync(this.root, { recursive: true }); safeKnowledgeDirectory(this.root);
     this.db = new DatabaseSync(join(this.root, 'library.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL;
@@ -123,19 +126,22 @@ export class KnowledgeStore {
       next: offset + knowledgeLimits.page < all.length ? offset + knowledgeLimits.page : null, generation: current };
   }
   share(id: string, brains: string[], expectedRevision: string, expectedUpdatedAt?: string) {
-    if (!Array.isArray(brains) || brains.length > 32 || new Set(brains).size !== brains.length) throw new Error('knowledge_invalid_sharing');
-    brains.forEach((b) => knowledgeID.parse(b)); const value = this.get(id);
-    if (value.revision !== expectedRevision || expectedUpdatedAt && value.updatedAt !== expectedUpdatedAt) throw new Error('knowledge_revision_conflict');
-    value.sharedBrains = [...brains].sort(); value.updatedAt = new Date(Math.max(Date.now(), Date.parse(value.updatedAt) + 1)).toISOString(); this.persist(value); return this.local(value);
+    return this.activity.trackSync('share', () => {
+      if (!Array.isArray(brains) || brains.length > 32 || new Set(brains).size !== brains.length) throw new Error('knowledge_invalid_sharing');
+      brains.forEach((b) => knowledgeID.parse(b)); const value = this.get(id);
+      if (value.revision !== expectedRevision || expectedUpdatedAt && value.updatedAt !== expectedUpdatedAt) throw new Error('knowledge_revision_conflict');
+      value.sharedBrains = [...brains].sort(); value.updatedAt = new Date(Math.max(Date.now(), Date.parse(value.updatedAt) + 1)).toISOString(); this.persist(value); return this.local(value);
+    });
   }
   shareMany(entries: { id: string; revision: string; updatedAt: string }[], brains: string[]) {
-    if (!entries.length || entries.length > knowledgeLimits.entries || new Set(entries.map((v) => v.id)).size !== entries.length ||
-      brains.length > 32 || new Set(brains).size !== brains.length) throw new Error('knowledge_invalid_sharing');
-    brains.forEach((id) => knowledgeID.parse(id));
-    const values = entries.map((input) => {
-      const value = this.get(input.id);
-      if (value.revision !== input.revision || value.updatedAt !== input.updatedAt) throw new Error('knowledge_revision_conflict');
-      return { ...value, sharedBrains: [...brains].sort(), updatedAt: new Date(Math.max(Date.now(), Date.parse(value.updatedAt) + 1)).toISOString() };
+    return this.activity.trackSync('share', () => {
+      if (!entries.length || entries.length > knowledgeLimits.entries || new Set(entries.map((v) => v.id)).size !== entries.length ||
+        brains.length > 32 || new Set(brains).size !== brains.length) throw new Error('knowledge_invalid_sharing');
+      brains.forEach((id) => knowledgeID.parse(id));
+      const values = entries.map((input) => {
+        const value = this.get(input.id);
+        if (value.revision !== input.revision || value.updatedAt !== input.updatedAt) throw new Error('knowledge_revision_conflict');
+        return { ...value, sharedBrains: [...brains].sort(), updatedAt: new Date(Math.max(Date.now(), Date.parse(value.updatedAt) + 1)).toISOString() };
     });
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -143,6 +149,7 @@ export class KnowledgeStore {
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.onChange(); return values.map((v) => this.local(v));
+    });
   }
   memoryAction(action: MemoryAction): LocalKnowledgeEntry | null {
     const row = this.db.prepare('SELECT hash,body FROM memory_actions WHERE key=?').get(action.key);
@@ -153,28 +160,32 @@ export class KnowledgeStore {
     return value;
   }
   saveMemory(raw: MemoryInput, origin: string, options: { provenance?: MemoryProvenance; action?: MemoryAction } = {}) {
-    const input = memoryInputSchema.parse(raw); const previous = input.id ? this.get(input.id) : null;
-    if (previous && (previous.kind !== 'memory' || previous.revision !== input.expectedRevision)) throw new Error('knowledge_revision_conflict');
-    if (previous && origin.startsWith('task:') && (previous.provenance || previous.withdrawnAt)) throw new Error('knowledge_confirmation_required');
-    const bytes = Buffer.from(input.body, 'utf8');
-    const files = [{ path: 'MEMORY.md', bytes: bytes.length, sha256: knowledgeHash(bytes) }];
-    const provenance = options.provenance || previous?.provenance;
-    const revision = knowledgeHash(JSON.stringify([input.name, input.description, input.category, input.projectID, files,
-      ...(options.provenance ? [{ ...options.provenance, promotedRevision: undefined }] : [])]));
-    const value: Stored = { id: input.id || randomUUID(), nodeID: this.nodeID, kind: 'memory', name: input.name,
-      description: input.description, category: input.category, projectID: input.projectID, body: input.body,
-      files, revision, source: 'wiki', origin, updatedAt: new Date().toISOString(), sharedBrains: previous?.sharedBrains || [], error: null,
-      ...(provenance ? { provenance: options.provenance ? { ...provenance, promotedRevision: revision } : provenance } : {}) };
-    this.persist(value, true, options.action); return this.local(value);
+    return this.activity.trackSync('save', () => {
+      const input = memoryInputSchema.parse(raw); const previous = input.id ? this.get(input.id) : null;
+      if (previous && (previous.kind !== 'memory' || previous.revision !== input.expectedRevision)) throw new Error('knowledge_revision_conflict');
+      if (previous && origin.startsWith('task:') && (previous.provenance || previous.withdrawnAt)) throw new Error('knowledge_confirmation_required');
+      const bytes = Buffer.from(input.body, 'utf8');
+      const files = [{ path: 'MEMORY.md', bytes: bytes.length, sha256: knowledgeHash(bytes) }];
+      const provenance = options.provenance || previous?.provenance;
+      const revision = knowledgeHash(JSON.stringify([input.name, input.description, input.category, input.projectID, files,
+        ...(options.provenance ? [{ ...options.provenance, promotedRevision: undefined }] : [])]));
+      const value: Stored = { id: input.id || randomUUID(), nodeID: this.nodeID, kind: 'memory', name: input.name,
+        description: input.description, category: input.category, projectID: input.projectID, body: input.body,
+        files, revision, source: 'wiki', origin, updatedAt: new Date().toISOString(), sharedBrains: previous?.sharedBrains || [], error: null,
+        ...(provenance ? { provenance: options.provenance ? { ...provenance, promotedRevision: revision } : provenance } : {}) };
+      this.persist(value, true, options.action); return this.local(value);
+    });
   }
   withdrawMemory(id: string, expectedRevision: string, action?: MemoryAction) {
-    const value = this.get(id);
-    if (value.kind !== 'memory' || value.revision !== expectedRevision) throw new Error('knowledge_revision_conflict');
-    if (value.withdrawnAt) throw new Error('knowledge_memory_withdrawn');
-    const at = new Date().toISOString();
-    const next: Stored = { ...value, revision: knowledgeHash(JSON.stringify([value.revision, 'withdrawn', at])),
-      withdrawnAt: at, updatedAt: at, error: 'knowledge_memory_withdrawn' };
-    this.persist(next, true, action); return this.local(next);
+    return this.activity.trackSync('withdraw', () => {
+      const value = this.get(id);
+      if (value.kind !== 'memory' || value.revision !== expectedRevision) throw new Error('knowledge_revision_conflict');
+      if (value.withdrawnAt) throw new Error('knowledge_memory_withdrawn');
+      const at = new Date().toISOString();
+      const next: Stored = { ...value, revision: knowledgeHash(JSON.stringify([value.revision, 'withdrawn', at])),
+        withdrawnAt: at, updatedAt: at, error: 'knowledge_memory_withdrawn' };
+      this.persist(next, true, action); return this.local(next);
+    });
   }
   history(id: string) {
     this.get(id);
@@ -184,29 +195,33 @@ export class KnowledgeStore {
     });
   }
   remove(id: string, revision: string) {
-    const value = this.get(id); if (value.revision !== revision) throw new Error('knowledge_revision_conflict');
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.db.prepare('DELETE FROM entries WHERE id=?').run(id);
-      this.db.prepare('DELETE FROM versions WHERE id=?').run(id);
-      // Keep only a content-free receipt tombstone so an old retry cannot recreate a removed memory.
-      this.db.prepare("UPDATE memory_actions SET body=? WHERE json_extract(body,'$.id')=?").run('{"removed":true}', id);
-      this.db.exec('COMMIT');
-    }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
-    this.onChange(); this.scheduleOrganization();
+    return this.activity.trackSync('remove', () => {
+      const value = this.get(id); if (value.revision !== revision) throw new Error('knowledge_revision_conflict');
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.prepare('DELETE FROM entries WHERE id=?').run(id);
+        this.db.prepare('DELETE FROM versions WHERE id=?').run(id);
+        // Keep only a content-free receipt tombstone so an old retry cannot recreate a removed memory.
+        this.db.prepare("UPDATE memory_actions SET body=? WHERE json_extract(body,'$.id')=?").run('{"removed":true}', id);
+        this.db.exec('COMMIT');
+      }
+      catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      this.onChange(); this.scheduleOrganization();
+    });
   }
   async registerSkill(directory: string, projectID: string | null) {
-    const source = safeKnowledgeDirectory(directory);
-    if (projectID !== null) knowledgeID.parse(projectID);
-    const existing = this.all().find((v) => v.kind === 'skill' && v.source.toLowerCase() === source.toLowerCase());
-    if (existing) { await this.refresh(existing.id); return this.local(this.get(existing.id)); }
-    const files = await this.scan(source);
-    const header = skillHeader((await readKnowledgeFile(source, 'SKILL.md')).toString('utf8'), 'Skill');
-    const value: Stored = { id: randomUUID(), nodeID: this.nodeID, kind: 'skill', ...header, category: 'Skills',
-      projectID, source, origin: 'registered-folder', files, body: null, sharedBrains: [], error: null,
-      updatedAt: new Date().toISOString(), revision: knowledgeHash(JSON.stringify([header, files])) };
-    this.persist(value); return this.local(value);
+    return this.activity.track('register', async () => {
+      const source = safeKnowledgeDirectory(directory);
+      if (projectID !== null) knowledgeID.parse(projectID);
+      const existing = this.all().find((v) => v.kind === 'skill' && v.source.toLowerCase() === source.toLowerCase());
+      if (existing) { await this.refresh(existing.id); return this.local(this.get(existing.id)); }
+      const files = await this.scan(source);
+      const header = skillHeader((await readKnowledgeFile(source, 'SKILL.md')).toString('utf8'), 'Skill');
+      const value: Stored = { id: randomUUID(), nodeID: this.nodeID, kind: 'skill', ...header, category: 'Skills',
+        projectID, source, origin: 'registered-folder', files, body: null, sharedBrains: [], error: null,
+        updatedAt: new Date().toISOString(), revision: knowledgeHash(JSON.stringify([header, files])) };
+      this.persist(value); return this.local(value);
+    });
   }
   private async scan(root: string) {
     const files: KnowledgeFile[] = []; let bytes = 0;
@@ -246,7 +261,17 @@ export class KnowledgeStore {
     })().finally(() => this.refreshes.delete(id));
     this.refreshes.set(id, operation); return operation;
   }
-  async refreshAll() { for (const value of this.all()) if (value.kind === 'skill') await this.refresh(value.id).catch(() => undefined); }
+  async refreshAll() {
+    const operation = this.activity.begin('refresh');
+    try {
+      let succeeded = 0; let failed = 0;
+      for (const value of this.all()) if (value.kind === 'skill') {
+        try { await this.refresh(value.id); succeeded++; } catch { failed++; }
+      }
+      // Keep the API's best-effort refresh behavior, while reporting its actual result.
+      operation.finish(failed ? { status: succeeded ? 'partial' : 'failed', error: 'knowledge_source_unavailable' } : { status: 'completed' });
+    } catch (error) { operation.finish({ status: 'failed', error }); throw error; }
+  }
   manifest(id: string, brainID?: string): KnowledgeManifest {
     const value = this.get(id);
     if (brainID && !value.sharedBrains.includes(brainID)) throw new Error('knowledge_not_shared');
@@ -285,9 +310,11 @@ export class KnowledgeStore {
     return { body, revision: knowledgeHash(body), path };
   }
   saveRules(body: string, expectedRevision: string, directory?: string) {
-    if (typeof body !== 'string' || body.length > knowledgeLimits.rulesChars || body.includes('\0')) throw new Error('knowledge_rules_invalid');
-    const current = this.rules(directory); if (current.revision !== expectedRevision) throw new Error('knowledge_revision_conflict');
-    atomicText(current.path, body); this.onChange(); return this.rules(directory);
+    return this.activity.trackSync('rules', () => {
+      if (typeof body !== 'string' || body.length > knowledgeLimits.rulesChars || body.includes('\0')) throw new Error('knowledge_rules_invalid');
+      const current = this.rules(directory); if (current.revision !== expectedRevision) throw new Error('knowledge_revision_conflict');
+      atomicText(current.path, body); this.onChange(); return this.rules(directory);
+    });
   }
   scheduleOrganization() {
     if (this.timer || this.closed) return;
@@ -298,21 +325,23 @@ export class KnowledgeStore {
     const row = this.db.prepare("SELECT body FROM settings WHERE key='organization'").get(); return row ? JSON.parse(String(row.body)) : null;
   }
   organize(): MemoryOrganization {
-    const entries = this.all().filter((v) => v.kind === 'memory'); const categories = new Map<string, Stored[]>();
-    const duplicates = new Map<string, string[]>();
-    for (const entry of entries) {
-      const list = categories.get(entry.category) || []; list.push(entry); categories.set(entry.category, list);
-      const key = knowledgeHash(JSON.stringify([entry.projectID, entry.body?.trim()]));
-      const group = duplicates.get(key) || []; group.push(entry.id); duplicates.set(key, group);
-    }
-    // Rebuild navigation only. Originals and all revisions remain in SQLite; no body is silently merged/deleted.
-    const lines = ['# Wiki', '', ...[...categories].sort(([a], [b]) => a.localeCompare(b)).flatMap(([category, values]) =>
-      [`## ${category.replace(/[\r\n]/g, ' ')}`, ...values.map((v) => `- ${v.name.replace(/[\r\n]/g, ' ')} (${v.id}) — ${v.description.replace(/[\r\n]/g, ' ')}`), ''])];
-    atomicText(join(this.root, 'wiki', 'INDEX.md'), lines.join('\n'));
-    const report = { at: new Date().toISOString(), entries: entries.length, categories: categories.size,
-      duplicates: [...duplicates.values()].filter((v) => v.length > 1) };
-    this.db.prepare("INSERT INTO settings VALUES ('organization',?) ON CONFLICT(key) DO UPDATE SET body=excluded.body").run(JSON.stringify(report));
-    this.onChange(); return report;
+    return this.activity.trackSync('organize', () => {
+      const entries = this.all().filter((v) => v.kind === 'memory'); const categories = new Map<string, Stored[]>();
+      const duplicates = new Map<string, string[]>();
+      for (const entry of entries) {
+        const list = categories.get(entry.category) || []; list.push(entry); categories.set(entry.category, list);
+        const key = knowledgeHash(JSON.stringify([entry.projectID, entry.body?.trim()]));
+        const group = duplicates.get(key) || []; group.push(entry.id); duplicates.set(key, group);
+      }
+      // Rebuild navigation only. Originals and all revisions remain in SQLite; no body is silently merged/deleted.
+      const lines = ['# Wiki', '', ...[...categories].sort(([a], [b]) => a.localeCompare(b)).flatMap(([category, values]) =>
+        [`## ${category.replace(/[\r\n]/g, ' ')}`, ...values.map((v) => `- ${v.name.replace(/[\r\n]/g, ' ')} (${v.id}) — ${v.description.replace(/[\r\n]/g, ' ')}`), ''])];
+      atomicText(join(this.root, 'wiki', 'INDEX.md'), lines.join('\n'));
+      const report = { at: new Date().toISOString(), entries: entries.length, categories: categories.size,
+        duplicates: [...duplicates.values()].filter((v) => v.length > 1) };
+      this.db.prepare("INSERT INTO settings VALUES ('organization',?) ON CONFLICT(key) DO UPDATE SET body=excluded.body").run(JSON.stringify(report));
+      this.onChange(); return report;
+    });
   }
   close() { this.closed = true; if (this.timer) clearTimeout(this.timer); this.db.close(); }
 }

@@ -9,6 +9,7 @@ import { t } from '../shared/i18n';
 import { Modal } from './ui';
 import { FilePreview } from './file-preview';
 import { officeMessage } from './office-messages';
+import { localActivity } from './local-activity';
 import './project-files.css';
 export function ProjectFilesView({ projects, initialProjectID, close }: { projects: Project[]; initialProjectID?: string; close: () => void }) {
   const [projectID, setProjectID] = useState(projects.some(project => project.id === initialProjectID) ? initialProjectID! : projects[0]?.id || ''), [path, setPath] = useState('');
@@ -24,7 +25,7 @@ export function ProjectFilesView({ projects, initialProjectID, close }: { projec
     const location = JSON.stringify([projectID, path, search]);
     if (listingLocation.current !== location) setListing(null);
     listingLocation.current = location;
-    void api<ProjectFileListing>(`/projects/${projectID}/files?${new URLSearchParams({ path, search })}`).then(value => { if (alive) setListing(value); })
+    void localActivity.run('file-read', path || t('项目根目录'), () => api<ProjectFileListing>(`/projects/${projectID}/files?${new URLSearchParams({ path, search })}`)).then(value => { if (alive) setListing(value); })
       .catch(error => { if (alive) setError(officeMessage(error.message)); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; selectionRequest.current += 1; };
   }, [projectID, path, search, revision]);
@@ -32,7 +33,7 @@ export function ProjectFilesView({ projects, initialProjectID, close }: { projec
     if (entry.directory) { setPath(entry.path); setQuery(''); setSearch(''); return; }
     const filePath = `/projects/${projectID}/file/${encodeURIComponent(entry.path)}`;
     const request = ++selectionRequest.current; setOpening(entry.path);
-    try { setError(''); const file = await api<Pick<TaskFileDescriptor, 'name' | 'bytes'>>(filePath); if (request === selectionRequest.current) setSelected({ file, path: filePath }); }
+    try { setError(''); const file = await localActivity.run('file-read', entry.name, () => api<Pick<TaskFileDescriptor, 'name' | 'bytes'>>(filePath)); if (request === selectionRequest.current) setSelected({ file, path: filePath }); }
     catch (error) { if (request === selectionRequest.current) setError(officeMessage((error as Error).message)); }
     finally { if (request === selectionRequest.current) setOpening(''); }
   }

@@ -10,12 +10,14 @@ export type CreatedNodeTaskResponse = NodeNetwork & { createdTaskID: string };
 export class ApiError extends Error {
   readonly status: number;
   readonly queueConfirmation?: QueueConfirmation;
+  readonly code?: string;
 
-  constructor(message: string, status: number, queueConfirmation?: QueueConfirmation) {
+  constructor(message: string, status: number, queueConfirmation?: QueueConfirmation, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.queueConfirmation = queueConfirmation;
+    this.code = typeof code === 'string' && code.length <= 100 && /^office_[a-z_]+$/.test(code) ? code : undefined;
   }
 }
 
@@ -47,6 +49,7 @@ export async function api<T>(
         response.status === 409 && validQueueConfirmation(data.queueConfirmation)
           ? data.queueConfirmation
           : undefined,
+        data.error,
       );
     return data;
   } catch (error) {

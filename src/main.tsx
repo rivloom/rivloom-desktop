@@ -20,6 +20,7 @@ import './conversation-workspace.css';
 import './workspace-settings.css';
 import './chat-refinement.css';
 import './ui-polish.css';
+import './node-activity.css';
 function Auth({ onLogin }: { onLogin: () => void }) {
   const [setup, setSetup] = useState(false);
   const [join, setJoin] = useState(false);

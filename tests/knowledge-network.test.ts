@@ -64,6 +64,35 @@ test('knowledge relay rejects non-Brain readers, cross-Brain access, revoked tru
     await assert.rejects(f.networks[1].handle(f.ids[0], input), /not_authorized/);
   } finally { f.close(); }
 });
+test('Node activity observes remote reads throughout transfer and retains partial directories and concurrent failures', async () => {
+  const f = fixture();
+  try {
+    const entry = f.stores[2].saveMemory({ name: 'Shared', description: '', category: 'Work', body: 'private body', projectID: null }, 'user');
+    f.stores[2].share(entry.id, [f.brainID], entry.revision);
+    const ref = { nodeID: f.ids[2], brainID: f.brainID, id: entry.id };
+    const manifest = await f.networks[0].manifest(ref);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const request = f.transports[0].request;
+    f.transports[0].request = async (...args) => {
+      if ((args[2] as { action?: string }).action === 'chunk') await gate;
+      return request(...args);
+    };
+    const reading = f.networks[0].file(ref, manifest, 'MEMORY.md');
+    assert.equal(f.stores[0].activity.snapshot().find((item) => item.action === 'read' && item.status === 'running')?.activeCount, 1);
+    await assert.rejects(f.networks[0].file(ref, manifest, 'missing.md'), /file_not_found/);
+    assert(f.stores[0].activity.snapshot().some((item) => item.action === 'read' && item.status === 'failed'));
+    assert(f.stores[0].activity.snapshot().some((item) => item.action === 'read' && item.status === 'running'));
+    release(); assert.equal((await reading).toString(), 'private body');
+    assert(!f.stores[0].activity.snapshot().some((item) => item.status === 'running'));
+    assert(f.stores[2].activity.snapshot().some((item) => item.action === 'read' && item.status === 'completed'));
+    f.peers[2].online = false;
+    const search = await f.networks[0].search({ brainID: f.brainID });
+    assert.equal(search.unavailable.length, 1);
+    assert(f.stores[0].activity.snapshot().some((item) => item.action === 'search' && item.status === 'partial'));
+    assert(!JSON.stringify(f.stores[0].activity.snapshot()).includes('private body'));
+  } finally { f.close(); }
+});
 test('relay rejects tampered chunks and revocation while an awaited read is returning', async () => {
   const f = fixture();
   try {
