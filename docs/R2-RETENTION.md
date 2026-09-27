@@ -1,6 +1,8 @@
 # R2 发行文件保留与清理
 
-**最近执行（2026-09-26，Windows/Linux 0.1.22）：** 发行源码 [9b3f07f759b278bbed8dbcd910ea12889188bb0a](https://github.com/rivloom/rivloom-desktop/commit/9b3f07f759b278bbed8dbcd910ea12889188bb0a)。同提交 CI、正式下载与原公钥更新签名、官网实际页面及当前引用核对完成后，逐项审计 81 个对象：保留 81、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 按两平台各自最近三版、近 30 天、当前引用取并集，未知信息保留；未启用自动清理。见[本次逐对象审计](releases/0.1.22-r2-retention.md)。
+**最近执行（2026-09-27，Windows/Linux 0.1.23）：** 发行源码 [e51726a6b19e3c701c0094b0f336387fb17e455d](https://github.com/rivloom/rivloom-desktop/commit/e51726a6b19e3c701c0094b0f336387fb17e455d)。同提交 CI、独立公开完整下载、Windows 原公钥更新签名及官网实际部署完成后，逐项审计 86 个对象：保留 86、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 按两平台各自最近三版、近 30 天和当前引用取并集，未知信息保留；未启用自动清理。见[本次逐对象审计](releases/0.1.23-r2-retention.md)。
+
+**历史执行（2026-09-26，Windows/Linux 0.1.22）：** 发行源码 [9b3f07f759b278bbed8dbcd910ea12889188bb0a](https://github.com/rivloom/rivloom-desktop/commit/9b3f07f759b278bbed8dbcd910ea12889188bb0a)。同提交 CI、正式下载与原公钥更新签名、官网实际页面及当前引用核对完成后，逐项审计 81 个对象：保留 81、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 按两平台各自最近三版、近 30 天、当前引用取并集，未知信息保留；未启用自动清理。见[本次逐对象审计](releases/0.1.22-r2-retention.md)。
 
 以下为历史检查记录。
 

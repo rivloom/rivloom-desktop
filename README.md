@@ -8,11 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-**0.1.23 发行准备中。** 本版加入办公文件预览、可随时打开的模型连接配置，并完善待办与会话往返及整体界面交互。功能和范围见[本版说明](docs/releases/0.1.23.md)；下方0.1.22仍是上一版已完成的发行记录，新包以同提交验收和官网实际下载为准。
+当前 Windows / Linux x64 正式版为 **0.1.23**。本版增加 PDF、Word（DOCX）、Excel（XLSX）预览、可随时打开的模型连接配置，完善待办与会话往返及整体界面交互。GitHub、官网和 Windows 签名更新渠道已同步，详见[0.1.23 更新说明](docs/releases/0.1.23.md)及[发行验收与范围](docs/releases/0.1.23-verification.md)。
 
-当前 Windows / Linux x64 正式版为 **0.1.22**，包含聊天与侧栏视觉、动效、队列栏自动收起、更多菜单焦点及实际版本号布局修复。GitHub、官网和 Windows 签名更新渠道已同步，详见[0.1.22 更新说明](docs/releases/0.1.22.md)及[发行验收与范围](docs/releases/0.1.22-verification.md)。
+核心固定 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0。同源码 CI、Windows 隔离安装、双平台公开完整下载、官网及 R2 收尾已完成（保留 86、暂缓 0、可删除 0、删除 0 个）。原 updater 公钥验签通过，Authenticode 发布者签名尚未配置。办公合成任务及界面检查不替代真实内网模型的长任务质量验收，具体边界见发行验收。
 
-核心固定 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0。同源码 CI、Windows 隔离安装与双平台公开下载、官网及 R2 收尾已完成（保留 81、暂缓 0、可删除 0、删除 0 个）；更新渠道签名已由原 updater 公钥核验，Authenticode 发布者签名尚未配置。本轮未新增原生 WebView2 视觉、真实模型或完整跨版本升级矩阵验收；官网 CUA 不可用，未新增官网截图或浏览器视觉验收。
+**历史 0.1.22 发行：** 聊天与侧栏视觉、动效、队列栏自动收起、菜单焦点和版本号布局修复，见[版本说明](docs/releases/0.1.22.md)与[验收记录](docs/releases/0.1.22-verification.md)。
 
 **历史 0.1.21 发行：** Windows / Linux x64 0.1.21 包含聊天与设置页优化、独立引用卡片、文件拖入及输入框左右附件/设备入口。GitHub、官网和 Windows 签名更新渠道已同步，详见 [0.1.21 更新说明](docs/releases/0.1.21.md)及[发行验收与范围](docs/releases/0.1.21-verification.md)。
 
@@ -22,7 +22,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.22 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.22.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南提供下载、校验值和 curl / wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；Windows 与 Linux 正式包使用 **OpenCode 1.18.31-rivloom.9b07cf442a7e**，随包 Node.js 为 **24.19.0**。
+**Linux x86_64 命令行执行节点 0.1.23 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收桌面端任务。原生 CI、公开完整下载及 curl / wget 验收已通过，文件见 [Linux 发行说明](docs/releases/linux-0.1.23.md)；[官网下载页](https://rivloom.com/download/) 及配套中英文指南提供下载、校验值和 curl / wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。使用与运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入；Windows 与 Linux 正式包使用 **OpenCode 1.18.31-rivloom.9b07cf442a7e**，随包 Node.js 为 **24.19.0**。
 
 ## 从源码运行
 
