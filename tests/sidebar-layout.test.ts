@@ -15,10 +15,10 @@ import { directoryDisplayName } from '../shared/directory-aliases.ts';
 
 test('sidebar defaults preserve desktop, narrow-window and unpaired layouts', () => {
   for (const [width, paired, history, network] of [
-    [1280, true, 252, 280],
+    [1280, true, 340, 280],
     [960, true, 218, 244],
     [860, true, 200, 205],
-    [1280, false, 252, 0],
+    [1280, false, 340, 0],
     [860, false, 226, 0],
   ] as const) {
     const actual = sidebarLayout(width, paired, defaultSidebarWidths());

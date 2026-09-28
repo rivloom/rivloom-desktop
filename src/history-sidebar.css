@@ -1,0 +1,147 @@
+/* The approved graphite history panel. Tokens stay local, including its portal menus. */
+.history-graphite {
+  --font-ui: 'Noto Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
+  --ink: #f0f1f4;
+  --text: #e4e5e9;
+  --muted: #a0a3ae;
+  --surface: #272930;
+  --surface-soft: #30333b;
+  --sidebar: #272930;
+  --line: #3a3d46;
+  --line-strong: #555b69;
+  --hover-wash: #2e3038;
+  --press-wash: #3b3f49;
+  --accent: #b3c4e8;
+  --accent-ink: #d0dcf3;
+  --accent-soft: #353840;
+  --focus: #b3c4e8;
+  --focus-ring: #b3c4e824;
+  --success: #9bcab7;
+  --warning: #dfbc85;
+  --danger: #eba6ab;
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  color: var(--text);
+}
+.conversation-sidebar.history-graphite {
+  padding: 12px 12px 8px;
+  background: var(--surface);
+  border-radius: 13px;
+  box-shadow: inset 0 0 0 1px #3b3e46, 0 4px 18px #171a2314;
+}
+.history-graphite .node-identity-button { margin-bottom: 6px; border-radius: 7px; }
+.history-graphite .node-identity-button strong { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.history-graphite .node-avatar { background: var(--accent-soft); border-color: var(--line); color: var(--accent); }
+.history-graphite .new-conversation {
+  min-height: 32px;
+  padding: 6px 10px;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+.history-graphite .new-conversation:hover { background: var(--press-wash); border-color: var(--line-strong); box-shadow: none; transform: none; }
+.history-graphite .new-conversation:hover > svg { transform: none; }
+.history-graphite .new-conversation kbd { color: var(--muted); }
+.history-graphite .workspace-command-entry { padding: 6px 10px; font-size: 12px; color: var(--muted); }
+.history-graphite .conversation-searchbar { margin: 6px 0 10px; }
+.history-graphite .conversation-search { height: 30px; background: #22242b; border: 1px solid var(--line); border-radius: 6px; }
+.history-graphite .conversation-search:focus-within { background: #22242b; border-color: var(--focus); box-shadow: 0 0 0 2px var(--focus-ring); }
+.history-graphite .conversation-search input { color: var(--text); }
+.history-graphite .history-filter-toggle { width: 30px; height: 30px; background: transparent; border-radius: 6px; }
+.history-graphite .history-filter-toggle:is(:hover, .active, [aria-expanded='true']) { background: var(--accent-soft); color: var(--ink); border-color: var(--line); }
+.history-graphite .history-filter-count { color: var(--surface); }
+.history-graphite .history-filter-popover { box-shadow: 0 8px 24px #11121855; }
+.history-graphite .history-draft-tools { gap: 4px; padding: 0 2px 7px; }
+.history-graphite .history-draft-tools button { padding: 3px 7px; }
+.history-graphite .conversation-history { padding-bottom: 8px; scrollbar-gutter: auto; }
+.history-graphite .history-directory { margin-bottom: 10px; }
+.history-graphite .history-directory-heading { position: relative; margin: 0; padding-right: 26px; }
+.history-graphite .history-directory-toggle { gap: 6px; min-height: 26px; padding: 3px 8px; letter-spacing: 0; font-weight: 500; }
+.history-graphite .history-directory-toggle > span { font-size: 11px; font-weight: 500; }
+.history-graphite .history-directory-toggle > small { font-size: 10px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.history-graphite .history-directory-toggle > svg:first-child { order: 3; width: 11px; }
+.history-graphite .history-directory-toggle > svg:nth-child(2) { display: none; }
+.history-graphite .history-directory-heading > .context-more { position: absolute; right: 0; width: 24px; height: 24px; }
+.history-graphite .history-directory-items { margin: 0; padding: 0; border: 0; animation: none; }
+.history-graphite .history-row { display: block; margin-bottom: 1px; border-radius: 5px; animation: none; }
+.history-graphite .conversation-item {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  margin: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+.history-graphite .conversation-item:hover,
+.history-graphite .conversation-item.incoming:hover:not(.selected) { background: var(--hover-wash); }
+.history-graphite .conversation-item.selected { background: var(--accent-soft); color: var(--ink); box-shadow: none; }
+.history-graphite .conversation-item.selected::before { content: none; }
+.history-graphite .history-item-content { display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; }
+.history-graphite .history-item-title { min-height: 20px; gap: 5px; padding: 0; }
+.history-graphite .conversation-item strong { font-size: 14px; line-height: 22px; font-weight: 400; color: inherit; }
+.history-graphite .conversation-item.selected strong { font-weight: 500; color: var(--ink); }
+.history-graphite .conversation-item-origin { width: 14px; height: 18px; flex-basis: 14px; }
+.history-graphite .conversation-item-origin .node-avatar { width: 14px; height: 14px; color: var(--muted); background: transparent; }
+.history-graphite .conversation-item-origin .node-avatar > svg { width: 13px; height: 13px; }
+.history-graphite :is(.conversation-pinned, .history-draft-marker) { flex: 0 0 11px; color: var(--muted); }
+.history-graphite .history-item-meta { display: flex; justify-content: flex-end; align-items: center; min-width: 0; font-size: 11px; line-height: 20px; color: var(--muted); }
+.history-graphite .history-item-meta time { font-family: 'Segoe UI', sans-serif; font-size: 11px; font-variant-numeric: tabular-nums; }
+.history-graphite .conversation-item .conversation-item-state { display: block; min-width: 0; max-width: 100%; color: var(--muted); font-weight: 400; line-height: 20px; }
+.history-graphite .conversation-item-state small { display: block; font-size: 11px; }
+.history-graphite .conversation-item-state.is-running { color: var(--accent); }
+.history-graphite .conversation-item-state.is-running::before { content: none; }
+.history-graphite .conversation-item-state.attention { color: #dfc49e; }
+.history-graphite .history-draft-badge { border: 0; padding: 0; color: var(--muted); background: transparent; font-size: 11px; }
+/* The action occupies the metadata column; the title never changes width on hover. */
+.history-graphite .history-row > .context-more { top: 3px; right: 8px; width: 34px; height: 24px; color: var(--text); background: var(--hover-wash); border-radius: 5px; }
+.history-graphite .history-row:has(.selected) > .context-more { background: var(--accent-soft); }
+.history-graphite .history-row > .context-more:hover { background: var(--press-wash); }
+.history-graphite .history-row:is(:hover, :focus-within, :has(.context-more[aria-expanded='true'])) .history-item-meta { visibility: hidden; }
+.history-graphite :is(.history-row, .history-directory-heading):focus-within > .context-more { opacity: 1; pointer-events: auto; }
+.history-graphite .history-row:hover .history-item-title,
+.history-graphite .history-row:has(:focus-visible) .history-item-title,
+.history-graphite .history-row:has(.context-more[aria-expanded='true']) .history-item-title { padding-right: 0; }
+.history-graphite .history-search-excerpt { padding: 2px 10px 8px; color: var(--muted); }
+.history-graphite .search-highlight,
+.history-graphite .conversation-item.selected .search-highlight { color: #f0debc; background: #675339; }
+.history-graphite :is(.conversation-item, .history-directory-toggle, .context-more):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.history-graphite .conversation-settings { border-color: var(--line); }
+.history-graphite .conversation-settings :is(.activity-utility, .utility-nav-entry) { color: var(--muted); }
+.history-graphite .conversation-settings :is(.activity-utility.active, button[data-active='true'], button.active) { background: var(--accent-soft); color: var(--accent); }
+.history-graphite .conversation-settings .attention-count { background: var(--accent-soft); color: var(--text); }
+.history-graphite .sidebar-signature { border-color: var(--line); color: var(--muted); }
+.history-graphite .sidebar-signature .rivloom-wordmark { filter: grayscale(1) brightness(0) invert(1); opacity: .6; }
+.context-menu.history-graphite { background: var(--surface-soft); border-color: var(--line-strong); color: var(--text); box-shadow: 0 8px 24px #11121855; }
+.context-menu.history-graphite > button:is(:hover, :focus-visible) { background: var(--press-wash); }
+.context-menu.history-graphite > button.danger { color: var(--danger); }
+.history-title-hint { position: fixed; z-index: 490; width: max-content; max-width: min(320px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); box-shadow: 0 5px 20px #11121833; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+html[lang='en'] .history-graphite .history-item-content { grid-template-columns: minmax(0, 1fr) 70px; }
+@container history-sidebar (max-width: 230px) {
+  .history-graphite .history-item-content { gap: 5px; grid-template-columns: minmax(0, 1fr) 48px; }
+  html[lang='en'] .history-graphite .history-item-content { grid-template-columns: minmax(0, 1fr) 60px; }
+  .history-graphite .conversation-item { padding-inline: 7px; }
+}
+@media (max-width: 900px) {
+  .conversation-sidebar.history-graphite { border-radius: 0; box-shadow: none; }
+}
+@media (pointer: coarse) {
+  .history-graphite .conversation-item { min-height: 44px; padding-right: 44px; }
+  .history-graphite .history-row > .context-more { top: 0; right: 0; width: 42px; height: 44px; opacity: 1; pointer-events: auto; background: transparent; }
+  .history-graphite .history-row:is(:hover, :focus-within, :has(.context-more[aria-expanded='true'])) .history-item-meta { visibility: visible; }
+  .history-graphite .history-directory-toggle { min-height: 44px; }
+  .history-graphite .history-directory-heading { padding-right: 42px; }
+  .history-graphite .history-directory-heading > .context-more { width: 42px; height: 44px; }
+  .history-graphite .conversation-search, .history-graphite .history-filter-toggle { min-height: 44px; }
+  .history-graphite .history-filter-toggle { width: 44px; }
+  .history-graphite .conversation-search input { font-size: 16px; }
+}

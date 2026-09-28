@@ -61,7 +61,8 @@ export function ContextMenu({ menu, label, actions }: { menu: ReturnType<typeof 
     };
   }, [anchor, close]);
   if (!anchor) return null;
-  return createPortal(<div ref={ref} id={id} role="menu" aria-label={label} tabIndex={-1} className="context-menu"
+  return createPortal(<div ref={ref} id={id} role="menu" aria-label={label} tabIndex={-1}
+    className={`context-menu${anchor.target.closest('.history-graphite') ? ' history-graphite' : ''}`}
     style={{ left: anchor.x, top: anchor.y }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
     onKeyDown={(event) => {
       const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([aria-disabled="true"])') || [])];

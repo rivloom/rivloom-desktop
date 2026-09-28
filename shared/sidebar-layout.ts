@@ -12,7 +12,7 @@ export function sidebarLayout(width: number, hasNetwork: boolean, saved: Sidebar
   const availableWidth = Math.max(741, Math.floor(width));
   const minimumCenter = availableWidth > 1180 ? 340 : availableWidth > 900 ? 300 : 280;
   const defaultHistory =
-    availableWidth > 1180 ? 252 : hasNetwork ? (availableWidth > 900 ? 218 : 200) : 226;
+    availableWidth > 1180 ? 340 : hasNetwork ? (availableWidth > 900 ? 218 : 200) : 226;
   const defaultNetwork = availableWidth > 1180 ? 280 : availableWidth > 900 ? 244 : 205;
   let history = clamp(
     saved.history ?? defaultHistory,

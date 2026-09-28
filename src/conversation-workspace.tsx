@@ -41,6 +41,7 @@ import { conversationDirectory, groupConversationHistory, historyCanTrash } from
 import { directoryDisplayName } from '../shared/directory-aliases';
 import { DirectoryAliasEditor } from './directory-alias-editor';
 import { HistoryDirectoryHeading } from './history-directory-heading';
+import { useHistoryTitleHint } from './history-title-hint';
 import { ConversationRenameEditor } from './conversation-rename-editor';
 import { ContextMenu, useContextMenu } from './context-menu';
 import { PairedMachines } from './paired-machines';
@@ -413,8 +414,15 @@ const HistoryRow = memo(function HistoryRow({
   origin: ConversationOrigin['kind'];
 }) {
   const menu = useContextMenu();
+  const titleHint = useHistoryTitleHint(item.title);
   const state = conversationState(item);
   const group = conversationStatusGroup(item);
+  const updated = new Date(item.updatedAt);
+  const today = new Date();
+  const validDate = Number.isFinite(updated.getTime());
+  const updatedLabel = !validDate ? '' : updated.toDateString() === today.toDateString()
+    ? updated.toLocaleTimeString(language(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    : `${String(updated.getMonth() + 1).padStart(2, '0')}-${String(updated.getDate()).padStart(2, '0')}`;
   const originLabel = origin === 'delegated' ? t('他人委派') : origin === 'own' ? t('自己发起') : t('来源待确认');
   const label = [selected ? t('当前') : '', item.title, originLabel, source, state, item.pinned ? t('已置顶') : '', hasDraft ? t('草稿') : ''].filter(Boolean).join(' · ');
   const excerpt = matches && contentSearchMatch(matches);
@@ -425,32 +433,29 @@ const HistoryRow = memo(function HistoryRow({
       aria-label={label}
       className={`conversation-item ${origin === 'delegated' ? 'incoming' : origin} ${selected ? 'selected' : ''}`}
       onClick={() => open(item)}
-      title={label}
+      {...titleHint.trigger}
     >
-      <span className="conversation-item-origin" aria-hidden="true">
-        {origin === 'delegated' ? <NodeAvatar small icon={icon} /> : <MessageSquare size={15} />}
-      </span>
       <span className="history-item-content">
       <span className="history-item-title">
-      <strong><SearchText text={item.title} query={searchQuery} /></strong>
+      {origin !== 'own' && <span className="conversation-item-origin" title={[originLabel, source].filter(Boolean).join(' · ')} aria-hidden="true">
+        {origin === 'delegated' ? <NodeAvatar small icon={icon} /> : <MessageSquare size={13} />}
+      </span>}
+      <strong ref={titleHint.titleRef}><SearchText text={item.title} query={searchQuery} /></strong>
       {item.pinned && <Pin className="conversation-pinned" size={11} aria-label={t('已置顶')} />}
-      {group !== 'completed' && (
-        <span
-          className={`conversation-item-state ${group} ${conversationIsRunning(item) ? 'is-running' : ''}`}
-          aria-hidden="true"
-        >
-          <small>{state}</small>
-        </span>
-      )}
+      {hasDraft && group !== 'completed' && <Pencil className="history-draft-marker" size={11} aria-label={t('草稿')} />}
       </span>
-      {hasDraft && <span className="history-draft-badge">{t('草稿')}</span>}
+      <span className="history-item-meta" aria-hidden="true">
+        {group !== 'completed' ? <span className={`conversation-item-state ${group} ${conversationIsRunning(item) ? 'is-running' : ''}`} title={state}>
+          <small>{state}</small>
+        </span> : hasDraft ? <span className="history-draft-badge">{t('草稿')}</span>
+          : <time dateTime={validDate ? item.updatedAt : undefined} title={validDate ? dateLabel(item.updatedAt) : undefined}>{updatedLabel}</time>}
+      </span>
       </span>
     </button>
-    <button type="button" className="context-more icon-button" aria-label={t('会话操作：{{title}}', { title: item.title })} title={t('更多操作')} {...menu.trigger}><MoreHorizontal size={15} /></button>
-    <button type="button" className="history-delete icon-button" disabled={!canRemove}
-      aria-label={t('删除会话：{{title}}', { title: item.title })}
-      title={canRemove ? t('移入回收站') : t('请先停止会话并等待处理完成')}
-      onClick={() => remove(item)}><Trash2 size={14} /></button>
+    <button type="button" className="context-more icon-button" aria-label={t('会话操作：{{title}}', { title: item.title })}
+      title={[t('更多操作'), state, source, validDate ? dateLabel(item.updatedAt) : ''].filter(Boolean).join('\n')}
+      {...menu.trigger}><MoreHorizontal size={15} /></button>
+    {titleHint.hint}
     {excerpt && <button type="button" className="history-search-excerpt" onClick={() => open(item)}
       aria-label={t('查看 {{title}} 中的匹配内容', { title: item.title })}>
       <small>{searchMatchLabel(excerpt)} · {t('{{count}} 个匹配片段', { count: matches!.length })}</small>
@@ -1664,7 +1669,7 @@ export function ConversationWorkspace({
       <aside
         ref={sidebarRef}
         id="conversation-history-sidebar"
-        className="conversation-sidebar"
+        className="conversation-sidebar history-graphite"
         aria-label={t('历史会话')}
         role={narrowSidebar && mobileSidebar ? 'dialog' : undefined}
         aria-modal={narrowSidebar && mobileSidebar ? true : undefined}

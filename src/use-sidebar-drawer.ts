@@ -24,7 +24,8 @@ export function useSidebarDrawer(open: boolean, close: () => void, sidebar: RefO
         (panel.querySelector<HTMLElement>('[aria-current="page"]') || controls()[0])?.focus({ preventScroll: true });
     });
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [role="menu"]') || document.activeElement?.closest('[role="dialog"]')) return;
+      const activeDialog = document.activeElement?.closest('[role="dialog"]');
+      if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], [role="menu"]') || activeDialog && activeDialog !== panel) return;
       if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); return; }
       if (event.key !== 'Tab') return;
       const items = controls(), first = items[0], last = items.at(-1);
