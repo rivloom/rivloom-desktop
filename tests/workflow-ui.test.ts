@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Workflow, WorkflowStep, WorkflowAttempt } from '../shared/workflows.ts';
-import type { Bootstrap, Task } from '../shared/types.ts';
-import { workflowGraph, layoutWorkflowGraph, workflowStepLabel } from '../src/workflow-graph-data.ts';
+import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types.ts';
+import { workflowGraph, workflowGraphNodeID, layoutWorkflowGraph, workflowStepLabel } from '../src/workflow-graph-data.ts';
 import { workflowResults } from '../src/workflow-results.ts';
 import { conversations } from '../src/conversations.ts';
 import { collectAttention } from '../shared/task-attention.ts';
 import { createWorkflowDraft, updateConversationDraft, prepareConversationRequest, clearSubmittedDraft, createdConversationKey } from '../src/conversation-drafts.ts';
+import { conversationStopTarget, conversationStopState } from '../src/conversation-stop.ts';
 
 const at = '2026-09-09T00:00:00.000Z';
 const step = (id: string, dependsOn: string[] = []): WorkflowStep => ({ id, title: id, instructions: id, dependsOn, nodeID: null,
@@ -18,6 +19,97 @@ const fixture = (): Workflow => ({ id: 'root', requestID: 'request', contentDige
   criteria: '', projectID: null, model: null, approvalMode: 'ask', target: { mode: 'automatic' }, state: 'running', version: 1, planVersion: 1, summary: '',
   planner: step('planner'), steps: [step('script'), step('video', ['script']), step('audio', ['script']), step('edit', ['video', 'audio'])],
   events: [], handoffs: [], inputFiles: [], confirmations: [], pendingConfirmation: null, createdAt: at, updatedAt: at, error: null });
+
+test('composer stop addresses the whole workflow during planning and parallel local/remote execution', () => {
+  const value = fixture();
+  value.planner.attempts = [{ ...attempt(1), executionID: 'planner-only', phase: 'running' }];
+  value.steps[0].attempts = [{ ...attempt(1), executionID: 'local-step', phase: 'running' }];
+  value.steps[1].attempts = [{ ...attempt(2), kind: 'remote', executionID: 'remote-step', phase: 'unknown' }];
+  for (const state of ['planning', 'running', 'paused'] as const) {
+    value.state = state;
+    const target = conversationStopTarget({ workflow: value, localTask: { id: 'local-step' } as Task,
+      remote: { id: 'remote-step' } as RemoteTaskInvite }, { id: 'owner', owner: true });
+    assert.equal(target?.path, '/workflows/root/control');
+    assert.deepEqual(target?.body, { action: 'stop' });
+    assert.equal(conversationStopState(target), 'ready');
+  }
+});
+
+test('composer keeps an unconfirmed remote workflow stop pending until the workflow is terminal', () => {
+  const value = fixture(); value.state = 'stopping';
+  value.steps[0].attempts = [{ ...attempt(1), kind: 'remote', phase: 'unknown' }];
+  const target = conversationStopTarget({ workflow: value }, { id: 'owner', owner: true });
+  assert.equal(conversationStopState(target, { key: target!.key, phase: 'retry' }), 'confirming');
+  for (const state of ['stopped', 'completed', 'failed'] as const) {
+    value.state = state;
+    assert.equal(conversationStopTarget({ workflow: value }, { id: 'owner', owner: true }), null);
+  }
+});
+
+test('composer local stop includes received tasks and preserves the current engine execution identity', () => {
+  const localTask = { id: 'local', creatorID: 'sender', assigneeID: 'owner', sessionID: 'session', runAfter: 12,
+    state: 'running', remoteOrigin: { remoteTaskID: 'received' } } as Task;
+  const target = conversationStopTarget({ localTask }, { id: 'owner', owner: true });
+  assert.equal(target?.path, '/tasks/local/stop'); assert.deepEqual(target?.body, {});
+  localTask.state = 'stopping';
+  assert.equal(conversationStopState(conversationStopTarget({ localTask }, { id: 'owner', owner: true })), 'confirming');
+  localTask.state = 'interrupted';
+  assert.equal(conversationStopState(conversationStopTarget({ localTask }, { id: 'owner', owner: true }),
+    { key: target!.key, phase: 'retry' }), 'retry');
+  assert.equal(conversationStopState(conversationStopTarget({ localTask }, { id: 'owner', owner: true }),
+    { key: target!.key, phase: 'confirming' }), 'retry');
+  assert.equal(conversationStopState(conversationStopTarget({ localTask }, { id: 'owner', owner: true }),
+    { key: target!.key, phase: 'sending' }), 'confirming');
+  localTask.state = 'running'; localTask.runAfter++;
+  assert.equal(conversationStopState(conversationStopTarget({ localTask }, { id: 'owner', owner: true }),
+    { key: target!.key, phase: 'confirming' }), 'ready');
+  localTask.state = 'stopped';
+  assert.equal(conversationStopTarget({ localTask }, { id: 'owner', owner: true }), null);
+});
+
+test('composer outgoing stop binds the remote execution sequence and waits for pending control', () => {
+  const remote = { id: 'remote', direction: 'outgoing', status: 'accepted', executionSequence: 7,
+    executionState: 'running', controlPending: false } as RemoteTaskInvite;
+  const target = conversationStopTarget({ remote }, { id: 'owner', owner: true });
+  assert.equal(target?.path, '/network/tasks/remote/control');
+  assert.deepEqual(target?.body, { expectedExecutionSequence: 7, action: { kind: 'stop' }, confirmed: true });
+  remote.controlPending = true;
+  const pending = conversationStopTarget({ remote }, { id: 'owner', owner: true });
+  assert.equal(conversationStopState(pending), 'waiting');
+  assert.equal(conversationStopState(pending, { key: target!.key, phase: 'confirming' }), 'confirming');
+  remote.controlPending = false;
+  assert.equal(conversationStopState(target, { key: target!.key, phase: 'retry' }), 'retry');
+  remote.executionSequence++;
+  assert.equal(conversationStopState(conversationStopTarget({ remote }, { id: 'owner', owner: true }),
+    { key: target!.key, phase: 'confirming' }), 'ready');
+});
+
+test('composer stop is unavailable for read-only, unstarted, terminal and cancelled conversations', () => {
+  assert.equal(conversationStopTarget(undefined, { id: 'owner', owner: true }), null);
+  assert.equal(conversationStopTarget({ workflow: fixture() }, { id: 'other', owner: true }), null);
+  const localTask = { id: 'local', creatorID: 'owner', assigneeID: 'owner', state: 'running', sessionID: 's' } as Task;
+  assert.equal(conversationStopTarget({ localTask }, { id: 'other', owner: false }), null);
+  localTask.sessionID = null;
+  assert.equal(conversationStopTarget({ localTask }, { id: 'owner', owner: true }), null);
+  const remote = { id: 'remote', direction: 'outgoing', status: 'accepted', executionSequence: 7,
+    executionState: 'running', controlPending: false } as RemoteTaskInvite;
+  assert.equal(conversationStopTarget({ remote }, { id: 'member', owner: false }), null);
+  remote.executionSequence = 0;
+  assert.equal(conversationStopTarget({ remote }, { id: 'owner', owner: true }), null);
+  remote.executionSequence = 7; remote.status = 'cancelled';
+  assert.equal(conversationStopTarget({ remote }, { id: 'owner', owner: true }), null);
+});
+
+test('composer HTTP acknowledgement cannot show stopped and retry state does not leak to another round', () => {
+  const value = fixture();
+  const target = conversationStopTarget({ workflow: value }, { id: 'owner', owner: true });
+  const request = { key: target!.key, phase: 'confirming' as const };
+  assert.equal(conversationStopState(target, request), 'confirming');
+  assert.equal(conversationStopState(target, { ...request, phase: 'retry' }), 'retry');
+  value.roundRequestID = 'next-round';
+  assert.equal(conversationStopState(conversationStopTarget({ workflow: value }, { id: 'owner', owner: true }), request), 'ready');
+  assert.equal(conversationStopState(null, request), null);
+});
 
 test('historical attempt labels describe that attempt independently of a later failure', () => {
   const s = step('result'); s.state = 'failed'; const old = attempt(1), current = { ...attempt(2), phase: 'failed' as const };
@@ -71,6 +163,27 @@ test('task graph anchors dependencies to the latest source attempt and preserves
   assert.equal(graph.edges.find((e) => e.id === 'transfer')?.to, 'script:3');
   assert.equal(graph.edges.find((e) => e.to === 'video:0')?.from, 'script:3');
   assert.deepEqual(graph.edges.filter((e) => e.to === 'edit:0').map((e) => e.from).sort(), ['audio:0', 'video:0']);
+});
+
+test('task graph displays actual execution before global locks, semantic placement and soft preferences', () => {
+  const value = fixture(); const planned = value.steps[0]; planned.nodeID = 'soft-preference';
+  const node = workflowGraph(value).nodes[0];
+  assert.equal(workflowGraphNodeID(value, node), 'soft-preference');
+  planned.placement = { version: 1, mode: 'required', nodeID: 'required-device', reason: 'Observe this device' };
+  assert.equal(workflowGraphNodeID(value, node), 'required-device');
+  value.target = { mode: 'preferred', nodeID: 'global-preference' };
+  assert.equal(workflowGraphNodeID(value, node), 'required-device');
+  value.target = { mode: 'locked', nodeID: 'global-lock' };
+  assert.equal(workflowGraphNodeID(value, node), 'global-lock');
+  node.attempt = { ...attempt(1), nodeID: 'actual-device', phase: 'unknown' };
+  assert.equal(workflowGraphNodeID(value, node), 'actual-device');
+  node.attempt.phase = 'completed';
+  assert.equal(workflowGraphNodeID(value, node), 'actual-device');
+  node.attempt = null; value.target = { mode: 'automatic' };
+  planned.placement = { version: 1, mode: 'free', reason: 'Portable work' };
+  assert.equal(workflowGraphNodeID(value, node), 'soft-preference');
+  planned.nodeID = null;
+  assert.equal(workflowGraphNodeID(value, node), null);
 });
 test('task graph cards fit narrow and wide canvases without overlap, with all joins to the right of their parents', () => {
   const value = fixture(); value.steps.splice(3, 0, ...['a', 'b', 'c', 'd'].map((id) => step(id, ['script'])));

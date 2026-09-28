@@ -1,4 +1,13 @@
 {
+  "尚未确定步骤应在哪台设备执行，相关新步骤未开始。请补充目标设备或重新规划。": "The execution device has not been determined. The affected new steps have not started. Specify the target device or replan.",
+  "无法确认指定的执行设备，相关新步骤未开始。请明确指定已配对的设备后重新规划。": "The specified execution device could not be identified. The affected new steps have not started. Specify a paired device, then replan.",
+  "无法确认这条请求发自哪台设备，相关新步骤未开始。请明确指定设备后重新规划。": "The device this request came from is unknown. The affected new steps have not started. Specify the target device, then replan.",
+  "计划中的设备与任务已有的设备限制冲突，相关新步骤未开始。请核对目标设备和任务要求后重新规划。": "The planned device conflicts with the task's existing device constraints. The affected new steps have not started. Review the target device and requirements, then replan.",
+  "等待远端确认": "Awaiting remote acknowledgement",
+  "重试停止": "Retry stop",
+  "正在确认停止，草稿会保留。": "Confirming the stop. Your draft will be kept.",
+  "停止整个任务，保留当前草稿。": "Stop the entire task and keep your draft.",
+  "停止结果尚未确认。草稿已保留，可以重试停止。": "The stop is not yet confirmed. Your draft is saved; you can retry stopping.",
   "正在移除": "Removing",
   "准备上传": "Preparing upload",
   "文件 {{name}} 超过单个文件上限 {{size}}。": "File {{name}} exceeds the {{size}} per-file limit.",

@@ -1,5 +1,6 @@
 import type { PermissionRuleset } from '@opencode-ai/sdk/v2';
 import { sessionPermissions } from './engine.ts';
+import { workflowUsesPlacementContract } from '../shared/workflow-origin.ts';
 import { validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, type WorkflowExecutionContext,
   type PlanningOutcome, type ExecutionOutcome } from '../shared/workflows.ts';
 
@@ -40,19 +41,27 @@ export function workflowOutputSchema(role: WorkflowExecutionContext['role']): Sc
 export function plannerPermissions(): PermissionRuleset {
   // Retain the same credential deny rules as ordinary execution, with no write/command permission.
   return [{ permission: '*', pattern: '*', action: 'deny' },
-    ...sessionPermissions('ask').filter((rule) => ['read', 'glob', 'grep', 'list', 'task', 'skill', 'rivloom_knowledge_search', 'rivloom_knowledge_read', 'rivloom_history', 'rivloom_context_note', 'rivloom_document_read'].includes(rule.permission)),
+    ...sessionPermissions('ask').filter((rule) => ['read', 'glob', 'grep', 'list', 'question', 'task', 'skill', 'rivloom_knowledge_search', 'rivloom_knowledge_read', 'rivloom_history', 'rivloom_context_note', 'rivloom_document_read'].includes(rule.permission)),
     { permission: 'StructuredOutput', pattern: '*', action: 'allow' }];
 }
 export function workflowPrompt(context: WorkflowExecutionContext): string {
   if (!validWorkflowExecutionContext(context)) throw new Error('workflow_invalid_context');
-  const targeting = context.target.mode === 'locked'
+  let targeting = context.target.mode === 'locked'
     ? `所有执行步骤必须留在 Node ${context.target.nodeID}。可以查询其他已配对 Node 的资源和取回允许访问的材料，但不能把整个步骤或子步骤交给其他 Node。`
     : context.target.mode === 'preferred' ? `条件相同时优先选择 Node ${context.target.nodeID}；该机忙碌，或资源、工具、硬件不适合时，可以使用其他合适的 Node，让互不依赖的步骤并行。`
     : '按资源、工具、硬件、当前负载和步骤依赖选择合适的 Node；无需把所有步骤放在一台机器上。';
+  if (workflowUsesPlacementContract(context)) targeting += `
+
+The coordinator supplied RIVLOOM_PLACEMENT_CONTRACT_V1. Infer the user's intended operation, the machine or data being discussed, and each step's necessary execution location from the whole request, conversation history and supplied Node facts. Do not use a keyword rule or assume every request must execute on the originating Node. The originating Node defines an unambiguous reference to this machine; the current planner/executor Node does not redefine the user's subject. A natural-language Node name needs no @ syntax. Resolve it against actual Node identities, never invent an ID or choose between duplicate names without clarification.
+For every step in kind=plan and kind=expand, start instructions with exactly one single-line JSON placement declaration, followed by a newline and the business instructions. Use {"rivloomPlacement":1,"mode":"free","reason":"why this work can move"} when any eligible Node can perform the step without changing its meaning. Use {"rivloomPlacement":1,"mode":"required","nodeID":"origin","reason":"why the originating machine is required"} or replace origin with the actual 32-character Node ID when execution must stay on that machine. The reason must contain 1 to 400 characters; the declaration must be at most 1600 characters. Do not add placement fields outside instructions. A free declaration has no nodeID; a required declaration must have nodeID. The step's ordinary nodeID remains a soft preference, not a binding requirement. Load, offline status or missing tools cannot turn a required subject into free work. Respect all coordinator target constraints, including those inherited when expanding a required step.
+Separate machine identity from execution eligibility. required means that switching to another equally eligible Node would change the user's requested subject or violate a device-specific user constraint. If another authorized Node had the needed hardware, software and permitted inputs and could satisfy the same request unchanged, declare free. Even if only one Node currently has the required GPU or software, or only one Node is idle, that does not require its identity. Keep such portable work free and express its actual eligibility conditions in requirements and software; the ordinary step.nodeID may prefer the currently suitable Node. Do not turn temporary capability, availability or load facts into an identity lock. Conversely, an observation of a particular machine remains required even when another machine has identical hardware.
+Examples illustrate meaning, not routing patterns: checking this machine's hardware requires the originating machine; checking winserver2 requires its identified Node even without @. Comparing two machines needs separate observations bound to the respective machines, followed by a movable comparison step. Video processing may retrieve authorized source materials from one Node and use an eligible GPU/software Node for computation; file location alone does not bind every step. Greeting the user or translating a quotation about checking this machine requires no machine inspection and is normally free. A negated instruction must not become an action. Resolve pronouns such as 'it' and 'continue the previous round' from history; preserve the actual subject and saved result locations, and ask if the reference is ambiguous.
+If the target or task is ambiguous, use the question tool before planning business execution. Resource kind=query looks up facts and is not a question to the user. If this planner has no question tool, return a plan containing only one free clarification step: its instructions must ask the user through the executor's question tool, preserve the original request, perform no machine inspection or business operation before the answer, then return kind=expand with the actual business plan and placement declarations for every new step. Do not pre-schedule speculative successors. A clarification executor must use an already recorded answer when available, or ask and wait; if questioning is unavailable there too, report the limitation without guessing or executing. A declared locked target still limits clarification and subsequent execution.
+Keep plan.summary concise: explain which machine or resource the request concerns and the relevant placement basis. Report observable facts and unresolved ambiguity, not private reasoning. The coordinator will validate placement declarations and enforce them before dispatch.`;
   const role = context.role === 'planner' ?
     `先分析用户的完整需求并形成可执行计划。此会话只允许读取和规划。所有请求都要分析，包括很短的请求、包含 @ 或 @@ 的请求。
 按有意义的业务步骤拆分；简单任务可以只有一步。用户明确要求一个步骤时保留一个步骤；读取输入、创建目录、写入文件和汇报通常是同一业务步骤内的工具操作，不单独拆成步骤。依赖表示前置步骤全部完成才能开始；互不依赖的步骤可以并行。每一步要有明确产出，禁止为了显示复杂而拆分。
-本机发起的任务不设固定并发上限；其他机器发来的任务共享该 Node 配置的远端并发名额。可并行的分支根据合适 Node 的实时负载安排。步骤 nodeID 是首选位置，通常可填 null，让协调器结合实时负载分配；只有 @@ 锁定限制所有步骤的执行位置，已开始的执行和指定目标的转交不会因为负载被重派。
+本机发起的任务不设固定并发上限；其他机器发来的任务共享该 Node 配置的远端并发名额。可并行的分支根据合适 Node 的实时负载安排。步骤 nodeID 是首选位置，通常可填 null，让协调器结合实时负载分配；@@ 限制所有步骤的执行位置，协调器提供的逐步骤位置约束同样必须遵守。已开始的执行和指定目标的转交不会因为负载被重派。
 缺少文件事实时返回 kind=query，让协调器查询目录后继续规划；software 能力以目录节点 head.capabilities 的实际记录为准。最终返回 kind=plan，填写完整步骤和依赖。
 resources 仅表示实际输入文件，必须复制目录中的 nodeID/workspaceID/id/revision，id 和 revision 都是 64 位十六进制值，不能填文件名、软件名或版本号。无外部输入文件时 resources 为 []；上游步骤将要生成的文件通过 dependsOn 传入，不编造它们的资源引用。FFmpeg、FFprobe、Python 等工具只填写在 software，不放进 resources。
 query.kinds 是文件分类筛选，[] 表示所有分类；document 包括 txt、md，file 仅表示未分类文件，不是所有文件。一次只返回 query 或 plan 中的一个对象；查询后等待目录事实再给出计划。

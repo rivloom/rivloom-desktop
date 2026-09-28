@@ -1372,6 +1372,33 @@ html[lang='en'] .conversation-settings > button {
   color: var(--muted);
   box-shadow: none;
 }
+.send-message.alongside-stop {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+.send-message.alongside-stop:disabled { color: var(--muted); background: var(--sidebar); }
+.send-message.stop-message {
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  width: auto;
+  min-width: 72px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+.send-message.stop-message > span { display: inline; white-space: nowrap; }
+.send-message.stop-message:hover:not(:disabled) {
+  background: var(--danger);
+  box-shadow: none;
+  filter: brightness(.9);
+}
+.send-message.stop-message:hover:enabled > svg { transform: none; }
+.send-message.stop-message:disabled {
+  color: var(--danger);
+  background: var(--danger-surface);
+  border-color: var(--danger-line);
+}
 .composer-context {
   display: flex;
   align-items: center;

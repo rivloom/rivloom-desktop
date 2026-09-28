@@ -14,6 +14,7 @@ import { primaryShortcut } from './keyboard-platform';
 import { ComposerSendPreference } from './composer-send-preference';
 import { ConversationStarters } from './conversation-starters';
 import { composerSendHint, shouldSendComposer, type ComposerSendMode } from './composer-keyboard';
+import { conversationStopTarget, conversationStopState, type ConversationStopRequest } from './conversation-stop';
 import { conversationDraftKeys, hasConversationDraft } from './conversation-draft-indicators';
 import { ConversationExportDialog } from './conversation-export-view';
 import { MessageReuseActions } from './message-reuse-view';
@@ -614,6 +615,7 @@ export function ConversationWorkspace({
   const [draftSaveError, setDraftSaveError] = useState(false);
   const emptyDraft = useRef(createWorkflowDraft());
   const [busy, setBusy] = useState(false);
+  const [stopRequest, setStopRequest] = useState<ConversationStopRequest | null>(null);
   const operation = useRef(false);
   const [error, setError] = useState('');
   const [quoteReplacement, setQuoteReplacement] = useState<{ apply: () => boolean; error: string } | null>(null);
@@ -973,6 +975,22 @@ export function ConversationWorkspace({
       remote.executionState !== 'not_started' &&
       activeStates.includes(remote.executionState);
   const canApprove = task ? task.approverID === data.user.id : canRemoteControl;
+  const stopTarget = conversationStopTarget(current, data.user);
+  const stopState = conversationStopState(stopTarget, stopRequest);
+  const stopConfirming = stopState === 'confirming';
+  const stopWaiting = stopConfirming || stopState === 'waiting';
+  const stopLabel = stopState === 'waiting' ? t('等待远端确认') : stopConfirming ? t('正在确认停止') : stopState === 'retry' ? t('重试停止') : t('停止');
+  // Keep the acknowledgement visible until the refreshed execution confirms it.
+  // A lost/stale response must not leave the composer permanently disabled.
+  useEffect(() => {
+    if (!stopTarget || stopTarget.confirming || stopTarget.blocked || busy || stopState !== 'confirming') return;
+    const key = stopTarget.key;
+    const timer = setTimeout(() => {
+      setStopRequest((request) => request?.key === key ? { key, phase: 'retry' } : request);
+      setError(t('停止结果尚未确认。草稿已保留，可以重试停止。'));
+    }, 15_000);
+    return () => clearTimeout(timer);
+  }, [stopTarget?.key, stopTarget?.confirming, stopTarget?.blocked, stopState, busy]);
 
   useEffect(() => {
     if (!model && data.defaultModel && !drafts.new?.requestSignature) setModel(data.defaultModel);
@@ -1390,6 +1408,20 @@ export function ConversationWorkspace({
       confirmed: true,
     });
   };
+  async function stopCurrentConversation() {
+    if (!stopTarget || stopWaiting || operation.current) return;
+    const target = stopTarget;
+    setStopRequest({ key: target.key, phase: 'sending' });
+    await perform(async () => {
+      try {
+        await api(target.path, target.body, { timeoutMilliseconds: 15_000 });
+        setStopRequest({ key: target.key, phase: 'confirming' });
+      } catch (error) {
+        setStopRequest({ key: target.key, phase: 'retry' });
+        throw error;
+      }
+    });
+  }
   async function runLocal(value: Task, addition?: string) {
     if (value.state === 'open') await api(`/tasks/${value.id}/claim`, {});
     await api(`/tasks/${value.id}/run`, {
@@ -1420,6 +1452,7 @@ export function ConversationWorkspace({
     if (
       !draft.trim() ||
       busy ||
+      stopWaiting ||
       !canWrite ||
       inputUsage.overLimit ||
       ((!current || current.workflow) && !draftFilesReady(draftState.files))
@@ -1637,13 +1670,14 @@ export function ConversationWorkspace({
         )}
       </div>
       <button type="button" className="composer-options composer-labeled" disabled={busy || !canWrite} title={t('提示词模板')} aria-label={t('提示词模板')} onClick={() => { setMention(null); setModal('templates'); }}><BookOpen size={16} /><span>{t('模板')}</span></button>
-      <button
+      {(!stopTarget || !!draft.trim()) && <button
         type="submit"
-        className="send-message"
+        className={`send-message${stopTarget ? ' alongside-stop' : ''}`}
         aria-label={t('发送消息')}
         title={modelGuidance.required ? t('先完善模型设置，已输入的内容会保留。') : composerSendHint(sendMode)}
         disabled={
           busy ||
+          stopWaiting ||
           !draft.trim() ||
           inputUsage.overLimit ||
           ((!current || current.workflow) && !draftFilesReady(draftState.files)) ||
@@ -1653,7 +1687,15 @@ export function ConversationWorkspace({
       >
         {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
         <span>{t('发送')}</span>
-      </button>
+      </button>}
+      {stopTarget && <button type="button" className="send-message stop-message"
+        aria-label={stopLabel}
+        title={stopState === 'waiting' ? t('等待远端确认') : stopConfirming ? t('正在确认停止，草稿会保留。') : t('停止整个任务，保留当前草稿。')}
+        disabled={busy || stopWaiting} aria-busy={stopWaiting}
+        onClick={() => void stopCurrentConversation()}>
+        {stopWaiting ? <LoaderCircle size={17} className="spin" /> : <Square size={16} fill="currentColor" />}
+        <span>{stopLabel}</span>
+      </button>}
     </>
   );
 
@@ -1912,6 +1954,7 @@ export function ConversationWorkspace({
                 onScroll={updateScrollPosition}
               >
                 {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName}
+                  stopControl={stopTarget ? { confirming: stopConfirming, stop: () => void stopCurrentConversation() } : undefined}
                   navigateDiagnostics={(target, nodeID) => {
                     if (target === 'queue') setModal('queue');
                     else { if (target === 'diagnostics') setDiagnosticTarget(nodeID || null); setView(target); }
@@ -2059,15 +2102,11 @@ export function ConversationWorkspace({
                         )}
                       {running && (task || canRemoteControl) && (
                         <Button
-                          disabled={busy || task?.state === 'stopping' || remote?.controlPending}
-                          onClick={() =>
-                            void perform(() =>
-                              task ? api(`/tasks/${task.id}/stop`, {}) : control({ kind: 'stop' }),
-                            )
-                          }
+                          disabled={busy || !stopTarget || stopWaiting}
+                          onClick={() => void stopCurrentConversation()}
                         >
                           <Square size={13} />
-                          {t('停止')}
+                          {stopLabel}
                         </Button>
                       )}
                     </div>
@@ -2499,7 +2538,7 @@ export function ConversationWorkspace({
               )}
               <div className="composer-hint" id="conversation-composer-hint"
                 title={current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : undefined}>
-                {waitingForRemoteSession
+                {stopConfirming ? t('正在确认停止，草稿会保留。') : waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')

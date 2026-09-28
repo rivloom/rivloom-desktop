@@ -79,6 +79,11 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     return evaluateWorkflowPlacement(step, this.placementInput(value, snapshot)).candidates.map(candidate => ({ ...candidate,
       history: candidate.kind === 'local' || !!snapshot.paired?.find(n => n.id === candidate.nodeID)?.capabilities.includes(workflowHistoryCapability) }));
   }
+  placementNodes(value: Workflow) {
+    const network = this.options.network.snapshot();
+    return [...(network.local ? [{ nodeID: network.local.id, name: network.local.name }] : []),
+      ...(user(value.creatorID)?.owner ? (network.paired || []).filter(node => node.trusted).map(node => ({ nodeID: node.id, name: node.name })) : [])];
+  }
   private placementInput(value: Workflow, network = this.options.network.snapshot()): WorkflowPlacementInput {
     const ownProject = value.projectID || this.options.policies.snapshot().projectID;
     const ownModel = value.model || this.options.policies.snapshot().model;
@@ -343,9 +348,12 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     return waiting ? null : result;
   }
   async stop(value: Workflow, attempt: WorkflowAttempt): Promise<'stopped' | 'unknown'> {
+    // Admission persists its local task or outgoing invite before execution/delivery.
+    // Only a missing intent behind the durable stop fence proves it never started.
+    const missing = value.state === 'stopping' && attempt.phase === 'intent' ? 'stopped' : 'unknown';
     if (attempt.kind === 'local') return exclusive(`workflow-stop:${attempt.executionID}`, async () => {
       let local = this.localTask(attempt);
-      if (!local) return 'stopped'; // No admission can occur after the workflow's persisted stop fence.
+      if (!local) return missing;
       this.assertBinding(value, attempt, local);
       const actor = user(value.creatorID); if (!actor) return 'unknown';
       if (local.state === 'ready' && !local.sessionID && !db.prepare('SELECT task_id FROM task_engine_intents WHERE task_id=?').get(local.id)) {
@@ -361,13 +369,14 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       return ['stopped', 'accepted', 'failed'].includes(local.state) ? 'stopped' : 'unknown';
     });
     const network = this.options.network; const remote = network.remoteTask(attempt.executionID);
-    if (!remote) return 'stopped';
+    if (!remote) return missing;
     if (remote.direction !== 'outgoing' || remote.targetNodeID !== attempt.nodeID) return 'unknown';
     try {
       if (remote.executionSequence === 0 && remote.status === 'pending') await network.cancelRemoteTask(remote.id);
       else if (!['stopped', 'accepted', 'failed'].includes(remote.executionState) && !remote.controlPending)
         await network.requestRemoteTaskControl(remote.id, remote.executionSequence, { kind: 'stop' });
-      const current = network.remoteTask(remote.id)!;
+      const current = network.remoteTask(remote.id);
+      if (!current) return 'unknown';
       if (['accepted', 'failed', 'stopped'].includes(current.executionState)) return 'stopped';
       if (['declined', 'expired', 'cancelled'].includes(current.status) && !current.deliveryPending && !current.deliveryError) return 'stopped';
     } catch { /* Stop remains pending until an authenticated state confirms it. */ }

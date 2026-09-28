@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
 import type { WorkflowRuntime } from '../server/workflow-runtime.ts';
 import type { NodeNetwork } from '../server/node-network.ts';
-import { validWorkflowMessageEdit, workflowPendingMessages } from '../shared/workflows.ts';
+import { validWorkflowMessageEdit, workflowPendingMessages, type Workflow } from '../shared/workflows.ts';
+import { workflowEffectiveTarget } from '../shared/workflow-origin.ts';
 import { WorkflowStore } from '../server/workflows.ts';
 import { WorkflowService, type WorkflowExecutionAdapter } from '../server/workflow-service.ts';
 import { listenHttp } from '../server/http-ports.ts';
@@ -137,9 +138,9 @@ test('the real workflow HTTP route fences other accounts and authority fields wi
   if (previousDataRoot === undefined) delete process.env.RIVLOOM_DATA_DIR; else process.env.RIVLOOM_DATA_DIR = previousDataRoot;
   const f = setup(), app = express(); app.use(express.json());
   app.use((req, res, next) => { if (!req.headers['x-test-user']) { res.status(401).json({ error: 'unauthorized' }); return; } next(); });
-  let kicks = 0;
+  let kicks = 0; let localNodeID: string | null = 'A'.repeat(32);
   installWorkflowAPI(app, { store: f.store, service: f.service, kick: () => { kicks++; } } as unknown as WorkflowRuntime,
-    { files: { uploaded: () => [] } } as unknown as NodeNetwork, req => ({ id: String(req.headers['x-test-user']), name: 'Fixture', username: 'fixture', owner: false }));
+    { snapshot: () => ({ local: localNodeID ? { id: localNodeID } : null }), files: { uploaded: () => [] } } as unknown as NodeNetwork, req => ({ id: String(req.headers['x-test-user']), name: 'Fixture', username: 'fixture', owner: false }));
   const errors: ErrorRequestHandler = (error, _req, res, _next) => { res.status(error.status || (error.name === 'ZodError' ? 400 : 500)).json({ error: error.message }); };
   app.use(errors);
   const server = createServer(app);
@@ -172,10 +173,15 @@ test('the real workflow HTTP route fences other accounts and authority fields wi
     };
     assert.equal((await enqueue('another-account', next)).status, 404);
     assert.equal((await enqueue('owner', { ...next, model: 'invalid' })).status, 400);
+    assert.equal((await enqueue('owner', { ...next, originNodeID: 'B'.repeat(32) })).status, 400);
+    assert.equal((await enqueue('owner', { ...next, placementPolicy: 'placement-v1' })).status, 400);
     const originalModel = f.store.get(f.id)!.model;
     const pending = await enqueue('owner', next);
     assert.equal(pending.status, 201);
     assert.equal(pending.body.messages.at(-1).model, next.model, 'HTTP schema forwards exact selected model');
+    assert.equal(pending.body.messages.at(-1).originNodeID, 'A'.repeat(32), 'only the receiving server establishes this round origin');
+    assert.equal(pending.body.messages.at(-1).placementPolicy, 'placement-v1');
+    assert.equal(pending.body.originNodeID, undefined, 'queuing cannot rewrite the old active round origin');
     assert.equal(pending.body.model, originalModel, 'acceptance cannot change the active round');
     assert.equal((await enqueue('owner', next)).status, 201);
     assert.equal((await enqueue('owner', { ...next, model: 'fixture/another' })).status, 409);
@@ -183,6 +189,39 @@ test('the real workflow HTTP route fences other accounts and authority fields wi
     assert.equal(legacy.status, 201);
     assert.equal(Object.hasOwn(legacy.body.messages.at(-1), 'model'), false);
     assert.deepEqual(f.sideEffects, []);
+    for (const criteria of ['完成会话要求，说明结果、验证情况和仍需处理的问题。',
+      "Complete the conversation's requirements. Describe the result, verification, and any remaining issues.", 'Custom acceptance criteria with mixed machines']) {
+      const creation = { requestID: randomUUID(), title: '你看下这台机器信息', description: '你看下这台机器信息', criteria,
+        projectID: null, model: null, approvalMode: 'ask', target: { mode: 'automatic' }, attachmentIDs: [] };
+      const create = async (payload: unknown): Promise<{ status: number; body: Workflow }> => {
+        const response = await fetch(`http://127.0.0.1:${address.port}/api/workflows`, { method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-test-user': 'owner' }, body: JSON.stringify(payload) });
+        return { status: response.status, body: await response.json() };
+      };
+      assert.equal((await create({ ...creation, originNodeID: 'B'.repeat(32) })).status, 400);
+      assert.equal((await create({ ...creation, placementPolicy: 'placement-v1' })).status, 400);
+      const created = await create(creation); assert.equal(created.status, 201); assert.equal(created.body.originNodeID, 'A'.repeat(32));
+      assert.equal(created.body.placementPolicy, 'placement-v1');
+      assert.deepEqual(workflowEffectiveTarget(created.body), { mode: 'automatic' }, 'wording never locks planning before a model decision');
+      f.store.update(f.id, value => { value.criteria = criteria; });
+      const localRequest = { requestID: randomUUID(), text: '看下这台机器信息' };
+      const localMessage = await enqueue('owner', localRequest);
+      assert.equal(localMessage.status, 201);
+      const queued = localMessage.body.messages.at(-1);
+      assert.equal(queued.originNodeID, 'A'.repeat(32)); assert.equal(queued.placementPolicy, 'placement-v1');
+      assert.deepEqual(workflowEffectiveTarget(localMessage.body), { mode: 'automatic' });
+      assert.equal(localMessage.body.originNodeID, undefined, 'old active round remains unchanged');
+      assert.equal(localMessage.body.placementPolicy, undefined, 'old active round does not inherit future semantics');
+      localNodeID = null;
+      assert.equal((await create(creation)).status, 201, 'identity outage does not reject an already-bound idempotent request');
+      assert.equal((await enqueue('owner', localRequest)).status, 201, 'a queued round retains its recorded origin during an identity outage');
+      const unknownOrigin = await create({ ...creation, requestID: randomUUID() });
+      assert.equal(unknownOrigin.status, 201); assert.equal(unknownOrigin.body.originNodeID, undefined);
+      assert.equal(unknownOrigin.body.placementPolicy, 'placement-v1', 'model may still plan portable work while identity is unknown');
+      assert.equal((await enqueue('owner', { requestID: randomUUID(), text: '看下这台机器信息' })).status, 201);
+      localNodeID = 'A'.repeat(32);
+    }
+    assert.deepEqual(f.sideEffects, [], 'HTTP capture does not execute or inspect any real machine');
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await f.close(); applicationStore.db.close();
   }

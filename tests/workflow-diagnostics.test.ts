@@ -119,6 +119,24 @@ test('parallel running work does not hide a waiting branch or its dependencies',
   assert.equal(JSON.stringify(value), before);
   assert.deepEqual(workflowDiagnostics(value, sources, at), result);
 });
+
+test('model-required device diagnostics explain only that device while free steps keep alternatives', () => {
+  const { value, sources, input, step } = diagnosticFixture();
+  value.originNodeID = A; value.description = '看下这台机器信息'; value.steps = [step];
+  step.placement = { version: 1, mode: 'required', nodeID: A, reason: 'Model identified the machine being inspected' };
+  step.attempts = []; step.state = 'ready'; input.local.modelAvailable = false;
+  assert(evaluateWorkflowPlacement(step, input, at).candidates.some(c => c.nodeID === B));
+  assert.equal(workflowCandidateAllowed(value, step, B), false);
+  const result = workflowDiagnostics(value, sources, at).steps[0];
+  assert.equal(result.phase, 'placement'); assert.equal(result.nodeID, A);
+  assert.deepEqual(result.nodes.map(n => n.nodeID), [A]);
+  assert.deepEqual(result.nodes[0].reasons.map(r => r.code), ['model_unavailable']);
+  value.description = '为远端生成报告';
+  assert.equal(workflowCandidateAllowed(value, step, B), false, 'editing description cannot erase the accepted step binding');
+  step.placement = { version: 1, mode: 'free', reason: 'A different model-planned portable step' };
+  assert.equal(workflowCandidateAllowed(value, step, B), true);
+  assert.equal(workflowDiagnostics(value, sources, at).steps[0].nodes.length, 2);
+});
 test('disconnection and uncertain delivery hide queue position and keep original execution identity', () => {
   const { value, sources, execution } = diagnosticFixture();
   execution.connected = false;

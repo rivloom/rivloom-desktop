@@ -1,13 +1,14 @@
 import { validReasoningEffort, reasoningForMessage, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { randomUUID } from 'node:crypto';
-import { jsonBytes, uuid } from '../shared/collaboration.ts';
+import { jsonBytes, nodeID, uuid } from '../shared/collaboration.ts';
 import { taskFileBatchBytes, taskFileMaximumCount, taskFileUploadCount, validTaskFileManifest, sameTaskFile, type TaskFileDescriptor } from '../shared/task-files.ts';
 import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, validPlanningOutcome, validWorkflowExecutionContext, validWorkflowMessageEdit, validWorkflowMessageModel, workflowPlanError, workflowPendingMessages, workflowAllSteps,
-  type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowMessageEdit, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
+  type Workflow, type WorkflowAttempt, type WorkflowExecutionContext, type WorkflowMessageEdit, type WorkflowPlacementPolicy, type WorkflowPlan, type WorkflowStep, type WorkflowStepPlacement, type WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { workflowCandidateAllowed } from '../shared/workflow-diagnostics.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
 import { workflowHistoryGuide } from '../shared/workflow-history.ts';
+import { decodeWorkflowPlacementPlan, workflowEffectiveTarget, workflowPlacementContract, workflowPlacementPolicy } from '../shared/workflow-origin.ts';
 
 export type WorkflowCandidate = { nodeID: string; kind: 'local' | 'remote'; waitingCount: number; history?: boolean; resultDelivery?: 'on-demand'; localConfig?: { projectID: string; model: string; reasoningEffort?: ReasoningEffort } };
 export type WorkflowExecutionSnapshot = {
@@ -17,6 +18,8 @@ export type WorkflowExecutionSnapshot = {
 export type WorkflowDispatchResult = { state: 'accepted' } | { state: 'confirmation'; waitingCount: number } |
   { state: 'blocked' | 'uncertain'; reason: string };
 export interface WorkflowExecutionAdapter {
+  /** Authenticated identities, including unavailable Nodes; eligibility alone cannot establish identity. */
+  placementNodes?(workflow: Workflow): { nodeID: string; name: string }[];
   candidates(workflow: Workflow, step: WorkflowStep, role: WorkflowExecutionContext['role']): WorkflowCandidate[];
   evidence(workflow: Workflow): string;
   lookup(workflow: Workflow, attempt: WorkflowAttempt): Promise<WorkflowExecutionSnapshot | null>;
@@ -70,7 +73,7 @@ export class WorkflowService {
   isAdvancing(id: string) { return this.advancing.has(id); }
   preparation(value: Workflow, step: WorkflowStep) {
     const detail = this.preparationDetails.get(`${value.id}:${step.id}`);
-    return step.state === 'ready' && detail?.plan === JSON.stringify(planFields(step)) && detail.round === (value.roundRequestID || value.requestID) &&
+    return step.state === 'ready' && detail?.plan === stepRevision(step) && detail.round === (value.roundRequestID || value.requestID) &&
       (detail.active || Date.now() - Date.parse(detail.observedAt) < 15_000) ? { nodeID: detail.nodeID, observedAt: detail.observedAt } : null;
   }
   constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}) {
@@ -84,7 +87,7 @@ export class WorkflowService {
     }, version);
     for (const [key, detail] of this.preparationDetails) if (key.startsWith(`${id}:`)) {
       const step = getStep(result, detail.stepID);
-      if (!step || step.state !== 'ready' || JSON.stringify(planFields(step)) !== detail.plan ||
+      if (!step || step.state !== 'ready' || stepRevision(step) !== detail.plan ||
         detail.round !== (result.roundRequestID || result.requestID)) this.preparationDetails.delete(key);
     }
     this.trackAssignments(result); this.onChange(); return result;
@@ -123,8 +126,10 @@ export class WorkflowService {
     const archived = updated.rounds?.find(round => [round.planner, ...round.steps].some(s => s.attempts.some(a => a.executionID === executionID)));
     this.store.history.sync(updated, archived?.requestID);
   }
-  enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[], model?: string | null, reasoningEffort?: ReasoningEffort) {
+  enqueue(id: string, requestID: string, text: string, inputFiles: TaskFileDescriptor[], model?: string | null, reasoningEffort?: ReasoningEffort, originNodeID?: string, placementPolicy?: WorkflowPlacementPolicy) {
     if (!uuid(requestID) || !text.trim() || text.length > 12_000 || !validTaskFileManifest(inputFiles) || inputFiles.length > taskFileUploadCount ||
+      originNodeID !== undefined && !nodeID(originNodeID) ||
+      placementPolicy !== undefined && placementPolicy !== 'placement-v1' ||
       model !== undefined && !validWorkflowMessageModel(model) || reasoningEffort !== undefined && !validReasoningEffort(reasoningEffort))
       throw new Error('invalid_workflow_request');
     return this.update(id, (value) => {
@@ -137,6 +142,8 @@ export class WorkflowService {
       if (round || value.requestID === requestID || value.roundRequestID === requestID) throw new Error('workflow_request_conflict');
       if (workflowPendingMessages(value).length >= 50) throw new Error('workflow_message_queue_full');
       (value.messages ||= []).push({ requestID, text, inputFiles: structuredClone(inputFiles), createdAt: new Date().toISOString(), state: 'queued',
+        ...(originNodeID !== undefined ? { originNodeID } : {}),
+        ...(placementPolicy !== undefined ? { placementPolicy } : {}),
         ...(model !== undefined ? { model } : {}), ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) });
       if (['failed', 'stopped', 'stopping'].includes(value.state)) value.queuePaused = true;
     });
@@ -223,8 +230,12 @@ export class WorkflowService {
       const next = value.steps.map((s) => s.id === replacement.id ? replacement : s);
       // Only plan fields belong in validation, never internal execution state.
       const plan = { summary: value.summary, steps: next.map(planFields) };
-      const error = workflowPlanError(plan, value.target);
+      const error = workflowPlanError(plan, workflowEffectiveTarget(value));
       if (error) throw new Error(error);
+      // The legacy editor cannot silently clear a model's required placement sidecar.
+      // nodeID remains a preference; selecting a different required machine needs a new plan.
+      if (step.placement?.mode === 'required' && replacement.nodeID !== null && replacement.nodeID !== step.placement.nodeID)
+        throw new Error('workflow_placement_conflict');
       Object.assign(step, structuredClone(replacement)); value.planVersion++;
       workflowEvent(value, 'plan', 'Step updated', step.id);
     }, version);
@@ -282,12 +293,16 @@ export class WorkflowService {
         const pending = this.nextMessage(latest);
         // Editing during async context preparation invalidates this admission.
         // A later tick rebuilds from the latest message instead of running old text.
-        if (!terminalWorkflow(latest) || pending?.requestID !== message.requestID || pending.text !== message.text || pending.model !== message.model || pending.reasoningEffort !== message.reasoningEffort || this.closed) return;
-        const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error, model, reasoningEffort } = latest;
+        if (!terminalWorkflow(latest) || pending?.requestID !== message.requestID || pending.text !== message.text || pending.model !== message.model || pending.reasoningEffort !== message.reasoningEffort || pending.originNodeID !== message.originNodeID || pending.placementPolicy !== message.placementPolicy || this.closed) return;
+        const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error, model, reasoningEffort, originNodeID, placementPolicy } = latest;
         (latest.rounds ||= []).push({ description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error,
+          ...(originNodeID !== undefined ? { originNodeID } : {}),
+          ...(placementPolicy !== undefined ? { placementPolicy } : {}),
           inputFiles: latest.inputFiles, requestID: latest.roundRequestID || latest.requestID, createdAt: latest.roundCreatedAt || latest.createdAt, model, reasoningEffort });
         latest.roundRequestID = message.requestID; latest.roundCreatedAt = message.createdAt;
         latest.description = message.text; latest.inputFiles = inputFiles; latest.conversationContextFile = context;
+        latest.originNodeID = message.originNodeID;
+        latest.placementPolicy = message.placementPolicy;
         latest.reasoningEffort = reasoningForMessage(latest, message);
         if (message.model !== undefined) latest.model = message.model;
         latest.state = 'planning'; latest.planVersion = 0; latest.summary = ''; latest.steps = []; latest.events = []; latest.handoffs = [];
@@ -348,7 +363,7 @@ export class WorkflowService {
     let waitingForInputs = false;
     this.preparationDetails.delete(preparationKey);
     const observe = (current: Workflow, nodeID: string) => this.preparationDetails.set(preparationKey,
-      { stepID: step.id, plan: JSON.stringify(planFields(step)), round: current.roundRequestID || current.requestID,
+      { stepID: step.id, plan: stepRevision(step), round: current.roundRequestID || current.requestID,
         nodeID, observedAt: new Date().toISOString(), active: true });
     try {
       const role = step.id === 'planner' ? 'planner' : 'executor';
@@ -367,7 +382,7 @@ export class WorkflowService {
       // Discard this preparation so the next tick uses the newly saved requirements.
       const prepared = this.store.get(value.id)!;
       const preparedStep = getStep(prepared, step.id);
-      if (!preparedStep || JSON.stringify(planFields(preparedStep)) !== JSON.stringify(planFields(step))) return;
+      if (!preparedStep || stepRevision(preparedStep) !== stepRevision(step)) return;
       candidate = this.selectCandidate(prepared, preparedStep, reservation);
       if (!candidate) return;
       if (candidate.waitingCount >= 10 && !prepared.confirmations.some((c) => c.nodeID === candidate.nodeID)) {
@@ -387,13 +402,19 @@ export class WorkflowService {
       const inputFiles = candidate.kind === 'remote' && originalFiles.length
         ? await this.adapter.stageInputs(value, `${value.roundRequestID || value.requestID}:${step.id}:${step.attempts.length + 1}:${candidate.nodeID}`, originalFiles, () => this.mayStart(value.id, step.id))
         : originalFiles;
-      if (!this.mayStart(value.id, step.id) || JSON.stringify(planFields(getStep(this.store.get(value.id)!, step.id)!)) !== JSON.stringify(planFields(step))) return;
+      if (!this.mayStart(value.id, step.id) || stepRevision(getStep(this.store.get(value.id)!, step.id)!) !== stepRevision(step)) return;
       if (!this.candidates(this.store.get(value.id)!, step).some((c) => c.nodeID === candidate.nodeID)) return;
       const evidence = boundedText([this.adapter.evidence(value), step.evidence].filter(Boolean).join('\n\n'), 12_000, 18_000);
       const correction = role === 'planner' && step.validationRounds
         ? `上次只读规划未通过 JSON 格式校验。这是第 ${step.validationRounds}/2 次格式纠正；尚未执行业务步骤。重新按原需求返回一个且仅一个完整 JSON 对象。检查资源引用与文件/软件区别；无输入文件用 resources:[]；缺少事实只返回 query，已有事实只返回 plan。` : '';
       const historyFile = legacyHistory || value.conversationContextFile;
-      const location = (historyFile ? `这是同一会话的后续请求。先读取输入文件 ${historyFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n` : '') +
+      const placementContract = value.placementPolicy === workflowPlacementPolicy ? workflowPlacementContract(value.originNodeID) : '';
+      const origin = this.adapter.placementNodes?.(value).find(node => node.nodeID === value.originNodeID);
+      const location = (placementContract ? placementContract + '\n\n' : '') +
+        (origin ? `Origin device facts: ${JSON.stringify(origin)}\n` : '') +
+        (historyFile ? `这是同一会话的后续请求。先读取输入文件 ${historyFile.name}，其中包含此前各轮完整需求、结果与文件记录；保留适用约束，从已有成果继续修改。远端成果默认保留在记录中的 Node；不要假设已下载为附件。若确实需要跨 Node 读取，先查询资源目录并用 resources 请求对应文件；不需要文件内容时只使用结果记录。\n` : '') +
+        (value.originNodeID ? `发起任务的 Node：${value.originNodeID}。此身份是理解用户语义的上下文，不要求所有步骤在此执行；应结合原始需求、明确目标与历史指代，由规划模型判断每步是否必须指定设备。实际执行 Node 不会改变被查询的机器。` :
+          '此旧会话未记录发起 Node，不能把实际执行 Node 当作用户所指的本机。') +
         `本次实际执行 Node：${candidate.nodeID}。这是当前步骤的第 ${step.attempts.length + 1} 次尝试。` +
         (continuation?.handoff ? '本次接收上一个 Node 的转交；从下方已保存检查点继续，不重复源端已完成的操作，不再次转交给自己。' : '');
       const originalRequest = role === 'executor' ? `用户完整需求（本步骤及后续转交都必须遵守其中适用的约束；只执行当前步骤）：\n${value.planner.instructions}` : '';
@@ -407,7 +428,7 @@ export class WorkflowService {
       }
       const priorContext = [location, originalRequest, progress].filter(Boolean).join('\n\n');
       const context: WorkflowExecutionContext = { workflowID: value.id, stepID: step.id, attempt: step.attempts.length + 1,
-        role, target: value.target, instructions: continuation?.handoff && step.checkpoint ? step.checkpoint : step.instructions, evidence, priorContext };
+        role, target: workflowEffectiveTarget(value, step), instructions: continuation?.handoff && step.checkpoint ? step.checkpoint : step.instructions, evidence, priorContext };
       // Preserve the actual request; reduce supporting evidence to fit the authenticated channel in UTF-8.
       while (jsonBytes({ executionID: '0'.repeat(36), context, inputFiles }) > 58_000 || jsonBytes(context) > 55_000) {
         if (context.evidence.length > 100) context.evidence = context.evidence.slice(0, Math.floor(context.evidence.length * 0.8));
@@ -420,6 +441,7 @@ export class WorkflowService {
       if (!validWorkflowExecutionContext(context)) throw new Error('workflow_context_limit');
       const at = new Date().toISOString();
       const attempt: WorkflowAttempt = { number: context.attempt, executionID: randomUUID(), nodeID: candidate.nodeID, kind: candidate.kind,
+        ...(value.placementPolicy ? { placementPolicy: value.placementPolicy } : {}),
         ...(candidate.resultDelivery ? { resultDelivery: candidate.resultDelivery } : {}),
         ...(candidate.localConfig ? { localConfig: candidate.localConfig } : {}), phase: 'intent',
         context, createdAt: at, updatedAt: at, summary: '', outcome: null, inputFiles, outputFiles: [], error: null, handled: false };
@@ -510,7 +532,8 @@ export class WorkflowService {
   }
   private correctPlanningFormat(value: Workflow, step: WorkflowStep, error: string | null): boolean {
     if (step.id !== 'planner' || value.planVersion || value.steps.length || value.state === 'stopping' ||
-      error !== 'workflow_invalid_outcome' || (step.validationRounds || 0) >= 2 || step.attempts.length >= 16) return false;
+      !error || !['workflow_invalid_outcome', 'workflow_placement_header_invalid', 'workflow_placement_conflict', 'workflow_placement_node_unknown'].includes(error) ||
+      (step.validationRounds || 0) >= 2 || step.attempts.length >= 16) return false;
     const attempt = step.attempts.at(-1)!;
     if (!['failed', 'completed'].includes(attempt.phase)) return false;
     attempt.handled = true; attempt.error = error;
@@ -523,10 +546,13 @@ export class WorkflowService {
     const value = this.store.get(id)!; const step = currentStep(value, stepID, executionID);
     if (!step || step.attempts.at(-1)!.handled || value.state === 'stopping') return;
     const outcome = snapshot.outcome;
+    const requestedPlacement = step.attempts.at(-1)!.placementPolicy === workflowPlacementPolicy;
     const planner = stepID === 'planner';
     try {
       if (planner ? !validPlanningOutcome(outcome) : !validExecutionOutcome(outcome)) throw new Error('workflow_invalid_outcome');
       let queryEvidence: string | null = null;
+      let acceptedPlan: WorkflowPlan | undefined;
+      let placements: Record<string, WorkflowStepPlacement> | undefined;
       let materials = mergeFiles(step.materials, snapshot.outputFiles);
       if (outcome!.kind === 'query' || outcome!.kind === 'resources') {
         if (step.queryRounds >= 4) throw new Error('workflow_query_limit');
@@ -534,13 +560,21 @@ export class WorkflowService {
         else materials = mergeFiles(materials, await this.adapter.materialize(value, outcome!.resources));
       }
       if (outcome!.kind === 'plan' || outcome!.kind === 'expand') {
-        const error = workflowPlanError(outcome!.plan, value.target);
+        const error = workflowPlanError(outcome!.plan, workflowEffectiveTarget(value));
         if (error) throw new Error(error);
         if (outcome!.plan.steps.some((s) => s.id === 'planner')) throw new Error('workflow_reserved_step_id');
         if (outcome!.kind === 'expand' && !snapshot.safeToTransfer) throw new Error('workflow_source_not_quiescent');
+        acceptedPlan = outcome!.plan;
+        if (requestedPlacement) {
+          const identities = this.adapter.placementNodes?.(value).map(node => node.nodeID) ||
+            [...new Set([...(value.originNodeID ? [value.originNodeID] : []), ...this.adapter.candidates(value, step, planner ? 'planner' : 'executor').map(candidate => candidate.nodeID)])];
+          const decoded = decodeWorkflowPlacementPlan(acceptedPlan, { originNodeID: value.originNodeID, knownNodeIDs: identities,
+            target: value.target, parent: outcome!.kind === 'expand' ? step.placement : undefined });
+          acceptedPlan = decoded.plan; placements = decoded.placements;
+        }
       }
       if (outcome!.kind === 'handoff') {
-        if (value.target.mode === 'locked') throw new Error('workflow_locked_handoff');
+        if (workflowEffectiveTarget(value, step).mode === 'locked') throw new Error('workflow_locked_handoff');
         if (!snapshot.safeToTransfer || !outcome!.processesStopped) throw new Error('workflow_source_not_quiescent');
         if (value.handoffs.filter((h) => h.stepID === stepID).length >= 4) throw new Error('workflow_handoff_limit');
         if (outcome!.nodeID && step.attempts.some((a) => a.nodeID === outcome!.nodeID)) throw new Error('workflow_handoff_cycle');
@@ -556,14 +590,14 @@ export class WorkflowService {
           if (handoff) handoff.phase = 'completed';
         }
         if (outcome!.kind === 'plan') {
-          current.summary = outcome!.plan.summary; current.steps = outcome!.plan.steps.map(workflowStep); current.planVersion++;
+          current.summary = acceptedPlan!.summary; current.steps = acceptedPlan!.steps.map(plan => workflowStep(plan, placements?.[plan.id])); current.planVersion++;
           active.state = 'completed'; if (current.state !== 'paused') current.state = 'running';
           workflowEvent(current, 'plan', current.summary);
         } else if (outcome!.kind === 'completed') {
           active.checkpoint = outcome!.summary; active.state = 'completed';
         } else {
           if ('checkpoint' in outcome!) active.checkpoint = outcome!.checkpoint;
-          if (outcome!.kind === 'expand') this.expand(current, active, outcome!.plan);
+          if (outcome!.kind === 'expand') this.expand(current, active, acceptedPlan!, placements);
           else {
             active.state = 'ready';
             active.continuation = { nodeID: outcome!.kind === 'handoff' ? outcome!.nodeID : attempt.nodeID,
@@ -587,12 +621,12 @@ export class WorkflowService {
       });
     }
   }
-  private expand(value: Workflow, step: WorkflowStep, plan: WorkflowPlan) {
+  private expand(value: Workflow, step: WorkflowStep, plan: WorkflowPlan, placements?: Record<string, WorkflowStepPlacement>) {
     if (value.steps.length + plan.steps.length > 32) throw new Error('workflow_expansion_limit');
     const prefix = `s${value.planVersion + 1}_`;
     const idMap = new Map(plan.steps.map((s, i) => [s.id, `${prefix}${i + 1}`]));
     const newSteps = plan.steps.map((s) => workflowStep({ ...s, id: idMap.get(s.id)!,
-      dependsOn: s.dependsOn.length ? s.dependsOn.map((id) => idMap.get(id)!) : [step.id] }));
+      dependsOn: s.dependsOn.length ? s.dependsOn.map((id) => idMap.get(id)!) : [step.id] }, placements?.[s.id]));
     const leaves = newSteps.filter((s) => !newSteps.some((other) => other.dependsOn.includes(s.id))).map((s) => s.id);
     for (const next of value.steps) if (next.dependsOn.includes(step.id)) {
       if (next.attempts.length) throw new Error('workflow_expansion_started_dependency');
@@ -606,4 +640,5 @@ function planFields(step: WorkflowStepPlan): WorkflowStepPlan {
   return { id: step.id, title: step.title, instructions: step.instructions, dependsOn: step.dependsOn,
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements };
 }
+function stepRevision(step: WorkflowStep) { return JSON.stringify([planFields(step), step.placement]); }
 function errorCode(error: unknown) { return error instanceof Error ? error.message.slice(0, 300) : 'workflow_operation_failed'; }

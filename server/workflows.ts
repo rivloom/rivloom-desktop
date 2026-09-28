@@ -1,19 +1,22 @@
 import { validReasoningEffort, type ReasoningEffort } from '../shared/model-reasoning.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { uuid } from '../shared/collaboration.ts';
-import { validWorkflowTarget, type Workflow, type WorkflowStep, type WorkflowStepPlan } from '../shared/workflows.ts';
+import { nodeID, uuid } from '../shared/collaboration.ts';
+import { validWorkflowTarget, type Workflow, type WorkflowPlacementPolicy, type WorkflowStep, type WorkflowStepPlacement, type WorkflowStepPlan } from '../shared/workflows.ts';
 import { validTaskFileDescriptor, type TaskFileDescriptor } from '../shared/task-files.ts';
 import type { ApprovalMode } from '../shared/types.ts';
 import { createHistorySchema, HistoryError } from './conversation-history.ts';
 import { WorkflowHistory } from './workflow-history.ts';
 
 export type WorkflowRequest = {
+  placementPolicy?: WorkflowPlacementPolicy;
+  /** Trusted server identity; never accepted from the HTTP body. */
+  originNodeID?: string;
   requestID: string; creatorID: string; title: string; description: string; projectID: string | null;
   model: string | null; reasoningEffort?: ReasoningEffort; approvalMode: ApprovalMode; target: Workflow['target']; inputFiles: TaskFileDescriptor[]; criteria?: string;
 };
-export function workflowStep(plan: WorkflowStepPlan): WorkflowStep {
-  return { ...structuredClone(plan), state: plan.dependsOn.length ? 'waiting' : 'ready', attempts: [], checkpoint: '',
+export function workflowStep(plan: WorkflowStepPlan, placement?: WorkflowStepPlacement): WorkflowStep {
+  return { ...structuredClone(plan), ...(placement ? { placement: structuredClone(placement) } : {}), state: plan.dependsOn.length ? 'waiting' : 'ready', attempts: [], checkpoint: '',
     queryRounds: 0, materials: [], evidence: '', continuation: null };
 }
 export function workflowEvent(value: Workflow, kind: Workflow['events'][number]['kind'], text: string, stepID: string | null = null) {
@@ -46,12 +49,13 @@ export class WorkflowStore {
   create(request: WorkflowRequest): Workflow {
     if (this.db.prepare("SELECT 1 FROM conversation_retired WHERE kind='requests' AND id=?").get(`${request.creatorID}:${request.requestID}`))
       throw new HistoryError(410, '此会话已移入回收站或已永久删除。');
-    if (request.reasoningEffort !== undefined && !validReasoningEffort(request.reasoningEffort) || !uuid(request.requestID) || !request.creatorID || !request.title.trim() || request.title.length > 160 ||
+    if (request.placementPolicy !== undefined && request.placementPolicy !== 'placement-v1' || request.originNodeID !== undefined && !nodeID(request.originNodeID) || request.reasoningEffort !== undefined && !validReasoningEffort(request.reasoningEffort) || !uuid(request.requestID) || !request.creatorID || !request.title.trim() || request.title.length > 160 ||
       !request.description.trim() || request.description.length > 12_000 || !validWorkflowTarget(request.target) ||
       (request.criteria !== undefined && (typeof request.criteria !== 'string' || request.criteria.length > 4000)) ||
       !['ask', 'auto', 'full'].includes(request.approvalMode) || request.inputFiles.length > 10 ||
       !request.inputFiles.every(validTaskFileDescriptor)) throw new Error('invalid_workflow_request');
     // Explicit field order and normalized descriptors make retries independent of JSON key ordering.
+    // Server-derived origin is not user content: old request retries keep their saved origin and digest.
     const contentDigest = createHash('sha256').update(JSON.stringify([
       request.title, request.description, request.criteria || '', request.projectID, request.model, request.approvalMode,
       request.target.mode, request.target.mode === 'automatic' ? null : request.target.nodeID,

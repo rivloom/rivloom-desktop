@@ -1,6 +1,7 @@
 import { workflowCandidateAllowed, type WorkflowDiagnosticSnapshot, type WorkflowStepDiagnostic } from '../shared/workflow-diagnostics.ts';
 import type { Workflow, WorkflowAttempt, WorkflowStep } from '../shared/workflows.ts';
 import type { WorkflowPlacement } from './workflow-placement.ts';
+import { workflowEffectiveTarget } from '../shared/workflow-origin.ts';
 
 export type WorkflowExecutionDiagnostic = {
   connected: boolean; observedAt: string | null; attention: boolean;
@@ -17,9 +18,10 @@ export function workflowDiagnostics(value: Workflow, sources: WorkflowDiagnostic
   const steps = value.planVersion ? value.steps : [value.planner];
   return { workflowID: value.id, roundRequestID: value.roundRequestID || value.requestID, workflowVersion: value.version,
     sampledAt: new Date(at).toISOString(), steps: steps.map((step): WorkflowStepDiagnostic => {
+      const effectiveTarget = workflowEffectiveTarget(value, step);
       const attempt = step.attempts.at(-1);
       const active = step.state === 'running' && attempt;
-      const target = value.target.mode === 'locked' ? value.target.nodeID : step.continuation?.nodeID || null;
+      const target = effectiveTarget.mode === 'locked' ? effectiveTarget.nodeID : step.continuation?.nodeID || null;
       const result: WorkflowStepDiagnostic = { stepID: step.id, attempt: attempt?.number || 0,
         executionID: active ? attempt.executionID : null, nodeID: active ? attempt.nodeID : target,
         phase: 'placement', recovery: 'automatic_check', observedAt: null, dependencies: [], nodes: [], queue: null };

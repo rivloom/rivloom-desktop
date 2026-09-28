@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { WorkflowStore, workflowStep, type WorkflowRequest } from '../server/workflows.ts';
 import { WorkflowService, type WorkflowExecutionAdapter, type WorkflowExecutionSnapshot } from '../server/workflow-service.ts';
-import type { ExecutionOutcome, WorkflowAttempt, WorkflowPlan, WorkflowStepPlan } from '../shared/workflows.ts';
+import { validWorkflowExecutionContext, type ExecutionOutcome, type WorkflowAttempt, type WorkflowPlan, type WorkflowStepPlan } from '../shared/workflows.ts';
+import { workflowUsesPlacementContract } from '../shared/workflow-origin.ts';
 
 const A = 'A'.repeat(32); const B = 'B'.repeat(32); const C = 'C'.repeat(32);
 
@@ -38,12 +39,18 @@ test('queued thinking choices persist across restart, fence replays and reach ea
 });
 const step = (id: string, dependsOn: string[] = [], nodeID: string | null = null): WorkflowStepPlan =>
   ({ id, title: id, instructions: `Complete ${id}`, dependsOn, nodeID, resources: [], software: [], requirements: {} });
+const placedStep = (id: string, required: string | null = null, dependsOn: string[] = [], preferred: string | null = null): WorkflowStepPlan => ({
+  ...step(id, dependsOn, preferred), instructions: JSON.stringify(required ?
+    { rivloomPlacement: 1, mode: 'required', nodeID: required, reason: 'Model determined the required device' } :
+    { rivloomPlacement: 1, mode: 'free', reason: 'Model determined this work is portable' }) + `\nComplete ${id}`,
+});
 function setup() {
   const db = new DatabaseSync(':memory:'); const store = new WorkflowStore(db);
   const executions = new Map<string, WorkflowExecutionSnapshot>(); const starts: WorkflowAttempt[] = [];
   let queries = 0; let waitingCount = 0; let dropAfterAdmission = false; let stopUnknown = false;
   let beforeDispatch: (() => void) | null = null;
   const adapter: WorkflowExecutionAdapter = {
+    placementNodes: () => [A, B, C].map(nodeID => ({ nodeID, name: `Fixture ${nodeID[0]}` })),
     candidates: () => [A, B, C].map((nodeID) => ({ nodeID, kind: nodeID === A ? 'local' : 'remote', waitingCount })),
     evidence: () => 'catalog version 1',
     lookup: async (_value, attempt) => executions.get(attempt.executionID) || null,
@@ -87,6 +94,285 @@ function setup() {
   };
 }
 const complete = (summary = 'done'): ExecutionOutcome => ({ kind: 'completed', summary, files: [] });
+
+function idleRemoteBusyOrigin(f: ReturnType<typeof setup>, includeOrigin = true, backlog = 5) {
+  f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 0 },
+    ...(includeOrigin ? [{ nodeID: A, kind: 'local' as const, waitingCount: backlog }] : [])];
+}
+
+test('remote planning binds only the model-selected business step, its continuation and retry to the origin', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const value = f.create({ originNodeID: A, placementPolicy: 'placement-v1', description: '看下这台机器信息' });
+    await f.service.advance(value.id);
+    assert.equal(f.starts[0].nodeID, B);
+    assert.deepEqual(f.starts[0].context.target, { mode: 'automatic' });
+    assert(workflowUsesPlacementContract(f.starts[0].context));
+    assert(validWorkflowExecutionContext(f.starts[0].context), 'wire context retains its exact existing fields');
+    assert.match(f.starts[0].context.priorContext, new RegExp(`发起任务的 Node：${A}`));
+    const raw = { kind: 'plan' as const, plan: { summary: 'Machine information', steps: [placedStep('inspect', 'origin', [], B)] } };
+    f.finish(f.starts[0], raw);
+    await f.service.advance(value.id);
+    assert.equal(f.starts[1].nodeID, A, 'soft preference B cannot escape the independently required origin');
+    assert.deepEqual(f.starts[1].context.target, { mode: 'locked', nodeID: A });
+    assert.equal(f.starts[1].context.instructions, 'Complete inspect');
+    assert.deepEqual(f.store.get(value.id)!.planner.attempts[0].outcome, raw, 'raw outcome remains bound and unmodified');
+    assert.equal(f.store.get(value.id)!.steps[0].instructions, 'Complete inspect');
+    assert.equal(f.store.get(value.id)!.steps[0].placement?.mode, 'required');
+    f.finish(f.starts[1], { kind: 'query', query: { text: 'Machine capabilities', kinds: [], limit: 5 }, reason: 'Need facts', checkpoint: 'pending', files: [] });
+    await f.service.advance(value.id);
+    assert.equal(f.starts[2].nodeID, A);
+    f.executions.set(f.starts[2].executionID, { phase: 'failed', summary: '', error: 'fixture failure', outcome: null, outputFiles: [], safeToTransfer: true });
+    await f.service.advance(value.id);
+    const failed = f.store.get(value.id)!;
+    await f.service.retryStep(value.id, { version: failed.version, roundRequestID: failed.requestID, stepID: 'inspect', attempt: 2, requestID: randomUUID() });
+    f.restart(); await f.service.advance(value.id);
+    assert.equal(f.starts.at(-1)!.nodeID, A);
+    f.finish(f.starts.at(-1)!, { kind: 'handoff', nodeID: B, reason: 'Another Node is idle', checkpoint: 'No changes', processesStopped: true, files: [] });
+    await f.service.advance(value.id);
+    assert.equal(f.store.get(value.id)!.error, 'workflow_locked_handoff');
+    assert(f.starts.slice(1).every(a => a.nodeID === A));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('a missing local model does not block remote planning but a required local business step waits for its device', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f, false);
+    const value = f.create({ originNodeID: A, placementPolicy: 'placement-v1', description: '查看本机系统信息' });
+    await f.service.advance(value.id);
+    assert.equal(f.starts[0].nodeID, B); assert.equal(f.store.get(value.id)!.state, 'planning');
+    f.finish(f.starts[0], { kind: 'plan', plan: { summary: 'Check origin', steps: [placedStep('inspect', 'origin')] } });
+    await f.service.advance(value.id);
+    assert.equal(f.starts.length, 1, 'missing local model/capability cannot move a business step to a remote machine');
+    assert.equal(f.store.get(value.id)!.steps[0].state, 'ready');
+    assert.throws(() => f.service.editStep(value.id, f.store.get(value.id)!.version, step('inspect', [], B)), /placement_conflict/);
+    f.service.editStep(value.id, f.store.get(value.id)!.version, { ...step('inspect'), instructions: 'Updated business detail' });
+    assert.equal(f.store.get(value.id)!.steps[0].placement?.mode, 'required');
+    idleRemoteBusyOrigin(f, true, 12); await f.service.advance(value.id);
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(value.id)!.pendingConfirmation?.nodeID, A);
+    f.service.confirm(value.id, A); await f.service.advance(value.id);
+    assert.equal(f.starts[1].nodeID, A);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('arbitrary wording and criteria reach the model while its placement decision controls dispatch', async () => {
+  for (const criteria of ['完成会话要求，说明结果、验证情况和仍需处理的问题。',
+    "Complete the conversation's requirements. Describe the result, verification, and any remaining issues.", 'Compare this computer with the server and write a report']) {
+    const f = setup();
+    try {
+      idleRemoteBusyOrigin(f);
+      const value = f.create({ originNodeID: A, placementPolicy: 'placement-v1', description: 'Can you tell me about the computer I am using, then prepare something useful?', criteria });
+      await f.service.advance(value.id); assert.equal(f.starts[0].nodeID, B);
+      f.finish(f.starts[0], { kind: 'plan', plan: { summary: 'Local information', steps: [placedStep('inspect', 'origin')] } });
+      await f.service.advance(value.id); assert.equal(f.starts[1].nodeID, A);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('a new contract never treats missing placement as free and format correction is bounded', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const value = f.create({ originNodeID: A, placementPolicy: 'placement-v1', description: '任意用户请求' }); await f.service.advance(value.id);
+    for (let index = 0; index < 3; index++) {
+      f.finish(f.starts.at(-1)!, { kind: 'plan', plan: { summary: 'Missing placement', steps: [step('inspect', [], B)] } });
+      await f.service.advance(value.id);
+    }
+    assert.equal(f.store.get(value.id)!.error, 'workflow_placement_header_invalid'); assert.equal(f.starts.length, 3);
+    assert(f.starts.every(attempt => attempt.context.role === 'planner' && attempt.nodeID === B));
+    assert.equal(f.store.get(value.id)!.steps.length, 0);
+    f.service.control(value.id, 'retry_planning'); f.restart(); await f.service.advance(value.id);
+    assert.equal(f.starts.at(-1)!.nodeID, B); assert.equal(f.starts.at(-1)!.placementPolicy, 'placement-v1');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('origin binding is per current round and preserves explicit targets and legacy request retries', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const id = await f.planned({ summary: 'Local', steps: [placedStep('inspect', 'origin')] }, { originNodeID: A, placementPolicy: 'placement-v1', description: '查看本机信息' });
+    f.finish(f.starts[1], complete()); await f.service.advance(id);
+    f.service.enqueue(id, randomUUID(), '为服务器生成一份报告', [], undefined, undefined, A, 'placement-v1'); await f.service.tick(); await f.service.tick();
+    assert.equal(f.starts[2].nodeID, B, 'historical local request cannot lock an unrelated round');
+    assert.deepEqual(f.starts[2].context.target, { mode: 'automatic' });
+    assert.equal(f.store.get(id)!.originNodeID, A);
+    assert.match(f.starts[2].context.priorContext, new RegExp(`发起任务的 Node：${A}`));
+    assert.match(f.starts[2].context.priorContext, new RegExp(`本次实际执行 Node：${B}`));
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'Portable report', steps: [placedStep('report')] } });
+    await f.service.advance(id); assert.equal(f.starts[3].nodeID, B, 'model output cannot establish a new origin constraint');
+    f.finish(f.starts[3], complete()); await f.service.advance(id);
+    f.service.enqueue(id, randomUUID(), '列出本机当前目录', [], undefined, undefined, A, 'placement-v1'); await f.service.tick(); await f.service.tick();
+    assert.equal(f.starts[4].nodeID, B, 'planner remains freely schedulable for another local query');
+    f.finish(f.starts[4], { kind: 'plan', plan: { summary: 'Local directory', steps: [placedStep('directory', 'origin')] } });
+    await f.service.advance(id); assert.equal(f.starts[5].nodeID, A);
+    for (const mode of ['preferred', 'locked'] as const) {
+      const value = f.create({ requestID: randomUUID(), originNodeID: A, description: '查看本机信息', target: { mode, nodeID: B } });
+      await f.service.advance(value.id); assert.equal(f.starts.at(-1)!.nodeID, B, mode);
+    }
+    const request = { ...f.request, requestID: randomUUID(), description: '查看本机信息' };
+    const legacy = f.service.create(request);
+    assert.equal(f.service.create({ ...request, originNodeID: A }).contentDigest, legacy.contentDigest);
+    assert.equal(f.store.get(legacy.id)!.originNodeID, undefined, 'an idempotent retry cannot rewrite a legacy origin');
+    await f.service.advance(legacy.id); assert.equal(f.starts.at(-1)!.nodeID, B);
+    assert.match(f.starts.at(-1)!.context.priorContext, /未记录发起 Node/);
+    assert.throws(() => f.create({ requestID: randomUUID(), originNodeID: 'invalid' }), /invalid_workflow_request/);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('a new user round upgrades a legacy conversation with its trusted origin without rewriting old work', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const id = await f.planned({ summary: 'Legacy', steps: [step('old')] });
+    f.finish(f.starts[1], complete()); await f.service.advance(id);
+    const previous = structuredClone(f.store.get(id)!);
+    const requestID = randomUUID();
+    f.service.enqueue(id, requestID, '你看下这台机器信息', [], undefined, undefined, A, 'placement-v1');
+    assert.equal(f.store.get(id)!.originNodeID, undefined, 'active/historical round is not retrofitted on receipt');
+    assert.equal(f.store.get(id)!.messages![0].originNodeID, A);
+    f.service.enqueue(id, requestID, '你看下这台机器信息', [], undefined, undefined, B, 'placement-v1');
+    assert.equal(f.store.get(id)!.messages![0].originNodeID, A, 'replays preserve the originally captured trusted identity');
+    f.restart(); await f.service.tick(); await f.service.tick();
+    const current = f.store.get(id)!;
+    assert.equal(current.originNodeID, A); assert.equal(current.rounds![0].originNodeID, undefined);
+    assert.equal(current.placementPolicy, 'placement-v1'); assert.equal(current.rounds![0].placementPolicy, undefined);
+    assert.deepEqual(current.rounds![0].planner, previous.planner); assert.deepEqual(current.rounds![0].steps, previous.steps);
+    assert.equal(f.starts[2].nodeID, B); assert.deepEqual(f.starts[2].context.target, { mode: 'automatic' });
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'New bound step', steps: [placedStep('inspect', 'origin')] } });
+    await f.service.advance(id); assert.equal(f.starts[3].nodeID, A);
+    assert.throws(() => f.service.enqueue(id, randomUUID(), '查看本机信息', [], undefined, undefined, 'bad'), /invalid_workflow_request/);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('one semantic plan can require different devices and freely schedule a portable branch', async () => {
+  const f = setup();
+  try {
+    f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 0 }, { nodeID: A, kind: 'local', waitingCount: 5 }, { nodeID: C, kind: 'remote', waitingCount: 7 }];
+    const id = await f.planned({ summary: 'Inspect two devices and prepare a portable report', steps: [
+      placedStep('origin', 'origin', [], B), placedStep('named', C, [], A), placedStep('portable', null, [], C),
+    ] }, { originNodeID: A, placementPolicy: 'placement-v1', description: '检查我正在使用的电脑和另一台服务器，再整理建议', criteria: 'Use any suitable device for the portable work' });
+    assert.equal(f.starts[0].nodeID, B, 'planning may use the idle remote model');
+    const starts = new Map(f.starts.slice(1).map(a => [a.context.stepID, a]));
+    assert.equal(starts.get('origin')!.nodeID, A); assert.equal(starts.get('named')!.nodeID, C);
+    assert.equal(starts.get('portable')!.nodeID, B, 'free uses current load rather than a soft preference');
+    assert.deepEqual(starts.get('named')!.context.target, { mode: 'locked', nodeID: C });
+    assert.deepEqual(starts.get('portable')!.context.target, { mode: 'automatic' });
+    assert(f.store.get(id)!.steps.every(s => !s.instructions.includes('rivloomPlacement')));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('required expansion cannot weaken its parent while free clarification can expand into independently placed work', async () => {
+  for (const escape of [placedStep('child'), placedStep('child', B)]) {
+    const f = setup();
+    try {
+      idleRemoteBusyOrigin(f);
+      const id = await f.planned({ summary: 'Required origin', steps: [placedStep('inspect', 'origin')] }, { originNodeID: A, placementPolicy: 'placement-v1' });
+      f.finish(f.starts[1], { kind: 'expand', plan: { summary: 'Would escape', steps: [escape] }, checkpoint: 'Saved', files: [] });
+      await f.service.advance(id);
+      assert.equal(f.store.get(id)!.error, 'workflow_placement_conflict');
+      assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.steps.length, 1);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const id = await f.planned({ summary: 'Clarify first', steps: [placedStep('clarify')] }, { originNodeID: A, placementPolicy: 'placement-v1' });
+    f.executions.get(f.starts[1].executionID)!.phase = 'waiting';
+    await f.service.advance(id); assert.equal(f.starts.length, 2);
+    f.service.recordAnswers(f.starts[1].executionID, 'question-1', ['Which machine?'], [['Origin and the named server']]);
+    f.finish(f.starts[1], { kind: 'expand', plan: { summary: 'Answered', steps: [placedStep('origin', 'origin'), placedStep('named', B)] }, checkpoint: 'User clarified', files: [] });
+    await f.service.advance(id);
+    assert.equal(f.store.get(id)!.steps.length, 3);
+    assert.deepEqual(new Set(f.starts.slice(2).map(a => a.nodeID)), new Set([A, B]));
+    assert(f.store.get(id)!.steps.slice(1).every(s => s.placement?.mode === 'required'));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('legacy attempts do not acquire placement semantics from header-like text or later queued rounds', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const value = f.create({ originNodeID: A, description: '看下这台机器信息' });
+    await f.service.advance(value.id);
+    f.service.enqueue(value.id, randomUUID(), 'A future contract round', [], undefined, undefined, A, 'placement-v1');
+    const oldQueued = randomUUID(); f.service.enqueue(value.id, oldQueued, 'A legacy queued message', []);
+    const legacyPlan = { summary: 'Legacy header-like business text', steps: [placedStep('work', 'origin', [], A)] };
+    f.finish(f.starts[0], { kind: 'plan', plan: legacyPlan }); await f.service.advance(value.id);
+    assert.equal(f.starts[1].nodeID, B); assert.equal(f.starts[0].placementPolicy, undefined);
+    assert.equal(f.store.get(value.id)!.steps[0].placement, undefined);
+    assert.equal(f.store.get(value.id)!.steps[0].instructions, legacyPlan.steps[0].instructions);
+    f.finish(f.starts[1], complete()); await f.service.advance(value.id); await f.service.tick(); await f.service.tick();
+    assert.equal(f.starts[2].placementPolicy, 'placement-v1');
+    f.finish(f.starts[2], { kind: 'plan', plan: { summary: 'New round', steps: [placedStep('new')] } }); await f.service.advance(value.id);
+    f.finish(f.starts[3], complete()); await f.service.advance(value.id); await f.service.tick(); await f.service.tick();
+    const current = f.store.get(value.id)!;
+    assert.equal(current.roundRequestID, oldQueued); assert.equal(current.placementPolicy, undefined); assert.equal(current.originNodeID, undefined);
+    assert.equal(f.starts[4].placementPolicy, undefined); assert(!workflowUsesPlacementContract(f.starts[4].context));
+    assert.deepEqual(current.rounds?.map(round => round.placementPolicy), [undefined, 'placement-v1']);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('unknown origin blocks a required-origin result without treating the planner host as the origin', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const id = await f.planned({ summary: 'Unknown origin', steps: [placedStep('inspect', 'origin')] }, { placementPolicy: 'placement-v1' });
+    assert.equal(f.starts[0].nodeID, B); assert.equal(f.starts.length, 1);
+    assert.equal(f.store.get(id)!.error, 'workflow_placement_origin_unknown');
+    assert.equal(f.store.get(id)!.steps.length, 0);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('the placement contract preserves near-limit original requirements through execution and handoff', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const description = 'R'.repeat(11_980) + ' END-ORIGINAL-SCOPE';
+    const criteria = 'C'.repeat(200) + ' END-CRITERIA';
+    f.adapter.evidence = () => 'Resource fact '.repeat(2000);
+    const id = await f.planned({ summary: 'Portable work', steps: [placedStep('work')] },
+      { originNodeID: A, placementPolicy: 'placement-v1', description, criteria });
+    assert.equal(f.starts.length, 2, f.store.get(id)!.error || 'executor should fit');
+    const context = f.starts[1].context;
+    assert(context.priorContext.includes(description)); assert(context.priorContext.includes(criteria));
+    assert(workflowUsesPlacementContract(context)); assert(validWorkflowExecutionContext(context));
+    assert(context.priorContext.length <= 16_000);
+    f.adapter.candidates = () => [A, B, C].map(nodeID => ({ nodeID, kind: nodeID === A ? 'local' : 'remote', waitingCount: 0 }));
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: C, reason: 'Suitable eligible machine', checkpoint: 'Saved work', files: [], processesStopped: true });
+    await f.service.advance(id);
+    assert.equal(f.starts.length, 3, f.store.get(id)!.error || JSON.stringify(f.store.get(id)!.steps[0])); assert.equal(f.starts[2].nodeID, C);
+    assert(f.starts[2].context.priorContext.includes(description)); assert(f.starts[2].context.priorContext.includes(criteria));
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('combined maximum text that cannot fit the old context bound fails without dropping original constraints', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [placedStep('work')] },
+      { originNodeID: A, placementPolicy: 'placement-v1', description: 'D'.repeat(12_000), criteria: 'C'.repeat(4000) });
+    assert.equal(f.starts.length, 1); assert.equal(f.store.get(id)!.error, 'workflow_context_limit');
+    assert.equal(f.store.get(id)!.description.length, 12_000); assert.equal(f.store.get(id)!.criteria.length, 4000);
+    assert.equal(f.store.get(id)!.steps[0].attempts.length, 0, 'oversized business context is not dispatched');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('a later handoff that outgrows the fixed context limit does not truncate the original request or dispatch', async () => {
+  const f = setup();
+  try {
+    idleRemoteBusyOrigin(f);
+    const description = 'R'.repeat(11_980) + ' END-ORIGINAL-SCOPE', criteria = 'C'.repeat(980) + ' END-CRITERIA';
+    const id = await f.planned({ summary: 'Portable work', steps: [placedStep('work')] },
+      { originNodeID: A, placementPolicy: 'placement-v1', description, criteria });
+    assert.equal(f.starts.length, 2); assert(f.starts[1].context.priorContext.includes(description));
+    f.adapter.candidates = () => [A, B, C].map(nodeID => ({ nodeID, kind: nodeID === A ? 'local' : 'remote', waitingCount: 0 }));
+    f.finish(f.starts[1], { kind: 'handoff', nodeID: C, reason: 'Suitable machine', checkpoint: 'Saved work', files: [], processesStopped: true });
+    await f.service.advance(id);
+    assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.error, 'workflow_context_limit');
+    assert.equal(f.store.get(id)!.description, description); assert.equal(f.store.get(id)!.criteria, criteria);
+  } finally { await f.service.close(); f.db.close(); }
+});
 
 test('retry restores only a failed branch and its blocked descendants, preserving results, queue pause and durable receipts', async () => {
   const f = setup();
@@ -322,7 +608,7 @@ test('round input files preserve original material, newest results and explicitl
 
 const readyPlan = (f: ReturnType<typeof setup>, steps: WorkflowStepPlan[], target: WorkflowRequest['target'] = { mode: 'automatic' }) => {
   const value = f.create({ requestID: randomUUID(), target });
-  f.store.update(value.id, (w) => { w.state = 'running'; w.planVersion = 1; w.summary = 'Automatic placement'; w.steps = steps.map(workflowStep); });
+  f.store.update(value.id, (w) => { w.state = 'running'; w.planVersion = 1; w.summary = 'Automatic placement'; w.steps = steps.map(s => workflowStep(s)); });
   return value.id;
 };
 const resource = { nodeID: B, workspaceID: '00000000-0000-4000-8000-000000000001', id: 'a'.repeat(64), revision: 'b'.repeat(64) };
@@ -488,11 +774,13 @@ test('original user constraints survive narrowed plans, handoff and evidence tri
     const id = await f.planned({ summary: 'Narrowed plan', steps: [{ ...step('handoff'), instructions: '保存进度。'.repeat(700) }] },
       { description, criteria: '最终文件必须叫 final.mp4' });
     assert(f.starts[1].context.priorContext.includes(description)); assert.match(f.starts[1].context.priorContext, /最终文件必须叫 final\.mp4/);
-    assert(f.starts[1].context.priorContext.startsWith(`本次实际执行 Node：${f.starts[1].nodeID}`));
+    assert(f.starts[1].context.priorContext.startsWith('此旧会话未记录发起 Node'));
+    assert(f.starts[1].context.priorContext.includes(`本次实际执行 Node：${f.starts[1].nodeID}`));
     f.finish(f.starts[1], { kind: 'handoff', nodeID: B, reason: 'Required tool', checkpoint: 'Saved progress', files: [], processesStopped: true });
     await f.service.advance(id);
     assert.equal(f.starts[2].nodeID, B); assert(f.starts[2].context.priorContext.includes(description));
-    assert(f.starts[2].context.priorContext.startsWith(`本次实际执行 Node：${B}`));
+    assert(f.starts[2].context.priorContext.startsWith('此旧会话未记录发起 Node'));
+    assert(f.starts[2].context.priorContext.includes(`本次实际执行 Node：${B}`));
     assert.match(f.starts[2].context.priorContext, /本次接收上一个 Node 的转交/);
     assert.equal(f.starts[2].context.instructions, 'Saved progress', 'The target continues the checkpoint instead of repeating source instructions');
     assert.equal(f.store.get(id)!.steps[0].instructions, '保存进度。'.repeat(700), 'The original plan stays available in history');

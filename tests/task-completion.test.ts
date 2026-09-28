@@ -6,6 +6,7 @@ import { mkdtempSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, User, Message } from '../shared/types.ts';
+import type { WorkflowAttempt } from '../shared/workflows.ts';
 import { canContinueTask } from '../shared/task-continuation.ts';
 import { taskContinuationContext, taskContinuationContextBytes, taskMessageDigest, taskVisibleMessages } from '../server/task-continuation.ts';
 import { occupiesWorkerSlot } from '../server/worker-admission.ts';
@@ -34,7 +35,7 @@ test('cross-account context preserves all visible records, rejects excessive byt
   assert.notEqual(taskMessageDigest(request), taskMessageDigest({ ...request, text: 'Another request' }));
 });
 
-test('engine completion persists results and releases capacity automatically while approvals, questions and recovery remain explicit', async () => {
+test('engine completion persists results and releases capacity automatically while approvals, questions and recovery remain explicit', async (t) => {
   const root = mkdtempSync(resolve('.data/verification/completion-'));
   const engineURL = new URL('../server/engine.ts', import.meta.url).href;
   const key = `completion-${randomUUID()}`;
@@ -268,6 +269,78 @@ test('engine completion persists results and releases capacity automatically whi
     assert.equal(nodeQueueRecoveryDecision(queue.get(failedEntry.id)!, { source: 'live', task: stopped }).action, 'end');
     await service.stopTask(failed.id, owner);
     assert.equal(abortCalls, 2, 'Repeated stop after confirmation does not abort twice');
+    assert.equal(createCalls, 0); assert.equal(prompts.length, 0);
+    const { WorkflowRuntime } = await import('../server/workflow-runtime.ts');
+    const { WorkflowStore } = await import('../server/workflows.ts');
+    const workflows = new WorkflowStore(store.db);
+    const workflow = workflows.create({ requestID: randomUUID(), creatorID: owner.id, title: 'Stop fixture',
+      description: 'Do not execute a model', projectID, model: 'fixture/model', approvalMode: 'ask',
+      target: { mode: 'automatic' }, inputFiles: [] });
+    const stopping = workflows.update(workflow.id, value => { value.state = 'stopping'; });
+    const attempt = (kind: WorkflowAttempt['kind'], phase: WorkflowAttempt['phase']): WorkflowAttempt => ({
+      number: 1, executionID: randomUUID(), nodeID: (kind === 'local' ? 'A' : 'B').repeat(32), kind, phase,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), summary: '', outcome: null,
+      inputFiles: [], outputFiles: [], error: null, handled: false,
+      context: { workflowID: workflow.id, stepID: 'planner', attempt: 1, role: 'planner', target: workflow.target,
+        instructions: 'Do not execute a model', evidence: '', priorContext: '' },
+    });
+    type Remote = { id: string; direction: 'outgoing'; targetNodeID: string; executionSequence: number;
+      status: 'accepted'; executionState: 'running' | 'stopped'; controlPending: boolean };
+    let remote: Remote | null = null, controlCalls = 0, controlFailure = false, loseRecord = false;
+    const network = {
+      remoteTask: () => remote,
+      async requestRemoteTaskControl(id: string, sequence: number, action: { kind: string }) {
+        controlCalls++; assert.equal(id, remote?.id); assert.equal(sequence, remote?.executionSequence); assert.equal(action.kind, 'stop');
+        if (controlFailure) throw new Error('Synthetic peer offline');
+        if (loseRecord) remote = null;
+        else remote!.controlPending = true;
+      },
+    };
+    // Stub only the transport. Exercise the real Runtime stop, store binding and durable queue paths.
+    const runtime = Object.create(WorkflowRuntime.prototype) as InstanceType<typeof WorkflowRuntime>;
+    Object.assign(runtime, { options: { network, queue } });
+    await t.test('runtime stop retains missing admitted local and remote executions as unknown', async () => {
+      for (const kind of ['local', 'remote'] as const) for (const phase of ['queued', 'running', 'waiting', 'unknown'] as const)
+        assert.equal(await runtime.stop(stopping, attempt(kind, phase)), 'unknown', `${kind}/${phase}`);
+      assert.equal(controlCalls, 0);
+    });
+    await t.test('runtime stop confirms a missing intent only behind the persisted stop fence', async () => {
+      for (const kind of ['local', 'remote'] as const) {
+        const pending = attempt(kind, 'intent');
+        assert.equal(await runtime.stop(workflow, pending), 'unknown', `${kind}: no stop fence`);
+        assert.equal(await runtime.stop(stopping, pending), 'stopped', `${kind}: no admission after fence`);
+      }
+    });
+    await t.test('runtime stop still cancels a bound local queue entry before an engine session starts', async () => {
+      const pending = attempt('local', 'queued');
+      const local = { ...make('ready'), id: pending.executionID, sessionID: null, collaboration: pending.context };
+      store.saveTask(local);
+      const entry = queue.enqueue({ kind: 'local', taskID: local.id });
+      assert.equal(await runtime.stop(stopping, pending), 'stopped');
+      assert.equal(store.task(local.id).state, 'stopped'); assert.equal(queue.get(entry.id)!.state, 'ended');
+      assert.equal(abortCalls, 2, 'An unstarted queued task does not abort or create an engine session');
+    });
+    await t.test('runtime remote stop waits for a terminal acknowledgement after a failed or pending control', async () => {
+      const pending = attempt('remote', 'running');
+      remote = { id: pending.executionID, direction: 'outgoing', targetNodeID: pending.nodeID,
+        executionSequence: 3, status: 'accepted', executionState: 'running', controlPending: false };
+      controlFailure = true;
+      assert.equal(await runtime.stop(stopping, pending), 'unknown');
+      controlFailure = false;
+      assert.equal(await runtime.stop(stopping, pending), 'unknown');
+      assert.equal(controlCalls, 2);
+      assert.equal(await runtime.stop(stopping, pending), 'unknown'); assert.equal(controlCalls, 2, 'Pending control is not repeated');
+      remote.executionState = 'stopped'; remote.controlPending = false;
+      assert.equal(await runtime.stop(stopping, pending), 'stopped'); assert.equal(controlCalls, 2);
+    });
+    await t.test('runtime remote stop cannot confirm a record that disappears during the control request', async () => {
+      const pending = attempt('remote', 'running');
+      remote = { id: pending.executionID, direction: 'outgoing', targetNodeID: pending.nodeID,
+        executionSequence: 4, status: 'accepted', executionState: 'running', controlPending: false };
+      loseRecord = true;
+      assert.equal(await runtime.stop(stopping, pending), 'unknown');
+      assert.equal(await runtime.stop(stopping, pending), 'unknown', 'Later polls must not turn the missing record into a successful stop');
+    });
     assert.equal(createCalls, 0); assert.equal(prompts.length, 0);
     const account = providerAccounts.create('fixture', 'Alternate');
     service.engineStatus.models = ['fixture/model', 'fixture/org/beta', `${account.id}/org/beta`].map(id => ({ id, name: id }));

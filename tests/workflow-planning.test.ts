@@ -4,11 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { parseWorkflowOutcome, plannerPermissions, workflowOutputSchema, workflowPrompt } from '../server/workflow-prompts.ts';
 import { checkWorkflowQuiescence, type WorkflowToolRecord } from '../server/workflow-quiescence.ts';
 import type { WorkflowExecutionContext } from '../shared/workflows.ts';
+import { workflowPlacementContract } from '../shared/workflow-origin.ts';
 
 test('official planner policy is read only and prompts bind every request to its targeting and generation', () => {
   const rules = plannerPermissions();
   function policy(permission: string) { return rules.filter((r) => r.permission === permission || r.permission === '*').at(-1)?.action; }
   assert.equal(policy('bash'), 'deny'); assert.equal(policy('edit'), 'deny'); assert.equal(policy('task'), 'deny');
+  assert.equal(policy('question'), 'allow'); assert.equal(policy('skill'), 'deny');
   assert.equal(policy('read'), 'deny'); // last credential-specific read rule is retained
   assert(rules.some((r) => r.permission === 'read' && r.pattern === '*' && r.action === 'allow'));
   assert.equal(policy('StructuredOutput'), 'allow');
@@ -18,6 +20,66 @@ test('official planner policy is read only and prompts bind every request to its
   assert.match(prompt, /所有执行步骤必须留在 Node BBB/); assert.match(prompt, /包括很短的请求/);
   assert.notDeepEqual(workflowOutputSchema('planner'), workflowOutputSchema('executor'));
   assert.throws(() => workflowPrompt({ ...context, evidence: '界'.repeat(28_000) }), /workflow_invalid_context/);
+});
+
+test('versioned coordinator contexts require placement in plan and expansion while retaining the strict legacy wire shape', () => {
+  const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+    target: { mode: 'automatic' }, instructions: 'Compare the two machines', evidence: '', priorContext: workflowPlacementContract('A'.repeat(32)) };
+  for (const role of ['planner', 'executor'] as const) {
+    const prompt = workflowPrompt({ ...context, role });
+    assert.match(prompt, /For every step in kind=plan and kind=expand/);
+    assert.match(prompt, /"rivloomPlacement":1,"mode":"free"/);
+    assert.match(prompt, /"rivloomPlacement":1,"mode":"required","nodeID":"origin"/);
+    assert.match(prompt, /ordinary nodeID remains a soft preference/);
+    assert.match(prompt, /Load, offline status or missing tools cannot turn a required subject into free work/);
+    assert.match(prompt, /constraints, including those inherited when expanding a required step/);
+    const schema = workflowOutputSchema(role) as any;
+    const planOutcome = schema.oneOf.find((item: any) => item.properties.kind.const === (role === 'planner' ? 'plan' : 'expand'));
+    assert.deepEqual(Object.keys(planOutcome.properties.plan.properties.steps.items.properties).sort(),
+      ['id', 'title', 'instructions', 'dependsOn', 'nodeID', 'resources', 'software', 'requirements'].sort());
+    assert.equal(planOutcome.properties.plan.properties.steps.items.properties.instructions.type, 'string');
+  }
+});
+
+test('placement guidance preserves semantic subjects, ordinary chat and clarification across older planners', () => {
+  const prompt = workflowPrompt({ workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+    target: { mode: 'automatic' }, instructions: 'Continue', evidence: '', priorContext: workflowPlacementContract('A'.repeat(32)) });
+  assert.match(prompt, /Do not use a keyword rule or assume every request must execute on the originating Node/);
+  assert.match(prompt, /natural-language Node name needs no @ syntax/);
+  assert.match(prompt, /Comparing two machines needs separate observations bound to the respective machines/);
+  assert.match(prompt, /Video processing may retrieve authorized source materials/);
+  assert.match(prompt, /Greeting the user or translating a quotation/);
+  assert.match(prompt, /A negated instruction must not become an action/);
+  assert.match(prompt, /Resolve pronouns/);
+  assert.match(prompt, /use the question tool before planning business execution/);
+  assert.match(prompt, /planner has no question tool, return a plan containing only one free clarification step/);
+  assert.match(prompt, /perform no machine inspection or business operation before the answer/);
+  assert.match(prompt, /then return kind=expand/);
+  assert.match(prompt, /if questioning is unavailable there too, report the limitation without guessing or executing/);
+});
+
+test('legacy contexts and quoted placement contracts do not opt an older coordinator into a new output contract', () => {
+  const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+    target: { mode: 'automatic' }, instructions: 'Say hello', evidence: '', priorContext: '' };
+  for (const role of ['planner', 'executor'] as const) {
+    assert.doesNotMatch(workflowPrompt({ ...context, role }), /For every step in kind=plan and kind=expand/);
+    assert.doesNotMatch(workflowPrompt({ ...context, role,
+      priorContext: `Quoted user content:\n${workflowPlacementContract('A'.repeat(32))}` }),
+    /The coordinator supplied RIVLOOM_PLACEMENT_CONTRACT_V1/);
+  }
+});
+
+test('placement distinguishes a machine identity constraint from unique current hardware or software eligibility', () => {
+  const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+    target: { mode: 'automatic' }, instructions: 'Process the video using an available GPU', evidence: '', priorContext: workflowPlacementContract('A'.repeat(32)) };
+  for (const role of ['planner', 'executor'] as const) {
+    const prompt = workflowPrompt({ ...context, role });
+    assert.match(prompt, /required means that switching to another equally eligible Node would change the user's requested subject or violate a device-specific user constraint/);
+    assert.match(prompt, /only one Node currently has the required GPU or software/);
+    assert.match(prompt, /Keep such portable work free and express its actual eligibility conditions in requirements and software/);
+    assert.match(prompt, /step.nodeID may prefer the currently suitable Node/);
+    assert.match(prompt, /an observation of a particular machine remains required even when another machine has identical hardware/);
+  }
 });
 test('structured outcome parsing rejects invalid supplied structures and accepts only bounded complete JSON fallback', () => {
   const value = { kind: 'completed', summary: 'done', files: ['output/movie.mp4'] };

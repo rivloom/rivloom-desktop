@@ -2,6 +2,13 @@ import { t } from '../shared/i18n.ts';
 import type { Workflow, WorkflowAttempt, WorkflowStep } from '../shared/workflows.ts';
 export type WorkflowGraphNode = { id: string; step: WorkflowStep; attempt: WorkflowAttempt | null; historical: boolean };
 export type WorkflowGraphEdge = { id: string; from: string; to: string; kind: 'dependency' | 'handoff'; label: string };
+/** Actual executions are evidence; an unstarted step displays enforced placement before preferences. */
+export function workflowGraphNodeID(value: Pick<Workflow, 'target'>, node: Pick<WorkflowGraphNode, 'step' | 'attempt'>): string | null {
+  if (node.attempt) return node.attempt.nodeID;
+  if (value.target.mode === 'locked') return value.target.nodeID;
+  if (node.step.placement?.mode === 'required') return node.step.placement.nodeID;
+  return node.step.nodeID;
+}
 export function workflowGraph(value: Workflow) {
   const nodes: WorkflowGraphNode[] = []; const edges: WorkflowGraphEdge[] = [];
   const first = new Map<string, string>(); const last = new Map<string, string>();

@@ -3,7 +3,7 @@ import { Check, Circle, LoaderCircle, LockKeyhole, AlertCircle, ArrowRightLeft }
 import { t } from '../shared/i18n.ts';
 import type { Workflow } from '../shared/workflows.ts';
 
-import { workflowGraph, layoutWorkflowGraph, workflowStepLabel, type WorkflowGraphNode } from './workflow-graph-data.ts';
+import { workflowGraph, workflowGraphNodeID, layoutWorkflowGraph, workflowStepLabel, type WorkflowGraphNode } from './workflow-graph-data.ts';
 export { workflowStepLabel, type WorkflowGraphNode } from './workflow-graph-data.ts';
 export function WorkflowGraph({ value, selected, select, nodeName }: {
   value: Workflow; selected: string | null; select: (node: WorkflowGraphNode) => void; nodeName: (id: string | null) => string;
@@ -51,7 +51,7 @@ export function WorkflowGraph({ value, selected, select, nodeName }: {
           const position = layout.positions.get(node.id)!;
           const status = node.historical ? t('已转交') : workflowStepLabel(node.step, node.attempt);
           const state = node.historical ? 'handed-off' : node.step.state;
-          const assigned = node.attempt?.nodeID || node.step.nodeID || (value.target.mode === 'locked' ? value.target.nodeID : null);
+          const assigned = workflowGraphNodeID(value, node);
           return <li key={node.id} style={{ left: position.x, top: position.y, width: position.width, height: position.height }}>
             <button type="button" className={`workflow-step ${state} ${selected === node.id ? 'selected' : ''}`}
               aria-pressed={selected === node.id} onClick={() => select(node)}
@@ -62,7 +62,7 @@ export function WorkflowGraph({ value, selected, select, nodeName }: {
                 <span>{status}</span><small>{node.attempt ? `#${node.attempt.number}` : '—'}</small>
               </span>
               <strong>{node.step.title}</strong>
-              <span className="workflow-step-node">{value.target.mode === 'locked' && <LockKeyhole size={12} />}<span>{assigned ? nodeName(assigned) : t('待分配')}</span></span>
+              <span className="workflow-step-node">{(value.target.mode === 'locked' || node.step.placement?.mode === 'required') && <LockKeyhole size={12} />}<span>{assigned ? nodeName(assigned) : t('待分配')}</span></span>
             </button>
           </li>;
         })}

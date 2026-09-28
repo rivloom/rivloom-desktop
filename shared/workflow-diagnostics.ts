@@ -2,6 +2,7 @@ import type { NodeQueueReasonCode } from './node-queue.ts';
 import type { Workflow, WorkflowStep } from './workflows.ts';
 import type { TaskHardwareRequirements } from './types.ts';
 import type { TaskQueueReceipt } from './task-queue-receipts.ts';
+import { validWorkflowStepPlacement, workflowEffectiveTarget } from './workflow-origin.ts';
 
 export type WorkflowDiagnosticCode =
   | 'node_offline' | 'channel_unavailable' | 'trust_required' | 'topology_unavailable'
@@ -35,7 +36,10 @@ export type WorkflowDiagnosticSnapshot = {
 
 /** Shared by placement and its explanation. These restrictions also fence handoffs. */
 export function workflowCandidateAllowed(value: Workflow, step: WorkflowStep, nodeID: string) {
-  return (value.target.mode !== 'locked' || value.target.nodeID === nodeID) &&
+  const target = workflowEffectiveTarget(value, step);
+  return (step.placement === undefined || validWorkflowStepPlacement(step.placement)) &&
+    !(value.target.mode === 'locked' && step.placement?.mode === 'required' && step.placement.nodeID !== value.target.nodeID) &&
+    (target.mode !== 'locked' || target.nodeID === nodeID) &&
     (!step.continuation?.nodeID || step.continuation.nodeID === nodeID) &&
     (!step.continuation?.handoff || !step.attempts.some((a) => a.nodeID === nodeID));
 }

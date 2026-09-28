@@ -60,6 +60,7 @@ type WorkflowViewProps = {
   searchMatch?: SearchMatch; searchQuery?: string; searchRevision?: number;
   navigateDiagnostics?: WorkflowDiagnosticNavigation;
   reuse?: Pick<MessageReuseActionsProps, 'draft' | 'onApply' | 'disabled'>;
+  stopControl?: { confirming: boolean; stop: () => void };
 };
 export function WorkflowView(props: WorkflowViewProps) {
   const { value, busy, perform } = props;
@@ -69,7 +70,7 @@ export function WorkflowView(props: WorkflowViewProps) {
   return <>
     {(value.rounds || []).map((round, i) => <section className="workflow-round" key={round.requestID}>
       <small className="workflow-round-divider">{t('第 {{count}} 轮', { count: i + 1 })}</small>
-      <WorkflowRoundView {...props} historical value={{ ...value, ...round, rounds: [], roundRequestID: round.requestID }} />
+      <WorkflowRoundView {...props} historical value={{ ...value, ...round, originNodeID: round.originNodeID, placementPolicy: round.placementPolicy, rounds: [], roundRequestID: round.requestID }} />
     </section>)}
     {!!value.rounds?.length && <small className="workflow-round-divider">{t('第 {{count}} 轮', { count: value.rounds.length + 1 })}</small>}
     <WorkflowRoundView {...props} key={value.roundRequestID || value.requestID} />
@@ -93,7 +94,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       onSaved={() => { void perform(async () => undefined); }} close={() => setEditingMessage(null)} />}
   </>;
 }
-function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagnostics, historical = false, searchMatch, searchQuery = '', searchRevision, reuse }: WorkflowViewProps & { historical?: boolean }) {
+function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagnostics, historical = false, searchMatch, searchQuery = '', searchRevision, reuse, stopControl }: WorkflowViewProps & { historical?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const processID = useId();
   const selectedDetail = useRef<HTMLElement>(null), navigateToDetail = useRef(false);
@@ -192,7 +193,9 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
       {!terminal && <div className="workflow-controls">
         <Button disabled={busy || value.state === 'stopping'} onClick={() => void perform(() => api(`/workflows/${value.id}/control`, { action: value.state === 'paused' ? 'resume' : 'pause' }))}>
           {value.state === 'paused' ? <Play size={13} /> : <Pause size={13} />}{value.state === 'paused' ? t('继续派发') : t('暂停派发')}</Button>
-        <Button disabled={busy || value.state === 'stopping'} onClick={() => void perform(() => api(`/workflows/${value.id}/control`, { action: 'stop' }))}><Square size={12} />{t('停止整个任务')}</Button>
+        <Button disabled={busy || value.state === 'stopping' || (!historical && stopControl?.confirming)}
+          onClick={() => !historical && stopControl ? stopControl.stop() : void perform(() => api(`/workflows/${value.id}/control`, { action: 'stop' }))}>
+          <Square size={12} />{!historical && stopControl?.confirming ? t('正在确认停止') : t('停止整个任务')}</Button>
         <small>{t('已进入 Node 队列的执行会继续；暂停后不再派发新步骤。')}</small>
       </div>}
       {value.error && <p className="workflow-error" role="alert">{workflowError(value.error)}</p>}

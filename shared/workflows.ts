@@ -4,6 +4,9 @@ import type { TaskFileDescriptor } from './task-files.ts';
 import type { ApprovalMode, TaskHardwareRequirements } from './types.ts';
 
 export type WorkflowTarget = { mode: 'automatic' } | { mode: 'preferred' | 'locked'; nodeID: string };
+export type WorkflowPlacementPolicy = 'placement-v1';
+export type WorkflowStepPlacement = { version: 1; mode: 'free'; reason: string } |
+  { version: 1; mode: 'required'; nodeID: string; reason: string };
 export type WorkflowStepPlan = {
   id: string; title: string; instructions: string; dependsOn: string[]; nodeID: string | null;
   resources: ResourceReference[]; software: string[]; requirements: TaskHardwareRequirements;
@@ -21,6 +24,8 @@ export type WorkflowExecutionContext = {
   target: WorkflowTarget; instructions: string; evidence: string; priorContext: string;
 };
 export type WorkflowAttempt = {
+  /** Coordinator-local contract requested by this immutable attempt; never a wire context field. */
+  placementPolicy?: WorkflowPlacementPolicy;
   number: number; executionID: string; nodeID: string; kind: 'local' | 'remote';
   phase: 'intent' | 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'stopped' | 'unknown';
   createdAt: string; updatedAt: string; summary: string; outcome: ExecutionOutcome | PlanningOutcome | null;
@@ -31,6 +36,8 @@ export type WorkflowAttempt = {
   localConfig?: { projectID: string; model: string; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort };
 };
 export type WorkflowStep = WorkflowStepPlan & {
+  /** Derived from a validated model decision, not from request text or the soft nodeID. */
+  placement?: WorkflowStepPlacement;
   state: 'waiting' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked';
   attempts: WorkflowAttempt[]; checkpoint: string; queryRounds: number; validationRounds?: number;
   materials: TaskFileDescriptor[]; evidence: string;
@@ -43,6 +50,10 @@ export type WorkflowHandoff = {
   reason: string; phase: 'preparing' | 'waiting_stop' | 'transferring' | 'queued' | 'completed' | 'blocked'; at: string;
 };
 export type WorkflowMessage = {
+  /** Server-selected semantics for this future round. Legacy queued messages omit it. */
+  placementPolicy?: WorkflowPlacementPolicy;
+  /** Captured from the server receiving this user round, never from message text or the HTTP body. */
+  originNodeID?: string;
   requestID: string; text: string; inputFiles: TaskFileDescriptor[]; createdAt: string;
   state: 'queued' | 'cancelled';
   /** Omitted legacy messages inherit the previous round; null uses the local default. */
@@ -58,11 +69,15 @@ export function validWorkflowMessageEdit(value: unknown): value is WorkflowMessa
     && typeof value.expectedText === 'string' && value.expectedText.length > 0 && value.expectedText.length <= 12_000
     && typeof value.text === 'string' && value.text.trim().length > 0 && value.text.length <= 12_000 && !value.text.includes('\u0000');
 }
-export type WorkflowRound = Pick<Workflow, 'description' | 'criteria' | 'state' | 'planVersion' | 'summary' | 'planner' |
+export type WorkflowRound = Pick<Workflow, 'originNodeID' | 'placementPolicy' | 'description' | 'criteria' | 'state' | 'planVersion' | 'summary' | 'planner' |
   'steps' | 'events' | 'handoffs' | 'inputFiles' | 'confirmations' | 'pendingConfirmation' | 'updatedAt' | 'error'> & {
   requestID: string; createdAt: string; model?: string | null; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort;
 };
 export type Workflow = {
+  /** Server-selected semantics for this user round; absent records retain their old meaning. */
+  placementPolicy?: WorkflowPlacementPolicy;
+  /** Captured by the originating server. Older workflows may not have this identity. */
+  originNodeID?: string;
   id: string; requestID: string; contentDigest: string; creatorID: string; title: string; description: string; criteria: string;
   projectID: string | null; model: string | null; reasoningEffort?: import('./model-reasoning.ts').ReasoningEffort; approvalMode: ApprovalMode; target: WorkflowTarget;
   state: 'planning' | 'running' | 'paused' | 'stopping' | 'stopped' | 'completed' | 'failed';
@@ -162,6 +177,7 @@ export function validWorkflowOutputPath(value: string): boolean {
 }
 export function validWorkflowIdentity(value: unknown): boolean {
   return record(value) && uuid(value.id) && uuid(value.requestID) && digest(value.contentDigest) &&
+    (value.originNodeID === undefined || nodeID(value.originNodeID)) &&
     text(value.creatorID, 100) && integer(value.version, Number.MAX_SAFE_INTEGER, 1) &&
     timestamp(value.createdAt) && timestamp(value.updatedAt) && validWorkflowTarget(value.target);
 }
