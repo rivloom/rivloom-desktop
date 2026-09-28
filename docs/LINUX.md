@@ -1,6 +1,8 @@
 # Linux 命令行执行节点
 
-**当前正式版：Linux x64 0.1.27（2026-09-28）。** [同源码原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/36399627043)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36400857325)、curl/wget 各自完整下载、17695 文件全树、隔离启动/重启/SIGTERM 与官网中英文命令核验通过。继续提供无界面执行节点与手动升级，不包含 Windows 历史栏。官网部署成功，R2 保留 106、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 文件与边界见[Linux 说明](releases/linux-0.1.27.md)、[整版验收](releases/0.1.27-verification.md)及[R2 审计](releases/0.1.27-r2-retention.md)。
+**当前正式版：Linux x64 0.1.28（2026-09-28）。** [同源原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/36416520559)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36417597762)、公开 curl/wget 完整下载与隔离运行通过。同步模型订阅和短回复采样修复，保持手动升级。保留 111、暂缓 0、可删除 0、删除 0 个。检查完成，删除 0 个；未启用自动清理。见[Linux 说明](releases/linux-0.1.28.md)及[整版验收](releases/0.1.28-verification.md)。
+
+**历史正式版：Linux x64 0.1.27（2026-09-28）。** [同源码原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/36399627043)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36400857325)、curl/wget 各自完整下载、17695 文件全树、隔离启动/重启/SIGTERM 与官网中英文命令核验通过。继续提供无界面执行节点与手动升级，不包含 Windows 历史栏。官网部署成功，R2 保留 106、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 文件与边界见[Linux 说明](releases/linux-0.1.27.md)、[整版验收](releases/0.1.27-verification.md)及[R2 审计](releases/0.1.27-r2-retention.md)。
 
 **历史正式版：Linux x64 0.1.26（2026-09-28）。** [同源码原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/36378844390)、[独立发行](https://github.com/rivloom/rivloom-desktop/actions/runs/36379587926)、curl/wget 各自完整下载、17695 文件全树、隔离启动/重启/SIGTERM和官网中英文命令核验通过。随包依赖清单实际生成与核对通过；继续手动升级，没有桌面自动备份。官网部署成功，R2 保留 101、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 文件与边界见[Linux 说明](releases/linux-0.1.26.md)、[整版验收](releases/0.1.26-verification.md)及[R2 审计](releases/0.1.26-r2-retention.md)。
 
@@ -10,7 +12,7 @@
 
 **历史正式版：Linux x64 0.1.20（2026-09-22）。** 源码 [`ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3`](https://github.com/rivloom/rivloom-desktop/commit/ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3)；[原生构建](https://github.com/rivloom/rivloom-desktop/actions/runs/35712264986)、[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35713081497)、公开包 curl/wget 各自完整下载与 SHA256、WSL 完整文件树/启动/重启/SIGTERM 验收通过，官网双语命令已复核。继续手动升级；文件、校验值与实际范围见 [Linux 0.1.20 发行说明](releases/linux-0.1.20.md)及 [0.1.20 发行验收](releases/0.1.20-verification.md)。
 
-本文介绍随包 Linux x64 节点。安装版本用 `rivloom --version` 核对；对外发行、下载地址及校验值以[官网下载页](https://rivloom.com/download/)和对应发行记录为准。0.1.27 功能与边界见[版本说明](releases/linux-0.1.27.md)。核心固定 `9b07cf4`，运行要求为内核至少 4.18、glibc 至少 **2.30**、libstdc++ 至少 6.0.25；ARM64 暂不发布。
+本文介绍随包 Linux x64 节点。安装版本用 `rivloom --version` 核对；对外发行、下载地址及校验值以[官网下载页](https://rivloom.com/download/)和对应发行记录为准。0.1.28 功能与边界见[版本说明](releases/linux-0.1.28.md)。核心固定 `9b07cf4`，运行要求为内核至少 4.18、glibc 至少 **2.30**、libstdc++ 至少 6.0.25；ARM64 暂不发布。
 
 **2026-09-22 历史发行：Linux x64 0.1.19。** 源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，使用固定核心 `9b07cf4` 的自有 runtime；[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、原生 x64 CI、公开包 curl/wget 各自完整下载与 SHA256、全树来源核验、隔离初始化/启动/重启/SIGTERM 均通过，官网双语命令已匹配。继续手动升级。见[0.1.19 发行说明](releases/linux-0.1.19.md)与[R2 保留审计](releases/0.1.19-r2-retention.md)。下方早期开发与 0.1.18 发行段落保留为历史。
 
