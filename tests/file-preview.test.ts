@@ -10,6 +10,34 @@ import { TaskFileStore } from '../server/task-files.ts';
 import { installTaskFileAPI } from '../server/task-file-api.ts';
 import type { NodeNetwork } from '../server/node-network.ts';
 import type { Task, User } from '../shared/types.ts';
+import { officePreviewHasParts, officeSearchOffsets } from '../src/office-preview-state.ts';
+import type { OfficeDocument } from '../shared/office-files.ts';
+
+test('office search keeps original Unicode offsets and treats punctuation as literal text', () => {
+  // Lowercasing the dotted I expands it to two code units. Matching offsets
+  // from that transformed string would point beyond this text node.
+  assert.deepEqual(officeSearchOffsets('İ尾针', '尾针'), [{ start: 1, end: 3 }]);
+  assert.deepEqual(officeSearchOffsets('İ尾针', 'İ'), [{ start: 0, end: 1 }]);
+  assert.deepEqual(officeSearchOffsets('😀 NOTE note', 'note'), [{ start: 3, end: 7 }, { start: 8, end: 12 }]);
+  assert.deepEqual(officeSearchOffsets('a+b? [needle] aab', 'a+b? [needle]'), [{ start: 0, end: 13 }]);
+  assert.deepEqual(officeSearchOffsets('abc', ''), []);
+  assert.equal(officeSearchOffsets('x'.repeat(250), 'x').length, 200);
+  assert.deepEqual(officeSearchOffsets('xxxx', 'x', 1), [{ start: 0, end: 1 }]);
+  assert.deepEqual(officeSearchOffsets('xxxx', 'x', 0), []);
+});
+
+test('office preview paginates only the content actually displayed', () => {
+  const page: OfficeDocument = { kind: 'text', name: 'sample.txt', revision: 'hash', bytes: 30000,
+    text: 'part', truncated: true, warnings: [], offset: 0, nextOffset: 24000 };
+  assert.equal(officePreviewHasParts(page), true);
+  assert.equal(officePreviewHasParts({ ...page, offset: 24000, nextOffset: undefined, truncated: false }), true);
+  assert.equal(officePreviewHasParts({ ...page, nextOffset: undefined, truncated: false }), false);
+  assert.equal(officePreviewHasParts({ ...page, kind: 'table', nextOffset: 100 }), true);
+  assert.equal(officePreviewHasParts({ ...page, kind: 'pdf' }), false);
+  assert.equal(officePreviewHasParts({ ...page, kind: 'word', html: '<p>Complete document</p>' }), false);
+  assert.equal(officePreviewHasParts({ ...page, kind: 'word' }), true);
+  assert.equal(officePreviewHasParts(null), false);
+});
 
 test('preview classification treats active documents as literal text and bounds all media ranges', () => {
   for (const name of ['page.HTML', 'image.svg', 'code.tsx']) assert.equal(filePreviewType(name).kind, 'text');

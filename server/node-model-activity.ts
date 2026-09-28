@@ -65,11 +65,15 @@ export class NodeModelActivity {
   private recentMissing(run: Run, now: number) {
     return [...run.missingMessages.values()].some(at => now - at < INPUT_WINDOW);
   }
+  private expired(run: Run, now: number) {
+    return run.endedAt !== null && now - run.endedAt > INPUT_WINDOW &&
+      !run.input.some(sample => sample.at > now - INPUT_WINDOW) && !this.recentMissing(run, now);
+  }
   private trim(now: number) {
     for (const [key, run] of this.runs) {
       run.input = run.input.filter(sample => sample.at > now - INPUT_WINDOW);
       run.output = run.output.filter(sample => sample.at > now - OUTPUT_WINDOW);
-      if (run.endedAt !== null && now - run.endedAt > INPUT_WINDOW && !run.input.length && !this.recentMissing(run, now)) this.runs.delete(key);
+      if (this.expired(run, now)) this.runs.delete(key);
     }
     const needed = new Set([...this.runs.values()].map(run => run.task.feed));
     for (const [key, feed] of this.feeds) if (!needed.has(key) && now - feed.at > INPUT_WINDOW) this.feeds.delete(key);
@@ -189,7 +193,8 @@ export class NodeModelActivity {
     let target: Run | undefined;
     for (const run of this.runs.values()) if (run.task.feed === feed && run.task.sessionID === info.sessionID &&
       run.task.runAfter <= info.time.created && (!target || run.task.runAfter > target.task.runAfter)) target = run;
-    if (!target || target.endedAt !== null && now - target.endedAt > INPUT_WINDOW) return;
+    // Late reports retain their own window; allow corrections for exactly as long as reads retain them.
+    if (!target || this.expired(target, now)) return;
     this.usage(target, info, now);
     target.observedAt = now;
     target.observationFailed = false;

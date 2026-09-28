@@ -13,6 +13,8 @@ import type { Bootstrap } from '../shared/types.ts';
 export async function officeFixtureFiles(directory: string) {
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, '说明.md'), '# 材料处理说明\n\n这是用于验收的合成资料。\n\n- 核对来源\n- 汇总销售\n- 生成报告\n');
+  await writeFile(join(directory, '搜索检查.md'), '# 搜索检查\n\nİ尾针\n\n```text\nOnlyCodeNeedle\n```\n\na+b? [needle]\n');
+  await writeFile(join(directory, '长文本.txt'), '第一页合成内容\n' + '文'.repeat(23992) + '第二页合成内容');
   await writeFile(join(directory, '空白.txt'), '');
   await writeFile(join(directory, '数据.csv'), '部门,金额,备注\n一部,1200,"含税,已核对"\n二部,1800,"第二行\n补充说明"');
   await writeFile(join(directory, '损坏.pdf'), 'Synthetic invalid PDF');
@@ -28,6 +30,8 @@ export async function officeFixtureFiles(directory: string) {
   zip.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
   zip.file('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>季度经营简报</w:t></w:r></w:p><w:p><w:r><w:t>这是合成资料，用于验证离线阅读与引用功能。</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>华东</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>32,000 元</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>');
   await writeFile(join(directory, '简报.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
+  zip.file('word/document.xml', `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>长简报合成资料 ${'内容核对。'.repeat(5000)}</w:t></w:r></w:p></w:body></w:document>`);
+  await writeFile(join(directory, '长简报.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
   const stream = 'BT /F1 22 Tf 40 230 Td (Quarterly Office Report) Tj 0 -40 Td /F1 12 Tf (Offline preview - synthetic data) Tj ET';
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',

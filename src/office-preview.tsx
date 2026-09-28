@@ -11,6 +11,7 @@ import { api } from './api';
 import { desktop, chooseTaskFileDestination, openTaskFile, revealTaskFile, openTaskFileWith, fileApplications } from './desktop';
 import { officeMessage } from './office-messages';
 import { localActivity } from './local-activity';
+import { officePreviewHasParts, officeSearchOffsets } from './office-preview-state';
 import './file-preview.css';
 const PdfPreview = lazy(() => import('./pdf-preview'));
 export function FilePreviewButton({ file, path, iconOnly = false, source }: { file: TaskFileDescriptor; path: string; iconOnly?: boolean; source?: string }) {
@@ -24,7 +25,7 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
   const [applications, setApplications] = useState<string[]>([]);
   useEffect(() => { if (desktop) void fileApplications().then(setApplications).catch(() => {}); }, []);
   const [document, setDocument] = useState<OfficeDocument | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [documentError, setDocumentError] = useState(false);
+  const [documentError, setDocumentError] = useState('');
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false), [maximized, setMaximized] = useState(false);
   const [page, setPage] = useState(1), [sheet, setSheet] = useState(0), [offset, setOffset] = useState(0), [revision, setRevision] = useState(0);
   const [raw, setRaw] = useState(false), [editing, setEditing] = useState(false), [text, setText] = useState(''), [original, setOriginal] = useState(''), [expected, setExpected] = useState('');
@@ -36,15 +37,15 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
   const requestClose = () => guardUnsaved(close);
   useEffect(() => {
     setSelectedCell(''); setSelectedText('');
-  }, [path, page, sheet, offset]);
+  }, [path, page, sheet, offset, editing]);
   useEffect(() => {
-    if (!kind) return; const abort = new AbortController(); let alive = true; setLoading(true); setError(''); setDocumentError(false); setDocument(null);
+    if (!kind) return; const abort = new AbortController(); let alive = true; setLoading(true); setError(''); setDocumentError(''); setDocument(null);
     const params = new URLSearchParams({ page: String(page), sheet: String(sheet), offset: String(offset) });
     const read = () => api<OfficeDocument>(`${path}/document?${params}`, undefined, { signal: abort.signal, timeoutMilliseconds: 35_000 }).then(value => {
       if (alive) setDocument(value);
     });
     void (isProject ? localActivity.run('file-read', file.name, read) : read())
-      .catch(error => { if (alive) { setError(officeMessage(error.message)); setDocumentError(true); } }).finally(() => { if (alive) setLoading(false); });
+      .catch(error => { if (alive) setDocumentError(officeMessage(error.message)); }).finally(() => { if (alive) setLoading(false); });
     // Project reads report their real result even after this view has closed.
     return () => { alive = false; if (!isProject) abort.abort(); };
   }, [path, kind, page, sheet, offset, revision, isProject, file.name]);
@@ -58,26 +59,34 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
     window.addEventListener('beforeunload', before); return () => window.removeEventListener('beforeunload', before);
   }, [dirty]);
   useEffect(() => {
-    if (editing || kind === 'table' || !content.current || !('highlights' in CSS)) return;
+    const observedContent = content.current;
+    if (editing || kind === 'table' || !observedContent || !('highlights' in CSS)) return;
+    let disposed = false;
     const update = () => {
-      const ranges: Range[] = [], needle = query.toLocaleLowerCase();
-      if (needle) for (const element of content.current!.querySelectorAll('.office-word, .office-markdown, pre, .textLayer')) {
+      // React can detach the ref before this effect's passive cleanup runs.
+      // Ignore mutation deliveries for an editor that has closed or changed.
+      if (disposed || content.current !== observedContent || !observedContent.isConnected) return;
+      const ranges: Range[] = [], selector = '.office-word, .office-markdown, pre, .textLayer';
+      if (query) for (const element of observedContent.querySelectorAll(selector)) {
+        // A Markdown code block is already visited with its containing article.
+        const parent = element.parentElement?.closest(selector);
+        if (parent && observedContent.contains(parent)) continue;
         const walker = window.document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
         let node: Node | null;
         while ((node = walker.nextNode()) && ranges.length < 200) {
-          const text = (node.textContent || '').toLocaleLowerCase(); let from = 0, index: number;
-          while ((index = text.indexOf(needle, from)) >= 0 && ranges.length < 200) {
-            const range = window.document.createRange(); range.setStart(node, index); range.setEnd(node, index + needle.length); ranges.push(range); from = index + needle.length;
+          for (const { start, end } of officeSearchOffsets(node.textContent || '', query, 200 - ranges.length)) {
+            const range = window.document.createRange(); range.setStart(node, start); range.setEnd(node, end); ranges.push(range);
           }
         }
+        if (ranges.length >= 200) break;
       }
       CSS.highlights.set('office-search', new Highlight(...ranges)); setMatches(ranges.length);
     };
-    update(); const observer = new MutationObserver(update); observer.observe(content.current, { childList: true, subtree: true });
-    return () => { observer.disconnect(); CSS.highlights.delete('office-search'); };
+    update(); const observer = new MutationObserver(update); observer.observe(observedContent, { childList: true, subtree: true });
+    return () => { disposed = true; observer.disconnect(); CSS.highlights.delete('office-search'); };
   }, [query, document, editing, kind]);
   async function act(action: () => Promise<void>) {
-    if (busy) return; setBusy(true); setError(''); setDocumentError(false); setNotice('');
+    if (busy) return; setBusy(true); setError(''); setNotice('');
     try { await action(); } catch (cause) { setError(officeMessage(typeof cause === 'string' ? cause : cause instanceof Error ? cause.message : 'office_unavailable')); } finally { setBusy(false); }
   }
   const location = () => api<{ path: string }>(`${path}/location`, {});
@@ -114,8 +123,12 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
   const quote = () => {
     const selected = selectedText || selectedCell; if (!selected.trim()) return;
     const where = kind === 'pdf' ? `${t('页码')} ${page}` : document?.sheets ? `${document.sheets[sheet]?.name || ''}` : '';
-    const detail = { text: `${file.name}${where ? ` · ${where}` : ''}\n${selected}`, accepted: false, onAccepted: requestClose };
-    window.dispatchEvent(new CustomEvent('rivloom:file-quote', { detail })); if (detail.accepted) requestClose();
+    // The receiver can immediately close the entire project-file view. Ask
+    // about unsaved edits before dispatch, including deferred quote replacement.
+    guardUnsaved(() => {
+      const detail = { text: `${file.name}${where ? ` · ${where}` : ''}\n${selected}`, accepted: false, onAccepted: close };
+      window.dispatchEvent(new CustomEvent('rivloom:file-quote', { detail })); if (detail.accepted) close();
+    });
   };
   const rows = document?.rows || [], visibleRows = rows.map((row, index) => ({ row, index })).filter(({ row }) => !query || row.some(cell => cell.toLocaleLowerCase().includes(query.toLocaleLowerCase())));
   return <><Modal title={file.name} subtitle={source || (isProject ? t('项目文件') : t('附件与成果预览'))} close={requestClose} className={`file-preview-modal${maximized ? ' maximized' : ''}`}>
@@ -128,19 +141,20 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
           {/\.(pdf|txt|md|csv|tsv|json|log|png|jpe?g|gif|webp)$/i.test(file.name) && applications.map(app => <option value={app} key={app}>{app === 'chrome' ? 'Chrome' : 'Microsoft Edge'}</option>)}
           <option value="choose">{t('选择其他应用')}</option></select></label>
         <button disabled={busy} onClick={() => void external('copy')}><Copy size={15} />{t('复制路径')}</button></>}
-      <button disabled={busy || !(selectedText || selectedCell)} onMouseDown={event => event.preventDefault()} onClick={quote}><Quote size={15} />{t('引用到聊天')}</button>
+      <button disabled={busy || editing || !(selectedText || selectedCell)} onMouseDown={event => event.preventDefault()} onClick={quote}><Quote size={15} />{t('引用到聊天')}</button>
       {document?.editable && !editing && <button disabled={busy} onClick={() => void edit()}><Pencil size={15} />{t('编辑')}</button>}
       {kind === 'markdown' && !editing && <button onClick={() => setRaw(!raw)}>{raw ? t('排版预览') : t('查看源码')}</button>}
       {kind && kind !== 'table' && !editing && <label className="office-text-search"><input aria-label={t('查找本页内容')} placeholder={t('查找本页内容')} value={query} onChange={event => setQuery(event.target.value)} />{query && <span>{matches}{matches === 200 ? '+' : ''}</span>}</label>}
     </div>
-    {notice && <p className="office-notice" role="status">{notice}</p>}{error && !(kind === 'pdf' && documentError) && <p className="office-error" role="alert">{error}{documentError && <button disabled={busy} onClick={() => setRevision(value => value + 1)}>{t('重试')}</button>}</p>}
+    {notice && <p className="office-notice" role="status">{notice}</p>}{error && <p className="office-error" role="alert">{error}</p>}
+    {documentError && kind !== 'pdf' && <p className="office-error" role="alert">{documentError}<button disabled={busy} onClick={() => setRevision(value => value + 1)}>{t('重试')}</button></p>}
     {document?.warnings.map(code => <p className="office-warning" key={code}>{officeMessage(code)}</p>)}
     {loading && <p role="status">{t('正在读取…')}</p>}
     {editing ? <div className="office-text-editor"><textarea aria-label={t('文件内容')} value={text} spellCheck={false} onChange={event => setText(event.target.value)} disabled={busy} />
       <div className="office-document-controls"><span>{dirty ? t('尚未保存') : t('没有未保存的修改')}</span><button disabled={busy} onClick={() => guardUnsaved(() => setEditing(false))}>{t('取消')}</button>
         <button disabled={busy || !dirty} onClick={() => void save()}>{isProject ? t('保存文件') : t('保存为新副本')}</button></div></div>
       : <div className="file-preview-content" ref={content}>
-        {kind === 'pdf' ? documentError ? <p className="office-error office-empty" role="alert">{error}<button onClick={() => setRevision(value => value + 1)}>{t('重试')}</button></p> : <Suspense fallback={<p>{t('正在读取…')}</p>}><PdfPreview key={revision} url={`/api${path}/preview`} page={page} retry={() => setRevision(value => value + 1)} changePage={value => { setPage(value); setOffset(0); }} /></Suspense>
+        {kind === 'pdf' ? documentError ? <p className="office-error office-empty" role="alert">{documentError}<button disabled={busy} onClick={() => setRevision(value => value + 1)}>{t('重试')}</button></p> : <Suspense fallback={<p>{t('正在读取…')}</p>}><PdfPreview key={revision} url={`/api${path}/preview`} page={page} retry={() => setRevision(value => value + 1)} changePage={value => { setPage(value); setOffset(0); }} /></Suspense>
         : document?.kind === 'table' ? <><div className="office-document-controls"><label>{t('工作表')} <select value={sheet} onChange={event => { setSheet(Number(event.target.value)); setOffset(0); setSelectedCell(''); }}>{document.sheets?.map((sheet, index) => <option key={index} value={index}>{sheet.name}</option>)}</select></label>
             <input aria-label={t('查找本页内容')} placeholder={t('查找本页内容')} value={query} onChange={event => setQuery(event.target.value)} />
             <span>{t('从第 {{row}} 行开始', { row: offset + 1 })}</span></div>
@@ -154,7 +168,7 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
         : type.kind === 'audio' ? <audio controls preload="metadata" src={`/api${path}/preview`} onError={() => setError(t('此媒体暂时无法播放，请下载后打开。'))} />
         : !kind && <p>{t('此格式暂不支持内置预览，请使用系统应用打开。')}</p>}
       </div>}
-    {!editing && document && (offset > 0 || document.nextOffset !== undefined) && <div className="office-document-controls office-pagination"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - (document.kind === 'table' ? 100 : 24000)))}>{t('上一部分')}</button>
+    {!editing && document && officePreviewHasParts(document) && <div className="office-document-controls office-pagination"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - (document.kind === 'table' ? 100 : 24000)))}>{t('上一部分')}</button>
       <span>{document.truncated ? t('当前显示部分内容，可继续查看。') : t('已到末尾')}</span><button disabled={document.nextOffset === undefined} onClick={() => setOffset(document.nextOffset!)}>{t('下一部分')}</button></div>}
   </Modal>{confirmation}</>;
 }

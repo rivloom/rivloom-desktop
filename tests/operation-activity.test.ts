@@ -27,7 +27,9 @@ test('active groups preserve long operations and concurrent failures without unb
   assert.equal(activity.snapshot().find((item) => item.status === 'running')?.activeCount, 1);
   long.finish(); long.finish();
   assert(!activity.snapshot().some((item) => item.status === 'running'));
-  assert(activity.snapshot().some((item) => item.id === issue.id));
+  const retained = activity.snapshot().find((item) => item.action === issue.action && item.status === 'failed')!;
+  assert.equal(retained.startedAt, issue.startedAt);
+  assert.equal(retained.occurrences, 300);
 });
 
 test('completed activities expire while issues require explicit dismissal; snapshots cannot mutate state', () => {
@@ -45,6 +47,28 @@ test('completed activities expire while issues require explicit dismissal; snaps
   assert.equal(activity.snapshot().length, 1);
   assert.equal(activity.dismiss(issue.id), true);
   assert.equal(activity.dismiss(issue.id), false);
+  assert.deepEqual(activity.snapshot(), []);
+});
+
+test('a delayed dismissal cannot clear a newer occurrence of the same knowledge failure', () => {
+  let now = 100;
+  const activity = new OperationActivityRegistry(() => {}, () => now);
+  activity.begin('read').finish({ status: 'failed', error: 'knowledge_source_unavailable' });
+  const first = activity.snapshot()[0];
+  // A second operation can fail before the click from the displayed first issue reaches the server.
+  activity.begin('read').finish({ status: 'failed', error: 'knowledge_source_unavailable' });
+  const second = activity.snapshot()[0];
+  assert.equal(activity.dismiss(first.id), false);
+  assert.equal(activity.snapshot().length, 1);
+  assert.equal(second.occurrences, 2);
+  assert.equal(second.startedAt, first.startedAt);
+  assert.equal(second.updatedAt, first.updatedAt, 'UUID fencing also handles failures in the same millisecond');
+  now++;
+  activity.begin('read').finish({ status: 'partial', error: 'knowledge_source_unavailable' });
+  const third = activity.snapshot()[0];
+  assert.equal(activity.dismiss(second.id), false);
+  assert.equal(third.occurrences, 3);
+  assert.equal(activity.dismiss(third.id), true);
   assert.deepEqual(activity.snapshot(), []);
 });
 

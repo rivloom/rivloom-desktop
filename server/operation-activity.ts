@@ -46,7 +46,9 @@ export class OperationActivityRegistry {
         this.completed.set(action, { id: randomUUID(), action, status: 'completed', startedAt, updatedAt: now, completedAt: now });
       } else {
         const previous = this.issues.get(action);
-        this.issues.set(action, { id: previous?.id || randomUUID(), action, status: outcome.status,
+        // The ID fences dismissal to the exact observed revision, including same-millisecond failures.
+        // A delayed click for an older occurrence must leave new failures visible.
+        this.issues.set(action, { id: randomUUID(), action, status: outcome.status,
           startedAt: previous?.startedAt ?? startedAt, updatedAt: now, completedAt: now,
           occurrences: Math.min(1_000_000, (previous?.occurrences || 0) + 1), error: safeError(outcome.error) });
       }

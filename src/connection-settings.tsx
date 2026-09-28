@@ -14,21 +14,43 @@ export function ConnectionSettings({ onboarding = false, close, changed, advance
   const [existing, setExisting] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [selected, setSelected] = useState(''), [testConfirmed, setTestConfirmed] = useState(false), [dirty, setDirty] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const loadRevision = useRef(0), mutationPending = useRef(false);
   useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [draft?.id, error, notice]);
-  async function load() {
-    const [next, catalog] = await Promise.all([api<ModelSettings>('/model-settings'), api<ProviderAccess[]>('/model-settings/providers')]);
-    setSettings(next); setProviders(catalog); setSelected(value => value && next.models.some(model => model.id === value) ? value : next.defaultModel);
+  async function load(signal?: AbortSignal) {
+    const revision = ++loadRevision.current;
+    const [next, catalog] = await Promise.all([api<ModelSettings>('/model-settings', undefined, { signal }), api<ProviderAccess[]>('/model-settings/providers', undefined, { signal })]);
+    if (revision !== loadRevision.current || signal?.aborted) return null;
+    // Keep an unavailable choice visible; a refresh must not silently authorize another model.
+    setSettings(next); setProviders(catalog); setSelected(value => value || next.defaultModel);
     return { next, catalog };
   }
-  useEffect(() => { let alive = true; void load().then(({ catalog }) => { if (alive && onboarding && !catalog.some(value => value.connected || value.custom || value.account)) setDraft(fresh()); })
-    .catch(error => { if (alive) setError(systemText(error.message)); }); return () => { alive = false; }; }, []);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal).then(result => { if (result && onboarding && !result.catalog.some(value => value.connected || value.custom || value.account)) setDraft(fresh()); })
+    .catch(error => { if (!controller.signal.aborted) setError(systemText(error.message)); }); return () => { controller.abort(); loadRevision.current++; }; }, []);
   const testing = Object.values(settings?.checks || {}).some(value => value.status === 'testing');
-  useEffect(() => { if (!testing) return; const timer = setInterval(() => void load().catch(() => {}), 1200); return () => clearInterval(timer); }, [testing]);
+  useEffect(() => {
+    // Ordinary running tasks also lock connection edits. Refresh until the lock is released.
+    if (busy || (!testing && !settings?.busy)) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { await load(controller.signal); } catch { /* Retry without replacing the editable draft. */ }
+      finally { if (!controller.signal.aborted) timer = setTimeout(poll, 1200); }
+    };
+    timer = setTimeout(poll, 1200);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [testing, settings?.busy, busy]);
   const locked = busy || !!settings?.busy;
   const { request: guardUnsaved, confirmation } = useUnsavedActionGuard(dirty, busy);
   const dismiss = () => guardUnsaved(close);
   const patch = (value: Partial<CustomProvider>) => { setDraft(current => current ? { ...current, ...value } : current); setDirty(true); };
-  async function perform(action: () => Promise<void>) { if (busy) return; setBusy(true); setError(''); setNotice(''); try { await action(); } catch (error) { setError(systemText((error as Error).message)); } finally { setBusy(false); } }
+  async function perform(action: () => Promise<void>) {
+    if (mutationPending.current) return;
+    mutationPending.current = true; loadRevision.current++;
+    setBusy(true); setError(''); setNotice('');
+    try { await action(); }
+    catch (error) { setError(systemText((error as Error).message)); void load().catch(() => {}); }
+    finally { mutationPending.current = false; setBusy(false); }
+  }
   function edit(provider?: CustomProvider) {
     guardUnsaved(() => {
       setDraft(provider ? structuredClone(provider) : fresh()); setExisting(!!provider); setKey(''); setDirty(false);
@@ -43,14 +65,25 @@ export function ConnectionSettings({ onboarding = false, close, changed, advance
     if (!existing && !draft.keyless && !key.trim()) throw new Error(t('请填写 API Key，或选择免认证。'));
     await api('/model-settings/provider/custom', { provider: checked.data, shared: true, ...(key.trim() && !draft.keyless ? { key: key.trim() } : {}) });
     setExisting(true); setDirty(false); setKey(''); setDraft(checked.data);
+    changed(); setNotice(t('连接已保存。保存配置不会发送模型请求。'));
     const model = `${checked.data.id}/${checked.data.models[0].id}`;
-    if (use) await api('/model-settings/default', { model });
-    await load(); if (use) setSelected(model); changed(use ? model : undefined);
+    if (use) {
+      await api('/model-settings/default', { model });
+      setSettings(current => current ? { ...current, defaultModel: model } : current);
+      setSelected(model); changed(model);
+    }
     setNotice(use ? t('连接已保存并设为新任务的默认模型。') : t('连接已保存。保存配置不会发送模型请求。'));
+    await load();
   });
-  const select = () => perform(async () => { await api('/model-settings/default', { model: selected }); await load(); changed(selected); setNotice(t('已切换默认连接，正在执行的任务保持原模型。')); });
+  const select = () => perform(async () => {
+    await api('/model-settings/default', { model: selected });
+    setSettings(current => current ? { ...current, defaultModel: selected } : current);
+    changed(selected); setNotice(t('已切换默认连接，正在执行的任务保持原模型。'));
+    await load();
+  });
   const connected = providers.filter(provider => provider.connected || provider.custom || provider.account);
   const selectedAvailable = !!settings?.models.some(model => model.id === selected);
+  useEffect(() => { setTestConfirmed(false); }, [selected, selectedAvailable]);
   const selectedProvider = connected.find(provider => selected.startsWith(`${provider.id}/`));
   const overview = () => guardUnsaved(() => {
     setDraft(null); setDirty(false); setKey(''); setError(''); setNotice('');

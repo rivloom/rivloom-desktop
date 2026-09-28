@@ -1,6 +1,6 @@
 import { ProviderSettings } from './provider-settings.tsx';
 import { t, systemText, language } from '../shared/i18n.ts';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -55,48 +55,57 @@ export function ModelSettingsView({
   const [saved, setSaved] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [providerRevision, setProviderRevision] = useState(0);
+  const loadRevision = useRef(0), mutationPending = useRef(false);
 
   const applySettings = (next: ModelSettings) => {
     setSettings(next);
-    setSelectedDefault((current) =>
-      current && next.models.some((model) => model.id === current) ? current : next.defaultModel,
-    );
-    const models = next.models;
-    setTestModel((current) =>
-      current && models.some((model) => model.id === current) ? current : models[0]?.id || '',
-    );
+    setSelectedDefault((current) => current || next.defaultModel);
+    setTestModel((current) => current || next.defaultModel || next.models[0]?.id || '');
   };
 
-  const load = async () => {
+  const load = async (signal?: AbortSignal, background = false) => {
+    const revision = ++loadRevision.current;
     try {
-      const next = await api<ModelSettings>('/model-settings');
+      const next = await api<ModelSettings>('/model-settings', undefined, { signal });
+      if (revision !== loadRevision.current || signal?.aborted) return;
       applySettings(next);
-      setError('');
+      if (!background) setError('');
     } catch (cause) {
-      setError((cause as Error).message);
+      if (revision === loadRevision.current && !signal?.aborted && !background) setError((cause as Error).message);
     }
   };
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => { controller.abort(); loadRevision.current++; };
   }, []);
   const testing = settings
     ? Object.values(settings.checks).some((check) => check.status === 'testing')
     : false;
   useEffect(() => {
-    if (!testing) return;
-    setTestOpen(true);
-    const timer = setInterval(() => void load(), 1000);
-    return () => clearInterval(timer);
-  }, [testing]);
+    if (testing) setTestOpen(true);
+    if (busy || (!testing && !settings?.busy)) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await load(controller.signal, true);
+      if (!controller.signal.aborted) timer = setTimeout(poll, 1200);
+    };
+    timer = setTimeout(poll, 1200);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [testing, settings?.busy, busy]);
 
   const availableModels = useMemo(() => settings?.models || [], [settings]);
   const defaultAvailable = availableModels.some((model) => model.id === selectedDefault);
+  const testAvailable = availableModels.some((model) => model.id === testModel);
+  useEffect(() => { setTestConfirmed(false); }, [testModel, testAvailable]);
   const latestCheck = testModel ? settings?.checks[testModel] : undefined;
   const actionsLocked = !owner || !engineReady || !!settings?.busy || busy;
 
   async function mutate(path: string, body: unknown) {
-    if (busy) return;
+    if (mutationPending.current) return;
+    mutationPending.current = true; loadRevision.current++;
     setBusy(true);
     setError('');
     setSaved(false);
@@ -108,7 +117,9 @@ export function ModelSettingsView({
       onChanged();
     } catch (cause) {
       setError((cause as Error).message);
+      void load(undefined, true);
     } finally {
+      mutationPending.current = false;
       setBusy(false);
     }
   }
@@ -287,6 +298,7 @@ export function ModelSettingsView({
                 }}
                 disabled={!owner || testing || !availableModels.length}
               >
+                {testModel && !testAvailable && <option value={testModel}>{testModel} · {t('当前不可用')}</option>}
                 {availableModels.length ? (
                   availableModels.map((model) => (
                     <option value={model.id} key={model.id}>
@@ -320,7 +332,7 @@ export function ModelSettingsView({
                   type="checkbox"
                   checked={testConfirmed}
                   onChange={(event) => setTestConfirmed(event.target.checked)}
-                  disabled={!owner || !testModel}
+                  disabled={!owner || !testAvailable}
                 />
                 <span>
                   {t('我确认这会发送一次真实请求，可能消耗额度；失败后由我决定是否重试。')}
@@ -340,7 +352,7 @@ export function ModelSettingsView({
               ) : (
                 <button
                   className="button primary"
-                  disabled={actionsLocked || !testModel || !testConfirmed}
+                  disabled={actionsLocked || !testAvailable || !testConfirmed}
                   onClick={() => {
                     setTestConfirmed(false);
                     void mutate('/model-settings/test', { model: testModel, confirmed: true });

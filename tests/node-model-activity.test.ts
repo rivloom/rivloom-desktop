@@ -347,6 +347,25 @@ test('a late missing report is retained for its own minute beyond the terminal e
     'the duplicate late snapshot must not extend the missing-report window');
 });
 
+test('late confirmed usage repairs a retained missing report after the terminal retention boundary', () => {
+  const activity = new NodeModelActivity(), value = task(); begin(activity, value);
+  activity.observeTask({ ...value, state: 'accepted' }, 2000);
+  const update = (id: string, input: number | undefined): Event => ({ id, type: 'message.updated', properties: {
+    sessionID: value.sessionID!, info: info(value, { tokens: { input } }) } });
+  activity.usageEvent(value.feed, update('late-missing', undefined), 59900);
+  assert.equal(activity.read(62100).inputComplete, false);
+  activity.usageEvent(value.feed, update('late-confirmed', 600), 63000);
+  activity.usageEvent(value.feed, update('late-confirmed-replay', 600), 63100);
+  const repaired = activity.read(63200);
+  assert.equal(repaired.inputComplete, true);
+  assert.equal(repaired.inputTokensPerSecond, 10);
+  assert.equal(repaired.counts.active, 0);
+  assert.equal(repaired.outputTokensPerSecond, null);
+  assert.deepEqual(activity.read(123001).connections, []);
+  activity.usageEvent(value.feed, update('expired-history', 600), 124000);
+  assert.deepEqual(activity.read(124100).connections, [], 'expired executions are never recreated by replayed usage');
+});
+
 test('counts hide stale active and waiting observations while preserving fresh connection counts', () => {
   const activity = new NodeModelActivity(), stale = task(), fresh = task('b', 'fresh');
   begin(activity, stale); begin(activity, fresh);
