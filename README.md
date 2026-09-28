@@ -8,9 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows / Linux x64 正式版为 **0.1.25**。本版修补模型连接刷新与反馈、办公文件查找与编辑保护，以及 Node 活动和知识失败提示的边界问题。GitHub、官网与 Windows 签名更新已同步，见[版本说明](docs/releases/0.1.25.md)与[发行验收](docs/releases/0.1.25-verification.md)。
+当前 Windows / Linux x64 正式版为 **0.1.26**。本版优化升级备份范围，跳过引擎缓存、临时文件和经完整核对可离线重建的随包依赖，保留自定义及无法验证的文件。GitHub、官网与 Windows 签名更新已同步，见[版本说明](docs/releases/0.1.26.md)与[发行验收](docs/releases/0.1.26-verification.md)。从旧版升级到 0.1.26 仍由旧版备份，优化在安装本版后发起的后续更新中生效。
 
-固定核心保持 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0。同源码 CI、Windows 隔离安装、双平台完整公开下载、原公钥更新验签与 Linux 隔离运行通过。正式站点内容与构建结果一致；[Cloudflare Pages check 108762882940](https://github.com/rivloom/rivloom-website/runs/108762882940) 仍为 in_progress、conclusion=null，未将该状态写为成功。 R2 保留 96、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** Authenticode 发布者签名尚未配置，未覆盖项见本版验收。
+固定核心保持 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，Node.js 24.19.0。同源码 CI、Windows 隔离安装、双平台完整公开下载、原公钥更新验签与 Linux 隔离运行通过。官网实际内容与构建一致，Cloudflare Pages 部署成功。R2 保留 101、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** Authenticode 发布者签名尚未配置，未覆盖项见本版验收。
+
+**历史 0.1.25 发行：** 模型连接反馈、办公文件查找与编辑保护、Node 活动和知识失败提示修补，见[版本说明](docs/releases/0.1.25.md)与[发行验收](docs/releases/0.1.25-verification.md)。
 
 **历史 0.1.24 发行：** 当前 Node 活动与侧栏反馈，见[版本说明](docs/releases/0.1.24.md)和[验收记录](docs/releases/0.1.24-verification.md)。
 
@@ -26,7 +28,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.25 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.25.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，随包 Node.js 24.19.0。
+**Linux x86_64 命令行执行节点 0.1.26 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.26.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，随包 Node.js 24.19.0。
 
 ## 从源码运行
 
