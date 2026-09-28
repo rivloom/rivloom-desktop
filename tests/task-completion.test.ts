@@ -52,7 +52,10 @@ test('engine completion persists results and releases capacity automatically whi
     waitForExit: async () => {},
     client: {
       provider: { list: async () => ({ data: { all: [], connected: [] } }) },
-      event: { subscribe: async () => ({ stream: (async function* () {})() }) },
+      event: { subscribe: async (_parameters: unknown, { signal }: { signal: AbortSignal }) => ({ stream: (async function* () {
+        yield { type: 'server.connected', properties: {} };
+        if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      })() }) },
       session: {
         messages: async () => ({ data: messages }),
         status: async () => ({ data: statuses }),

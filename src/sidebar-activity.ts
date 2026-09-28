@@ -14,6 +14,18 @@ export function visibleModelRates(snapshot: NodeModelActivitySnapshot | null) {
   };
 }
 
+export type ModelActivityState = 'loading' | 'unavailable' | 'partial' | 'idle' | 'waiting' | 'active' | 'recent';
+
+/** Keep a truthful, inspectable state even when no rate can be shown. */
+export function modelActivityState(snapshot: NodeModelActivitySnapshot | null, loading: boolean): ModelActivityState {
+  if (!snapshot) return loading ? 'loading' : 'unavailable';
+  if (snapshot.limited || !snapshot.countsComplete) return 'partial';
+  const rates = visibleModelRates(snapshot);
+  if (!snapshot.counts.active) return (rates.outputTokensPerSecond ?? 0) > 0 ? 'recent' : 'idle';
+  if (rates.outputTokensPerSecond === null && !snapshot.counts.tools && !snapshot.counts.waiting) return 'waiting';
+  return 'active';
+}
+
 export function activityRateText(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;

@@ -34,6 +34,7 @@ export const logicFiles = [
   'tests/prompt-templates.test.ts',
   'tests/task-telemetry.test.ts',
   'tests/task-telemetry-engine.test.ts',
+  'tests/task-event-readiness.test.ts',
   'tests/workspace-commands.test.ts',
   'tests/current-conversation-find.test.ts',
   'tests/headless-runtime.test.ts',

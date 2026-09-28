@@ -88,6 +88,79 @@ test('expired observations hide rates instead of presenting a disconnected strea
   assert.equal(activity.read(63000).inputTokensPerSecond, 0, 'fresh observation with known usage support confirms no new reports in this window');
 });
 
+test('a short completed reply retains its measured output until the original window expires, without usage', () => {
+  const activity = new NodeModelActivity(), value = task(); begin(activity, value);
+  activity.event(value, delta(value), 1600);
+  const accepted = { ...value, state: 'accepted' } as const;
+  activity.snapshot(accepted, records(value, { time: { created: 1100, completed: 1700 },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }), 1750);
+  const nextPoll = activity.read(2000);
+  assert.equal(nextPoll.outputTokensPerSecond, 1, 'a one-second UI poll can still see a sub-second reply');
+  assert.equal(nextPoll.outputComplete, true);
+  assert.equal(nextPoll.inputTokensPerSecond, null, 'retaining measured output does not fabricate absent usage');
+  assert.equal(nextPoll.counts.active, 0);
+  assert.equal(nextPoll.counts.generating, 0);
+  assert.equal(nextPoll.connections[0].counts.active, 0);
+  assert.equal(nextPoll.connections[0].counts.generating, 0);
+  activity.snapshot(accepted, records(value, { time: { created: 1100, completed: 1700 }, tokens: { input: undefined } }), 3000);
+  assert.equal(activity.read(4599).outputTokensPerSecond, 1, 'repeated terminal snapshots do not shorten the window');
+  const expired = activity.read(4600);
+  assert.equal(expired.outputTokensPerSecond, null, 'the last real sample expires instead of becoming idle zero');
+  assert.equal(expired.outputComplete, false);
+  assert.equal(expired.connections[0].outputTokensPerSecond, null);
+});
+
+test('output-only terminal observations remain readable without an input snapshot or terminal keepalive', () => {
+  for (const state of ['accepted', 'stopped', 'failed'] as const) {
+    const activity = new NodeModelActivity(), value = task(); begin(activity, value);
+    activity.event(value, delta(value), 1600);
+    activity.observeTask({ ...value, state }, 1750);
+    const snapshot = activity.read(2000);
+    assert.equal(snapshot.outputTokensPerSecond, 1, state);
+    assert.equal(snapshot.connections[0].outputTokensPerSecond, 1, state);
+    assert.equal(snapshot.counts.active, 0, state);
+    assert.equal(snapshot.counts.generating, 0, state);
+    assert.equal(snapshot.inputTokensPerSecond, null, state);
+    activity.event(value, delta(value, 'late-after-end', 'x'.repeat(120)), 2200);
+    assert.equal(activity.read(2300).outputTokensPerSecond, 1, `${state}: late deltas cannot extend a terminal run`);
+    assert.equal(activity.read(4600).outputTokensPerSecond, null, state);
+  }
+});
+
+test('a retained short reply stays with its original connection across a later run', () => {
+  const activity = new NodeModelActivity(), old = task(); begin(activity, old);
+  activity.event(old, delta(old), 1600);
+  activity.observeTask({ ...old, state: 'accepted' }, 1750);
+  const current = { ...task('a', 'new-account'), sessionID: 'new-session', runAfter: 2000 };
+  begin(activity, current, 2000);
+  activity.event(current, delta(current, 'new-run', '中文'), 2200);
+  const snapshot = activity.read(2300);
+  const previousConnection = snapshot.connections.find(connection => connection.id === 'office')!;
+  const currentConnection = snapshot.connections.find(connection => connection.id === 'new-account')!;
+  assert.equal(previousConnection.outputTokensPerSecond, 1);
+  assert.equal(previousConnection.counts.active, 0);
+  assert.equal(previousConnection.counts.generating, 0);
+  assert.equal(currentConnection.outputTokensPerSecond, 1);
+  assert.equal(currentConnection.counts.active, 1);
+  assert.equal(currentConnection.counts.generating, 1);
+  assert.equal(snapshot.outputTokensPerSecond, 2, 'the Node window includes distinct recent runs once each');
+  assert.equal(snapshot.counts.generating, 1);
+  assert.equal(activity.read(4600).connections.some(connection => connection.id === 'office'), false);
+});
+
+test('reconnecting a feed discards terminal output without replaying the short reply', () => {
+  const activity = new NodeModelActivity(), value = task(); begin(activity, value);
+  const event = delta(value);
+  activity.event(value, event, 1600);
+  activity.observeTask({ ...value, state: 'accepted' }, 1750);
+  assert.equal(activity.read(2000).outputTokensPerSecond, 1);
+  activity.feedClosed(value.feed, 2100);
+  activity.feedOpened(value.feed, 2200);
+  activity.event(value, event, 2300);
+  assert.equal(activity.read(2400).outputTokensPerSecond, null);
+  assert.equal(activity.read(2400).counts.generating, 0);
+});
+
 test('reconnection discards the old output window and ignores replayed events', () => {
   const activity = new NodeModelActivity(), value = task(); begin(activity, value);
   const event = delta(value);

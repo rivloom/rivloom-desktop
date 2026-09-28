@@ -12,12 +12,13 @@ import { api } from './api';
 import { localActivity, type LocalActivity } from './local-activity';
 import { officeMessage } from './office-messages';
 import { machineStatus } from './machine-status';
-import { activityFresh, activityRate, activityRateText, attentionAdded, knowledgeActivityVersion, visibleModelRates } from './sidebar-activity';
+import { activityFresh, activityRate, activityRateText, attentionAdded, knowledgeActivityVersion, modelActivityState, visibleModelRates, type ModelActivityState } from './sidebar-activity';
 
-function useNodeActivity(identity: string, owner: boolean, connected: boolean) {
+function useNodeActivity(identity: string, owner: boolean) {
   const [visible, setVisible] = useState(() => !document.hidden);
   const [now, setNow] = useState(Date.now);
   const [received, setReceived] = useState<{ data: NodeActivitySnapshot; at: number; identity: string } | null>(null);
+  const [request, setRequest] = useState<{ identity: string; loading: boolean }>({ identity, loading: true });
   useEffect(() => {
     const changed = () => { setVisible(!document.hidden); setNow(Date.now()); };
     document.addEventListener('visibilitychange', changed);
@@ -30,35 +31,58 @@ function useNodeActivity(identity: string, owner: boolean, connected: boolean) {
   }, [visible]);
   useEffect(() => {
     setReceived(null);
-    if (!owner || !connected || !visible) return;
+    setRequest({ identity, loading: true });
+    if (!owner || !visible) return;
     let cancelled = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
         const data = await api<NodeActivitySnapshot>('/node-activity', undefined, { signal: controller.signal, timeoutMilliseconds: 4000 });
-        if (!cancelled) { const at = Date.now(); setReceived({ data, at, identity }); setNow(at); }
-      } catch { if (!cancelled) setReceived(null); }
+        if (!cancelled) { const at = Date.now(); setReceived({ data, at, identity }); setNow(at); setRequest({ identity, loading: false }); }
+      } catch { if (!cancelled) { setReceived(null); setRequest({ identity, loading: false }); } }
       finally { if (!cancelled) timer = setTimeout(poll, 1000); }
     };
     void poll();
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
-  }, [identity, owner, connected, visible]);
-  const fresh = owner && received?.identity === identity && activityFresh(received.at, now, connected, visible);
-  return { snapshot: fresh ? received.data : null, now, visible };
+  }, [identity, owner, visible]);
+  // This endpoint proves its own freshness; an unrelated UI event feed outage must
+  // not suppress healthy activity polling.
+  const fresh = owner && received?.identity === identity && activityFresh(received.at, now, true, visible);
+  return { snapshot: fresh ? received.data : null, now, visible, loading: request.identity !== identity || request.loading };
 }
 
 function RateValues({ rates }: { rates: NodeModelActivityRates }) {
   const input = activityRate(rates.inputTokensPerSecond), output = activityRate(rates.outputTokensPerSecond);
   return <>
-    {input !== null && <span className="activity-rate" title={t('近60秒新确认输入量的平均速率，不是预填充速度')}><ArrowDown size={11} /><span>{t('入均')}</span><b>{activityRateText(input)}</b></span>}
-    {output !== null && <span className="activity-rate output" title={t('近3秒流式文本与推理增量的估算速率')}><ArrowUp size={11} /><span>{t('出')}</span><b>≈{activityRateText(output)}</b></span>}
-    {(input !== null || output !== null) && <small className="activity-unit">t/s</small>}
+    <span className={`activity-rate input${input === null ? ' unknown' : ''}`} title={t('近60秒新确认输入量的平均速率，不是预填充速度')}><ArrowDown size={11} /><span>{t('入均')}</span><b>{input === null ? '—' : activityRateText(input)}</b></span>
+    <span className={`activity-rate output${output === null ? ' unknown' : ''}`} title={t('近3秒流式文本与推理增量的估算速率')}><ArrowUp size={11} /><span>{t('出')}</span><b>{output === null ? '—' : `≈${activityRateText(output)}`}</b></span>
+    <small className="activity-unit">t/s</small>
   </>;
 }
 
-function Wave({ moving }: { moving: boolean }) {
-  return <span className={`activity-wave${moving ? ' moving' : ''}`} aria-hidden="true"><i /><i /><i /><i /><i /></span>;
+function modelStateLabel(state: ModelActivityState) {
+  switch (state) {
+    case 'loading': return t('正在读取…');
+    case 'unavailable': return t('暂不可用');
+    case 'partial': return t('数据不完整');
+    case 'idle': return t('本机空闲');
+    case 'waiting': return t('等待输出');
+    case 'active': return t('运行');
+    case 'recent': return t('刚刚输出');
+  }
+}
+
+function modelStateDescription(state: ModelActivityState) {
+  switch (state) {
+    case 'loading': return t('正在读取本机模型活动。');
+    case 'unavailable': return t('本机活动数据暂不可用，正在自动重试。');
+    case 'partial': return t('部分活动数据暂不可用，可查看下方连接中已确认的数据。');
+    case 'idle': return t('本机当前没有运行中的模型调用。');
+    case 'waiting': return t('本机正在运行，收到流式输出后显示速率。');
+    case 'active': return t('正在显示本机模型调用的活动。');
+    case 'recent': return t('本机调用已结束，保留最近3秒内的输出采样。');
+  }
 }
 
 function ActivityPopover({ anchor, title, close, children }: { anchor: HTMLElement; title: string; close: (restore?: boolean) => void; children: ReactNode }) {
@@ -173,7 +197,7 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
   identity: string; owner: boolean; connected: boolean; network: NodeNetwork; attentionItems: AttentionItem[] | undefined; view: string;
   openConnections: () => void; openProjectFiles: () => void; openKnowledge: () => void; openAttention: () => void; openDevices: () => void;
 }) {
-  const { snapshot, now, visible } = useNodeActivity(identity, owner, connected);
+  const { snapshot, now, visible, loading } = useNodeActivity(identity, owner);
   const files = useSyncExternalStore(localActivity.subscribe, localActivity.getSnapshot);
   const [panel, setPanel] = useState<{ kind: 'models' | 'knowledge' | 'files'; anchor: HTMLElement; identity: string } | null>(null);
   const [dismissError, setDismissError] = useState(false);
@@ -216,8 +240,7 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
   useEffect(() => { if (!visible) { setPanel(null); setBounce(false); setDeviceChange(false); } }, [visible]);
   const models = snapshot?.models || null;
   const rates = visibleModelRates(models);
-  const modelKnown = models && (rates.inputTokensPerSecond !== null || rates.outputTokensPerSecond !== null || (!models.limited && models.countsComplete && models.counts.active > 0) || models.counts.failed > 0 ||
-    models.connections.some(connection => activityRate(connection.inputTokensPerSecond) !== null || activityRate(connection.outputTokensPerSecond) !== null || connection.countsComplete && connection.counts.active > 0 || connection.counts.failed > 0));
+  const modelState = modelActivityState(models, loading);
   const knowledge = knowledgeItems((snapshot?.knowledge || []).filter(item => !dismissed.includes(knowledgeActivityVersion(item))), models?.sampledAt || now);
   const fileOperations = fileItems(files);
   const openPanel = (kind: 'models' | 'knowledge' | 'files', anchor: HTMLElement) => { setDismissError(false); setPanel(previous => previous?.kind === kind ? null : { kind, anchor, identity }); };
@@ -235,12 +258,14 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
   };
   return <>
     {owner && <div className="sidebar-model-entry">
-      <button type="button" className="activity-office-entry" title={t('模型连接')} onClick={openConnections}><Plug size={16} /><span>{t('模型连接')}</span><Wave moving={visible && !!models?.countsComplete && !!models?.counts.generating} /><ChevronRight size={13} /></button>
-      {modelKnown && <button type="button" className="sidebar-model-metrics" aria-label={t('查看模型活动')} aria-haspopup="dialog" aria-expanded={panel?.kind === 'models'} onClick={event => openPanel('models', event.currentTarget)}>
-        {(models.limited || !models.countsComplete) && rates.inputTokensPerSecond === null && rates.outputTokensPerSecond === null && <Activity size={12} />}
-        <RateValues rates={rates} />{!models.limited && models.countsComplete && <span className="activity-run-count" title={t('此Node正在运行的会话')}><Activity size={10} aria-hidden="true" /><b>{models.counts.active}</b> <span className="activity-run-label">{t('运行')}</span></span>}
-        {models.counts.failed > 0 && <CircleAlert className="activity-failure" size={12} aria-label={t('有任务失败')} />}
-      </button>}
+      <button type="button" className="activity-office-entry" title={t('模型连接')} aria-label={t('模型连接')} onClick={openConnections}><Plug size={16} /><span>{t('模型连接')}</span></button>
+      <button type="button" className="sidebar-model-metrics" data-state={modelState} title={`${t('此Node的模型活动')} · ${modelStateLabel(modelState)}`} aria-label={t('查看模型活动')} aria-haspopup="dialog" aria-expanded={panel?.kind === 'models'} onClick={event => openPanel('models', event.currentTarget)}>
+        <RateValues rates={rates} />
+        {models && !models.limited && models.countsComplete && models.counts.active > 0
+          ? <span className="activity-run-count" title={modelStateDescription(modelState)}><Activity size={10} aria-hidden="true" /><b>{models.counts.active}</b> <span className="activity-run-label">{t('运行')}</span></span>
+          : <span className="activity-model-state">{modelStateLabel(modelState)}</span>}
+        {!!models?.counts.failed && <CircleAlert className="activity-failure" size={12} aria-label={t('有任务失败')} />}
+      </button>
     </div>}
     {owner && <div className="sidebar-file-entry"><button type="button" className="activity-office-entry" onClick={openProjectFiles}><FolderOpen size={16} /><span>{t('项目文件')}</span><ChevronRight size={13} /></button>
       <OperationBadge items={fileOperations} label={t('查看文件活动')} paused={!visible} expanded={panel?.kind === 'files'} open={anchor => openPanel('files', anchor)} /></div>}
@@ -255,15 +280,17 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
     {owner && visible && panel?.identity === identity && <ActivityPopover anchor={panel.anchor} title={panel.kind === 'models' ? t('此Node的模型活动') : panel.kind === 'knowledge' ? t('知识活动') : t('文件活动')} close={closePanel}>
       {panel.kind === 'models' && <>
         <p className="activity-description">{t('汇总此Node执行的所有会话，包括收到的委派。')}</p>
+        <p className="activity-description">{t('只统计本机执行的模型调用，其他设备的执行不计入。')}</p>
+        <div className="activity-totals"><RateValues rates={rates} /></div>
+        <p className="activity-model-description" role="status">{modelStateDescription(modelState)}</p>
         {models && <>
-          <div className="activity-totals"><RateValues rates={rates} /></div>
           {!models.limited && models.countsComplete && <Counts counts={models.counts} />}
           <ul className="activity-connections">{models.connections.map(connection => <li key={connection.id}>
             <div><Plug size={14} /><strong title={connection.name}>{connection.name}</strong><small>{connection.providerName}</small></div>
             <div className="activity-connection-rates"><RateValues rates={connection} /></div>{connection.countsComplete && <Counts counts={connection.counts} />}
           </li>)}</ul>
         </>}
-        <p className="activity-footnote">{t('输入按近60秒新确认用量统计；输出按近3秒流式增量估算。缺少数据时隐藏对应数值。')}</p>
+        <p className="activity-footnote">{t('输入按近60秒新确认用量统计；输出按近3秒流式增量估算。尚无可靠数值时显示 —。')}</p>
       </>}
       {panel.kind === 'knowledge' && <><OperationList items={knowledge} dismiss={id => void dismissKnowledge(id)} />{dismissError && <p role="alert" className="activity-failure">{t('提示未清除，请重试。')}</p>}<p className="activity-footnote">{t('显示实际知识操作，不代表设备间完整同步。')}</p></>}
       {panel.kind === 'files' && <OperationList items={fileOperations} dismiss={localActivity.dismiss} />}

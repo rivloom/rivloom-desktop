@@ -16,7 +16,10 @@ test('official session telemetry persists through polls, failures, stops, new ru
   let statuses: Record<string, { type: string }> = { session: { type: 'busy' } };
   const engine = { child: new EventEmitter(), close() {}, client: {
     provider: { list: async () => ({ data: { all: [], connected: [] } }) },
-    event: { subscribe: async () => ({ stream: (async function* () {})() }) },
+    event: { subscribe: async (_parameters: unknown, { signal }: { signal: AbortSignal }) => ({ stream: (async function* () {
+      yield { type: 'server.connected', properties: {} };
+      if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+    })() }) },
     session: { messages: async () => ({ data: messages }), status: async () => ({ data: statuses }),
       todo: async () => { todoReads++; if (failTodos) throw new Error('fixture read failure'); return { data: todos }; },
       diff: async () => ({ data: [] }), abort: async () => { statuses = {}; return {}; }, promptAsync: async () => { promptRequests++; return {}; } },

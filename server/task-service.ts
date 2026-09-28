@@ -97,7 +97,9 @@ accountEngines.onExit = (id) => {
   changed();
 };
 let shuttingDown = false;
-const streams = new Map<string, AbortController>();
+type EngineSubscription = { abort: AbortController; ready: Promise<void> };
+const streams = new Map<string, EngineSubscription>();
+const STREAM_READY_TIMEOUT = 10_000;
 const messageStream = new TaskMessageStream();
 const pendingFrames = new Map<string, TaskStreamUpdate>();
 let frameTimer: ReturnType<typeof setTimeout> | null = null;
@@ -244,7 +246,7 @@ async function readSessionArtifacts(directory: string, sessionID: string) {
 export async function refreshEngineConfiguration() {
   // Auth changes must take effect in every project instance, not only the settings page.
   nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed());
-  for (const abort of streams.values()) abort.abort();
+  for (const subscription of streams.values()) subscription.abort.abort();
   streams.clear();
   permissionEvents.clear();
   await engine!.client.global.dispose();
@@ -254,55 +256,77 @@ export async function refreshEngineConfiguration() {
 }
 async function subscribe(directory: string) {
   const key = feedKey(directory);
-  if (streams.has(key)) return;
+  const existing = streams.get(key);
+  if (existing) return existing.ready;
   const abort = new AbortController();
-  streams.set(key, abort);
+  let resolveReady!: () => void, rejectReady!: (error: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const subscription = { abort, ready };
+  streams.set(key, subscription);
   const permissionFeed = permissionEvents.open(key);
-  try {
-    const feed = await client().event.subscribe({ directory }, { signal: abort.signal });
-    nodeModelActivity.observe(undefined, () => nodeModelActivity.feedOpened(key));
-    void (async () => {
-      try {
-        for await (const event of feed.stream) {
-          nodeModelActivity.observe(undefined, () => { nodeModelActivity.feedSeen(key); nodeModelActivity.usageEvent(key, event); });
-          if (event.type === 'permission.asked') permissionEvents.asked(key, event.properties, permissionFeed);
-          if (event.type === 'permission.replied') permissionEvents.replied(key, event.properties.requestID, permissionFeed);
-          const props = event.properties as Record<string, unknown>;
-          const sessionID =
-            props.sessionID ||
-            (props.part as { sessionID?: string } | undefined)?.sessionID ||
-            (props.info as { sessionID?: string } | undefined)?.sessionID;
-          const current = taskQueries.routeForSession(sessionID);
-          if (!current || taskAccount(task(current.id)) !== accountEngines.current() || !activeStates.includes(current.state)) continue;
-          const currentTask = task(current.id);
-          const frame = messageStream.event(currentTask, event);
-          if (frame) {
-            nodeModelActivity.observe(currentTask.id, () => nodeModelActivity.event(currentTask, event));
-            streamFrame(frame);
-          }
-          if (
-            event.type === 'permission.asked' ||
-            event.type === 'question.asked' ||
-            event.type === 'session.idle' ||
-            event.type === 'session.error'
-          ) {
-            void sync(current.id).catch(() => {});
-          }
-        }
-      } catch {
-        /* Polling below reconciles state and reopens the feed. */
-      } finally {
-        permissionEvents.close(key, permissionFeed);
-        if (streams.get(key) === abort) nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed(key));
-        if (streams.get(key) === abort) streams.delete(key);
-      }
-    })();
-  } catch (error) {
+  let connected = false, closed = false;
+  const timeout = setTimeout(() => close(new Error('Engine event stream did not become ready. Retry starting the task.')), STREAM_READY_TIMEOUT);
+  const close = (error = new Error('Engine event stream closed before it became ready. Retry starting the task.')) => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(timeout);
+    if (!connected) rejectReady(error);
     permissionEvents.close(key, permissionFeed);
-    if (streams.get(key) === abort) nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed(key));
-    if (streams.get(key) === abort) streams.delete(key);
-    throw error;
-  }
+    if (streams.get(key) === subscription) {
+      nodeModelActivity.observe(undefined, () => nodeModelActivity.feedClosed(key));
+      streams.delete(key);
+    }
+    abort.abort();
+  };
+  abort.signal.addEventListener('abort', () => close(), { once: true });
+  void (async () => {
+    try {
+      // SDK subscriptions are lazy: only server.connected proves the engine has
+      // registered its listener. Submitting a short prompt before it loses deltas.
+      const feed = await client().event.subscribe({ directory }, { signal: abort.signal,
+        sseMaxRetryAttempts: 1, onSseError: () => close() });
+      for await (const event of feed.stream) {
+        if (abort.signal.aborted || streams.get(key) !== subscription) break;
+        if (event.type === 'server.connected') {
+          if (!connected) {
+            connected = true;
+            clearTimeout(timeout);
+            nodeModelActivity.observe(undefined, () => nodeModelActivity.feedOpened(key));
+            resolveReady();
+          }
+          continue;
+        }
+        if (!connected) continue;
+        nodeModelActivity.observe(undefined, () => { nodeModelActivity.feedSeen(key); nodeModelActivity.usageEvent(key, event); });
+        if (event.type === 'permission.asked') permissionEvents.asked(key, event.properties, permissionFeed);
+        if (event.type === 'permission.replied') permissionEvents.replied(key, event.properties.requestID, permissionFeed);
+        const props = event.properties as Record<string, unknown>;
+        const sessionID =
+          props.sessionID ||
+          (props.part as { sessionID?: string } | undefined)?.sessionID ||
+          (props.info as { sessionID?: string } | undefined)?.sessionID;
+        const current = taskQueries.routeForSession(sessionID);
+        if (!current || taskAccount(task(current.id)) !== accountEngines.current() || !activeStates.includes(current.state)) continue;
+        const currentTask = task(current.id);
+        const frame = messageStream.event(currentTask, event);
+        if (frame) {
+          nodeModelActivity.observe(currentTask.id, () => nodeModelActivity.event(currentTask, event));
+          streamFrame(frame);
+        }
+        if (
+          event.type === 'permission.asked' ||
+          event.type === 'question.asked' ||
+          event.type === 'session.idle' ||
+          event.type === 'session.error'
+        ) {
+          void sync(current.id).catch(() => {});
+        }
+      }
+    } catch {
+      /* Existing task polls reconcile state; the next tick reopens the feed. */
+    } finally { close(); }
+  })();
+  return ready;
 }
 const readPermissions = (directory: string, sessionID: string) => permissionEvents.read(feedKey(directory), sessionID,
   async () => (await client().permission.list({ directory })).data || []);
@@ -409,7 +433,8 @@ const timer = setInterval(async () => {
   try {
     for (const t of taskQueries.inStates(activeStates)) {
       nodeModelActivity.observe(t.id, () => nodeModelActivity.observeTask(modelActivityTask(t)));
-      await accountEngines.run(taskAccount(t), () => subscribe(project(t.projectID).directory)).catch(() => {});
+      // Reconnecting observation must not stall state/usage polls for active tasks.
+      void accountEngines.run(taskAccount(t), () => subscribe(project(t.projectID).directory)).catch(() => {});
       await sync(t.id).catch(() => {});
     }
   } finally {
@@ -873,7 +898,7 @@ export async function shutdownEngine(waitForExit = false) {
   pendingFrames.clear();
   messageStream.clear();
   clearInterval(timer);
-  for (const abort of streams.values()) abort.abort();
+  for (const subscription of streams.values()) subscription.abort.abort();
   if (engine) {
     await Promise.allSettled(
       taskQueries

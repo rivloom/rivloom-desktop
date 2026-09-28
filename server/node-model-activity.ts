@@ -107,7 +107,8 @@ export class NodeModelActivity {
     run.task = task;
     if (!active(task.state)) {
       run.endedAt ??= now;
-      run.output = [];
+      // Completion ends generation, but does not erase deltas still inside the
+      // three-second rate window before the UI has had a chance to sample them.
       run.toolRunning = false;
     }
   }
@@ -245,9 +246,10 @@ export class NodeModelActivity {
     for (const run of this.runs.values()) {
       const isActive = active(run.task.state), fresh = now - run.observedAt <= FRESHNESS;
       const inputRecent = run.inputAt !== null && now - run.inputAt < INPUT_WINDOW;
+      const outputRecent = run.output.length > 0;
       const inputMissing = this.recentMissing(run, now);
       const recentFailure = run.failedAt !== null && now - run.failedAt < INPUT_WINDOW;
-      if (!isActive && !inputRecent && !inputMissing && !recentFailure) continue;
+      if (!isActive && !inputRecent && !outputRecent && !inputMissing && !recentFailure) continue;
       let group = groups.get(run.task.connection.id);
       if (!group) {
         group = { connection: { ...run.task.connection, inputTokensPerSecond: null, outputTokensPerSecond: null, countsComplete: true, counts: counts() },
@@ -265,7 +267,7 @@ export class NodeModelActivity {
       const observedSilence = run.outputObservedSince !== null && now - run.outputObservedSince >= OUTPUT_WINDOW &&
         (run.toolRunning || ['waiting_input', 'waiting_approval'].includes(run.task.state));
       const outputValid = observed && (run.outputKnown || observedSilence);
-      if (isActive && run.task.state !== 'stopping') {
+      if (isActive && run.task.state !== 'stopping' || !isActive && outputRecent) {
         group.outputRequired = true;
         if (outputValid) {
           const value = sum(run.output.map(sample => sample.tokens));

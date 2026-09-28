@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { NodeModelActivitySnapshot } from '../shared/node-model-activity.ts';
-import { activityFresh, activityRate, activityRateText, attentionAdded, knowledgeActivityVersion, visibleModelRates } from '../src/sidebar-activity.ts';
+import { activityFresh, activityRate, activityRateText, attentionAdded, knowledgeActivityVersion, modelActivityState, visibleModelRates } from '../src/sidebar-activity.ts';
 
 const snapshot = (patch: Partial<NodeModelActivitySnapshot> = {}): NodeModelActivitySnapshot => ({
   sampledAt: 1000, inputWindowSeconds: 60, outputWindowSeconds: 3, inputComplete: true, outputComplete: true, countsComplete: true, limited: false,
@@ -19,6 +19,20 @@ test('missing, partial or stale observations cannot become apparently complete z
   assert.equal(activityFresh(1000, 5999, true, true), true);
   for (const [now, connected, visible] of [[6000, true, true], [500, true, true], [1000, false, true], [1000, true, false]] as const)
     assert.equal(activityFresh(1000, now, connected, visible), false);
+});
+
+test('model activity distinguishes empty, pending, unavailable and incomplete observations', () => {
+  assert.equal(modelActivityState(null, true), 'loading');
+  assert.equal(modelActivityState(null, false), 'unavailable');
+  const idle = snapshot({ inputComplete: false, outputComplete: false, inputTokensPerSecond: null, outputTokensPerSecond: null,
+    counts: { active: 0, generating: 0, tools: 0, waiting: 0, failed: 0 } });
+  assert.equal(modelActivityState(idle, false), 'idle');
+  assert.equal(modelActivityState({ ...idle, counts: { ...idle.counts, active: 1 } }, false), 'waiting');
+  assert.equal(modelActivityState({ ...idle, countsComplete: false }, false), 'partial');
+  assert.equal(modelActivityState(snapshot({ limited: true }), false), 'partial');
+  assert.equal(modelActivityState(snapshot(), false), 'active');
+  assert.equal(modelActivityState({ ...idle, outputComplete: true, outputTokensPerSecond: 2 }, false), 'recent');
+  assert.equal(modelActivityState({ ...idle, outputComplete: true, outputTokensPerSecond: 0 }, false), 'idle');
 });
 
 test('the todo badge animates once on new items with a larger count, never on polling', () => {
