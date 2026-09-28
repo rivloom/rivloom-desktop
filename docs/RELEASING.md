@@ -1,5 +1,7 @@
 # 官网分发与安全更新方案
 
+**2026-09-28：Windows/Linux x64 0.1.25 发布完成。** 同源码 CI、隔离安装与运行、完整公开下载、原公钥更新验签、官网实际内容及 R2 检查通过；产物与未覆盖项见[本版验收](releases/0.1.25-verification.md)。
+
 **2026-09-27 · 0.1.24 已发布；官网内容已核验，部署检查仍待回写。** Windows / Linux x64 同一源码 [1993acc56a12f2900c717b852f828b6184b149b5](https://github.com/rivloom/rivloom-desktop/commit/1993acc56a12f2900c717b852f828b6184b149b5)，新增 Node 活动及侧栏反馈。同提交四组源码 CI、Windows 隔离安装/启动/重启/卸载、候选静态解包、双平台公开完整文件与原公钥更新签名、Linux 隔离运行和官网双语命令核对通过。正式页面及资源已匹配核验构建；GitHub 上的 Cloudflare Pages check 仍为 in_progress，尚无最终结论。 首次源码的 Linux fixture 失败已修复；最终 attempt 和实际下载方式见[本版验收与范围](releases/0.1.24-verification.md)。本地记录 18 项布局检查，生产响应式视觉复验因工具超时未完成，也未新增原生窗口视觉验收。R2 保留 91、暂缓 0、可删除 0、删除 0 个，检查完成，删除 0 个；未启用自动清理，见[R2 审计](releases/0.1.24-r2-retention.md)。
 
 **2026-09-27 · 0.1.23 正式发布与收尾完成。** Windows / Linux x64 同一源码 [e51726a6b19e3c701c0094b0f336387fb17e455d](https://github.com/rivloom/rivloom-desktop/commit/e51726a6b19e3c701c0094b0f336387fb17e455d)。同提交四组源码 CI、Windows 隔离安装/启动/重启/卸载、独立静态解包、双平台公开完整下载与原公钥更新签名、Linux 隔离运行、官网实际部署和双语命令核对通过。六项云端工作流均首轮成功，新增 Windows/Linux 办公服务覆盖。R2 保留 86、暂缓 0、可删除 0、删除 0 个，检查完成，删除 0 个；未启用自动清理。详见[本版验收与范围](releases/0.1.23-verification.md)和[R2 审计](releases/0.1.23-r2-retention.md)。

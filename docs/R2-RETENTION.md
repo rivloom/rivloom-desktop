@@ -1,6 +1,8 @@
 # R2 发行文件保留与清理
 
-**最近执行（2026-09-27，Windows/Linux 0.1.24）：** 发行源码 [1993acc56a12f2900c717b852f828b6184b149b5](https://github.com/rivloom/rivloom-desktop/commit/1993acc56a12f2900c717b852f828b6184b149b5)。双平台公开文件、Windows 原公钥更新签名与官网实际内容核验后，逐项审计 91 个对象：保留 91、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 正式页面及资源已匹配核验构建；GitHub 上的 Cloudflare Pages check 仍为 in_progress，尚无最终结论。 两平台各自最近三版、近 30 天与当前引用取并集，未知信息保留，未启用自动清理。见[本次逐对象审计](releases/0.1.24-r2-retention.md)。
+**最近执行（2026-09-28，Windows/Linux 0.1.25）：** 保留 96、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 按两平台各自最近三版、近 30 天与当前引用取并集，未启用自动清理。见[逐对象审计](releases/0.1.25-r2-retention.md)。
+
+**历史执行（2026-09-27，Windows/Linux 0.1.24）：** 发行源码 [1993acc56a12f2900c717b852f828b6184b149b5](https://github.com/rivloom/rivloom-desktop/commit/1993acc56a12f2900c717b852f828b6184b149b5)。双平台公开文件、Windows 原公钥更新签名与官网实际内容核验后，逐项审计 91 个对象：保留 91、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 正式页面及资源已匹配核验构建；GitHub 上的 Cloudflare Pages check 仍为 in_progress，尚无最终结论。 两平台各自最近三版、近 30 天与当前引用取并集，未知信息保留，未启用自动清理。见[本次逐对象审计](releases/0.1.24-r2-retention.md)。
 
 **历史执行（2026-09-27，Windows/Linux 0.1.23）：** 发行源码 [e51726a6b19e3c701c0094b0f336387fb17e455d](https://github.com/rivloom/rivloom-desktop/commit/e51726a6b19e3c701c0094b0f336387fb17e455d)。同提交 CI、独立公开完整下载、Windows 原公钥更新签名及官网实际部署完成后，逐项审计 86 个对象：保留 86、暂缓 0、可删除 0、删除 0 个。**检查完成，删除 0 个。** 按两平台各自最近三版、近 30 天和当前引用取并集，未知信息保留；未启用自动清理。见[本次逐对象审计](releases/0.1.23-r2-retention.md)。
 
