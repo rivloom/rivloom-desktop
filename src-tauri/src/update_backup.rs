@@ -2,7 +2,7 @@
 //! User project directories are references inside the database, never traversal roots.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, io::{Read, Write}, path::{Path, PathBuf}, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,12 +12,102 @@ pub struct BackupProgress { pub files: u64, pub total_files: u64, pub bytes: u64
 #[serde(rename_all = "camelCase")]
 struct BackupFile { path: String, bytes: u64, sha256: String }
 
+const DEPENDENCY_MARKER: &str = ".rivloom-plugin-dependencies";
+const DEPENDENCY_INVENTORY: &str = ".rivloom-plugin-dependencies-files.json";
+
+// Both the shared engine and each account have their own cache/config/data roots.
+// Do not apply these rules to similarly named folders in attachments or user data.
+fn engine_relative(relative: &Path) -> Option<&Path> {
+    let path = relative.strip_prefix("engine").ok()?;
+    if let Ok(accounts) = path.strip_prefix("accounts") {
+        let mut components = accounts.components();
+        components.next()?;
+        Some(components.as_path())
+    } else { Some(path) }
+}
+
 fn excluded(relative: &Path) -> bool {
-    let path = relative.to_string_lossy().replace('\\', "/");
-    let root = path.split('/').next().unwrap_or("");
+    let root = relative.components().next().and_then(|c| c.as_os_str().to_str()).unwrap_or("");
     matches!(root, ".updates" | "webview" | "app.lock" | "desktop-runtime.json" | "desktop-auth-token.txt" | "update-shutdown.json") ||
-        path == "engine/cache" || path.starts_with("engine/cache/") ||
-        path == "engine/temp" || path.starts_with("engine/temp/")
+        engine_relative(relative).is_some_and(|path| path.starts_with("cache") || path.starts_with("temp"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DependencyInventory { schema_version: u32, fingerprint: String, files: Vec<DependencyFile> }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DependencyFile { path: String, bytes: u64, sha256: String }
+
+fn bounded_read(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    let metadata = regular_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > limit { return None; }
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= limit).then_some(bytes)
+}
+
+fn sha256_text(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+// A marker alone cannot prove that node_modules contains only shipped files.
+// Keep the entire tree (and its marker) if a user added/changed a dependency,
+// the inventory is absent/stale, or any file cannot be verified. Only a complete
+// match can be rebuilt offline; omitting its marker then forces startup to seed it.
+fn dependencies_are_regenerable(config: &Path) -> Option<()> {
+    let inventory: DependencyInventory = serde_json::from_slice(&bounded_read(&config.join(DEPENDENCY_INVENTORY), 32 * 1024 * 1024)?).ok()?;
+    if inventory.schema_version != 1 || !sha256_text(&inventory.fingerprint) || inventory.files.is_empty() || inventory.files.len() > 200_000 { return None; }
+    if bounded_read(&config.join(DEPENDENCY_MARKER), 64)? != inventory.fingerprint.as_bytes() { return None; }
+    let manifest: serde_json::Value = serde_json::from_slice(&bounded_read(&config.join("package.json"), 1024 * 1024)?).ok()?;
+    let dependencies = manifest.get("dependencies")?.as_object()?;
+    if dependencies.len() != 1 { return None; }
+    let plugin_version = dependencies.get("@opencode-ai/plugin")?.as_str()?;
+    for key in ["devDependencies", "optionalDependencies", "peerDependencies"] {
+        if let Some(value) = manifest.get(key) { if !value.as_object()?.is_empty() { return None; } }
+    }
+    let mut files = HashMap::new();
+    for file in inventory.files {
+        if !file.path.starts_with("node_modules/") || file.path.contains(['\\', ':']) || file.path.chars().any(char::is_control) ||
+            file.path.split('/').any(|part| matches!(part, "" | "." | "..")) || !sha256_text(&file.sha256) { return None; }
+        if files.insert(file.path.clone(), file).is_some() { return None; }
+    }
+    if !files.contains_key("node_modules/@opencode-ai/plugin/dist/index.js") || !files.contains_key("node_modules/@opencode-ai/plugin/package.json") { return None; }
+    let modules = config.join("node_modules");
+    if !regular_metadata(&modules).ok()?.is_dir() { return None; }
+    let mut directories = vec![modules];
+    let mut visited = 0usize;
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory).ok()? {
+            visited += 1;
+            if visited > 400_001 { return None; }
+            let path = entry.ok()?.path();
+            let before = regular_metadata(&path).ok()?;
+            if before.is_dir() { directories.push(path); continue; }
+            let relative = path.strip_prefix(config).ok()?.to_str()?.replace('\\', "/");
+            let expected = files.remove(&relative)?;
+            if before.len() != expected.bytes { return None; }
+            let mut input = fs::File::open(&path).ok()?;
+            let mut digest = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut bytes = 0u64;
+            loop {
+                let count = input.read(&mut buffer).ok()?;
+                if count == 0 { break; }
+                bytes = bytes.checked_add(count as u64)?;
+                if bytes > expected.bytes { return None; }
+                digest.update(&buffer[..count]);
+            }
+            let after = regular_metadata(&path).ok()?;
+            if bytes != expected.bytes || after.len() != before.len() || before.modified().ok() != after.modified().ok() ||
+                format!("{:x}", digest.finalize()) != expected.sha256 { return None; }
+        }
+    }
+    if !files.is_empty() { return None; }
+    // Restoring a generated tree seeds the bundled exact version. Preserve a
+    // user's custom version/range/file spec by keeping the original tree+marker.
+    let plugin: serde_json::Value = serde_json::from_slice(&bounded_read(&config.join("node_modules/@opencode-ai/plugin/package.json"), 1024 * 1024)?).ok()?;
+    (plugin.get("version")?.as_str()? == plugin_version).then_some(())
 }
 
 pub(crate) fn regular_metadata(path: &Path) -> Result<fs::Metadata, String> {
@@ -40,10 +130,14 @@ pub fn private_state_directory(data_dir: &Path) -> Result<PathBuf, String> {
 }
 
 fn files_below(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let omit_dependencies = directory.strip_prefix(root).ok().and_then(engine_relative)
+        .is_some_and(|path| path == Path::new("config/opencode")) && dependencies_are_regenerable(directory).is_some();
     for entry in fs::read_dir(directory).map_err(|_| "update_backup_failed")? {
         let path = entry.map_err(|_| "update_backup_failed")?.path();
         let relative = path.strip_prefix(root).map_err(|_| "update_backup_failed")?;
         if excluded(relative) { continue; }
+        if omit_dependencies && path.file_name().and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "node_modules" | DEPENDENCY_MARKER | DEPENDENCY_INVENTORY)) { continue; }
         let meta = regular_metadata(&path)?;
         if meta.is_dir() { files_below(root, &path, files)?; }
         else { files.push(relative.to_owned()); }
@@ -199,6 +293,138 @@ mod tests {
         let path = std::env::temp_dir().join(format!("rivloom-update-backup-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         fs::create_dir(&path).unwrap(); path
     }
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("cmd").args(["/d", "/c", "mklink", "/J"])
+            .arg(link.to_string_lossy().replace('/', "\\")).arg(target.to_string_lossy().replace('/', "\\"))
+            .creation_flags(0x08000000).output().unwrap();
+        assert!(output.status.success(), "Junction fixture failed: {} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+    fn seed_dependencies(root: &Path, engine: &str) -> PathBuf {
+        let config = root.join(engine).join("config/opencode");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(config.join("package.json"), br#"{"dependencies":{"@opencode-ai/plugin":"1.0.0"}}"#).unwrap();
+        fs::write(config.join("package-lock.json"), b"synthetic lock").unwrap();
+        fs::write(config.join("opencode.json"), b"user configuration").unwrap();
+        let mut files = Vec::new();
+        for path in ["node_modules/@opencode-ai/plugin/package.json", "node_modules/@opencode-ai/plugin/dist/index.js", "node_modules/zod/index.js"] {
+            let file = config.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let contents: &[u8] = if path.ends_with("package.json") { br#"{"version":"1.0.0"}"# } else { path.as_bytes() };
+            fs::write(file, contents).unwrap();
+            files.push(serde_json::json!({"path": path, "bytes": contents.len(), "sha256": format!("{:x}", Sha256::digest(contents))}));
+        }
+        let fingerprint = "a".repeat(64);
+        fs::write(config.join(DEPENDENCY_MARKER), &fingerprint).unwrap();
+        fs::write(config.join(DEPENDENCY_INVENTORY), serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 1, "fingerprint": fingerprint, "files": files,
+        })).unwrap()).unwrap();
+        config
+    }
+
+    #[test]
+    fn backup_omits_verified_dependencies_and_caches_in_shared_and_account_engines() {
+        let root = root();
+        for engine in ["engine", "engine/accounts/first", "engine/accounts/second"] {
+            seed_dependencies(&root, engine);
+            for path in ["cache/cached.bin", "temp/temporary.bin", "data/opencode/auth.json", "state/session.json", "rivloom-providers.json"] {
+                let file = root.join(engine).join(path);
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(file, path.as_bytes()).unwrap();
+            }
+        }
+        // Similar names outside these exact managed paths remain user data.
+        for path in ["task-files/cache/file", "task-files/node_modules/file", "engine/data/cache/file", "engine/accounts/first/data/temp/file", "engine/cache-backup/file"] {
+            let file = root.join(path); fs::create_dir_all(file.parent().unwrap()).unwrap(); fs::write(file, path.as_bytes()).unwrap();
+        }
+        let mut events = Vec::new();
+        let copied = backup(&root, "0.1.25", "0.1.26", |event| events.push(event)).unwrap();
+        for engine in ["engine", "engine/accounts/first", "engine/accounts/second"] {
+            for path in ["cache", "temp", "config/opencode/node_modules", "config/opencode/.rivloom-plugin-dependencies", "config/opencode/.rivloom-plugin-dependencies-files.json"] {
+                assert!(!copied.join(engine).join(path).exists(), "{engine}/{path}");
+                assert!(root.join(engine).join(path).exists(), "Live data must remain untouched: {engine}/{path}");
+            }
+            for path in ["data/opencode/auth.json", "state/session.json", "rivloom-providers.json", "config/opencode/package.json", "config/opencode/package-lock.json", "config/opencode/opencode.json"] {
+                assert_eq!(fs::read(copied.join(engine).join(path)).unwrap(), fs::read(root.join(engine).join(path)).unwrap());
+            }
+        }
+        for path in ["task-files/cache/file", "task-files/node_modules/file", "engine/data/cache/file", "engine/accounts/first/data/temp/file", "engine/cache-backup/file"] {
+            assert_eq!(fs::read(copied.join(path)).unwrap(), path.as_bytes());
+        }
+        let manifest: serde_json::Value = serde_json::from_slice(&fs::read(copied.join("backup-manifest.json")).unwrap()).unwrap();
+        let files = manifest["files"].as_array().unwrap();
+        assert_eq!(files.len(), 23);
+        let bytes: u64 = files.iter().map(|file| file["bytes"].as_u64().unwrap()).sum();
+        assert_eq!(events.first().unwrap(), &BackupProgress { files: 0, total_files: 23, bytes: 0, total_bytes: bytes });
+        assert_eq!(events.last().unwrap(), &BackupProgress { files: 23, total_files: 23, bytes, total_bytes: bytes });
+        for file in files {
+            let contents = fs::read(copied.join(file["path"].as_str().unwrap())).unwrap();
+            assert_eq!(file["sha256"], format!("{:x}", Sha256::digest(contents)));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unknown_modified_missing_or_unverifiable_dependencies_keep_the_whole_scope() {
+        for scenario in ["extra", "modified", "missing", "no-inventory", "invalid-inventory", "stale", "custom-dependency", "custom-plugin-version", "traversal", "duplicate"] {
+            let root = root();
+            let config = seed_dependencies(&root, "engine/accounts/custom");
+            let module = config.join("node_modules/zod/index.js");
+            match scenario {
+                "extra" => fs::write(config.join("node_modules/custom-plugin.js"), b"user plugin").unwrap(),
+                "modified" => { let size = fs::metadata(&module).unwrap().len() as usize; fs::write(&module, vec![b'x'; size]).unwrap(); },
+                "missing" => fs::remove_file(&module).unwrap(),
+                "no-inventory" => fs::remove_file(config.join(DEPENDENCY_INVENTORY)).unwrap(),
+                "invalid-inventory" => fs::write(config.join(DEPENDENCY_INVENTORY), b"{").unwrap(),
+                "stale" => fs::write(config.join(DEPENDENCY_MARKER), "b".repeat(64)).unwrap(),
+                "custom-dependency" => fs::write(config.join("package.json"), br#"{"dependencies":{"@opencode-ai/plugin":"1.0.0","custom-plugin":"1.0.0"}}"#).unwrap(),
+                "custom-plugin-version" => fs::write(config.join("package.json"), br#"{"dependencies":{"@opencode-ai/plugin":"file:./custom-plugin"}}"#).unwrap(),
+                "traversal" | "duplicate" => {
+                    let mut inventory: serde_json::Value = serde_json::from_slice(&fs::read(config.join(DEPENDENCY_INVENTORY)).unwrap()).unwrap();
+                    let mut item = inventory["files"][0].clone();
+                    if scenario == "traversal" { item["path"] = "node_modules/../../data/auth.json".into(); }
+                    inventory["files"].as_array_mut().unwrap().push(item);
+                    fs::write(config.join(DEPENDENCY_INVENTORY), serde_json::to_vec(&inventory).unwrap()).unwrap();
+                },
+                _ => unreachable!(),
+            }
+            // A customized account does not prevent another engine from shrinking.
+            seed_dependencies(&root, "engine");
+            assert!(dependencies_are_regenerable(&config).is_none(), "{scenario}");
+            let copied = backup(&root, "0.1.25", "0.1.26", |_| {}).unwrap();
+            let kept = copied.join("engine/accounts/custom/config/opencode");
+            assert!(!copied.join("engine/config/opencode/node_modules").exists());
+            assert_eq!(fs::read(kept.join(DEPENDENCY_MARKER)).unwrap(), fs::read(config.join(DEPENDENCY_MARKER)).unwrap(), "{scenario}");
+            assert_eq!(fs::read(kept.join("node_modules/@opencode-ai/plugin/dist/index.js")).unwrap(), b"node_modules/@opencode-ai/plugin/dist/index.js");
+            if scenario != "missing" { assert_eq!(fs::read(kept.join("node_modules/zod/index.js")).unwrap(), fs::read(&module).unwrap(), "{scenario}"); }
+            if scenario == "extra" { assert_eq!(fs::read(kept.join("node_modules/custom-plugin.js")).unwrap(), b"user plugin"); }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn generated_dependency_evidence_does_not_bypass_junction_rejection() {
+        for entry in ["node_modules", "node_modules/zod", DEPENDENCY_MARKER, DEPENDENCY_INVENTORY] {
+            let root = root();
+            let config = seed_dependencies(&root, "engine");
+            let outside = root.with_extension("outside");
+            fs::create_dir(&outside).unwrap();
+            fs::write(outside.join("private.txt"), b"outside must remain untouched").unwrap();
+            let link = config.join(entry);
+            fs::rename(&link, root.join("original-entry")).unwrap();
+            junction(&link, &outside);
+            assert!(dependencies_are_regenerable(&config).is_none(), "{entry}");
+            assert!(backup(&root, "0.1.25", "0.1.26", |_| {}).is_err(), "{entry}");
+            assert!(fs::read_dir(root.join(".updates/backups")).unwrap().filter_map(Result::ok)
+                .all(|copy| !copy.path().join("backup-manifest.json").exists()));
+            assert_eq!(fs::read(outside.join("private.txt")).unwrap(), b"outside must remain untouched");
+            fs::remove_dir(link).unwrap();
+            fs::remove_dir_all(root).unwrap();
+            fs::remove_dir_all(outside).unwrap();
+        }
+    }
     #[test]
     fn backup_preserves_identity_databases_files_and_engine_state_without_following_projects() {
         let root = root();
@@ -289,13 +515,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cleanup_refuses_junctions_at_the_root_backup_and_inside_a_copy() {
-        use std::os::windows::process::CommandExt;
-        fn junction(link: &Path, target: &Path) {
-            let output = std::process::Command::new("cmd").args(["/d", "/c", "mklink", "/J"])
-                .arg(link.to_string_lossy().replace('/', "\\")).arg(target.to_string_lossy().replace('/', "\\"))
-                .creation_flags(0x08000000).output().unwrap();
-            assert!(output.status.success(), "Junction fixture failed: {} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        }
         let root = root(); let outside = root.with_extension("outside");
         fs::create_dir(&outside).unwrap(); fs::write(outside.join("keep.txt"), b"project data").unwrap();
         fs::create_dir(root.join(".updates")).unwrap(); junction(&root.join(".updates/backups"), &outside);
