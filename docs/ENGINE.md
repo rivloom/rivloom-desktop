@@ -10,7 +10,7 @@ Windows 生产者产物包含 EXE、manifest、完整 `source-files.json`、许�
 
 Linux 使用本仓库 `scripts/runtime-linux/` 的固定四文件 recipe 快照，独立绑定 recipe、ELF、完整源码清单、许可和 11 项 smoke。新引擎与内嵌原生库的 ABI 核对后，完整 Linux runtime 的 glibc 下限仍为 2.30；随包 Node.js 要求内核至少 4.18 与 `GLIBCXX_3.4.25`。ARM64 未进入本次验收与发行范围。
 
-当前隔离验收已通过 Windows/Linux 生产者各 11 项 smoke，以及 Windows 消费端独立 10 项检查。它们覆盖模型模拟、会话和流式事件、工具批准/拒绝、取消、重启持久化、删除及插件依赖，不代表真实供应商 OAuth、真实模型调用、桌面安装/升级或实体多机已完成。上游本次更新涉及 GPT-6 Sol/Luna 订阅模型、Gemini 思考参数、Cloudflare AI Gateway 超时及 Bedrock 工具图片兼容；固定 models.dev 目录也已更新，实际供应商行为仍须单独验证。
+当前隔离验收已通过 Windows/Linux 生产者各 11 项 smoke、Windows 消费端独立 10 项检查及双平台 vendor receipt 核验。桌面完整单元测试 875 项、CI 自检 87 项、20 项现有 Windows 服务检查与 Linux 原生桌面检查 29 项全部通过，无测试跳过；实际桌面 runtime 资源、344 个运行时依赖及许可清单核验通过。服务首轮三项深路径夹具失败保留，同一提交的短路径隔离快照复验通过；其中 Node SQLite 的 270 字符数据库路径限制已单独确证，未改动产品断言。它们覆盖模型模拟、会话和流式事件、工具批准/拒绝、取消、重启持久化、删除及插件依赖，不代表真实供应商 OAuth、真实模型调用、桌面安装/升级或实体多机已完成。上游本次更新涉及 GPT-6 Sol/Luna 订阅模型、Gemini 思考参数、Cloudflare AI Gateway 超时及 Bedrock 工具图片兼容；固定 models.dev 目录也已更新，实际供应商行为仍须单独验证。
 
 开发构建沿用 `npm run engine:prepare`；Windows 可用 `--source` 从本机 runtime 对象库克隆同一个固定提交，不能复制未提交文件。已有同锁、同哈希且核验通过的 vendor 产物优先复用。外部产物导入仍必须匹配 source lock 中实际批准的 binary/manifest/consumer-smoke 三项摘要；未列批准摘要时拒绝导入。生产者自身 smoke 不能代替桌面消费端验收。Windows 正式打包直接执行 `npm run desktop:build`，它已包含 prepare 和前端构建；Linux 执行 `npm run linux:build` 与 `npm run linux:smoke`。
 
