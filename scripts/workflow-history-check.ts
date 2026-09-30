@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSocket } from 'node:dgram';
-import { ServiceClient, modelFixture, pairServices, until } from './m34-fixtures.ts';
+import { ServiceClient, modelFixture, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
@@ -62,7 +62,7 @@ const model = await modelFixture(30_000, input => {
     }
     assert.equal(results[5].authority, 'inferred');
     return { content: JSON.stringify({ kind: 'plan', plan: { summary: 'Use source-backed state', steps: [
-      { id: 'verify', title: 'Verify history', instructions: 'Read current state and report the active format without changing files.',
+      { id: 'verify', title: 'Verify history', instructions: workflowFixtureInstructions('Read current state and report the active format without changing files.'),
         dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} },
     ] } }) };
   } catch (error) { failures.push(String(error)); return { content: JSON.stringify({ kind: 'completed', summary: `Fixture failed: ${error}`, files: [] }) }; }

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { ApprovalMode, Project, Task } from '../shared/types.ts';
 import type { Workflow } from '../shared/workflows.ts';
-import { modelFixture, ServiceClient, pairServices, until } from './m34-fixtures.ts';
+import { modelFixture, ServiceClient, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 
 export async function checkApprovalExecution() {
   const root = resolve('.data', 'approval-execution', randomUUID());
@@ -22,7 +22,7 @@ export async function checkApprovalExecution() {
     const [key, expected] = entry;
     const workflow = text.includes('最后只返回一个符合下列 JSON Schema');
     if (workflow && text.includes('此会话只允许读取和规划')) return { content: JSON.stringify({ kind: 'plan', plan: {
-      summary: 'Verify actual tool authorization', steps: [{ id: 'execute', title: key, instructions: key,
+      summary: 'Verify actual tool authorization', steps: [{ id: 'execute', title: key, instructions: workflowFixtureInstructions(key),
         dependsOn: [], nodeID: ownNode, resources: [], software: [], requirements: {} }] } }) };
     assert(system.includes(`permission mode \\"${expected.mode}\\"`), `${key}: missing actual approval policy in system prompt`);
     assert(!text.includes('每次修改和命令等待审批'), `${key}: obsolete unconditional approval instruction`);

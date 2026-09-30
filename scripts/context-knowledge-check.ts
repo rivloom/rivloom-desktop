@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ServiceClient, modelFixture, until } from './m34-fixtures.ts';
+import { ServiceClient, modelFixture, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
@@ -28,7 +28,7 @@ const model = await modelFixture(30_000, input => {
     const user = input.messages.filter((m: any) => m.role === 'user').map((m: any) => text(m.content)).join('\n');
     if (user.includes('CONTEXT_MEMORY_LINK') && input.tools?.some((t: any) => t.function.name === 'rivloom_history')) {
       if (user.includes('只允许读取和规划')) return { content: JSON.stringify({ kind: 'plan', plan: { summary: 'Prepare sourced note', steps: [
-        { id: 'verify', title: 'Verify requirement', instructions: 'CONTEXT_MEMORY_LINK Report requirements without changing files.',
+        { id: 'verify', title: 'Verify requirement', instructions: workflowFixtureInstructions('CONTEXT_MEMORY_LINK Report requirements without changing files.'),
           dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} },
       ] } }) };
       return { content: JSON.stringify({ kind: 'completed', summary: 'Source available for explicit owner promotion.', files: [] }) };

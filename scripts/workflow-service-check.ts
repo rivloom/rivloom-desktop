@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createSocket } from 'node:dgram';
-import { modelFixture, ServiceClient, pairServices, until, type FixtureModelReply } from './m34-fixtures.ts';
+import { modelFixture, ServiceClient, pairServices, until, workflowFixtureInstructions, type FixtureModelReply } from './m34-fixtures.ts';
 import type { Workflow, WorkflowStepPlan } from '../shared/workflows.ts';
 import type { ResourceReference } from '../shared/resources.ts';
 import type { KnowledgeRef, KnowledgeUsagePage, LocalKnowledgeEntry } from '../shared/knowledge.ts';
@@ -22,7 +22,7 @@ const parallelRequests = new Map<string, { enteredAt: number; releasedAt?: numbe
 let releaseContinuation!: () => void; let continuationEntered = false;
 const continuationHeld = new Promise<void>((ok) => { releaseContinuation = ok; });
 const step = (id: string, instructions: string, dependsOn: string[] = [], nodeID: string | null = null): WorkflowStepPlan =>
-  ({ id, title: id, instructions, dependsOn, nodeID, resources: [], software: [], requirements: {} });
+  ({ id, title: id, instructions: workflowFixtureInstructions(instructions), dependsOn, nodeID, resources: [], software: [], requirements: {} });
 function workflowReply(input: any): FixtureModelReply {
   const userText = (input.messages || []).filter((m: any) => m.role === 'user').map((m: any) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
   if (!userText.includes('最后只返回一个符合下列 JSON Schema')) return { content: 'Workflow fixture title' };
@@ -223,6 +223,8 @@ try {
     const failed = await completed((await create('CASE_RETRY_WORK', { mode: 'locked', nodeID: target })).id);
     assert.equal(failed.state, 'failed', JSON.stringify(failed));
     assert.deepEqual(failed.steps.map((s) => s.state), ['completed', 'failed', 'blocked']);
+    assert.equal(!!failed.queuePaused, false, 'A new execution failure must not introduce a manual queue pause');
+    assert.equal(failed.queuePauseReason, undefined);
     const request = { version: failed.version, roundRequestID: failed.roundRequestID || failed.requestID,
       stepID: 'retry', attempt: 1, requestID: randomUUID() };
     await origin.call(`/workflows/${failed.id}/steps/retry`, request);
@@ -230,7 +232,8 @@ try {
     const recovered = await completed(failed.id); assert.equal(recovered.state, 'completed', JSON.stringify(recovered));
     assert.deepEqual(recovered.steps.map((s) => s.attempts.length), [1, 2, 1]);
     assert.equal(recovered.steps[0].attempts[0].executionID, failed.steps[0].attempts[0].executionID);
-    assert.equal(recovered.steps[1].attempts[0].error, 'workflow_invalid_outcome'); assert.equal(recovered.queuePaused, true);
+    assert.equal(recovered.steps[1].attempts[0].error, 'workflow_invalid_outcome');
+    assert.equal(!!recovered.queuePaused, false); assert.equal(recovered.queuePauseReason, undefined);
   }
   pass('Local and remote failed steps retry once after a fresh official-session check; completed prerequisites and failure history survive');
   const queried = await completed((await create('CASE_QUERY')).id); assert.equal(queried.state, 'completed', JSON.stringify(queried));

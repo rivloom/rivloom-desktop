@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSocket } from 'node:dgram';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ServiceClient, modelFixture, pairServices, until } from './m34-fixtures.ts';
+import { ServiceClient, modelFixture, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
@@ -37,7 +37,7 @@ const fixture = await modelFixture(120_000, input => {
     if (!results.length) return tool({ action: 'state' });
     const state = results[0]; assert(state.goal?.id && state.version);
     if (planner) return { content: JSON.stringify({ kind: 'plan', plan: { summary: 'Single synthetic recovery step', steps: [
-      { id: 'recover', title: 'Recover history', instructions: 'Read source-backed state and original history; keep originals. Continue the synthetic recovery route.',
+      { id: 'recover', title: 'Recover history', instructions: workflowFixtureInstructions('Read source-backed state and original history; keep originals. Continue the synthetic recovery route.'),
         dependsOn: [], nodeID: nodes[0], resources: [], software: [], requirements: {} },
     ] } }) };
     if (state.round === 1) return { content: JSON.stringify({ kind: 'completed', summary: 'Synthetic history stored.', files: [] }) };

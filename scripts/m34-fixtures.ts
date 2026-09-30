@@ -31,6 +31,10 @@ export async function until<T>(
 }
 
 export type FixtureModelReply = { content: string } | { toolName: string; arguments: Record<string, unknown> };
+// These synthetic steps remain portable; nodeID is only their scheduling preference.
+export const workflowFixtureInstructions = (instructions: string) =>
+  JSON.stringify({ rivloomPlacement: 1, mode: 'free', reason: 'Portable synthetic verification step' }) + '\n' + instructions;
+
 export async function modelFixture(timeout = 120_000, replyFor?: (input: any) => FixtureModelReply | Promise<FixtureModelReply>) {
   let released = false;
   let requests = 0;
