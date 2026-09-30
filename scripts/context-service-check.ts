@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ServiceClient, until } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Task } from '../shared/types.ts';
 import type { TaskStreamUpdate } from '../shared/task-stream.ts';
@@ -62,7 +63,7 @@ const watch = async (client: ServiceClient, target: TaskStreamUpdate[]) => {
 let ownerFeed: Promise<void> | undefined, memberFeed: Promise<void> | undefined;
 try {
  await service.start({ runtimeDirectory: runtime, logPath: join(evidence, 'service.log') });
- const data = await service.bootstrap(); report.engineVersion = data.engine.version; assert.equal(data.engine.version, '1.18.31-rivloom.9b07cf442a7e');
+ const data = await service.bootstrap(); report.engineVersion = data.engine.version; assert.equal(data.engine.version, readEngineSource(join(import.meta.dirname, '..')).version);
  outsider.base = service.base;
  const invitation = await service.call('/invitations', {});
  await outsider.call('/auth/join', { username: 'trace_observer', name: 'Unrelated observer', password: 'fixture-' + randomUUID(), code: invitation.code });

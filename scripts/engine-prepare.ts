@@ -5,7 +5,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { engineBinaryName, engineDigest, engineRecipeDigest, engineVerificationDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { engineBinaryName, engineDigest, engineProducerSchema, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 
 export function parseEngineArguments(args: string[]) {
   assert(args.length === 0 || (args.length === 2 && ['--artifact', '--source'].includes(args[0]) && args[1] && !args[1].startsWith('--')), 'Usage: node scripts/engine-prepare.ts [--artifact VERIFIED_DIRECTORY | --source LOCAL_RUNTIME_REPOSITORY]');
@@ -27,9 +27,11 @@ export function sourceSnapshot(root: string, source: EngineSource) {
     const path = engineRelativePath(match[2]), file = join(root, path);
     // Hash the link itself, never its target. Windows may materialize Git links as text files.
     const bytes = match[1] === '120000' && lstatSync(file).isSymbolicLink() ? readlinkSync(file) : readFileSync(engineRegularFile(root, path));
-    return [path, match[1], engineDigest(bytes)];
+    return { path, mode: match[1], sha256: engineDigest(bytes) };
   });
-  return { commit: source.commit, tree: source.tree, clean: true, inputs, files: files.length, sourceSHA256: engineDigest(JSON.stringify(files)) };
+  const sourceSHA256 = engineSourceInventoryDigest(files);
+  if (source.sourceInventory) assert.deepEqual({ files: files.length, sha256: sourceSHA256 }, source.sourceInventory, 'Complete runtime source differs from the reviewed inventory');
+  return { commit: source.commit, tree: source.tree, clean: true, inputs, files: files.length, sourceSHA256 };
 }
 async function realDirectory(root: string, relative: string) {
   let cursor = root;
@@ -140,7 +142,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
   }
   assert(artifact);
   const result = verifyEngineArtifact(artifact, source, options.mode === 'artifact');
-  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(target === 'linux-x64' ? ['source-files.json'] : [])])
+  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(engineProducerSchema(source) === 2 ? ['source-files.json'] : [])])
     await copyFile(engineRegularFile(artifact, name), join(staging, name));
   if (target === 'linux-x64') await chmod(join(staging, 'opencode'), 0o755);
   let sourceProofSHA256: string | undefined;

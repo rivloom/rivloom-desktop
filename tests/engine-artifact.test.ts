@@ -4,7 +4,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, sy
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { engineDigest, engineRecipeDigest, engineVerificationDigest, engineTarget, readEngineSource, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { engineDigest, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineTarget, readEngineSource, verifyEngineArtifact, verifyEngineProducer, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 import { prepareEngine, verifyEngineRecipe, verifyEngineVerification } from '../scripts/engine-prepare.ts';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
@@ -50,7 +50,12 @@ function fixture(t: TestContext, sameArtifact = false) {
   const root = join(base, 'desktop'), approved = join(base, 'approved');
   mkdirSync(join(root, 'shared'), { recursive: true });
   const source = structuredClone(readEngineSource(repository, 'windows-x64'));
+  // These cases exercise the retained schema 1 contract even after the repository pin moves on.
+  source.producerSchemaVersion = 1;
+  delete source.sourceInventory;
+  if (source.verification) delete source.verification.files['server/engine-artifact.ts'];
   for (const file of Object.keys(source.verification?.files || {})) { mkdirSync(dirname(join(root, file)), { recursive: true }); writeFileSync(join(root, file), readFileSync(join(repository, file))); }
+  if (source.verification) source.verification.files = Object.fromEntries(Object.keys(source.verification.files).map(file => [file, engineDigest(readFileSync(join(root, file)))]));
   source.inputs.LICENSE = engineDigest('synthetic license\n');
   source.approvedArtifact = artifact(approved, source, 'approved');
   const lock = JSON.stringify(source, null, 2) + '\n';
@@ -126,6 +131,7 @@ test('Windows smoke rejects rehashed reports with missing exit proof or a differ
 function linuxFixture(t: TestContext) {
   const value = fixture(t);
   const source: EngineSource = { ...value.source, target: 'linux-x64', artifactPath: `vendor/rivloom-opencode/linux-x64/${value.source.commit.slice(0, 12)}`,
+    producerSchemaVersion: 2,
     recipe: { directory: 'scripts/runtime-linux', files: Object.fromEntries(['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs'].map(file => [file, engineDigest(file)])) } };
   delete source.approvedArtifact;
   delete source.verification;
@@ -197,6 +203,150 @@ test('Linux ELF artifact binds clean core, external recipe, inventory, smoke and
   assert.equal(verified.source.target, 'linux-x64');
   assert.equal(verified.recipeSHA256, engineRecipeDigest(value.source));
   verifyEngineRecipe(value.root, value.source);
+});
+
+function windowsSchema2Fixture(t: TestContext) {
+  const value = fixture(t);
+  const source: EngineSource = { ...value.source, producerSchemaVersion: 2 };
+  delete source.approvedArtifact;
+  const helper = readFileSync(join(repository, 'server/engine-artifact.ts'));
+  writeFileSync(join(value.root, 'server/engine-artifact.ts'), helper);
+  source.verification = { files: { ...source.verification!.files, 'server/engine-artifact.ts': engineDigest(helper) } };
+  for (const file of ['rivloom/artifact.mjs', 'packages/opencode/script/build.ts']) source.inputs[file] = engineDigest(`pinned ${file}`);
+  const directory = value.directory;
+  const inventory = { schemaVersion: 1, commit: source.commit, tree: source.tree, dirty: false, status: [],
+    files: [...Object.entries(source.inputs), ['rivloom/README.md', engineDigest(readFileSync(join(directory, 'README.md')))],
+      ['packages/opencode/src/session/processor.ts', engineDigest('complete source, beyond selected inputs')]]
+      .map(([path, sha256]) => ({ path, mode: '100644', bytes: 42, sha256, tracked: true, type: 'file' })) };
+  source.sourceInventory = { files: inventory.files.length, sha256: engineSourceInventoryDigest(inventory.files) };
+  const original = JSON.parse(readFileSync(join(directory, 'runtime-manifest.json'), 'utf8'));
+  const manifest = { ...original, schemaVersion: 2,
+    source: { ...original.source, inventory: { file: 'source-files.json', files: inventory.files.length, sha256: '' } },
+    toolchain: { ...source.toolchain, nodeExecutableSHA256: engineDigest('node'), bunExecutableSHA256: engineDigest('bun') },
+    inputs: { ...original.inputs, files: Object.fromEntries(['rivloom/runtime.json', 'rivloom/build.ps1', 'rivloom/build.mjs',
+      'rivloom/artifact.mjs', 'rivloom/smoke.mjs', 'packages/opencode/script/build.ts'].map(file => [file, source.inputs[file]])) },
+    artifacts: ['LICENSE', 'README.md', 'source-files.json'].map(file => ({ file, bytes: 0, sha256: '' })) };
+  const smoke = { ...JSON.parse(readFileSync(join(directory, 'smoke-report.json'), 'utf8')), schemaVersion: 2,
+    sourceInventorySHA256: '', licenseSHA256: source.inputs.LICENSE,
+    verificationFiles: source.verification.files, verificationSHA256: engineVerificationDigest(source) };
+  const lock = JSON.stringify(source) + '\n'; writeFileSync(join(value.root, 'shared/engine-source.json'), lock);
+  const proof = JSON.stringify({ commit: source.commit, tree: source.tree, clean: true, inputs: source.inputs,
+    files: inventory.files.length, sourceSHA256: source.sourceInventory.sha256 }) + '\n';
+  writeFileSync(join(directory, 'source-proof.json'), proof);
+  const receipt = { ...JSON.parse(readFileSync(join(directory, 'engine-build.json'), 'utf8')), sourceLockSHA256: engineDigest(lock),
+    sourceProofSHA256: engineDigest(proof), verificationSHA256: engineVerificationDigest(source) };
+  const result = { ...value, source, inventory, manifest, smoke, receipt };
+  rehashWindowsMetadata(result);
+  return result;
+}
+
+function rehashWindowsMetadata(value: ReturnType<typeof windowsSchema2Fixture>) {
+  const write = (file: string, body: unknown) => writeFileSync(join(value.directory, file), JSON.stringify(body) + '\n');
+  write('source-files.json', value.inventory);
+  value.manifest.source.inventory.sha256 = engineDigest(readFileSync(join(value.directory, 'source-files.json')));
+  value.manifest.source.inventory.files = value.inventory.files.length;
+  value.manifest.binary.sha256 = engineDigest(readFileSync(join(value.directory, 'opencode.exe')));
+  value.manifest.binary.bytes = readFileSync(join(value.directory, 'opencode.exe')).length;
+  for (const row of value.manifest.artifacts) { const bytes = readFileSync(join(value.directory, row.file)); row.bytes = bytes.length; row.sha256 = engineDigest(bytes); }
+  write('runtime-manifest.json', value.manifest);
+  value.smoke.manifestSHA256 = engineDigest(readFileSync(join(value.directory, 'runtime-manifest.json')));
+  value.smoke.binarySHA256 = value.manifest.binary.sha256;
+  value.smoke.sourceInventorySHA256 = value.manifest.source.inventory.sha256;
+  write('smoke-report.json', value.smoke);
+  Object.assign(value.receipt, { binarySHA256: value.manifest.binary.sha256, manifestSHA256: value.smoke.manifestSHA256,
+    smokeSHA256: engineDigest(readFileSync(join(value.directory, 'smoke-report.json'))) });
+  write('engine-build.json', value.receipt);
+  writeFileSync(join(value.directory, 'SHA256SUMS'), ['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json', 'smoke-report.json']
+    .map(file => `${engineDigest(readFileSync(join(value.directory, file)))}  ${file}\n`).join(''));
+}
+
+test('Windows schema 2 binds the complete source inventory and supports independent source builds', t => {
+  const value = windowsSchema2Fixture(t);
+  assert.equal(verifyPreparedEngine(value.root, 'windows-x64').binarySHA256, value.manifest.binary.sha256);
+  assert.equal(verifyEngineProducer(value.directory, value.source).manifest.schemaVersion, 2);
+  assert.throws(() => verifyEngineArtifact(value.directory, value.source, true), /no approved artifact import/);
+});
+
+test('Windows schema 2 pins the shared producer verifier before the consumer smoke can execute', t => {
+  const value = windowsSchema2Fixture(t);
+  verifyEngineVerification(value.root, value.source);
+  writeFileSync(join(value.root, 'server/engine-artifact.ts'), 'changed producer verifier');
+  assert.throws(() => verifyEngineVerification(value.root, value.source), /verification differs/);
+});
+
+test('Windows schema 2 inventory hashes are portable across entry order and symlink materialization', () => {
+  const files = [{ path: 'z-link', mode: '120000', sha256: engineDigest('target') }, { path: 'a-file', mode: '100755', sha256: engineDigest('source') }];
+  assert.equal(engineSourceInventoryDigest(files), engineSourceInventoryDigest([...files].reverse()));
+  assert.notEqual(engineSourceInventoryDigest(files), engineSourceInventoryDigest(files.map(row => ({ ...row, mode: '100644' }))));
+});
+
+test('Windows schema 2 requires an explicit complete inventory and reviewed producer inputs', t => {
+  const value = windowsSchema2Fixture(t);
+  const path = join(value.root, 'shared/engine-source.json');
+  for (const change of [
+    (source: EngineSource) => { delete source.sourceInventory; },
+    (source: EngineSource) => { delete source.verification; },
+    (source: EngineSource) => { delete source.inputs['rivloom/artifact.mjs']; },
+    (source: EngineSource) => { delete source.inputs['packages/opencode/script/build.ts']; },
+  ]) {
+    const source = structuredClone(value.source); change(source); writeFileSync(path, JSON.stringify(source));
+    assert.throws(() => readEngineSource(value.root, 'windows-x64'), /requires|Missing reviewed/);
+  }
+});
+
+test('Windows schema 2 rejects refreshed hashes for source bytes and modes beyond the selected inputs', t => {
+  for (const change of [
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files.at(-1)!.sha256 = engineDigest('other source'); },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files.at(-1)!.mode = '100755'; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files.pop(); },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files[0].sha256 = engineDigest('different dependency graph'); },
+  ]) {
+    const value = windowsSchema2Fixture(t); change(value); rehashWindowsMetadata(value);
+    assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /source inventory|Source inventory/);
+  }
+});
+
+test('Windows schema 2 rejects malformed, dirty and duplicate source inventories after metadata is rehashed', t => {
+  for (const change of [
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files[0].tracked = false; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files[0].bytes = -1; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files[0].mode = '160000'; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.files.at(-1)!.path = value.inventory.files[0].path; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.schemaVersion = 2; },
+    (value: ReturnType<typeof windowsSchema2Fixture>) => { value.inventory.dirty = true; },
+  ]) {
+    const value = windowsSchema2Fixture(t); change(value); rehashWindowsMetadata(value);
+    assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'));
+  }
+});
+
+test('Windows schema 2 rejects a source proof changed alongside its receipt digest', t => {
+  const value = windowsSchema2Fixture(t), path = join(value.directory, 'source-proof.json');
+  const proof = JSON.parse(readFileSync(path, 'utf8')); proof.sourceSHA256 = engineDigest('other source snapshot');
+  writeFileSync(path, JSON.stringify(proof)); value.receipt.sourceProofSHA256 = engineDigest(readFileSync(path));
+  rehashWindowsMetadata(value);
+  assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /snapshot differs from the reviewed/);
+});
+
+test('Windows schema 2 rejects schema changes and altered binary identity despite refreshed metadata', t => {
+  for (const schema of [1, 3]) {
+    const value = windowsSchema2Fixture(t); value.manifest.schemaVersion = schema; value.smoke.schemaVersion = schema;
+    rehashWindowsMetadata(value);
+    assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /Producer schema differs/);
+  }
+  const value = windowsSchema2Fixture(t), path = join(value.directory, 'opencode.exe'), binary = readFileSync(path);
+  binary.writeUInt16LE(0xaa64, 132); writeFileSync(path, binary); rehashWindowsMetadata(value);
+  assert.throws(() => verifyPreparedEngine(value.root, 'windows-x64'), /Windows x64 PE32\+/);
+});
+
+test('Windows schema 2 approved import hashes reject a rehashed replacement binary', t => {
+  const value = windowsSchema2Fixture(t);
+  value.source.approvedArtifact = { binarySHA256: value.receipt.binarySHA256, manifestSHA256: value.receipt.manifestSHA256, smokeSHA256: value.receipt.smokeSHA256 };
+  verifyEngineArtifact(value.directory, value.source, true);
+  const path = join(value.directory, 'opencode.exe'), binary = readFileSync(path); binary[300] ^= 1; writeFileSync(path, binary);
+  assert.throws(() => verifyEngineProducer(value.directory, value.source), /binary SHA256 mismatch/);
+  rehashWindowsMetadata(value);
+  assert.throws(() => verifyEngineArtifact(value.directory, value.source, true), /Imported engine differs/);
 });
 
 test('Linux rejects unsupported ARM64 and a Windows executable even with rewritten checksum list', t => {

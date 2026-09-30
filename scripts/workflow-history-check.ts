@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createSocket } from 'node:dgram';
 import { ServiceClient, modelFixture, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
 
@@ -78,7 +79,7 @@ if (worker) {
 }
 try {
   await service.start({ runtimeDirectory: runtime, discovery, logPath: join(evidence, 'service.log') });
-  const data = await service.bootstrap(); assert.equal(data.engine.version, '1.18.31-rivloom.9b07cf442a7e');
+  const data = await service.bootstrap(); assert.equal(data.engine.version, readEngineSource(join(import.meta.dirname, '..')).version);
   const project = await service.call('/projects', { name: 'History fixture', directory, trusted: true }, 201);
   let target: Workflow['target'] = { mode: 'automatic' };
   if (worker) {

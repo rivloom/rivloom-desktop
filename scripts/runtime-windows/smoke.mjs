@@ -7,22 +7,22 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { stopWindowsEngineTree } from "../../server/windows-engine-stop.mjs"
+import { readEngineSource, engineProducerSchema, verifyEngineProducer } from "../../server/engine-artifact.ts"
 
 assert.equal(process.argv.length, 3, "An explicit pinned source checkout is required")
 assert.equal(process.platform, "win32")
 const root = path.resolve(process.argv[2])
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
-const source = JSON.parse(readFileSync(path.join(desktop, "shared/engine-source.json"), "utf8"))
+const source = readEngineSource(desktop, "windows-x64")
 const sha256 = file => createHash("sha256").update(readFileSync(file)).digest("hex")
 const verificationFiles = Object.fromEntries(Object.keys(source.verification.files).map(file => [file, sha256(path.join(desktop, file))]))
 assert.deepEqual(verificationFiles, source.verification.files, "Windows verification files differ from the reviewed lock")
 const verificationSHA256 = createHash("sha256").update(JSON.stringify(Object.entries(verificationFiles).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))).digest("hex")
 const out = path.join(root, "rivloom/dist/windows-x64")
 const exe = path.join(out, "opencode.exe")
-const manifest = JSON.parse(readFileSync(path.join(out, "runtime-manifest.json"), "utf8"))
-assert.equal(manifest.source.commit, source.commit)
-assert.equal(manifest.source.tree, source.tree)
-assert.equal(manifest.source.dirty, false)
+// Verify identity, all producer files and the reviewed source inventory before executing the EXE.
+const producer = verifyEngineProducer(out, source)
+const manifest = producer.manifest
 const manifestSHA256 = sha256(path.join(out, "runtime-manifest.json"))
 const diagnostics = path.join(root, "rivloom/dist/verification")
 mkdirSync(diagnostics, { recursive: true })
@@ -35,10 +35,14 @@ for (const dir of [project, home, "tmp", "data", "cache", "config", "state", "ma
   mkdirSync(dir, { recursive: true })
 }
 const report = {
-  schemaVersion: 1,
+  schemaVersion: engineProducerSchema(source),
   version: manifest.version,
   binarySHA256: manifest.binary.sha256,
   manifestSHA256,
+  ...(engineProducerSchema(source) === 2 ? {
+    sourceInventorySHA256: manifest.source.inventory.sha256,
+    licenseSHA256: source.inputs.LICENSE,
+  } : {}),
   verificationFiles,
   verificationSHA256,
   harnessSHA256: verificationFiles["scripts/runtime-windows/smoke.mjs"],
@@ -434,11 +438,16 @@ try {
   await new Promise((resolve) => model.close(resolve))
   report.finishedAt = new Date().toISOString()
   assert.equal(sha256(path.join(out, "runtime-manifest.json")), manifestSHA256, "Producer manifest changed during smoke")
+  assert.deepEqual(verifyEngineProducer(out, source), producer, "Producer artifact changed during smoke")
   assert.deepEqual(Object.fromEntries(Object.keys(verificationFiles).map(file => [file, sha256(path.join(desktop, file))])), verificationFiles, "Verification harness changed during smoke")
   report.localModelRequests = requests
   report.eventTypes = [...new Set(events.map((event) => event.type))].sort()
   writeFileSync(path.join(diagnostics, "engine.log"), log)
   writeFileSync(path.join(diagnostics, "smoke-report.json"), JSON.stringify(report, null, 2) + "\n")
   writeFileSync(path.join(out, "smoke-report.json"), JSON.stringify(report, null, 2) + "\n")
+  if (engineProducerSchema(source) === 2) {
+    const files = ["LICENSE", "README.md", "opencode.exe", "runtime-manifest.json", "source-files.json", "smoke-report.json"]
+    writeFileSync(path.join(out, "SHA256SUMS"), files.map(file => `${sha256(path.join(out, file))}  ${file}\n`).join(""))
+  }
   console.log(`Runtime verification ${report.passed ? "PASSED" : "FAILED"}: ${report.checks.length} checks`)
 }

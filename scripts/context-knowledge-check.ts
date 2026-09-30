@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ServiceClient, modelFixture, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
 import type { KnowledgeUsagePage, LocalKnowledgeEntry, WorkflowMemoryLink } from '../shared/knowledge.ts';
@@ -55,7 +56,7 @@ model.configure(application); model.release(); loadNodeIdentity(application);
 const service = new ServiceClient(application), outsider = new ServiceClient(application);
 try {
   await service.start({ runtimeDirectory: runtime, logPath: join(evidence, 'service.log') });
-  const bootstrap = await service.bootstrap(); assert.equal(bootstrap.engine.version, '1.18.31-rivloom.9b07cf442a7e');
+  const bootstrap = await service.bootstrap(); assert.equal(bootstrap.engine.version, readEngineSource(join(import.meta.dirname, '..')).version);
   const project = await service.call('/projects', { name: 'Context knowledge fixture', directory, trusted: true }, 201);
   memory = await service.call('/knowledge/memory', { name: 'Context knowledge long', description: 'Chinese source with escaping and emoji',
     category: 'Projects/Fixture/Reference', body: source, projectID: project.id });

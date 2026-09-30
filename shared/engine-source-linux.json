@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "kind": "rivloom-source",
   "repository": "https://github.com/rivloom/rivloom-opencode-runtime.git",
-  "commit": "9b07cf442a7eba60a6fe690f630251d23d24194a",
-  "tree": "006c927c42ceab424354049a1d3624fe2cdee907",
-  "version": "1.18.31-rivloom.9b07cf442a7e",
-  "packageVersion": "1.18.31",
+  "commit": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+  "tree": "9bbec9cc7eb7062cb7bda8d3e8a4ad6b1c428351",
+  "version": "1.18.33-rivloom.655285f835f8",
+  "packageVersion": "1.18.33",
   "target": "linux-x64",
-  "artifactPath": "vendor/rivloom-opencode/linux-x64/9b07cf442a7e",
+  "artifactPath": "vendor/rivloom-opencode/linux-x64/655285f835f8",
   "upstream": {
     "repository": "anomalyco/opencode",
-    "tag": "v1.18.31",
-    "commit": "014614d35b397775e5d397a490fc72368c894ec2",
-    "version": "1.18.31"
+    "tag": "v1.18.33",
+    "commit": "51ef4be1d3c122f18fefb510dca8d778571f4f18",
+    "version": "1.18.33"
   },
   "toolchain": {
     "node": "24.19.0",
@@ -20,12 +20,12 @@
     "bunArchiveSHA256": "a063908ae08b7852ca10939bbdc6ceed3ddabce8fb9402dce83d65d73b36e6c7"
   },
   "inputs": {
-    "bun.lock": "0b2900f5353569f871b55346ddcbd1a6ddceb7577295bba5a38480a6d94c3161",
-    "rivloom/runtime.json": "d82fbb3fb7e55925c9ee7345f104b65c6878750f88ce232be42ae2352ff69645",
-    "rivloom/build.mjs": "80f104cb6f0dfd06a1dbbdfa2e3490fb81abfd01ccc40e50617e7c7eece1b5fe",
-    "rivloom/build.ps1": "e9f1f8675fc57abc68a76533ecf86b80f4813a75d1415aa3d01a463655e5bcb9",
-    "rivloom/smoke.mjs": "0de08fb2ab76b432e4152593b34daf776b9c6c83f64074ca01121a6aaa1261ab",
-    "rivloom/models.json": "22733fa7b4faff49d6658dd1a1c575c78d2e16730bb3f68101c800422d4991f0",
+    "bun.lock": "b68e7ece1128eb383663e55ffca4f9f08e451530cc09fc9cf84c489bf41bdc2a",
+    "rivloom/runtime.json": "bdebe6b48fc83b159f383934c39454595b529aa25487346841028c99c914e0a5",
+    "rivloom/build.mjs": "5d819ef3e9bed80f4349dbfd2aef305f94fd4eaa045ae43a4141129a3b80b51a",
+    "rivloom/build.ps1": "d40ff47ca93e4efd68b31423d5d1d840c8871e70444f0ca7254d523c8dbab453",
+    "rivloom/smoke.mjs": "343fa7fbd246740dcf93da0517545b56cea293a1d146041726d4669cbfdf568c",
+    "rivloom/models.json": "58e29fa343539c2ba27f364eb98314b962f16afab4d5c5afbb5401ff901d954b",
     "LICENSE": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
     "packages/opencode/script/build.ts": "946167808e209e0e863727f1493b28a5377ce3e43c6139c13b95653914d52aad"
   },
@@ -34,8 +34,18 @@
     "files": {
       "artifact.mjs": "dde0cfd59d9169faaa2a4ebe118e6b29f6feba37f1e4a70294629154ef5c8077",
       "build.mjs": "a24320cfac2dc21cc6d83a804aaad6621cd8021b959d0184dfbf38279d0e2592",
-      "runtime.json": "fab503915635e39e093bf65db3e5dd857819e476881fd1552719b1fc2b6bc269",
+      "runtime.json": "97a0e41e393531bcfde8b9a9f5f9c957326d7a563147785f4ca6c23da841d570",
       "smoke.mjs": "86608d51931c0dbba448b10f7f4553a3e5df7f2d87399380de8a782925be5822"
     }
+  },
+  "producerSchemaVersion": 2,
+  "sourceInventory": {
+    "files": 6662,
+    "sha256": "cbd8267dec752aff60c50b0180b3b0eafc4f8039ce66124fba55415d38751765"
+  },
+  "approvedArtifact": {
+    "binarySHA256": "719cb2112b9c2dbdfcb21862ddd080b23c9d2d929a01a7fd8421ddf438c847d4",
+    "manifestSHA256": "9c0d76a9f06345bbc4d1515fab365af465e56e003d88b3acb3851cfc491868de",
+    "smokeSHA256": "f50b50767e7490a89d4f5b5f28751166b0cd2207a87781948e32dc24c9aed19a"
   }
 }

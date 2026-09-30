@@ -13,6 +13,7 @@ import {
   type RuntimeProfile,
 } from '../scripts/ci-verify-runtime.ts';
 import { collectDependencyNotices } from '../scripts/notices.ts';
+import { engineSourceInventoryDigest } from '../server/engine-artifact.ts';
 
 const sha = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 const encode = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
@@ -426,6 +427,77 @@ test('source builds require a clean source proof bound to the reviewed inputs an
   await f.artifact('engine-build.json', encode(receipt));
   await assert.rejects(f.verify());
   assert.equal(f.calls.length, 0);
+});
+
+async function schema2Fixture(t: TestContext) {
+  const f = await fixture(t, 'desktop');
+  const readme = 'Synthetic Windows schema 2 metadata, never execute.\n';
+  const inputs: Record<string, string> = { ...f.engineSource.inputs, 'rivloom/artifact.mjs': sha('pinned artifact'), 'packages/opencode/script/build.ts': sha('pinned compiler') };
+  const inventory = { schemaVersion: 1, commit: f.engineSource.commit, tree: f.engineSource.tree, dirty: false, status: [],
+    files: [...Object.entries(inputs), ['rivloom/README.md', sha(readme)], ['packages/opencode/src/session/processor.ts', sha('complete source')]]
+      .map(([path, sha256]) => ({ path, mode: '100644', bytes: 42, tracked: true, type: 'file', sha256 })) };
+  const { approvedArtifact: _approved, ...legacySource } = f.engineSource;
+  const verification = { files: { 'scripts/runtime-windows/smoke.mjs': sha('independent smoke'),
+    'server/engine-artifact.ts': sha('producer verifier'), 'server/windows-engine-stop.mjs': sha('owned process stop') } };
+  const source = { ...legacySource, inputs, producerSchemaVersion: 2, verification,
+    sourceInventory: { files: inventory.files.length, sha256: engineSourceInventoryDigest(inventory.files) } };
+  const verificationSHA256 = sha(JSON.stringify(Object.entries(verification.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
+  const manifest = { ...f.engineManifest, schemaVersion: 2,
+    source: { ...f.engineManifest.source, inventory: { file: 'source-files.json', files: inventory.files.length, sha256: '' } },
+    toolchain: { ...source.toolchain, bunExecutableSHA256: sha('bun'), nodeExecutableSHA256: sha('node') },
+    inputs: { ...f.engineManifest.inputs, files: Object.fromEntries(['rivloom/runtime.json', 'rivloom/build.ps1', 'rivloom/build.mjs',
+      'rivloom/artifact.mjs', 'rivloom/smoke.mjs', 'packages/opencode/script/build.ts'].map(file => [file, source.inputs[file]])) },
+    profile: { embedWebUI: false, signed: false, desktopIntegrated: false },
+    artifacts: ['LICENSE', 'README.md', 'source-files.json'].map(file => ({ file, bytes: 0, sha256: '' })) };
+  const smoke = { ...f.engineSmoke, schemaVersion: 2, manifestSHA256: '', sourceInventorySHA256: '', licenseSHA256: source.inputs.LICENSE,
+    verificationSHA256, verificationFiles: verification.files, harnessSHA256: verification.files['scripts/runtime-windows/smoke.mjs'],
+    stops: [{ stopped: true, recorded: 1, rootExited: true, proof: 'taskkill', code: 0 }, { stopped: true, recorded: 1, rootExited: true, proof: 'observed-exit', code: 128 }] };
+  const proof = { commit: source.commit, tree: source.tree, clean: true, inputs: source.inputs,
+    files: inventory.files.length, sourceSHA256: source.sourceInventory.sha256 };
+  const receipt = { ...f.engineReceipt, mode: 'source-build', sourceLockSHA256: sha(encode(source)), sourceProofSHA256: sha(encode(proof)), verificationSHA256 };
+  await f.artifact('README.md', readme);
+  await f.artifact('source-proof.json', encode(proof));
+  await f.both('shared/engine-source.json', encode(source));
+  const refresh = async () => {
+    await f.artifact('source-files.json', encode(inventory));
+    manifest.source.inventory.sha256 = sha(encode(inventory)); manifest.source.inventory.files = inventory.files.length;
+    for (const row of manifest.artifacts) {
+      const bytes = await readFile(join(f.runtimeRoot, source.artifactPath, row.file)); row.bytes = bytes.length; row.sha256 = sha(bytes);
+    }
+    smoke.manifestSHA256 = sha(encode(manifest)); smoke.sourceInventorySHA256 = manifest.source.inventory.sha256;
+    receipt.manifestSHA256 = smoke.manifestSHA256; receipt.smokeSHA256 = sha(encode(smoke));
+    await f.artifact('runtime-manifest.json', encode(manifest)); await f.artifact('smoke-report.json', encode(smoke));
+    await f.artifact('engine-build.json', encode(receipt));
+    const sums = await Promise.all(['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json', 'smoke-report.json']
+      .map(async file => `${sha(await readFile(join(f.runtimeRoot, source.artifactPath, file)))}  ${file}\n`));
+    await f.artifact('SHA256SUMS', sums.join(''));
+  };
+  await refresh();
+  return { f, source, manifest, inventory, smoke, receipt, proof, refresh };
+}
+
+test('runtime gate accepts Windows schema 2 only with complete source and consumer verification evidence', async t => {
+  const { f } = await schema2Fixture(t);
+  assert.equal((await f.verify()).status, 'passed');
+  assert.equal(f.calls.length, 2);
+});
+
+test('runtime gate rejects schema 2 inventory, schema and consumer smoke tampering before executable probes', async t => {
+  for (const variant of ['source', 'count', 'mode', 'schema', 'smoke', 'proof']) {
+    const value = await schema2Fixture(t);
+    if (variant === 'source') value.inventory.files.at(-1)!.sha256 = sha('another unchecked source');
+    if (variant === 'count') value.inventory.files.pop();
+    if (variant === 'mode') value.inventory.files.at(-1)!.mode = '100755';
+    if (variant === 'schema') value.manifest.schemaVersion = 1;
+    if (variant === 'smoke') value.smoke.stops[0].rootExited = false;
+    if (variant === 'proof') {
+      value.proof.sourceSHA256 = sha('another source snapshot');
+      value.receipt.sourceProofSHA256 = sha(encode(value.proof)); await value.f.artifact('source-proof.json', encode(value.proof));
+    }
+    await value.refresh();
+    await assert.rejects(value.f.verify(), /source inventory|Producer schema|exit proof|source snapshot/, variant);
+    assert.equal(value.f.calls.length, 0, `No binary probe may precede ${variant} verification`);
+  }
 });
 
 test('runtime gate rejects old manifest schema without probing any executable', async (t) => {
