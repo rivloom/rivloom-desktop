@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PencilLine, Quote } from 'lucide-react';
+import { CornerUpLeft, PencilLine } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { ConversationDraft } from './conversation-drafts';
 import { applyMessageReuse, type MessageReuseIntent, type MessageReuseMode, type MessageReusePlacement, type MessageReuseResult } from './message-reuse';
@@ -51,7 +51,7 @@ export function MessageReuseActions({ text, draft, existingConversation, onApply
   return <span className={`message-reuse-actions ${className}`}>
     {showQuote && <CopyButton text={text} label={t('复制这条消息')} iconOnly={iconOnly} />}
     {showQuote && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={t('引用这条消息')} aria-label={t('引用这条消息')}
-      disabled={disabled || !text.trim()} onClick={() => choose('quote')}>{iconOnly ? <Quote size={13} /> : <span>{t('引用')}</span>}</button>}
+      disabled={disabled || !text.trim()} onClick={() => choose('quote')}>{iconOnly ? <CornerUpLeft size={14} aria-hidden="true" /> : <span>{t('引用')}</span>}</button>}
     {allowReuse && <button type="button" className={`message-reuse-button ${iconOnly ? '' : 'has-label'}`} title={reuseLabel || t('重新编辑')} aria-label={reuseLabel || t('重新编辑')}
       disabled={disabled || !text.trim()} onClick={() => choose('reuse')}>{iconOnly ? <PencilLine size={13} /> : <span>{reuseLabel || t('重新编辑')}</span>}</button>}
     {!selection && error && <span className="message-reuse-error" role="alert">{error}</span>}

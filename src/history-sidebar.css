@@ -1,6 +1,5 @@
 /* The approved graphite history panel. Tokens stay local, including its portal menus. */
 .history-graphite {
-  --font-ui: 'Noto Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', sans-serif;
   --ink: #f0f1f4;
   --text: #e4e5e9;
   --muted: #a0a3ae;
@@ -30,8 +29,6 @@
   border-radius: 13px;
   box-shadow: inset 0 0 0 1px #3b3e46, 0 4px 18px #171a2314;
 }
-.history-graphite .node-identity-button { margin-bottom: 6px; border-radius: 7px; }
-.history-graphite .node-identity-button strong { font-size: 14px; font-weight: 500; letter-spacing: 0; }
 .history-graphite .node-avatar { background: var(--accent-soft); border-color: var(--line); color: var(--accent); }
 .history-graphite .new-conversation {
   min-height: 32px;
@@ -86,7 +83,9 @@
 .history-graphite .conversation-item.incoming:hover:not(.selected) { background: var(--hover-wash); }
 .history-graphite .conversation-item.selected { background: var(--accent-soft); color: var(--ink); box-shadow: none; }
 .history-graphite .conversation-item.selected::before { content: none; }
-.history-graphite .history-item-content { display: grid; grid-template-columns: minmax(0, 1fr) 56px; gap: 8px; }
+/* The metadata column fits its (compact) state so longer states and English labels are not cut off.
+   Its 36px floor keeps titles clear of the hover action; the cap keeps titles readable. */
+.history-graphite .history-item-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .history-graphite .history-item-title { min-height: 20px; gap: 5px; padding: 0; }
 .history-graphite .conversation-item strong { font-size: 14px; line-height: 22px; font-weight: 400; color: inherit; }
 .history-graphite .conversation-item.selected strong { font-weight: 500; color: var(--ink); }
@@ -94,13 +93,14 @@
 .history-graphite .conversation-item-origin .node-avatar { width: 14px; height: 14px; color: var(--muted); background: transparent; }
 .history-graphite .conversation-item-origin .node-avatar > svg { width: 13px; height: 13px; }
 .history-graphite :is(.conversation-pinned, .history-draft-marker) { flex: 0 0 11px; color: var(--muted); }
-.history-graphite .history-item-meta { display: flex; justify-content: flex-end; align-items: center; min-width: 0; font-size: 11px; line-height: 20px; color: var(--muted); }
+.history-graphite .history-item-meta { display: flex; justify-content: flex-end; align-items: center; min-width: 36px; max-width: min(104px, 42cqi); font-size: 11px; line-height: 20px; color: var(--muted); }
 .history-graphite .history-item-meta time { font-family: 'Segoe UI', sans-serif; font-size: 11px; font-variant-numeric: tabular-nums; }
 .history-graphite .conversation-item .conversation-item-state { display: block; min-width: 0; max-width: 100%; color: var(--muted); font-weight: 400; line-height: 20px; }
 .history-graphite .conversation-item-state small { display: block; font-size: 11px; }
 .history-graphite .conversation-item-state.is-running { color: var(--accent); }
 .history-graphite .conversation-item-state.is-running::before { content: none; }
 .history-graphite .conversation-item-state.attention { color: #dfc49e; }
+.history-graphite .conversation-item-state.is-failed { color: var(--danger); }
 .history-graphite .history-draft-badge { border: 0; padding: 0; color: var(--muted); background: transparent; font-size: 11px; }
 /* The action occupies the metadata column; the title never changes width on hover. */
 .history-graphite .history-row > .context-more { top: 3px; right: 8px; width: 34px; height: 24px; color: var(--text); background: var(--hover-wash); border-radius: 5px; }
@@ -125,10 +125,8 @@
 .context-menu.history-graphite > button:is(:hover, :focus-visible) { background: var(--press-wash); }
 .context-menu.history-graphite > button.danger { color: var(--danger); }
 .history-title-hint { position: fixed; z-index: 490; width: max-content; max-width: min(320px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); box-shadow: 0 5px 20px #11121833; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-html[lang='en'] .history-graphite .history-item-content { grid-template-columns: minmax(0, 1fr) 70px; }
 @container history-sidebar (max-width: 230px) {
-  .history-graphite .history-item-content { gap: 5px; grid-template-columns: minmax(0, 1fr) 48px; }
-  html[lang='en'] .history-graphite .history-item-content { grid-template-columns: minmax(0, 1fr) 60px; }
+  .history-graphite .history-item-content { gap: 5px; }
   .history-graphite .conversation-item { padding-inline: 7px; }
 }
 @media (max-width: 900px) {

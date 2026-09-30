@@ -124,7 +124,7 @@ export function NodeDiagnosticsView({
             }}
           >
             <option value="local">
-              {t('本机 · {{value1}}', { value1: data.network.local?.name || t('我的 Node') })}
+              {data.network.local?.name ? t('本机 · {{value1}}', { value1: data.network.local.name }) : t('本机')}
             </option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>

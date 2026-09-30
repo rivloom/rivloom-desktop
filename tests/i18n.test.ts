@@ -79,10 +79,15 @@ test('model replies and user-authored queue rejection reasons remain verbatim', 
     await i18n.changeLanguage('en');
     assert.equal(executionSummaryText(text, 'review'), text);
     assert.equal(executionSummaryText(text, 'completed'), text);
-    assert.equal(
-      executionSummaryText('OpenCode 正在执行任务。', 'running'),
-      'OpenCode is running the task.',
-    );
+    for (const locale of ['en', 'zh-CN']) {
+      await i18n.changeLanguage(locale);
+      assert.equal(executionSummaryText('OpenCode 正在执行任务。', 'running'), '');
+      assert.equal(executionSummaryText('OpenCode is running the task.', 'running'), '');
+      assert.equal(executionSummaryText('已查到本机时区 UTC+8', 'running'), '已查到本机时区 UTC+8');
+      for (const state of ['review', 'accepted', 'completed'])
+        assert.equal(executionSummaryText('OpenCode 正在执行任务。', state), 'OpenCode 正在执行任务。');
+    }
+    await i18n.changeLanguage('en');
     assert.equal(queueReasonLabel({ code: 'rejected', message: text }), text);
     assert.equal(taskReceiptView(conversation, { connected: true })?.detail, text);
     assert.equal(

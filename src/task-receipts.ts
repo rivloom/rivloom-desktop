@@ -1,6 +1,6 @@
 import { executionSummaryText } from './system-display.ts';
 import { t, systemText } from '../shared/i18n.ts';
-import { stateLabels } from '../shared/types.ts';
+import { activeStates, stateLabels } from '../shared/types.ts';
 import type { NodeQueueItem, NodeQueueReason } from '../shared/node-queue.ts';
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
 import type { Conversation } from './conversations.ts';
@@ -123,6 +123,21 @@ function queueView(
     tone:
       receipt.state === 'rejected' ? 'ended' : receipt.state === 'admitted' ? 'working' : 'waiting',
   };
+}
+
+/**
+ * Suppress confirmed live receipts that only repeat the current execution state.
+ * Queue, reconnecting, interrupted and substantive remote receipts retain their facts.
+ */
+export function receiptRepeatsExecution(item: Conversation, view: TaskReceiptView | null): boolean {
+  if (!view || view.syncing || view.tone !== 'working') return false;
+  const task = item.localTask;
+  if (!!task && activeStates.includes(task.state) &&
+    view.label === stateLabels[task.state] &&
+    !task.remoteOrigin && !task.collaboration && !item.remote && !item.brainTask) return true;
+  const state = task?.state || (item.remote?.executionState !== 'not_started' ? item.remote?.executionState : undefined) || item.brainTask?.status;
+  return state === 'running' && view.label === stateLabels.running &&
+    [t('已收到实际执行状态。'), t('原 Brain 已收到实际执行状态。')].includes(view.detail);
 }
 
 export function taskReceiptView(

@@ -249,6 +249,45 @@ test('engine completion persists results and releases capacity automatically whi
     }
     assert.equal(diffCalls, 1, 'Only successful completion collects results');
 
+    await t.test('workflow completion with no declared files keeps the result without executing the business step again', async () => {
+      const task = make('running');
+      task.collaboration = { workflowID: randomUUID(), stepID: 'timezone', attempt: 1, role: 'executor',
+        target: { mode: 'locked', nodeID: 'A'.repeat(32) }, instructions: 'Read this device time zone', evidence: '', priorContext: '' };
+      store.saveTask(task);
+      const summary = 'This device uses China Standard Time (UTC+8). Daylight saving time is not active. No files were created.';
+      const finalText = JSON.stringify({ kind: 'completed', summary });
+      permissions = []; questions = []; statuses = {};
+      // This is an already completed tool record, not an invocation of a command or model.
+      messages = [{
+        info: { id: 'timezone-tool', role: 'assistant', time: { created: 101, completed: 102 }, finish: 'tool-calls' },
+        parts: [{ id: 'timezone-tool-part', type: 'tool', callID: 'timezone-call', tool: 'bash', state: {
+          status: 'completed', input: { command: 'Get-TimeZone' }, title: 'Read time zone',
+          output: 'China Standard Time / UTC+8 / False', time: { start: 101, end: 102 },
+        } }],
+      }, {
+        info: { id: 'timezone-result', role: 'assistant', time: { created: 103, completed: 104 }, finish: 'stop' },
+        parts: [{ id: 'timezone-text', type: 'text', text: finalText }],
+      }];
+      const before = { prompts: prompts.length, creates: createCalls, aborts: abortCalls };
+      await service.sync(task.id);
+      const result = store.task(task.id);
+      assert.equal(result.state, 'accepted'); assert.equal(result.error, null);
+      assert.equal(result.messages.at(-1)?.text, finalText, 'Retain the original model response for the execution record');
+      assert.equal(result.messages[0].tools[0].output, 'China Standard Time / UTC+8 / False');
+      assert.deepEqual(result.collaborationOutcome?.value, { kind: 'completed', summary, files: [] });
+      assert.equal(result.collaborationOutcome?.sessionID, task.sessionID);
+      assert.equal(result.collaborationOutcome?.attempt, task.collaboration.attempt);
+      assert.equal(result.collaborationOutcome?.runAfter, task.runAfter);
+      assert.deepEqual(result.collaborationOutcome?.quiescence,
+        { confirmed: false, reason: 'workflow_external_work_unconfirmed' }, 'Output normalization must not invent process-exit proof');
+      const version = result.version;
+      await service.sync(task.id);
+      assert.equal(store.task(task.id).version, version, 'A repeated poll cannot repeat completion');
+      assert.deepEqual({ prompts: prompts.length, creates: createCalls, aborts: abortCalls }, before,
+        'Accepting a completed response must not send another prompt, create a session or restart the business work');
+      store.patchTask(task.id, { state: 'stopped' });
+    });
+
     const owner: User = { id: 'owner', username: 'owner', name: 'Owner', owner: true };
     store.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(owner.id, owner.username, owner.name, 1, 'unused');
     const failed = make('failed');
@@ -340,6 +379,85 @@ test('engine completion persists results and releases capacity automatically whi
       loseRecord = true;
       assert.equal(await runtime.stop(stopping, pending), 'unknown');
       assert.equal(await runtime.stop(stopping, pending), 'unknown', 'Later polls must not turn the missing record into a successful stop');
+    });
+    const { RemoteTaskStore, validRemoteTaskOffer, validRemoteTaskResponse, validRemoteTaskCancel, validRemoteTaskExecution } =
+      await import('../server/remote-tasks.ts');
+    const remoteStopFixture = () => {
+      const pending = attempt('remote', 'unknown'), brainID = randomUUID();
+      const master = new RemoteTaskStore(join(root, `remote-stop-master-${pending.executionID}`));
+      const worker = new RemoteTaskStore(join(root, `remote-stop-worker-${pending.executionID}`));
+      const invite = master.create('A'.repeat(32), brainID, pending.nodeID, brainID,
+        { title: 'Stop acknowledgement fixture', description: 'No model or network runs', criteria: 'Confirmed stop', brainTaskID: workflow.id }, pending.executionID);
+      const offer = master.message(invite.id); assert(validRemoteTaskOffer(offer));
+      worker.receiveOffer(offer); master.markDelivered(invite.id, offer);
+      const calls = { cancel: 0, control: 0 };
+      const runtime = Object.create(WorkflowRuntime.prototype) as InstanceType<typeof WorkflowRuntime>;
+      Object.assign(runtime, { options: { queue, network: {
+        remoteTask: (id: string) => master.list().find(value => value.id === id) || null,
+        async cancelRemoteTask(id: string) { calls.cancel++; return master.cancel(id); },
+        async requestRemoteTaskControl(id: string, sequence: number, action: { kind: 'stop' }) {
+          calls.control++; return master.requestControl(id, sequence, action);
+        },
+      } } });
+      return { pending, master, worker, invite, runtime, calls };
+    };
+    await t.test('runtime confirms a late cancel acknowledgement without requesting execution control for a sequence-zero invite', async () => {
+      const fixture = remoteStopFixture();
+      const { pending, master, worker, invite, runtime, calls } = fixture;
+      assert.equal(await runtime.stop(stopping, pending), 'unknown');
+      assert.equal(calls.cancel, 1);
+      const cancel = master.message(invite.id); assert(validRemoteTaskCancel(cancel));
+      assert.equal(master.record(invite.id)!.executionSequence, 0);
+      assert.equal(master.record(invite.id)!.deliveryPending, true);
+      assert.equal(await runtime.stop(stopping, pending), 'unknown', 'Sending cancel is not a stop acknowledgement');
+      worker.receiveCancel(cancel); assert(master.markDelivered(invite.id, cancel));
+      const controlCalls = calls.control;
+      assert.equal(await runtime.stop(stopping, pending), 'stopped', 'The next poll must consume the persisted cancellation acknowledgement');
+      assert.equal(await runtime.stop(stopping, pending), 'stopped', 'Repeated polls keep the same confirmed terminal result');
+      assert.equal(calls.control, controlCalls, 'A terminal invite must not invoke the real store control API, which rejects sequence zero');
+    });
+    await t.test('runtime confirms persisted declined and expired invites before attempting invalid control', async (t) => {
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      for (const terminal of ['declined', 'expired'] as const) {
+        const { pending, master, worker, invite, runtime, calls } = remoteStopFixture();
+        if (terminal === 'declined') {
+          worker.decide(invite.id, 'declined');
+          const response = worker.message(invite.id); assert(validRemoteTaskResponse(response));
+          assert(master.receiveResponse(response));
+        } else {
+          t.mock.timers.setTime(Date.parse(invite.expiresAt));
+          assert(master.expire());
+        }
+        assert.equal(master.record(invite.id)!.status, terminal);
+        assert.equal(master.record(invite.id)!.executionSequence, 0);
+        assert.equal(await runtime.stop(stopping, pending), 'stopped', terminal);
+        assert.deepEqual(calls, { cancel: 0, control: 0 }, 'A confirmed terminal invite needs no control request');
+      }
+    });
+    await t.test('runtime retains unknown for pending or failed cancel delivery and does not relax the target binding', async () => {
+      const { pending, master, invite, runtime } = remoteStopFixture();
+      master.cancel(invite.id);
+      const cancel = master.message(invite.id); assert(validRemoteTaskCancel(cancel));
+      assert.equal(await runtime.stop(stopping, pending), 'unknown');
+      assert(master.markDeliveryFailed(invite.id, cancel, 'Synthetic peer rejected cancellation'));
+      assert.equal(master.record(invite.id)!.deliveryPending, false);
+      assert.equal(await runtime.stop(stopping, pending), 'unknown', 'An unacknowledged cancellation remains unknown even when no delivery is pending');
+      assert.equal(master.record(invite.id)!.deliveryError, 'Synthetic peer rejected cancellation');
+      assert.equal(await runtime.stop(stopping, { ...pending, nodeID: 'C'.repeat(32) }), 'unknown');
+    });
+    await t.test('runtime accepts authenticated execution terminal states without sending another stop', async () => {
+      for (const terminal of ['accepted', 'failed', 'stopped'] as const) {
+        const { pending, master, worker, invite, runtime, calls } = remoteStopFixture();
+        worker.decide(invite.id, 'accepted');
+        const response = worker.message(invite.id); assert(validRemoteTaskResponse(response));
+        master.receiveResponse(response); worker.markDelivered(invite.id, response);
+        const localID = randomUUID(); worker.bindLocalTask(invite.id, localID);
+        worker.updateLocalExecution(localID, terminal, 'Synthetic authenticated terminal record');
+        const execution = worker.message(invite.id); assert(validRemoteTaskExecution(execution));
+        assert(master.receiveExecution(execution));
+        assert.equal(await runtime.stop(stopping, pending), 'stopped', terminal);
+        assert.deepEqual(calls, { cancel: 0, control: 0 });
+      }
     });
     assert.equal(createCalls, 0); assert.equal(prompts.length, 0);
     const account = providerAccounts.create('fixture', 'Alternate');

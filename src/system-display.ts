@@ -2,6 +2,7 @@ import { systemText, t } from '../shared/i18n.ts';
 
 /** Review and accepted summaries can contain a model's actual reply. */
 export function executionSummaryText(value: string | undefined, state: string | undefined) {
+  if (state === 'running' && systemText(value?.trim()) === systemText('OpenCode is running the task.')) return '';
   return ['review', 'accepted', 'completed'].includes(state || '')
     ? value || ''
     : systemText(value);

@@ -120,6 +120,51 @@ test('parallel running work does not hide a waiting branch or its dependencies',
   assert.deepEqual(workflowDiagnostics(value, sources, at), result);
 });
 
+test('cancelled remote planning retains its recorded attempt without claiming a business step', () => {
+  const { value, sources, step } = diagnosticFixture();
+  const stoppedAt = '2026-09-17T01:00:03.489Z';
+  value.planVersion = 0; value.steps = []; value.state = 'stopped';
+  value.planner = structuredClone(step); value.planner.id = 'planner'; value.planner.state = 'cancelled';
+  const attempt = value.planner.attempts[0];
+  attempt.context.stepID = 'planner'; attempt.context.role = 'planner'; attempt.phase = 'stopped'; attempt.updatedAt = stoppedAt;
+  sources.execution = () => assert.fail('terminal diagnostics must use persisted history');
+  const result = workflowDiagnostics(value, sources, at).steps;
+  assert.equal(result.length, 1); assert.equal(result[0].stepID, 'planner');
+  assert.equal(result[0].phase, 'stopped'); assert.equal(result[0].recovery, 'none');
+  assert.equal(result[0].attempt, 1); assert.equal(result[0].executionID, attempt.executionID);
+  assert.equal(result[0].nodeID, B); assert.equal(result[0].observedAt, stoppedAt);
+  assert.equal(result[0].queue, null); assert.deepEqual(result[0].nodes, []);
+  assert.equal(value.steps.length, 0);
+});
+
+test('terminal executor diagnostics retain actual history ahead of a changed target', () => {
+  const { value, sources, step } = diagnosticFixture(); value.steps = [step];
+  value.target = { mode: 'locked', nodeID: A }; step.nodeID = A;
+  step.placement = { version: 1, mode: 'required', nodeID: A, reason: 'Current target differs from recorded history' };
+  const attempt = step.attempts[0], endedAt = '2026-09-17T01:00:05Z'; attempt.updatedAt = endedAt;
+  sources.execution = () => assert.fail('terminal diagnostics must not depend on current peer availability');
+  for (const [state, phase] of [['completed', 'completed'], ['failed', 'failed'], ['cancelled', 'stopped']] as const) {
+    step.state = state; attempt.phase = phase;
+    const result = workflowDiagnostics(value, sources, at).steps[0];
+    assert.equal(result.phase, phase); assert.equal(result.executionID, attempt.executionID);
+    assert.equal(result.nodeID, B); assert.equal(result.observedAt, endedAt);
+    assert.equal(result.recovery, state === 'failed' ? 'user_action' : 'none');
+  }
+  step.state = 'running'; value.state = 'stopped';
+  assert.equal(workflowDiagnostics(value, sources, at).steps[0].nodeID, B);
+  assert.equal(workflowDiagnostics(value, sources, at).steps[0].observedAt, endedAt);
+});
+
+test('cancelling undispatched work does not turn its target into an execution record', () => {
+  const { value, sources, step } = diagnosticFixture(); value.steps = [step];
+  value.target = { mode: 'locked', nodeID: B }; step.nodeID = B;
+  step.state = 'cancelled'; step.attempts = [];
+  const result = workflowDiagnostics(value, sources, at).steps[0];
+  assert.equal(result.phase, 'stopped'); assert.equal(result.attempt, 0);
+  assert.equal(result.executionID, null); assert.equal(result.nodeID, null); assert.equal(result.observedAt, null);
+  assert.equal(JSON.parse(workflowDiagnosticSummary(workflowDiagnostics(value, sources, at))).steps[0].executionRecorded, false);
+});
+
 test('model-required device diagnostics explain only that device while free steps keep alternatives', () => {
   const { value, sources, input, step } = diagnosticFixture();
   value.originNodeID = A; value.description = '看下这台机器信息'; value.steps = [step];

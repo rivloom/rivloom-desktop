@@ -86,6 +86,9 @@ export function parseWorkflowOutcome(role: WorkflowExecutionContext['role'], str
     const text = finalText.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1');
     try { value = JSON.parse(text); } catch { throw new Error('workflow_invalid_outcome'); }
   }
+  // A text-only completion may omit deliveries; normalize only this model-output boundary.
+  if (role === 'executor' && value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    'kind' in value && value.kind === 'completed' && !Object.hasOwn(value, 'files')) value = { ...value, files: [] };
   if (role === 'planner' ? !validPlanningOutcome(value) : !validExecutionOutcome(value)) throw new Error('workflow_invalid_outcome');
   return value as PlanningOutcome | ExecutionOutcome;
 }

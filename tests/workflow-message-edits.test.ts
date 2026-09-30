@@ -83,7 +83,7 @@ test('editing while async round context is being prepared cannot admit stale tex
     release(); await preparing;
     let value = f.store.get(f.id)!;
     assert.equal(value.roundRequestID, undefined); assert.equal(value.rounds, undefined);
-    assert.equal(value.queuePaused, undefined); assert.equal(value.queueError, undefined);
+    assert.equal(value.queuePaused, false); assert.equal(value.queueError, undefined);
     assert.equal(workflowPendingMessages(value)[0].text, 'Use the new request');
     f.adapter.conversationContext = async () => context;
     await f.service.advance(f.id); value = f.store.get(f.id)!;

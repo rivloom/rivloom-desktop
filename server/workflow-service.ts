@@ -37,6 +37,24 @@ export interface WorkflowExecutionAdapter {
 const terminalAttempt = (attempt: WorkflowAttempt) => ['completed', 'failed', 'stopped'].includes(attempt.phase);
 const terminalStep = (step: WorkflowStep) => ['completed', 'failed', 'cancelled', 'blocked'].includes(step.state);
 const terminalWorkflow = (workflow: Workflow) => ['stopped', 'completed', 'failed'].includes(workflow.state);
+const roundEnded = (workflow: Workflow) => terminalWorkflow(workflow) && [workflow.planner, ...workflow.steps]
+  .every((step) => step.attempts.every((attempt) => terminalAttempt(attempt) && attempt.handled));
+function stoppedContinuationPending(value: Workflow) {
+  if (value.state !== 'stopped' || !value.queuePaused || value.queuePauseReason !== 'stopped' || value.queueError || !roundEnded(value)) return false;
+  // Earlier versions kept even a new send after stop confirmation paused. Recover only that
+  // narrow case; incomplete, equal or contradictory timestamps cannot establish a later send.
+  const control = value.events.findLast((event) => event.kind === 'state' && event.stepID === null);
+  if (control?.text !== 'stopped') return false;
+  const stoppedAt = Date.parse(control.at), updatedAt = Date.parse(value.updatedAt);
+  if (!Number.isFinite(stoppedAt) || !Number.isFinite(updatedAt)) return false;
+  return workflowPendingMessages(value).some((message) => {
+    const sentAt = Date.parse(message.createdAt);
+    return Number.isFinite(sentAt) && sentAt > stoppedAt && sentAt <= updatedAt;
+  });
+}
+function continueMessages(value: Workflow) {
+  value.queuePaused = false; value.queuePauseReason = undefined; value.queueError = undefined;
+}
 const getStep = (workflow: Workflow, id: string) => id === 'planner' ? workflow.planner : workflow.steps.find((step) => step.id === id);
 function currentStep(workflow: Workflow, stepID: string, executionID: string) {
   const step = getStep(workflow, stepID);
@@ -83,7 +101,10 @@ export class WorkflowService {
   private update(id: string, change: (workflow: Workflow) => void, version?: number) {
     const result = this.store.update(id, (value) => {
       const before = value.state; change(value);
-      if (value.state !== before && ['failed', 'stopped'].includes(value.state)) value.queuePaused = true;
+      if (value.state !== before && (value.state === 'stopped' || value.state === 'failed' && before === 'paused')) {
+        value.queuePaused = true;
+        value.queuePauseReason ||= value.state === 'stopped' ? 'stopped' : 'manual';
+      }
     }, version);
     for (const [key, detail] of this.preparationDetails) if (key.startsWith(`${id}:`)) {
       const step = getStep(result, detail.stepID);
@@ -145,7 +166,12 @@ export class WorkflowService {
         ...(originNodeID !== undefined ? { originNodeID } : {}),
         ...(placementPolicy !== undefined ? { placementPolicy } : {}),
         ...(model !== undefined ? { model } : {}), ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) });
-      if (['failed', 'stopped', 'stopping'].includes(value.state)) value.queuePaused = true;
+      // A new send after a safely ended round is continuation intent, even after explicit stop
+      // or a failed context preparation. Replays return above and cannot undo later user control.
+      if (roundEnded(value)) continueMessages(value);
+      else if (value.state === 'stopping') {
+        value.queuePaused = true; value.queuePauseReason ||= 'stopped';
+      }
     });
   }
   messageControl(id: string, action: 'cancel' | 'resume' | 'pause', requestID?: string) {
@@ -154,7 +180,10 @@ export class WorkflowService {
         const message = value.messages?.find((m) => m.requestID === requestID);
         if (!message || message.requestID === value.roundRequestID || value.rounds?.some((r) => r.requestID === requestID)) throw new Error('workflow_message_started');
         message.state = 'cancelled';
-      } else { value.queuePaused = action === 'pause'; value.queueError = undefined; }
+      } else {
+        value.queuePaused = action === 'pause'; value.queuePauseReason = action === 'pause' ? 'manual' : undefined;
+        value.queueError = undefined;
+      }
     });
   }
   /** Only a pending message's text is editable. Checking the current text inside
@@ -181,7 +210,9 @@ export class WorkflowService {
       if (terminalWorkflow(value)) throw new Error('workflow_already_finished');
       if (action === 'pause' && ['planning', 'running'].includes(value.state)) value.state = 'paused';
       else if (action === 'resume' && value.state === 'paused') value.state = value.planVersion ? 'running' : 'planning';
-      else if (action === 'stop') { value.state = 'stopping'; value.pendingConfirmation = null; value.queuePaused = true; }
+      else if (action === 'stop') {
+        value.state = 'stopping'; value.pendingConfirmation = null; value.queuePaused = true; value.queuePauseReason = 'stopped';
+      }
       else throw new Error('workflow_invalid_control');
       workflowEvent(value, 'state', value.state);
     });
@@ -247,7 +278,7 @@ export class WorkflowService {
     this.advancing.set(id, pending); return pending;
   }
   async tick() {
-    const ids = this.store.list().filter((w) => !terminalWorkflow(w) || this.nextMessage(w)).map((w) => w.id);
+    const ids = this.store.list().filter((w) => !terminalWorkflow(w) || this.nextMessage(w) || stoppedContinuationPending(w)).map((w) => w.id);
     for (let start = 0; start < ids.length && !this.closed; start += 4)
       await Promise.allSettled(ids.slice(start, start + 4).map((id) => this.advance(id)));
   }
@@ -261,6 +292,9 @@ export class WorkflowService {
   private async advanceOne(id: string) {
     let value = this.store.get(id);
     if (!value || this.closed) return;
+    if (stoppedContinuationPending(value)) value = this.update(id, (latest) => {
+      if (stoppedContinuationPending(latest)) continueMessages(latest);
+    });
     if (terminalWorkflow(value)) { await this.advanceRound(value); return; }
     this.trackAssignments(value);
     if (value.state === 'stopping') { await this.stopAll(value); return; }
@@ -281,7 +315,14 @@ export class WorkflowService {
   }
   private async advanceRound(value: Workflow) {
     const message = this.nextMessage(value);
-    if (!message || [value.planner, ...value.steps].some((s) => s.attempts.some((a) => !terminalAttempt(a) || !a.handled))) return;
+    if (!message || !roundEnded(value)) return;
+    const stillCurrent = (latest: Workflow) => {
+      const pending = this.nextMessage(latest);
+      return !this.closed && roundEnded(latest) &&
+        (latest.roundRequestID || latest.requestID) === (value.roundRequestID || value.requestID) &&
+        pending?.requestID === message.requestID && pending.text === message.text && pending.model === message.model &&
+        pending.reasoningEffort === message.reasoningEffort && pending.originNodeID === message.originNodeID && pending.placementPolicy === message.placementPolicy;
+    };
     try {
       // Preparation is repeatable; the atomic archive/reset below is the only admission point.
       const context = await this.adapter.conversationContext?.(value);
@@ -290,10 +331,9 @@ export class WorkflowService {
         ...value.steps.flatMap((s) => s.attempts.at(-1)?.outputFiles || []), ...message.inputFiles]) inherited.set(file.name, file);
       const inputFiles = mergeFiles([...inherited.values()], context ? [context] : []);
       this.update(value.id, (latest) => {
-        const pending = this.nextMessage(latest);
         // Editing during async context preparation invalidates this admission.
         // A later tick rebuilds from the latest message instead of running old text.
-        if (!terminalWorkflow(latest) || pending?.requestID !== message.requestID || pending.text !== message.text || pending.model !== message.model || pending.reasoningEffort !== message.reasoningEffort || pending.originNodeID !== message.originNodeID || pending.placementPolicy !== message.placementPolicy || this.closed) return;
+        if (!stillCurrent(latest)) return;
         const { description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error, model, reasoningEffort, originNodeID, placementPolicy } = latest;
         (latest.rounds ||= []).push({ description, criteria, state, planVersion, summary, planner, steps, events, handoffs, confirmations, pendingConfirmation, updatedAt, error,
           ...(originNodeID !== undefined ? { originNodeID } : {}),
@@ -306,12 +346,16 @@ export class WorkflowService {
         latest.reasoningEffort = reasoningForMessage(latest, message);
         if (message.model !== undefined) latest.model = message.model;
         latest.state = 'planning'; latest.planVersion = 0; latest.summary = ''; latest.steps = []; latest.events = []; latest.handoffs = [];
-        latest.confirmations = []; latest.pendingConfirmation = null; latest.error = null; latest.queueError = undefined;
+        latest.confirmations = []; latest.pendingConfirmation = null; latest.error = null; latest.queueError = undefined; latest.queuePauseReason = undefined;
         latest.planner = workflowStep({ id: 'planner', title: latest.title, instructions: message.text + (latest.criteria ? `\n\n完成要求：\n${latest.criteria}` : ''),
           dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} });
       });
     } catch (error) {
-      this.update(value.id, (latest) => { latest.queuePaused = true; latest.queueError = error instanceof Error ? error.message : 'workflow_context_failed'; });
+      this.update(value.id, (latest) => {
+        if (!stillCurrent(latest)) return;
+        latest.queuePaused = true; latest.queuePauseReason = 'context_error';
+        latest.queueError = error instanceof Error ? error.message : 'workflow_context_failed';
+      });
     }
   }
   private async stopAll(value: Workflow) {
@@ -353,7 +397,6 @@ export class WorkflowService {
     }
     if (stateBefore !== JSON.stringify([value.state, value.steps.map((s) => s.state)])) this.update(id, (latest) => {
       latest.steps.forEach((step, i) => { step.state = value.steps[i].state; }); latest.state = value.state; latest.error = value.error;
-      if (latest.state === 'failed') latest.queuePaused = true;
       if (terminalWorkflow(latest)) workflowEvent(latest, 'state', latest.state);
     }, value.version);
   }

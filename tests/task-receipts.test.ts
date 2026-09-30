@@ -4,7 +4,7 @@ import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
 import { stateLabels, type RemoteTaskInvite, type BrainTask, type Task } from '../shared/types.ts';
 import type { Conversation } from '../src/conversations.ts';
-import { taskReceiptView } from '../src/task-receipts.ts';
+import { receiptRepeatsExecution, taskReceiptView } from '../src/task-receipts.ts';
 import { remoteExecutionSummary } from '../server/remote-execution-summary.ts';
 
 test('acceptance preserves the final assistant result instead of replacing it with a status label', () => {
@@ -238,6 +238,40 @@ test('ordinary local continuation uses current execution facts over a historical
       assert.equal(taskReceiptView(item, { connected: true, queueEntry, queueConfirmed: false })?.syncing, true);
     }
   }
+});
+
+test('confirmed local and remote live receipts omit repeated state but retain actionable facts', () => {
+  const task = { state: 'running', sessionID: 'session' } as Task;
+  const ordinary = { ...conversation(), remote: undefined, localTask: task };
+  for (const state of ['running', 'waiting_approval', 'waiting_input', 'stopping'] as const) {
+    const item = { ...ordinary, localTask: { ...task, state } };
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: true })), true, state);
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: false })), false, `${state} reconnecting`);
+  }
+  for (const state of ['interrupted', 'review', 'failed', 'stopped'] as const) {
+    const item = { ...ordinary, localTask: { ...task, state } };
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: true })), false, state);
+  }
+  const rejected = { state: 'ended', endReason: { code: 'rejected', message: 'Do not execute' } } as NodeQueueItem;
+  assert.equal(receiptRepeatsExecution(ordinary, taskReceiptView(ordinary, { connected: true, queueEntry: rejected })), false);
+  for (const item of [
+    { ...conversation({ executionState: 'running' }), localTask: task },
+    conversation({ executionState: 'running', executionSummary: 'OpenCode 正在执行任务。' }),
+    { ...ordinary, brainTask: { status: 'running' } as BrainTask },
+    { ...conversation(), remote: undefined, brainTask: { status: 'running', executionSummary: 'OpenCode 正在执行任务。' } as BrainTask },
+    { ...ordinary, localTask: { ...task, remoteOrigin: { remoteTaskID: 'remote', ownerNodeID: 'node', ownerBrainID: 'brain' } } },
+    { ...ordinary, localTask: { ...task, collaboration: {} as Task['collaboration'] } },
+  ]) {
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: true })), true);
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: false })), false);
+  }
+  for (const state of ['waiting_approval', 'waiting_input', 'interrupted', 'review', 'failed', 'stopped'] as const) {
+    const item = conversation({ executionState: state });
+    assert.equal(receiptRepeatsExecution(item, taskReceiptView(item, { connected: true })), false, state);
+  }
+  const substantive = { ...conversation(), remote: undefined, brainTask: { status: 'running', executionSummary: '已查到本机时区 UTC+8' } as BrainTask };
+  assert.equal(receiptRepeatsExecution(substantive, taskReceiptView(substantive, { connected: true })), false);
+  assert.equal(receiptRepeatsExecution(ordinary, null), false);
 });
 
 test('continuation receipt precedence cannot override rejection, remote or collaboration ownership', () => {

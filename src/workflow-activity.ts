@@ -1,6 +1,9 @@
 import type { Workflow, WorkflowAttempt, WorkflowStep } from '../shared/workflows.ts';
+import { language, t } from '../shared/i18n.ts';
+import { workflowStepLabel } from './workflow-graph-data.ts';
 
 export type WorkflowActivityItem = {
+  role: 'planner' | 'executor';
   step: WorkflowStep;
   attempt: WorkflowAttempt | undefined;
   nodeID: string | null;
@@ -18,8 +21,44 @@ export function workflowActivityItems(value: Pick<Workflow, 'planVersion' | 'ste
   return (value.planVersion ? value.steps : [value.planner]).map(step => {
     const attempt = step.attempts.at(-1);
     // A planned preference is not evidence that a Node has accepted execution.
-    return { step, attempt, nodeID: attempt?.nodeID || null, durationMilliseconds: workflowAttemptDuration(attempt) };
+    return { role: value.planVersion ? 'executor' : 'planner', step, attempt,
+      nodeID: attempt?.nodeID || null, durationMilliseconds: workflowAttemptDuration(attempt) };
   });
+}
+
+export function workflowActivityStepLabel(role: WorkflowActivityItem['role'], step: WorkflowStep, attempt?: WorkflowAttempt) {
+  const label = workflowStepLabel(step, attempt);
+  if (role !== 'planner') return label;
+  // Keep the observed transport/attention state instead of suggesting active planning.
+  if (attempt && ['intent', 'queued', 'waiting', 'unknown'].includes(attempt.phase)) return label;
+  // A selected old planning attempt retains its own result after retries.
+  if (attempt && attempt !== step.attempts.at(-1)) {
+    if (attempt.phase === 'stopped') return t('规划已停止');
+    if (attempt.phase === 'failed') return t('规划失败');
+    if (attempt.phase === 'completed') return attempt.outcome?.kind === 'handoff' ? t('规划转交') : t('规划已完成');
+    return t('正在分析与规划');
+  }
+  if (step.state === 'cancelled' || attempt?.phase === 'stopped') return t('规划已停止');
+  if (step.state === 'failed' || attempt?.phase === 'failed') return t('规划失败');
+  if (step.state === 'completed' && attempt?.phase === 'completed') return t('规划已完成');
+  if (step.state === 'running') return t('正在分析与规划');
+  return t('等待规划条件');
+}
+
+/** Planning attempts use the same transport, but are not business execution. */
+export function workflowActivityPresentation(item: WorkflowActivityItem, node: string) {
+  const { role, step, attempt, durationMilliseconds } = item;
+  const planning = role === 'planner';
+  const completed = step.state === 'completed' && attempt?.phase === 'completed';
+  const label = workflowActivityStepLabel(role, step, attempt);
+  const attribution = planning
+    ? node ? completed ? t('由 {{node}} 完成规划', { node }) : t('规划 Node：{{node}}', { node }) : t('待分配规划 Node')
+    : node ? completed ? t('由 {{node}} 完成', { node }) : t('执行 Node：{{node}}', { node }) : t('待分配');
+  const duration = durationMilliseconds === null ? null : workflowDurationLabel(durationMilliseconds, language());
+  const elapsed = duration === null ? planning ? t('规划详情') : t('执行详情')
+    : planning ? t('本次规划用时 {{duration}}', { duration }) : t('本次用时 {{duration}}', { duration });
+  return { label, attribution, elapsed, completed,
+    detailsTitle: planning ? t('查看规划状态与记录') : t('查看状态、步骤进度与执行记录') };
 }
 
 function priority(item: WorkflowActivityItem) {

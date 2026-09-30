@@ -1,6 +1,7 @@
 import type { Bootstrap, Message, RemoteTaskInvite, Task } from '../shared/types.ts';
 import type { Workflow, WorkflowAttempt, WorkflowStep } from '../shared/workflows.ts';
 import type { WorkflowDiagnosticSnapshot } from '../shared/workflow-diagnostics.ts';
+import { executionSummaryText } from './system-display.ts';
 
 export type WorkflowLatestExecution = { step: WorkflowStep; attempt: WorkflowAttempt; local?: Task; remote?: RemoteTaskInvite };
 export type WorkflowRecentExecution = WorkflowLatestExecution & { text: string; tools: { key: string; tool: Message['tools'][number] }[] };
@@ -29,7 +30,8 @@ export function recentWorkflowExecutions(entries: readonly WorkflowLatestExecuti
   if (['completed', 'failed', 'stopped'].includes(state)) return [];
   return entries.filter(entry => !['completed', 'failed', 'stopped'].includes(entry.attempt.phase)).flatMap(entry => {
     const messages = entry.local?.messages || [];
-    const text = entry.local ? messages.findLast(message => message.role === 'assistant' && message.text.trim())?.text || '' : entry.remote?.executionSummary || '';
+    const text = entry.local ? messages.findLast(message => message.role === 'assistant' && message.text.trim())?.text || '' :
+      executionSummaryText(entry.remote?.executionSummary, entry.remote?.executionState);
     const tools: WorkflowRecentExecution['tools'] = [];
     for (let i = messages.length - 1; i >= 0 && tools.length < 2; i--) {
       if (messages[i].role !== 'assistant') continue;

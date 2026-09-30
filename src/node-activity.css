@@ -16,18 +16,19 @@
 .conversation-settings :is(.activity-office-entry, .sidebar-model-metrics, .activity-utility, .operation-badge):hover { background: var(--hover-wash); }
 .conversation-settings :is(.activity-office-entry, .sidebar-model-metrics, .activity-utility, .operation-badge):active { transform: scale(.98); }
 .conversation-settings :is(.activity-office-entry, .sidebar-model-metrics, .activity-utility, .operation-badge):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.conversation-settings .sidebar-model-entry > .activity-office-entry { flex: 1 1 auto; width: auto; min-width: 0; gap: 6px; padding-inline: 6px; }
-.conversation-settings .sidebar-model-metrics { flex: 0 0 auto; width: auto; margin: 0; padding: 5px 6px; min-height: 29px; display: inline-flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.conversation-settings .sidebar-model-entry > .activity-office-entry { flex: 0 1 auto; width: auto; min-width: 0; gap: 6px; padding-inline: 6px; }
+.conversation-settings .sidebar-model-metrics { flex: 1 0 auto; min-width: 0; width: auto; margin: 0; padding: 5px 6px; min-height: 29px; display: inline-flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.sidebar-model-metrics .activity-rate-label { display: none; }
 .activity-rate { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; line-height: 17px; }
 .conversation-settings .sidebar-model-metrics > span { margin: 0; }
 .activity-rate b { color: var(--text); font-size: 11px; font-weight: 600; }
 .activity-rate.output b { color: var(--accent); }
 .activity-rate.unknown b { color: var(--muted); font-weight: 400; }
-.conversation-settings .sidebar-model-metrics > .activity-model-state { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-settings .sidebar-model-metrics > .activity-model-state { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-model-metrics > .activity-failure { flex-shrink: 0; }
 .activity-model-description { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .activity-unit { font-size: 9px; color: var(--muted); }
-.conversation-settings .sidebar-model-metrics > .activity-run-count { margin-left: auto; white-space: nowrap; font-size: 10px; }
+.conversation-settings .sidebar-model-metrics > .activity-run-count { white-space: nowrap; font-size: 10px; }
 .activity-run-count b { color: var(--text); font-weight: 500; }
 .activity-run-count > svg { display: none; }
 .sidebar-file-entry:has(.operation-badge) .activity-office-entry { padding-right: 33px; }
@@ -87,7 +88,6 @@
 @keyframes activity-bounce { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.28); } 65% { transform: scale(.94); } }
 @container (max-width: 265px) {
   .sidebar-model-metrics .activity-rate.input,
-  .sidebar-model-metrics .activity-rate > svg,
   .sidebar-model-metrics .activity-run-count,
   .sidebar-model-metrics .activity-model-state { display: none; }
   .conversation-settings .sidebar-model-metrics { gap: 3px; padding-inline: 4px; }

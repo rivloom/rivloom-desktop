@@ -101,7 +101,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
         })}>{t('编辑说明')}</Button></article>)}
     </div> : <>
       <div className="knowledge-toolbar"><label><select aria-label={t('知识库来源')} disabled={busy} value={scope} onChange={(e) => { setScope(e.target.value); setCategory(''); }}>
-        <option value="local">{t('我的 Node')}</option>{library.brains.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        <option value="local">{t('本机')}</option>{library.brains.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select></label><input aria-label={t('搜索技能与记忆')} placeholder={t('搜索名称、用途或分类')} value={query} onChange={(e) => setQuery(e.target.value)} />
       {(query || category) && <Button onClick={() => { setQuery(''); setCategory(''); }}>{t('清除筛选')}</Button>}
       {scope === 'local' && <Button disabled={busy} onClick={() => tab === 'skill' ? setRegister({ directory: '', projectID: null }) :

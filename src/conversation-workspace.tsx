@@ -55,7 +55,7 @@ import { ResourceDiscovery } from './resource-discovery';
 import { KnowledgeLibrary } from './knowledge-library';
 import { ConversationContext } from './conversation-context';
 import type { Workflow } from '../shared/workflows';
-import { workflowAllSteps, workflowPendingMessages } from '../shared/workflows';
+import { workflowAllSteps } from '../shared/workflows';
 import { ResizableWorkspace } from './resizable-workspace';
 import {
   filterConversations,
@@ -99,6 +99,8 @@ import {
   FileCode2,
   Bot,
   ShieldCheck,
+  ShieldAlert,
+  MessageCircleQuestion,
   ChevronRight,
   AtSign,
   Pause,
@@ -110,6 +112,7 @@ import {
   Download,
   GitCompareArrows,
   Keyboard,
+  Languages,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -151,6 +154,8 @@ import { Button, Field, Modal, Wordmark } from './ui';
 import {
   conversations,
   conversationState,
+  conversationCompactState,
+  conversationIsFailed,
   conversationIsRunning,
   executionQueueEntries,
   executionQueueStopTask,
@@ -159,7 +164,7 @@ import {
   type Conversation,
 } from './conversations';
 import type { NodeQueueAction, NodeQueueItem, NodeQueueSnapshot } from '../shared/node-queue';
-import { queueReasonLabel, taskReceiptView } from './task-receipts';
+import { queueReasonLabel, receiptRepeatsExecution, taskReceiptView } from './task-receipts';
 import {
   activeStates,
   approvalModeLabels,
@@ -446,8 +451,8 @@ const HistoryRow = memo(function HistoryRow({
       {hasDraft && group !== 'completed' && <Pencil className="history-draft-marker" size={11} aria-label={t('草稿')} />}
       </span>
       <span className="history-item-meta" aria-hidden="true">
-        {group !== 'completed' ? <span className={`conversation-item-state ${group} ${conversationIsRunning(item) ? 'is-running' : ''}`} title={state}>
-          <small>{state}</small>
+        {group !== 'completed' ? <span className={`conversation-item-state ${group}${conversationIsRunning(item) ? ' is-running' : ''}${conversationIsFailed(item) ? ' is-failed' : ''}`} title={state}>
+          <small>{conversationCompactState(item)}</small>
         </span> : hasDraft ? <span className="history-draft-badge">{t('草稿')}</span>
           : <time dateTime={validDate ? item.updatedAt : undefined} title={validDate ? dateLabel(item.updatedAt) : undefined}>{updatedLabel}</time>}
       </span>
@@ -516,10 +521,10 @@ const Transcript = memo(function Transcript({
           <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
             tabIndex={-1} data-search-target={searchTargetID(message.id === firstUser?.id || message.id === 'requirement'
               ? { kind: 'requirement' } : { kind: 'message', messageID: message.id })}>
-            {message.role === 'assistant' && text.trim() && <div className="chat-message-byline"><strong>Rivloom</strong></div>}
             {message.role === 'user' ? text && <UserMessageText text={text} searchQuery={searchQuery} /> :
-              <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} searchQuery={searchQuery} />}
-            {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} />
+              <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'}
+                completed={!!task && ['review', 'accepted'].includes(task.state)} searchQuery={searchQuery} />}
+            {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} iconOnly />
               {message.role === 'assistant' && <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />}</div>}
           </article>
         );
@@ -530,13 +535,16 @@ const Transcript = memo(function Transcript({
             <strong>{t('执行结果')}</strong>
           </div>
           <MessageMarkdown text={summary} searchQuery={searchQuery} />
-          <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} /></div>
+          <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} iconOnly /></div>
         </article>
       )}
-      {task && activeStates.includes(task.state) && (
-        <div className="chat-progress" role="status">
-          <LoaderCircle size={15} className="spin" />
-          {task.state === 'running' ? t('正在处理…') : conversationState(item)}
+      {task && task.state !== 'running' && activeStates.includes(task.state) && (
+        // Waiting for the user is not progress: only work in flight spins.
+        <div className={`chat-progress${['waiting_approval', 'waiting_input'].includes(task.state) ? ' awaiting-user' : ''}`} role="status">
+          {task.state === 'waiting_approval' ? <ShieldAlert size={15} aria-hidden="true" />
+            : task.state === 'waiting_input' ? <MessageCircleQuestion size={15} aria-hidden="true" />
+              : <LoaderCircle size={15} className="spin" />}
+          {conversationState(item)}
         </div>
       )}
     </>
@@ -980,6 +988,7 @@ export function ConversationWorkspace({
   const stopConfirming = stopState === 'confirming';
   const stopWaiting = stopConfirming || stopState === 'waiting';
   const stopLabel = stopState === 'waiting' ? t('等待远端确认') : stopConfirming ? t('正在确认停止') : stopState === 'retry' ? t('重试停止') : t('停止');
+  const sendInterruptsRun = running && !current?.workflow && !isPendingLocalTaskMessage(draftState);
   // Keep the acknowledgement visible until the refreshed execution confirms it.
   // A lost/stale response must not leave the composer permanently disabled.
   useEffect(() => {
@@ -1212,7 +1221,6 @@ export function ConversationWorkspace({
     ? directoryDisplayName(currentDirectory, data.directoryAliases) : '';
   const currentModelID = task?.model || current?.workflow?.model;
   const currentModelName = currentModelID ? data.engine.models.find((entry) => entry.id === currentModelID)?.name || currentModelID : '';
-  const pendingMessages = current?.workflow ? workflowPendingMessages(current.workflow).length : 0;
   const draftKeys = conversationDraftKeys(drafts, all.map((item) => item.key));
   const workspaceCommands: WorkspaceCommand[] = [
     { kind: 'action', id: 'new-conversation', label: t('新会话'), shortcut: workspaceShortcutLabels['new-conversation'], run: () => { open(null); focusComposer(); } },
@@ -1615,6 +1623,7 @@ export function ConversationWorkspace({
                     <option value="__add__">{t('添加文件夹…')}</option>
                   )}
                 </select>
+                <ChevronDown className="composer-select-chevron" size={12} aria-hidden="true" />
               </label>
             )}
             {(!targetNodeID || targetNodeID === local?.id) && (
@@ -1639,24 +1648,6 @@ export function ConversationWorkspace({
           </>
         ) : (
           <>
-          <span className="composer-context">
-            {task ? (
-              <>
-                <FolderOpen size={14} />
-                <span>{data.projects.find((p) => p.id === task.projectID)?.name}</span>
-              </>
-            ) : current.workflow ? (
-              <>
-                <MessageSquare size={14} />
-                <span>{pendingMessages ? `${t('待执行消息')} · ${pendingMessages}` : t('继续此会话')}</span>
-              </>
-            ) : (
-              <>
-                <Network size={14} />
-                <span>{conversationState(current)}</span>
-              </>
-            )}
-          </span>
           {continuationModelChoice && (
             <><ModelPicker onManage={openConnections} models={data.engine.models} value={continuationModel}
               onChange={(value) => changeDraft({ model: value })}
@@ -1669,7 +1660,6 @@ export function ConversationWorkspace({
           </>
         )}
       </div>
-      <button type="button" className="composer-options composer-labeled" disabled={busy || !canWrite} title={t('提示词模板')} aria-label={t('提示词模板')} onClick={() => { setMention(null); setModal('templates'); }}><BookOpen size={16} /><span>{t('模板')}</span></button>
       {(!stopTarget || !!draft.trim()) && <button
         type="submit"
         className={`send-message${stopTarget ? ' alongside-stop' : ''}`}
@@ -1685,7 +1675,7 @@ export function ConversationWorkspace({
           remote?.controlPending
         }
       >
-        {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={20} />}
+        {busy ? <LoaderCircle size={17} className="spin" aria-hidden="true" /> : <ArrowUp size={17} strokeWidth={2} aria-hidden="true" />}
         <span>{t('发送')}</span>
       </button>}
       {stopTarget && <button type="button" className="send-message stop-message"
@@ -1717,22 +1707,23 @@ export function ConversationWorkspace({
         aria-modal={narrowSidebar && mobileSidebar ? true : undefined}
         inert={narrowSidebar && !mobileSidebar}
       >
-        <button
-          className="node-identity-button"
-          onClick={() => setModal('profile')}
-          disabled={!local || !data.user.owner}
-          title={t('编辑 Node 名称与图标')}
-        >
+        <div className="node-identity">
           <NodeAvatar icon={local?.icon} name={local?.name} />
-          <span>
-            <strong>{local?.name || t('我的 Node')}</strong>
-            <small>
-              <i className={connected ? 'status-dot online' : 'status-dot'} />
-              {connected ? t('本机在线') : t('正在连接')}
-            </small>
+          <span className="node-identity-label">
+            <strong title={local?.name || t('本机')}>{local?.name || t('本机')}</strong>
+            {!connected && <small role="status">{t('正在连接')}</small>}
           </span>
-          <ChevronDown size={15} />
-        </button>
+          {local && data.user.owner && <button
+            type="button"
+            className="node-identity-edit"
+            onClick={() => setModal('profile')}
+            aria-label={t('编辑本机名称与图标')}
+            title={t('编辑本机名称与图标')}
+            aria-haspopup="dialog"
+          >
+            <Pencil size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>}
+        </div>
         <button className="new-conversation" title={`${t('新会话')} · ${workspaceShortcutLabels['new-conversation']}`} onClick={() => { open(null); focusComposer(); }}>
           <Plus size={18} />
           {t('新会话')}
@@ -1832,7 +1823,7 @@ export function ConversationWorkspace({
             { id: 'diagnostics', label: t('连接诊断'), icon: <DiagnosticIcon size={16} />,
               select: () => { setDiagnosticTarget(null); setView('diagnostics'); setMobileSidebar(false); } },
             { id: 'shortcuts', label: t('键盘与输入'), icon: <Keyboard size={16} />, select: () => setModal('shortcuts') },
-            { id: 'language', label: t('界面语言'), select: () => setModal('language') },
+            { id: 'language', label: t('界面语言'), icon: <Languages size={16} />, select: () => setModal('language') },
           ]} />
           <div className="sidebar-signature">
             <Wordmark />
@@ -1875,7 +1866,7 @@ export function ConversationWorkspace({
                       ? t('连接诊断')
                       : current?.title || t('新会话')}
             </span>
-            {view === 'chat' && current && <small>{conversationState(current)}</small>}
+            {view === 'chat' && current && <small title={conversationState(current)} className={conversationIsFailed(current) ? 'is-failed' : undefined}>{conversationState(current)}</small>}
             </div>
             {view === 'chat' && current && <div className="conversation-context-row">
               <span className={`conversation-origin-context ${currentOrigin?.kind || 'unknown'}`} title={currentOrigin?.source}>
@@ -1962,9 +1953,10 @@ export function ConversationWorkspace({
                   reuse={{ draft: draftState, onApply: reuseMessage, disabled: busy || !canWrite }}
                   searchMatch={currentMatch} searchQuery={currentMatch ? activeSearchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
-                    {currentReceipt && !(task?.state === 'accepted' && !task.remoteOrigin) && (
+                    {currentReceipt && !(task?.state === 'accepted' && !task.remoteOrigin) &&
+                      !receiptRepeatsExecution(current, currentReceipt) && (
                       <section
-                        className={`task-receipt ${currentReceipt.tone}`}
+                        className={`task-receipt ${currentReceipt.tone}${conversationIsFailed(current) ? ' is-failed' : ''}`}
                         role="status"
                         aria-live="polite"
                       >
@@ -2100,15 +2092,7 @@ export function ConversationWorkspace({
                             {localTaskModelChoice && task.sessionID ? t('发送补充要求') : task.sessionID ? t('继续执行') : t('开始执行')}
                           </Button>
                         )}
-                      {running && (task || canRemoteControl) && (
-                        <Button
-                          disabled={busy || !stopTarget || stopWaiting}
-                          onClick={() => void stopCurrentConversation()}
-                        >
-                          <Square size={13} />
-                          {stopLabel}
-                        </Button>
-                      )}
+                      {/* Stop lives beside the composer's send action; one control per action. */}
                     </div>
                     <div className="conversation-support">
                     {task && <TaskTelemetryView task={task} />}
@@ -2523,6 +2507,8 @@ export function ConversationWorkspace({
                 </Modal>
               )}
               {draftSaveError && <p className="file-error" role="alert">{t('草稿暂时无法保存，请保留此窗口。')}</p>}
+              {/* Model note and send hint share one row so the composer has a single footer line. */}
+              <div className="composer-footer">
               {continuationModelUnavailable && workflowRemoteDefaultAllowed ? (
                 <p className="composer-model-note" role="status">{t('本机默认模型不可用；自动调度仍可使用其他符合条件的 Node。')}</p>
               ) : continuationModelUnavailable ? (
@@ -2536,15 +2522,16 @@ export function ConversationWorkspace({
               ) : workflowModelChoice && (
                 <p className="composer-model-note">{t('所选模型仅用于这条新消息，当前轮的执行不变。')}</p>
               )}
-              <div className="composer-hint" id="conversation-composer-hint"
+              <div className={`composer-hint${sendInterruptsRun && !!draft.trim() ? ' caution' : ''}`} id="conversation-composer-hint"
                 title={current?.workflow ? t('新要求会排队接续；模型的问题请在问题卡片中直接回答。') : undefined}>
                 {stopConfirming ? t('正在确认停止，草稿会保留。') : waitingForRemoteSession
                   ? t('当前可查看投递与排队状态；目标准备执行会话后可补充要求。')
                   : !canWrite && !finished
                     ? t('执行状态由归属节点同步；当前节点没有可用的继续操作权限。')
-                      : running && !current?.workflow && !isPendingLocalTaskMessage(draftState)
+                      : sendInterruptsRun
                       ? t('发送补充要求会先停止当前执行，再继续同一会话。')
                       : composerSendHint(sendMode)}
+              </div>
               </div>
             </div>
           </>

@@ -149,7 +149,7 @@ test('remote task clock skew never revives cancelled, declined or expired execut
       }
       assert.throws(() => owner.receiveResponse(response), /失效|过期/);
       assert.notEqual(owner.record(task.id)?.status, 'accepted');
-      worker.markDeliveryFailed(task.id, 'Master rejected the obsolete execution');
+      worker.markDeliveryFailed(task.id, response, 'Master rejected the obsolete execution');
       assert.throws(() => worker.bindLocalTask(task.id, randomUUID()), /尚未完成同步/);
       assert.equal(worker.record(task.id)?.localTaskID, null);
     } finally {

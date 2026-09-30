@@ -1,31 +1,24 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
-import { language, systemText, t } from '../shared/i18n.ts';
-import { matchesWorkflowDiagnostic, workflowDiagnosticSummary, type WorkflowDiagnosticSnapshot, type WorkflowStepDiagnostic } from '../shared/workflow-diagnostics.ts';
+import { systemText, t } from '../shared/i18n.ts';
+import { matchesWorkflowDiagnostic, type WorkflowDiagnosticSnapshot } from '../shared/workflow-diagnostics.ts';
 import { canRetryWorkflowStep, type Workflow, type WorkflowStep } from '../shared/workflows.ts';
+import { workflowError } from '../shared/workflow-errors.ts';
 import type { Bootstrap } from '../shared/types.ts';
 import { api } from './api';
 import { Button } from './ui';
-import { CopyButton } from './copy-button';
 import { queueReasonLabel } from './task-receipts';
 import { diagnosticPhaseLabel, diagnosticReasonLabel, diagnosticRecoveryLabel } from './workflow-diagnostic-labels';
-import { healthyWorkflowDiagnostics } from './workflow-recent';
 
 export type WorkflowDiagnosticNavigation = (target: 'diagnostics' | 'models' | 'queue' | 'network', nodeID?: string) => void;
-function time(value: string | null) {
-  return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(language()) : t('尚无可确认的报告时间');
-}
-export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, editStep, retry, navigate, compact = false }: {
+export function WorkflowRecovery({ value, data, busy, nodeName, showStep, editStep, retry, navigate }: {
   value: Workflow; data: Bootstrap; busy: boolean; nodeName: (id: string | null) => string;
   showStep: (step: WorkflowStep) => void; editStep: (step: WorkflowStep) => void; retry: (step: WorkflowStep) => void;
   navigate?: WorkflowDiagnosticNavigation;
-  compact?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<WorkflowDiagnosticSnapshot | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [expanded, setExpanded] = useState(false);
-  const [detailsExpanded, setDetailsExpanded] = useState(false), detailsID = useId();
   const round = value.roundRequestID || value.requestID;
   const terminal = ['completed', 'failed', 'stopped'].includes(value.state);
   useEffect(() => {
@@ -56,51 +49,42 @@ export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, edi
   }, [value.id, round, value.version, terminal, refresh]);
 
   const current = snapshot && matchesWorkflowDiagnostic(value, snapshot) ? snapshot : null;
+  const planning = !value.planVersion;
   const steps = value.planVersion ? value.steps : [value.planner];
-  const ordered = [...(current?.steps || [])].sort((a, b) => priority(a) - priority(b));
-  const shown = expanded ? ordered : ordered.slice(0, 4);
-  const collapsed = compact && healthyWorkflowDiagnostics(current, unavailable) && !detailsExpanded;
-  return <section className="workflow-diagnostics" aria-label={t('步骤状态与等待原因')}>
-    {compact && healthyWorkflowDiagnostics(current, unavailable) && <button type="button" className="workflow-diagnostics-toggle" aria-expanded={!collapsed}
-      aria-controls={detailsID} onClick={() => setDetailsExpanded(!detailsExpanded)}>{t('步骤诊断')}<ChevronDown size={13} /></button>}
-    <div id={detailsID} hidden={collapsed}>
-    <div className="workflow-diagnostics-heading"><strong>{t('步骤状态')}</strong>
-      <button type="button" className="workflow-diagnostics-refresh" onClick={() => setRefresh((n) => n + 1)} aria-label={t('刷新步骤状态')}>
-        <RefreshCw size={13} />{t('刷新状态')}</button></div>
-    {unavailable && <p className="muted" role="status">{t('最新状态暂时无法确认；下方如有记录，仅供参考。')}</p>}
-    {!current && !unavailable && <p className="muted">{t('正在读取步骤状态…')}</p>}
-    {!current && unavailable && <div className="workflow-diagnostic-actions">{steps.filter((s) => s.state !== 'completed').map((step) =>
-      <Button key={step.id} onClick={() => showStep(step)}>{step.title}</Button>)}</div>}
+  // Normal progress belongs to the activity and message trace. Only interruptions need another UI block.
+  const shown = (current?.steps || []).filter(item => ['failed', 'unknown', 'held', 'rejected'].includes(item.phase) ||
+    item.phase === 'placement' && !item.nodes.some(node => !node.reasons.length) ||
+    item.phase === 'dependency' && item.recovery === 'user_action');
+  if (!shown.length && !unavailable) return null;
+  return <section className="workflow-recovery" aria-label={t('任务进展')}>
+    {unavailable && <div className="workflow-recovery-unavailable"><p className="muted" role="status">{t('最新状态暂时无法确认；下方如有记录，仅供参考。')}</p>
+      <Button onClick={() => setRefresh(n => n + 1)}><RefreshCw size={13} />{t('刷新状态')}</Button></div>}
     {shown.map((item) => {
       const step = steps.find((s) => s.id === item.stepID);
       if (!step) return null;
       const blocked = item.nodes.filter((n) => n.reasons.length);
       const eligible = item.nodes.some((n) => !n.reasons.length);
-      const label = item.phase === 'placement' && !eligible ? t('当前没有满足要求的设备') : diagnosticPhaseLabel(item.phase);
+      const label = item.phase === 'placement' && !eligible ? t('当前没有满足要求的设备') : diagnosticPhaseLabel(item.phase, planning);
       const ownID = data.network.local?.id;
       const nodeID = item.nodeID || (blocked.length === 1 ? blocked[0].nodeID : undefined);
       const reasons = item.nodes.filter((n) => n.nodeID === ownID).flatMap((n) => n.reasons);
       const recovery = diagnosticRecoveryLabel(item);
-      const needsDetail = !['running', 'completed', 'stopped'].includes(item.phase);
-      return <article className={`workflow-diagnostic-step ${item.phase}`} key={item.stepID}>
-        <div className="workflow-diagnostic-title"><button type="button" onClick={() => showStep(step)}>{step.title}</button><span>{label}</span></div>
-        <p className="workflow-diagnostic-device">{item.nodeID ? nodeName(item.nodeID) : t('尚未分配设备')}
-          {item.observedAt && <span> · {t('最近记录：{{time}}', { time: time(item.observedAt) })}</span>}</p>
+      const error = item.phase === 'failed' ? step.attempts.at(-1)?.error : null;
+      return <article className={`workflow-recovery-item ${item.phase}`} key={item.stepID}>
+        {shown.length > 1 && <button className="workflow-recovery-title" type="button" onClick={() => showStep(step)}>{step.title}</button>}
+        {(!error || error !== value.error) && <p className={item.phase === 'failed' ? 'workflow-error' : undefined}>{error ? workflowError(error) : label}</p>}
         {!!item.dependencies.length && <p>{t('等待：{{steps}}', { steps: item.dependencies.map((id) => steps.find((s) => s.id === id)?.title || id).join('、') })}</p>}
-        {item.queue && ['queued', 'held', 'admitted', 'rejected'].includes(item.phase) && <p>
-          {item.phase === 'queued' && <>{item.queue.position !== null ? t('最近回执排位：{{position}}', { position: item.queue.position }) : t('当前排位待确认')} · </>}
-          {item.queue.code ? queueReasonLabel(item.queue.code) : item.queue.reason ? systemText(item.queue.reason) : t('已收到设备回执')}
-          <small> · {time(item.queue.observedAt)}</small></p>}
+        {item.queue && ['held', 'rejected'].includes(item.phase) && (item.queue.code || item.queue.reason) && <p>
+          {item.queue.code ? queueReasonLabel(item.queue.code) : systemText(item.queue.reason!)}</p>}
         {blocked.length === 1 && blocked[0].reasons[0] && <p>{nodeName(blocked[0].nodeID)}：{diagnosticReasonLabel(blocked[0].reasons[0])}</p>}
-        {needsDetail && recovery && <p className="muted">{recovery}</p>}
-        {!!blocked.length && <details className="workflow-diagnostic-evidence"><summary>{t('查看设备条件')}<ChevronDown size={12} /></summary>
+        {recovery && <p className="muted">{recovery}</p>}
+        {(blocked.length > 1 || blocked[0]?.reasons.length > 1) && <details className="workflow-diagnostic-evidence"><summary>{t('查看设备条件')}<ChevronDown size={12} /></summary>
           {blocked.map((node) => <div key={node.nodeID}><strong>{nodeName(node.nodeID)}</strong>
-            {node.reasons.map((reason, index) => <p key={`${reason.code}:${index}`}>{diagnosticReasonLabel(reason)}
-              <small> · {reason.certainty === 'unknown' ? t('待确认') : t('已确认')} · {time(reason.observedAt)}</small></p>)}
+            {node.reasons.map((reason, index) => <p key={`${reason.code}:${index}`}>{diagnosticReasonLabel(reason)}</p>)}
             {navigate && <Button onClick={() => navigate('diagnostics', node.nodeID === ownID ? undefined : node.nodeID)}>{t('查看连接诊断')}</Button>}
           </div>)}
         </details>}
-        {needsDetail && <div className="workflow-diagnostic-actions">
+        <div className="workflow-diagnostic-actions">
           {navigate && nodeID && <Button onClick={() => navigate('diagnostics', nodeID === ownID ? undefined : nodeID)}>{t('查看连接诊断')}</Button>}
           {navigate && data.user.owner && reasons.some((r) => ['project_unavailable', 'model_unavailable', 'engine_unavailable'].includes(r.code)) &&
             <Button onClick={() => navigate('models')}>{t('打开模型设置')}</Button>}
@@ -110,23 +94,8 @@ export function WorkflowDiagnostics({ value, data, busy, nodeName, showStep, edi
             <Button disabled={busy || unavailable} onClick={() => editStep(step)}>{t('修改此步骤')}</Button>}
           {canRetryWorkflowStep(value, step) && <Button disabled={busy || unavailable} onClick={() => retry(step)}>{t('重试此步骤')}</Button>}
           <Button onClick={() => showStep(step)}>{t('查看步骤')}</Button>
-        </div>}
+        </div>
       </article>;
     })}
-    {ordered.length > 4 && <button className="workflow-diagnostics-more" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
-      {expanded ? t('收起步骤状态') : t('查看全部 {{count}} 个步骤', { count: ordered.length })}</button>}
-    {current && <small className="workflow-diagnostics-sampled">{t('本次检查：{{time}}', { time: time(current.sampledAt) })}</small>}
-    {current && <details className="workflow-diagnostic-summary"><summary>{t('诊断摘要')}</summary>
-      <p className="muted">{t('包含状态、时间和匿名设备编号；步骤编号按计划顺序排列。')}</p>
-      <CopyButton text={workflowDiagnosticSummary(current, unavailable)} label={t('复制诊断摘要')} />
-      <pre tabIndex={0}>{workflowDiagnosticSummary(current, unavailable)}</pre>
-    </details>}
-    </div>
   </section>;
-}
-function priority(step: WorkflowStepDiagnostic) {
-  if (['failed', 'unknown', 'confirmation', 'attention', 'held', 'rejected'].includes(step.phase)) return 0;
-  if (['placement', 'queued', 'admitted', 'materials'].includes(step.phase)) return 1;
-  if (step.phase === 'completed') return 3;
-  return 2;
 }

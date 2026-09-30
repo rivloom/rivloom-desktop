@@ -55,8 +55,8 @@ function useNodeActivity(identity: string, owner: boolean) {
 function RateValues({ rates }: { rates: NodeModelActivityRates }) {
   const input = activityRate(rates.inputTokensPerSecond), output = activityRate(rates.outputTokensPerSecond);
   return <>
-    <span className={`activity-rate input${input === null ? ' unknown' : ''}`} title={t('近60秒新确认输入量的平均速率，不是预填充速度')}><ArrowDown size={11} /><span>{t('入均')}</span><b>{input === null ? '—' : activityRateText(input)}</b></span>
-    <span className={`activity-rate output${output === null ? ' unknown' : ''}`} title={t('近3秒流式文本与推理增量的估算速率')}><ArrowUp size={11} /><span>{t('出')}</span><b>{output === null ? '—' : `≈${activityRateText(output)}`}</b></span>
+    <span className={`activity-rate input${input === null ? ' unknown' : ''}`} title={t('近60秒新确认输入量的平均速率，不是预填充速度')}><ArrowDown size={11} /><span className="activity-rate-label">{t('入均')}</span><b>{input === null ? '—' : activityRateText(input)}</b></span>
+    <span className={`activity-rate output${output === null ? ' unknown' : ''}`} title={t('近3秒流式文本与推理增量的估算速率')}><ArrowUp size={11} /><span className="activity-rate-label">{t('出')}</span><b>{output === null ? '—' : `≈${activityRateText(output)}`}</b></span>
     <small className="activity-unit">t/s</small>
   </>;
 }

@@ -2133,7 +2133,7 @@ export class NodeNetwork extends EventEmitter {
         error instanceof NodeNetworkError &&
         (error.status === 400 || error.status === 404 || error.status === 409)
       ) {
-        if (this.remoteTasks.markDeliveryFailed(taskID, '对方拒绝了冲突或无效的任务消息。'))
+        if (this.remoteTasks.markDeliveryFailed(taskID, message, '对方拒绝了冲突或无效的任务消息。'))
           this.update();
         return;
       }

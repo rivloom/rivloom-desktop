@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   conversations,
   conversationState,
+  conversationCompactState,
+  conversationIsFailed,
   conversationIsRunning,
   localQueue,
   executionQueueEntries,
@@ -14,6 +16,8 @@ import {
 import type { TaskQueueReceipt } from '../shared/task-queue-receipts.ts';
 import type { NodeQueueItem } from '../shared/node-queue.ts';
 import type { Bootstrap, BrainTask, RemoteTaskInvite, Task, RivloomNode } from '../shared/types.ts';
+import type { Workflow } from '../shared/workflows.ts';
+import { i18n } from '../shared/i18n.ts';
 import { conversationOrigin } from '../src/conversation-origin.ts';
 
 const localID = 'local-node';
@@ -135,6 +139,63 @@ test('only the current executing observation animates, including remote and Brai
     false,
     'old attempts do not animate the current conversation',
   );
+});
+
+test('failure tone follows exactly the label that reports an execution failure', () => {
+  const item = (extra: Partial<Conversation>) =>
+    ({ key: 'history', attempts: [], ...extra }) as Conversation;
+  const brain = (status: BrainTask['status']) => ({ status }) as BrainTask;
+  const workflow = (state: Workflow['state'], extra: Partial<Workflow> = {}) =>
+    ({ state, messages: [], rounds: [], ...extra }) as unknown as Workflow;
+  const queued = [{ requestID: 'next', state: 'queued', text: 'next', inputFiles: [], createdAt: date }] as Workflow['messages'];
+  const cases: Conversation[] = [
+    ...(['open', 'ready', 'running', 'waiting_approval', 'waiting_input', 'stopping', 'stopped', 'interrupted',
+      'failed', 'review', 'accepted'] as const).map((state) => item({ localTask: localTask('local', state) })),
+    ...(['submitting', 'queued', 'assigned', 'running', 'waiting', 'review', 'completed', 'failed'] as const)
+      .map((status) => item({ brainTask: brain(status) })),
+    item({ remote: remoteTask('remote', { executionState: 'failed' }) }),
+    item({ remote: remoteTask('cancelled', { status: 'cancelled', executionState: 'failed' }) }),
+    item({ localTask: localTask('local', 'running'), brainTask: brain('failed') }),
+    item({ brainTask: brain('completed'), remote: remoteTask('stale', { executionState: 'failed' }) }),
+    item({ localTask: localTask('local', 'ready'), remote: remoteTask('remote', { executionState: 'failed' }) }),
+    ...(['planning', 'running', 'paused', 'stopping', 'stopped', 'completed', 'failed'] as const)
+      .map((state) => item({ workflow: workflow(state) })),
+    item({ workflow: workflow('failed'), workflowAttention: true }),
+    item({ workflow: workflow('failed', { messages: queued }) }),
+  ];
+  for (const entry of cases)
+    assert.equal(conversationIsFailed(entry), conversationState(entry) === '执行失败', conversationState(entry));
+  assert(cases.filter(conversationIsFailed).length >= 4, 'The matrix covers each failure source');
+});
+
+test('history uses compact state labels while other states pass through unchanged', () => {
+  const item = (extra: Partial<Conversation>) =>
+    ({ key: 'history', attempts: [], ...extra }) as Conversation;
+  const workflow = (state: Workflow['state'], extra: Partial<Workflow> = {}) =>
+    ({ state, messages: [], rounds: [], ...extra }) as unknown as Workflow;
+  const queued = [{ requestID: 'next', state: 'queued', text: 'next', inputFiles: [], createdAt: date }] as Workflow['messages'];
+  assert.equal(conversationCompactState(item({ localTask: localTask('local', 'failed') })), '失败');
+  assert.equal(conversationCompactState(item({ localTask: localTask('local', 'interrupted') })), '已中断');
+  assert.equal(conversationCompactState(item({ workflow: workflow('planning') })), '规划中');
+  assert.equal(conversationCompactState(item({ workflow: workflow('completed', { messages: queued, queuePaused: true }) })), '队列已暂停');
+  assert.equal(conversationCompactState(item({ workflow: workflow('completed', { messages: queued }) })), '排队中');
+  for (const state of ['running', 'waiting_approval', 'waiting_input', 'stopped'] as const) {
+    const entry = item({ localTask: localTask('local', state) });
+    assert.equal(conversationCompactState(entry), conversationState(entry), state);
+  }
+});
+
+test('English history shortens labels whose Chinese form already fits', async () => {
+  const approval = { key: 'history', attempts: [], localTask: localTask('local', 'waiting_approval') } as unknown as Conversation;
+  try {
+    await i18n.changeLanguage('en');
+    assert.equal(conversationState(approval), 'Awaiting approval');
+    assert.equal(conversationCompactState(approval), 'Needs approval');
+    assert.equal(conversationCompactState({ ...approval, localTask: localTask('local', 'failed') }), 'Failed');
+  } finally {
+    await i18n.changeLanguage('zh-CN');
+  }
+  assert.equal(conversationCompactState(approval), '待审批');
 });
 
 function fixture() {

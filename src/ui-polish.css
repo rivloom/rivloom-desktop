@@ -195,6 +195,14 @@
 .conversation-starters > button:hover:enabled > svg:first-child { transform: scale(1.08) rotate(-4deg); background: #e2eaff; }
 .conversation-starters > button:hover:enabled > svg:last-child { opacity: 1; color: var(--accent); transform: translate(2px, -2px); }
 .conversation-starters > button:active:enabled { transform: translateY(0) scale(.99); box-shadow: var(--shadow-sm); }
+/* Wide windows: the start screen shares the composer's column and left edge; starters sit in one row. */
+@container conversation-center (min-width: 700px) {
+  .blank-conversation { max-width: var(--thread-width); padding-inline: 0; }
+  .conversation-starters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .conversation-starters > button { align-items: flex-start; }
+  .conversation-starters > button > svg:last-child { display: none; }
+  .conversation-starters > p { grid-column: 1 / -1; }
+}
 
 /* ---------- Transcript ---------- */
 .workflow-round-divider { gap: 14px; margin: 30px 0 22px; font-size: 11.5px; letter-spacing: .02em; }
@@ -267,7 +275,6 @@ details[open] > summary .trace-chevron { transform: rotate(90deg); }
   box-shadow: none;
 }
 .workflow-queue-message footer .button:hover:enabled { background: var(--hover-wash); color: var(--ink); }
-.workflow-queue-heading .button { border-radius: 8px; }
 
 .return-to-latest {
   border-color: #dfe5ee;
@@ -286,7 +293,7 @@ details[open] > summary .trace-chevron { transform: rotate(90deg); }
     box-shadow var(--dur-slow) var(--ease-out);
 }
 .composer-surface:hover { border-color: #cfd6e1; }
-.conversation-composer:focus-within .composer-surface {
+.composer-surface:has(> textarea:focus) {
   border-color: #9fb6ec;
   box-shadow: 0 0 0 4px #285fe314, 0 10px 30px -12px #285fe340;
 }
@@ -299,7 +306,6 @@ details[open] > summary .trace-chevron { transform: rotate(90deg); }
     color var(--dur-base) var(--ease-out),
     transform var(--dur-base) var(--ease-pop);
 }
-.conversation-composer:focus-within .composer-tool { border-color: #9fb6ec; border-bottom-color: var(--surface); }
 .composer-tool:hover { color: var(--accent-ink); }
 .composer-tool:hover > svg { transform: translateY(-1px) rotate(-8deg); }
 .composer-tool > svg { transition: transform var(--dur-slow) var(--ease-pop); }
@@ -447,8 +453,6 @@ dialog.modal[open]::backdrop, dialog.workspace-command-palette[open]::backdrop {
 .sidebar-resize-handle::before, .sidebar-resize-handle::after { opacity: .6; }
 
 /* ---------- Sidebar ---------- */
-.node-identity-button { border-radius: 12px; }
-.node-identity-button:hover { background: var(--hover-wash); }
 .new-conversation {
   margin-top: 6px;
   background: var(--accent-soft);
@@ -559,15 +563,16 @@ html[lang='en'] .conversation-settings > button.utility-nav-entry { font-size: 1
 .conversation-context-row svg { opacity: .7; }
 
 /* ---------- Transcript ---------- */
-.chat-message, .workflow-result-response { font-size: 15.5px; line-height: 1.8; }
+.chat-message, .workflow-result-response { font-size: 14px; line-height: 1.625; }
+.chat-message .message-markdown { line-height: inherit; }
 .user-message-body {
-  padding: 11px 16px;
-  background: linear-gradient(180deg, #edf2ff 0%, #e6edff 100%);
-  color: #16284d;
-  border: 0;
-  border-radius: 18px 18px 6px 18px;
+  padding: 10px 14px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid #e2e5e9;
+  border-radius: 12px;
 }
-.workflow-queue-message .user-message-body { background: #f5f7fb; color: var(--ink); border: 1px dashed #cdd6e4; }
+.workflow-queue-message .user-message-body { background: transparent; color: var(--ink); border: 1px dashed #cdd6e4; }
 .chat-message.assistant .chat-message-byline,
 .workflow-answer-byline {
   display: flex;
@@ -616,10 +621,10 @@ html[lang='en'] .conversation-settings > button.utility-nav-entry { font-size: 1
   border-color: #e1e6ee;
   box-shadow: 0 1px 2px #1b2a4108, 0 12px 32px -14px #1b2a4133;
 }
-.composer-surface > textarea { border-radius: 22px; padding: 16px 20px 6px; font-size: 15px; }
-.conversation-composer:focus-within .composer-surface {
-  border-color: #a9bff0;
-  box-shadow: 0 0 0 5px #285fe312, 0 16px 40px -16px #285fe359;
+.composer-surface > textarea { border-radius: 22px; padding: 16px 20px 6px; font-size: 14px; line-height: 1.625; }
+.composer-surface:has(> textarea:focus) {
+  border-color: #aeb8c7;
+  box-shadow: 0 0 0 2px #2635480a, 0 12px 32px -14px #1b2a4133;
 }
 .composer-toolbar { padding: 6px 10px 10px 12px; }
 .composer-options.composer-labeled { width: 36px; height: 36px; padding: 0; justify-content: center; border-radius: 12px; }
@@ -635,9 +640,45 @@ html[lang='en'] .conversation-settings > button.utility-nav-entry { font-size: 1
 .send-message > span { display: none; }
 .send-message > svg { width: 19px; height: 19px; }
 .send-message:disabled { background: #eef1f5; }
+.composer-toolbar > .send-message[type="submit"] {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #24282f;
+  border-radius: 10px;
+  background: #24282f;
+  color: #fff;
+  box-shadow: 0 1px 2px #18202a14;
+}
+.composer-toolbar > .send-message[type="submit"] > svg { width: 17px; height: 17px; }
+.composer-toolbar > .send-message[type="submit"]:hover:enabled {
+  border-color: #363b44;
+  background: #363b44;
+  box-shadow: 0 2px 4px #18202a1a;
+  transform: none;
+}
+.composer-toolbar > .send-message[type="submit"]:hover:enabled > svg { transform: none; }
+.composer-toolbar > .send-message[type="submit"]:active:enabled {
+  border-color: #1a1d23;
+  background: #1a1d23;
+  box-shadow: none;
+  transform: scale(.96);
+}
+.composer-toolbar > .send-message[type="submit"]:focus-visible {
+  outline: 2px solid #7b8494;
+  outline-offset: 3px;
+}
+.composer-toolbar > .send-message[type="submit"]:disabled {
+  border-color: #e8eaee;
+  background: #f0f1f3;
+  color: #a4a8b0;
+  box-shadow: none;
+}
 .composer-tool { border-color: #e1e6ee; border-bottom-color: var(--surface); border-radius: 12px 12px 0 0; }
 .composer-input-tools { padding: 0 18px; }
 .composer-hint { opacity: .8; }
+.composer-hint.caution { opacity: 1; }
 
 /* ---------- Rail cards: light, with origin kept visible by an accent edge ---------- */
 .queue-card { border-color: #e6eaf1; border-radius: 12px; box-shadow: none; animation: rv-rise-soft var(--dur-slow) var(--ease-out) backwards; }

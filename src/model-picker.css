@@ -4,10 +4,6 @@
   font: inherit;
   cursor: pointer;
 }
-.reasoning-picker { flex-shrink: 0; max-width: 190px; }
-.reasoning-picker select { max-width: 166px; text-overflow: ellipsis; }
-.reasoning-picker.needs-setup { color: #a46a11; }
-.reasoning-picker:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .model-picker-trigger > span {
   overflow: hidden;
   text-overflow: ellipsis;

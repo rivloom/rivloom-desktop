@@ -26,9 +26,14 @@ export function workflowDiagnostics(value: Workflow, sources: WorkflowDiagnostic
         executionID: active ? attempt.executionID : null, nodeID: active ? attempt.nodeID : target,
         phase: 'placement', recovery: 'automatic_check', observedAt: null, dependencies: [], nodes: [], queue: null };
       const state = (phase: WorkflowStepDiagnostic['phase'], recovery: WorkflowStepDiagnostic['recovery'] = 'none') => ({ ...result, phase, recovery });
-      if (step.state === 'completed') return { ...state('completed'), nodeID: attempt?.nodeID || null, observedAt: attempt?.updatedAt || null };
-      if (step.state === 'failed') return { ...state('failed', 'user_action'), nodeID: attempt?.nodeID || result.nodeID, observedAt: attempt?.updatedAt || null };
-      if (step.state === 'cancelled' || value.state === 'stopped') return state('stopped');
+      // Terminal attribution comes from the recorded attempt, never a current placement preference.
+      const terminal = (phase: WorkflowStepDiagnostic['phase'], recovery: WorkflowStepDiagnostic['recovery'] = 'none') => ({
+        ...state(phase, recovery), executionID: attempt?.executionID || null,
+        nodeID: attempt?.nodeID || null, observedAt: attempt?.updatedAt || null,
+      });
+      if (step.state === 'completed') return terminal('completed');
+      if (step.state === 'failed') return terminal('failed', 'user_action');
+      if (step.state === 'cancelled' || value.state === 'stopped') return terminal('stopped');
       if (value.state === 'stopping') return state('stopping', 'wait_original_execution');
       // Pausing only fences new dispatch; already admitted work keeps its actual status.
       if (!active && value.state === 'paused') return state('paused', 'user_action');

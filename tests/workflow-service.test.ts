@@ -383,6 +383,7 @@ test('retry restores only a failed branch and its blocked descendants, preservin
     f.executions.set(failed.executionID, { phase: 'failed', summary: 'Failed first try', error: 'synthetic_failure', outcome: null, outputFiles: [], safeToTransfer: true });
     await f.service.advance(id);
     f.service.enqueue(id, randomUUID(), 'Do not start the next round', []);
+    f.service.messageControl(id, 'pause');
     const before = f.store.get(id)!;
     const request = { version: before.version, roundRequestID: before.requestID, stepID: 'bad', attempt: 1, requestID: randomUUID() };
     f.restart(); const retried = await f.service.retryStep(id, request);
@@ -485,7 +486,7 @@ test('conversation messages queue through questions and restart, preserve rounds
   } finally { await f.service.close(); f.db.close(); }
 });
 
-test('message cancellation, stop and failures hold the queue until explicitly resumed', async () => {
+test('cancelled messages stay cancelled while failures advance and stop waits for a fresh send', async () => {
   for (const action of ['stop', 'failure', 'planner_failure'] as const) {
     const f = setup();
     try {
@@ -497,12 +498,265 @@ test('message cancellation, stop and failures hold the queue until explicitly re
       if (action === 'stop') f.service.control(id, 'stop');
       else f.executions.set(f.starts.at(-1)!.executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: true, error: 'execution_failed' });
       await f.service.advance(id); f.restart(); await f.service.tick();
-      assert.equal(f.store.get(id)!.queuePaused, true, action); assert.equal(f.store.get(id)!.rounds, undefined);
-      f.service.messageControl(id, 'resume'); await f.service.tick();
+      if (action === 'stop') {
+        assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.queuePauseReason, 'stopped');
+        assert.equal(f.store.get(id)!.rounds, undefined);
+        f.service.enqueue(id, randomUUID(), 'Continue with this new request', []);
+        assert.equal(f.store.get(id)!.queuePaused, false); await f.service.tick();
+      } else {
+        assert.equal(!!f.store.get(id)!.queuePaused, false, action);
+        assert.equal(f.store.get(id)!.rounds![0].state, 'failed');
+        assert.equal(f.store.get(id)!.rounds![0].error, 'execution_failed');
+      }
       assert.equal(f.store.get(id)!.roundRequestID, next, action);
       assert.equal(f.store.get(id)!.messages![0].state, 'cancelled');
     } finally { await f.service.close(); f.db.close(); }
   }
+});
+
+test('a fresh message after planner or executor failure starts one new round without retrying failed work', async () => {
+  for (const role of ['planner', 'executor'] as const) {
+    const f = setup();
+    try {
+      const id = role === 'planner' ? f.create().id : await f.planned({ summary: 'Original plan', steps: [step('work')] });
+      if (role === 'planner') await f.service.advance(id);
+      const failed = f.starts.at(-1)!, count = f.starts.length;
+      f.executions.set(failed.executionID, { phase: 'failed', summary: 'Preserve this failure', outcome: null,
+        outputFiles: [], safeToTransfer: false, error: 'execution_failed' });
+      await f.service.advance(id);
+      const before = f.store.get(id)!;
+      assert.equal(before.state, 'failed'); assert.equal(!!before.queuePaused, false);
+      const next = randomUUID(); f.service.enqueue(id, next, 'A separate next request', []);
+      f.service.enqueue(id, next, 'A separate next request', []); f.restart();
+      await Promise.all([f.service.advance(id), f.service.advance(id)]);
+      const admitted = f.store.get(id)!;
+      assert.equal(admitted.roundRequestID, next); assert.equal(admitted.rounds!.length, 1);
+      assert.deepEqual(admitted.rounds![0].planner, before.planner); assert.deepEqual(admitted.rounds![0].steps, before.steps);
+      assert.equal(admitted.rounds![0].state, 'failed'); assert.equal(f.starts.length, count);
+      f.restart(); await Promise.all([f.service.tick(), f.service.tick()]); await f.service.tick();
+      assert.equal(f.starts.length, count + 1); assert.equal(f.starts.at(-1)!.context.role, 'planner');
+      assert.notEqual(f.starts.at(-1)!.executionID, failed.executionID);
+      assert.equal(f.starts.filter(attempt => attempt.executionID === failed.executionID).length, 1);
+      f.service.enqueue(id, next, 'A separate next request', []);
+      assert.equal(f.store.get(id)!.messages!.length, 1); assert.equal(f.store.get(id)!.rounds!.length, 1);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('manual queue pause survives failure and replay but a fresh terminal send resumes FIFO', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    const first = randomUUID(); f.service.enqueue(id, first, 'Already queued', []); f.service.messageControl(id, 'pause');
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: true, error: 'execution_failed' });
+    await f.service.advance(id); f.restart();
+    f.service.enqueue(id, first, 'Already queued', []); await f.service.tick();
+    const paused = f.store.get(id)!;
+    assert.equal(paused.state, 'failed'); assert.equal(paused.queuePaused, true); assert.equal(paused.queuePauseReason, 'manual');
+    assert.equal(paused.rounds, undefined); assert.equal(f.starts.length, 2);
+    const next = randomUUID(); f.service.enqueue(id, next, 'New continuation intent', []);
+    assert.equal(f.store.get(id)!.queuePaused, false);
+    f.service.messageControl(id, 'pause'); f.service.enqueue(id, next, 'New continuation intent', []);
+    await f.service.tick(); assert.equal(f.store.get(id)!.rounds, undefined);
+    assert.equal(f.store.get(id)!.queuePauseReason, 'manual', 'A replay cannot undo a newer manual pause');
+    f.service.enqueue(id, randomUUID(), 'Continue after the later pause', []); await f.service.tick();
+    assert.equal(f.store.get(id)!.roundRequestID, first); assert.equal(f.store.get(id)!.queuePauseReason, undefined);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('legacy failure holds require a fresh message and never resume merely on startup, polling or replay', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Old plan', steps: [step('work')] });
+    const queued = randomUUID(); f.service.enqueue(id, queued, 'Previously queued', []);
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: false, error: 'workflow_invalid_outcome' });
+    await f.service.advance(id);
+    // Older versions stored the same boolean for automatic failure holds and manual queue pause.
+    f.store.update(id, value => { value.queuePaused = true; delete value.queuePauseReason; });
+    f.restart(); await f.service.tick(); f.service.enqueue(id, queued, 'Previously queued', []); await f.service.tick();
+    assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.rounds, undefined);
+    const next = randomUUID(); const resumed = f.service.enqueue(id, next, 'Explicit new continuation intent', []);
+    assert.equal(resumed.queuePaused, false);
+    f.restart(); await f.service.tick();
+    const current = f.store.get(id)!;
+    assert.equal(current.roundRequestID, queued, 'The fresh message does not jump ahead of already queued work');
+    assert.equal(current.rounds![0].state, 'failed'); assert.equal(current.rounds![0].steps[0].attempts.length, 1);
+    assert.equal(current.messages!.length, 2); assert.equal(f.starts.length, 2);
+    f.service.messageControl(id, 'pause'); f.service.enqueue(id, next, 'Explicit new continuation intent', []);
+    assert.equal(f.store.get(id)!.queuePaused, true, 'A retry of that send cannot undo a later explicit pause');
+    assert.equal(f.store.get(id)!.queuePauseReason, 'manual');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('fresh sends resume safely ended rounds regardless of the previous pause reason', async () => {
+  for (const state of ['stopped', 'failed', 'completed'] as const) for (const reason of [undefined, 'manual', 'stopped', 'context_error'] as const) {
+    const f = setup();
+    try {
+      const id = await f.planned({ summary: 'Original plan', steps: [step('work')] });
+      if (state === 'stopped') f.service.control(id, 'stop');
+      else if (state === 'failed') f.executions.set(f.starts[1].executionID, {
+        phase: 'failed', summary: 'Saved failure', outcome: null, outputFiles: [], safeToTransfer: false, error: 'execution_failed',
+      });
+      else f.finish(f.starts[1], complete('Saved result'));
+      await f.service.advance(id);
+      f.store.update(id, current => { current.queuePaused = true; current.queuePauseReason = reason;
+        if (reason === 'context_error') current.queueError = 'workflow_context_failed'; });
+      const before = f.store.get(id)!, next = randomUUID();
+      const resumed = f.service.enqueue(id, next, 'Use the saved context for new work', [], 'fixture/next', 'low', A);
+      assert.equal(resumed.queuePaused, false); assert.equal(resumed.queuePauseReason, undefined); assert.equal(resumed.queueError, undefined);
+      f.restart(); await Promise.all([f.service.tick(), f.service.tick()]);
+      const current = f.store.get(id)!;
+      assert.equal(current.roundRequestID, next); assert.equal(current.rounds!.length, 1);
+      assert.equal(current.rounds![0].state, state); assert.deepEqual(current.rounds![0].steps, before.steps);
+      assert.deepEqual(current.rounds![0].planner, before.planner); assert.equal(current.originNodeID, A);
+      assert.equal(current.model, 'fixture/next'); assert.equal(current.reasoningEffort, 'low');
+      await f.service.tick(); await f.service.tick(); assert.equal(f.starts.length, 3);
+      assert.equal(f.starts[2].context.role, 'planner'); assert.notEqual(f.starts[2].executionID, f.starts[1].executionID);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('a fresh send cannot resume active dispatch pause or an unconfirmed stop', async () => {
+  for (const control of ['pause', 'stop'] as const) {
+    const f = setup();
+    try {
+      const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+      f.service.control(id, control); if (control === 'stop') f.uncertainStop(true);
+      const next = randomUUID(); f.service.enqueue(id, next, 'A new request while control is pending', []);
+      await f.service.tick(); f.restart(); await f.service.tick();
+      const value = f.store.get(id)!;
+      assert.equal(value.state, control === 'pause' ? 'paused' : 'stopping');
+      assert.equal(value.rounds, undefined); assert.equal(f.starts.length, 2);
+      if (control === 'stop') {
+        assert.equal(value.steps[0].attempts[0].phase, 'unknown'); assert.equal(value.queuePaused, true);
+        f.uncertainStop(false); await f.service.tick(); await f.service.tick();
+        assert.equal(f.store.get(id)!.state, 'stopped'); assert.equal(f.store.get(id)!.rounds, undefined);
+        f.service.enqueue(id, next, 'A new request while control is pending', []); await f.service.tick();
+        assert.equal(f.store.get(id)!.queuePaused, true, 'Replay cannot undo the later confirmed stop');
+        f.service.enqueue(id, randomUUID(), 'Continue after stop confirmation', []); await f.service.tick();
+        assert.equal(f.store.get(id)!.roundRequestID, next);
+      }
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('saved sends after a confirmed stop recover on restart once while preserving FIFO and history', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Stopped plan', steps: [step('work')] });
+    f.service.control(id, 'stop'); await f.service.advance(id);
+    const before = f.store.get(id)!, first = randomUUID(), later = randomUUID(), cancelled = randomUUID();
+    const stoppedAt = Date.parse(before.events.at(-1)!.at);
+    // Simulate durable output from the older enqueue implementation, without using the new resume path.
+    before.messages = [
+      { requestID: cancelled, text: 'Cancelled send', inputFiles: [], createdAt: new Date(stoppedAt + 1).toISOString(), state: 'cancelled' },
+      { requestID: first, text: 'Earlier valid queued request', inputFiles: [], createdAt: new Date(stoppedAt - 1).toISOString(), state: 'queued' },
+      { requestID: later, text: 'CPU information after stop', inputFiles: [], createdAt: new Date(stoppedAt + 1).toISOString(), state: 'queued' },
+    ];
+    before.updatedAt = new Date(stoppedAt + 2).toISOString();
+    f.db.prepare('UPDATE workflows SET body=? WHERE id=?').run(JSON.stringify(before), id);
+    f.restart(); await Promise.all([f.service.tick(), f.service.tick()]);
+    const current = f.store.get(id)!;
+    assert.equal(current.queuePaused, false); assert.equal(current.queuePauseReason, undefined);
+    assert.equal(current.roundRequestID, first, 'A later send authorizes continuation without discarding older valid messages');
+    assert.equal(current.rounds!.length, 1); assert.equal(current.rounds![0].state, 'stopped');
+    assert.deepEqual(current.rounds![0].planner, before.planner); assert.deepEqual(current.rounds![0].steps, before.steps);
+    assert.equal(current.messages![0].state, 'cancelled'); assert.equal(current.messages![2].requestID, later);
+    f.restart(); await f.service.tick(); await f.service.tick(); assert.equal(f.starts.length, 3);
+    assert.equal(f.starts[2].context.role, 'planner'); assert.equal(f.starts.filter(a => a.executionID === f.starts[1].executionID).length, 1);
+    f.service.messageControl(id, 'pause'); f.service.enqueue(id, later, 'CPU information after stop', []);
+    assert.equal(f.store.get(id)!.queuePauseReason, 'manual', 'Replaying the recovered send does not clear later control');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('stop compatibility recovery skips ambiguous controls, timestamps and unsettled attempts', async () => {
+  const cases = ['before', 'equal', 'invalid_send', 'invalid_stop', 'invalid_updated', 'clock_rollback', 'cancelled',
+    'manual', 'context_error', 'legacy', 'queue_error', 'missing_event', 'later_state', 'step_event', 'stopping', 'failed', 'unknown', 'unhandled'] as const;
+  for (const boundary of cases) {
+    const f = setup();
+    try {
+      const id = await f.planned({ summary: 'Old stopped plan', steps: [step('work')] });
+      f.service.control(id, 'stop'); await f.service.advance(id);
+      const value = f.store.get(id)!, stopped = value.events.at(-1)!;
+      const at = Date.parse(stopped.at), requestID = randomUUID();
+      value.messages = [{ requestID, text: 'Saved follow up', inputFiles: [], createdAt: new Date(at + 1).toISOString(), state: 'queued' }];
+      value.updatedAt = new Date(at + 2).toISOString();
+      if (boundary === 'before') value.messages[0].createdAt = new Date(at - 1).toISOString();
+      if (boundary === 'equal') value.messages[0].createdAt = stopped.at;
+      if (boundary === 'invalid_send') value.messages[0].createdAt = 'invalid';
+      if (boundary === 'invalid_stop') stopped.at = 'invalid';
+      if (boundary === 'invalid_updated') value.updatedAt = 'invalid';
+      if (boundary === 'clock_rollback') value.updatedAt = stopped.at;
+      if (boundary === 'cancelled') value.messages[0].state = 'cancelled';
+      if (boundary === 'manual' || boundary === 'context_error') value.queuePauseReason = boundary;
+      if (boundary === 'legacy') delete value.queuePauseReason;
+      if (boundary === 'queue_error') value.queueError = 'workflow_context_failed';
+      if (boundary === 'missing_event') value.events = [];
+      if (boundary === 'later_state') value.events.push({ ...stopped, id: stopped.id + 1, text: 'paused' });
+      if (boundary === 'step_event') stopped.stepID = 'work';
+      if (boundary === 'stopping') { value.state = 'stopping'; value.steps[0].attempts[0].phase = 'unknown'; f.uncertainStop(true); }
+      if (boundary === 'failed') value.state = 'failed';
+      if (boundary === 'unknown') value.steps[0].attempts[0].phase = 'unknown';
+      if (boundary === 'unhandled') value.steps[0].attempts[0].handled = false;
+      f.db.prepare('UPDATE workflows SET body=? WHERE id=?').run(JSON.stringify(value), id);
+      f.restart(); await f.service.tick(); await f.service.tick();
+      const current = f.store.get(id)!;
+      assert.equal(current.queuePaused, true, boundary); assert.equal(current.rounds, undefined, boundary);
+      assert.equal(f.starts.length, 2, boundary);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('stop compatibility recovery rechecks a newer manual pause inside the durable mutation', async () => {
+  const f = setup();
+  try {
+    const id = f.create().id;
+    f.service.control(id, 'stop'); await f.service.advance(id);
+    const value = f.store.get(id)!, at = Date.parse(value.events.at(-1)!.at);
+    value.messages = [{ requestID: randomUUID(), text: 'Saved after stop', inputFiles: [], createdAt: new Date(at + 1).toISOString(), state: 'queued' }];
+    value.updatedAt = new Date(at + 2).toISOString();
+    f.db.prepare('UPDATE workflows SET body=? WHERE id=?').run(JSON.stringify(value), id);
+    const update = f.store.update.bind(f.store); let interrupted = false;
+    f.store.update = (id, mutate, version) => {
+      if (!interrupted) { interrupted = true; update(id, current => { current.queuePaused = true; current.queuePauseReason = 'manual'; }); }
+      return update(id, mutate, version);
+    };
+    await f.service.tick();
+    assert.equal(interrupted, true); assert.equal(f.store.get(id)!.queuePauseReason, 'manual');
+    assert.equal(f.store.get(id)!.rounds, undefined); assert.equal(f.starts.length, 0);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('a planner failure after explicit dispatch pause keeps future messages paused', async () => {
+  const f = setup();
+  try {
+    const value = f.create(); await f.service.advance(value.id);
+    f.service.control(value.id, 'pause'); f.service.enqueue(value.id, randomUUID(), 'Future request', []);
+    f.executions.set(f.starts[0].executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: true, error: 'execution_failed' });
+    await f.service.advance(value.id); f.restart(); await f.service.tick();
+    assert.equal(f.store.get(value.id)!.state, 'failed'); assert.equal(f.store.get(value.id)!.queuePauseReason, 'manual');
+    assert.equal(f.store.get(value.id)!.rounds, undefined); assert.equal(f.starts.length, 1);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('fresh terminal sends still require every recorded attempt to be terminal and handled', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    const next = randomUUID(); f.service.enqueue(id, next, 'Next request', []);
+    for (const state of ['stopped', 'failed', 'completed'] as const) for (const phase of ['queued', 'running', 'waiting', 'unknown', 'failed'] as const) {
+      f.store.update(id, value => {
+        value.state = state; value.steps[0].state = 'failed'; value.queuePaused = true; value.queuePauseReason = 'manual';
+        value.steps[0].attempts[0].phase = phase; value.steps[0].attempts[0].handled = phase !== 'failed';
+      });
+      f.service.enqueue(id, randomUUID(), 'Wait for old execution to be safely handled', []);
+      assert.equal(f.store.get(id)!.queuePaused, true);
+      await f.service.tick(); assert.equal(f.store.get(id)!.rounds, undefined, phase); assert.equal(f.starts.length, 2);
+    }
+    f.store.update(id, value => { value.steps[0].attempts[0].handled = true; });
+    f.service.enqueue(id, randomUUID(), 'Now continue safely', []);
+    await f.service.tick(); assert.equal(f.store.get(id)!.roundRequestID, next);
+  } finally { await f.service.close(); f.db.close(); }
 });
 
 test('queued model choices are durable per message and only change the admitted round', async () => {
@@ -586,6 +840,76 @@ test('round admission rechecks cancellation during context preparation and archi
   } finally { await f.service.close(); f.db.close(); }
 });
 
+test('fresh terminal sends retry context preparation while request replay preserves a repeated error', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: false, error: 'execution_failed' });
+    await f.service.advance(id);
+    const first = randomUUID(); f.service.enqueue(id, first, 'First continuation', []);
+    f.adapter.conversationContext = async () => { throw new Error('workflow_context_failed'); };
+    await f.service.tick();
+    assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.queuePauseReason, 'context_error');
+    assert.equal(f.store.get(id)!.queueError, 'workflow_context_failed');
+    const next = randomUUID(); f.service.enqueue(id, next, 'Later continuation', []);
+    assert.equal(f.store.get(id)!.queueError, undefined); assert.equal(f.store.get(id)!.queuePaused, false);
+    f.restart(); await f.service.tick();
+    assert.equal(f.store.get(id)!.rounds, undefined); assert.equal(f.store.get(id)!.queuePauseReason, 'context_error');
+    f.service.enqueue(id, first, 'First continuation', []);
+    assert.equal(f.store.get(id)!.queueError, 'workflow_context_failed');
+    delete f.adapter.conversationContext;
+    f.service.enqueue(id, randomUUID(), 'Retry after the context problem is resolved', []); await f.service.tick();
+    assert.equal(f.store.get(id)!.roundRequestID, first); assert.equal(f.store.get(id)!.queueError, undefined);
+    assert.equal(f.store.get(id)!.queuePauseReason, undefined); assert.equal(f.starts.length, 2);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('obsolete context preparation errors cannot pause an edited, cancelled or explicitly paused queue', async () => {
+  for (const change of ['edit', 'cancel', 'pause', 'round'] as const) {
+    const f = setup();
+    try {
+      const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+      f.finish(f.starts[1], complete()); await f.service.advance(id);
+      const first = randomUUID(), next = randomUUID();
+      f.service.enqueue(id, first, 'Before preparation', []); f.service.enqueue(id, next, 'Later request', []);
+      let reject!: (error: Error) => void;
+      f.adapter.conversationContext = () => new Promise((_resolve, fail) => { reject = fail; });
+      const preparing = f.service.advance(id);
+      if (change === 'edit') f.service.editMessage(id, { requestID: first, expectedText: 'Before preparation', text: 'Updated request' });
+      if (change === 'cancel') f.service.messageControl(id, 'cancel', first);
+      if (change === 'pause') f.service.messageControl(id, 'pause');
+      if (change === 'round') f.store.update(id, value => { value.roundRequestID = randomUUID(); });
+      reject(new Error('obsolete_context_failure')); await preparing;
+      const value = f.store.get(id)!;
+      assert.equal(value.queueError, undefined, change); assert.equal(value.rounds, undefined, change);
+      assert.equal(!!value.queuePaused, change === 'pause', change);
+      assert.equal(value.queuePauseReason, change === 'pause' ? 'manual' : undefined, change);
+      assert.equal(f.starts.length, 2);
+    } finally { await f.service.close(); f.db.close(); }
+  }
+});
+
+test('round admission rechecks handled terminal attempts after asynchronous context preparation', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    f.executions.set(f.starts[1].executionID, { phase: 'failed', summary: '', outcome: null, outputFiles: [], safeToTransfer: false, error: 'execution_failed' });
+    await f.service.advance(id);
+    const next = randomUUID(); f.service.enqueue(id, next, 'Next request', []);
+    const context = { id: randomUUID(), name: 'history.json', bytes: 2, sha256: 'a'.repeat(64), mime: 'application/octet-stream' };
+    let release!: () => void;
+    f.adapter.conversationContext = () => new Promise(resolve => { release = () => resolve(context); });
+    const preparing = f.service.advance(id);
+    f.store.update(id, value => { value.steps[0].attempts[0].handled = false; });
+    release(); await preparing;
+    assert.equal(f.store.get(id)!.rounds, undefined); assert.equal(f.starts.length, 2);
+    f.store.update(id, value => { value.steps[0].attempts[0].handled = true; });
+    f.adapter.conversationContext = async () => context;
+    await f.service.tick(); assert.equal(f.store.get(id)!.roundRequestID, next);
+    assert.equal(f.store.get(id)!.rounds![0].steps[0].attempts.length, 1);
+  } finally { await f.service.close(); f.db.close(); }
+});
+
 test('round input files preserve original material, newest results and explicitly report quota errors', async () => {
   const f = setup();
   try {
@@ -600,7 +924,8 @@ test('round input files preserve original material, newest results and explicitl
     const next = randomUUID(); f.service.enqueue(id, next, 'Keep every original file', []);
     f.adapter.conversationContext = async () => file('history.json');
     await f.service.tick();
-    assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.queueError, 'workflow_input_quota');
+    assert.equal(f.store.get(id)!.queuePaused, true); assert.equal(f.store.get(id)!.queuePauseReason, 'context_error');
+    assert.equal(f.store.get(id)!.queueError, 'workflow_input_quota');
     assert.notEqual(f.store.get(id)!.roundRequestID, next); assert.equal(f.store.get(id)!.inputFiles.length, 10);
     f.restart(); await f.service.tick(); assert.equal(f.store.get(id)!.queuePaused, true);
   } finally { await f.service.close(); f.db.close(); }

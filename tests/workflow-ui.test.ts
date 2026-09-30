@@ -8,6 +8,7 @@ import { conversations } from '../src/conversations.ts';
 import { collectAttention } from '../shared/task-attention.ts';
 import { createWorkflowDraft, updateConversationDraft, prepareConversationRequest, clearSubmittedDraft, createdConversationKey } from '../src/conversation-drafts.ts';
 import { conversationStopTarget, conversationStopState } from '../src/conversation-stop.ts';
+import { workflowMessageRecovery } from '../src/workflow-message-recovery.ts';
 
 const at = '2026-09-09T00:00:00.000Z';
 const step = (id: string, dependsOn: string[] = []): WorkflowStep => ({ id, title: id, instructions: id, dependsOn, nodeID: null,
@@ -19,6 +20,16 @@ const fixture = (): Workflow => ({ id: 'root', requestID: 'request', contentDige
   criteria: '', projectID: null, model: null, approvalMode: 'ask', target: { mode: 'automatic' }, state: 'running', version: 1, planVersion: 1, summary: '',
   planner: step('planner'), steps: [step('script'), step('video', ['script']), step('audio', ['script']), step('edit', ['video', 'audio'])],
   events: [], handoffs: [], inputFiles: [], confirmations: [], pendingConfirmation: null, createdAt: at, updatedAt: at, error: null });
+
+test('pending messages need no separate continuation control while preparation retry and stop confirmation remain available', () => {
+  for (const state of ['planning', 'running', 'paused', 'completed', 'failed', 'stopped'] as const)
+    for (const queuePaused of [true, false])
+      assert.equal(workflowMessageRecovery({ state, queuePaused }), null, `${state}/${queuePaused}`);
+  assert.deepEqual(workflowMessageRecovery({ state: 'failed', queueError: 'workflow_context_failed' }),
+    { kind: 'retry' });
+  assert.deepEqual(workflowMessageRecovery({ state: 'stopping', queuePaused: true, queueError: 'workflow_context_failed' }),
+    { kind: 'stopping' });
+});
 
 test('composer stop addresses the whole workflow during planning and parallel local/remote execution', () => {
   const value = fixture();

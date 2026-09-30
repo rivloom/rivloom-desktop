@@ -121,7 +121,7 @@ export function NodeProfileEditor({
   }
   return (
     <Modal
-      title={t('我的 Node')}
+      title={t('本机')}
       subtitle={t('给这台机器一个容易辨认的名字和图标。')}
       close={() => { if (!busy) close(); }}
     >
@@ -134,9 +134,9 @@ export function NodeProfileEditor({
       >
         <div className="profile-preview">
           <NodeAvatar name={name} icon={icon} />
-          <strong>{name || t('我的 Node')}</strong>
+          <strong>{name || t('本机')}</strong>
         </div>
-        <Field label={t('Node 名称')}>
+        <Field label={t('设备名称')}>
           <input
             value={name}
             disabled={busy}

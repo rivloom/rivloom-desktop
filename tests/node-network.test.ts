@@ -116,6 +116,105 @@ test('node response limits distinguish encrypted collaboration data from small c
   }
 });
 
+test('remote task delivery replies cannot replace a newer cancellation', { skip: !['win32', 'linux'].includes(process.platform), timeout: 20_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-delivery-reply-'));
+  const ownerRoot = join(root, 'owner'), workerRoot = join(root, 'worker');
+  const ownerIdentity = loadNodeIdentity(ownerRoot), workerIdentity = loadNodeIdentity(workerRoot);
+  const pending = beginSecureChannel(ownerIdentity, workerIdentity.nodeID);
+  const accepted = acceptSecureChannel(pending.message, workerIdentity);
+  const channel = finishSecureChannel(pending, accepted.ack);
+  const network = new NodeNetwork(ownerRoot, false);
+  const wire = network as unknown as {
+    nodes: Map<string, RivloomNode>; channels: Map<string, SecureChannelSession>;
+    remoteTasks: RemoteTaskStore; deliveringRemoteTasks: Set<string>;
+    flushRemoteTask(id: string): Promise<void>;
+  };
+  const receiver = new RemoteTaskStore(workerRoot);
+  let releaseOffer: (() => void) | undefined, offerArrived: (() => void) | undefined;
+  let offerResponse: Promise<void> = Promise.resolve(), responseStatus = 200;
+  let sending: Promise<void> | undefined;
+  const seen: { taskID: string; type: string }[] = [], serverErrors: unknown[] = [];
+  const server = createServer((req, res) => {
+    void (async () => {
+      assert.equal(req.url, '/v1/channel/message');
+      const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const envelope = JSON.parse(Buffer.concat(chunks).toString('utf8')) as ChannelEnvelope;
+      const message = decryptChannelPayload(accepted.session, envelope);
+      let status = 200;
+      if (validRemoteTaskOffer(message)) {
+        receiver.receiveOffer(message); seen.push({ taskID: message.taskID, type: message.type });
+        offerArrived?.(); await offerResponse; status = responseStatus;
+      } else {
+        assert(validRemoteTaskCancel(message)); receiver.receiveCancel(message);
+        seen.push({ taskID: message.taskID, type: message.type });
+      }
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status === 200 ? encryptChannelEventAck(accepted.session, envelope) : { error: 'Synthetic delayed conflict' }));
+    })().catch(error => { serverErrors.push(error); res.writeHead(500).end(); });
+  });
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 4000;
+    while (!check() && !serverErrors.length && Date.now() < deadline) await wait(5);
+    assert.deepEqual(serverErrors, []); assert(check(), 'Expected the pending delivery to settle');
+  };
+  try {
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address(); assert(address && typeof address !== 'string');
+    wire.nodes.set(workerIdentity.nodeID, { id: workerIdentity.nodeID, name: 'Loopback receiver',
+      fingerprint: workerIdentity.fingerprint, protocolVersion: 1, addresses: ['127.0.0.1'], port: address.port,
+      online: true, local: false, trusted: true, verified: true, channelReady: true, lastSeen: new Date().toISOString(),
+      capabilities: [queueReceiptCapability], brains: [], worker: null });
+    wire.channels.set(workerIdentity.nodeID, channel);
+    for (const scenario of [
+      { name: 'late failure preserves and delivers cancel', status: 409, cancel: true },
+      { name: 'late success preserves and delivers cancel', status: 200, cancel: true },
+      { name: 'current failure still records the rejection', status: 409, cancel: false },
+      { name: 'current success still records authenticated delivery', status: 200, cancel: false },
+    ]) await t.test(scenario.name, async () => {
+      responseStatus = scenario.status;
+      offerResponse = new Promise<void>(resolve => { releaseOffer = resolve; });
+      let arrived = false; offerArrived = () => { arrived = true; };
+      const brainID = randomUUID();
+      const task = wire.remoteTasks.create(ownerIdentity.nodeID, brainID, workerIdentity.nodeID, brainID, {
+        title: 'Delivery ordering fixture', description: 'Never execute business work or a model.', criteria: 'Preserve the latest durable message.',
+      });
+      sending = wire.flushRemoteTask(task.id);
+      await until(() => arrived);
+      assert.equal(wire.remoteTasks.record(task.id)!.transmissionState, 'sending');
+      if (scenario.cancel) {
+        wire.remoteTasks.cancel(task.id);
+        await wire.flushRemoteTask(task.id); // The original request owns the delivery lock.
+        assert.equal(wire.remoteTasks.record(task.id)!.deliveryPending, true);
+        assert(validRemoteTaskCancel(wire.remoteTasks.message(task.id)));
+        assert.deepEqual(seen.filter(item => item.taskID === task.id).map(item => item.type), ['remote-task-offer']);
+      }
+      releaseOffer!(); await sending;
+      await until(() => !wire.deliveringRemoteTasks.has(task.id) && !wire.remoteTasks.record(task.id)!.deliveryPending);
+      const current = wire.remoteTasks.record(task.id)!;
+      if (scenario.cancel) {
+        assert.equal(current.status, 'cancelled'); assert.equal(current.deliveryError, null);
+        assert.equal(current.deliveredAt, null, 'An old offer ACK must not overwrite the newer cancel');
+        assert.equal(receiver.record(task.id)!.status, 'cancelled');
+        assert.deepEqual(seen.filter(item => item.taskID === task.id).map(item => item.type), ['remote-task-offer', 'remote-task-cancel']);
+        const restored = new RemoteTaskStore(ownerRoot); restored.load();
+        assert.equal(restored.record(task.id)!.deliveryError, null); assert.equal(restored.record(task.id)!.deliveryPending, false);
+      } else if (scenario.status === 409) {
+        assert.equal(current.status, 'pending'); assert.match(current.deliveryError!, /拒绝/);
+        assert.equal(current.transmissionState, 'transmission_unknown'); assert.equal(current.deliveredAt, null);
+      } else {
+        assert.equal(current.status, 'pending'); assert.equal(current.deliveryError, null);
+        assert.equal(current.transmissionState, 'delivered'); assert(current.deliveredAt);
+      }
+      assert.equal(current.executionSequence, 0); assert.equal(receiver.record(task.id)!.localTaskID, null);
+    });
+  } finally {
+    releaseOffer?.(); await sending?.catch(() => undefined);
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await network.stop(); rmSync(root, { recursive: true, force: true });
+  }
+});
+
 async function availableUdpPort() {
   const socket = createSocket('udp4');
   await new Promise<void>((resolve, reject) => {

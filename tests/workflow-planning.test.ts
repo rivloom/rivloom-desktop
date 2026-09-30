@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { parseWorkflowOutcome, plannerPermissions, workflowOutputSchema, workflowPrompt } from '../server/workflow-prompts.ts';
 import { checkWorkflowQuiescence, type WorkflowToolRecord } from '../server/workflow-quiescence.ts';
-import type { WorkflowExecutionContext } from '../shared/workflows.ts';
+import { validExecutionOutcome, type WorkflowExecutionContext } from '../shared/workflows.ts';
 import { workflowPlacementContract } from '../shared/workflow-origin.ts';
 
 test('official planner policy is read only and prompts bind every request to its targeting and generation', () => {
@@ -91,6 +91,73 @@ test('structured outcome parsing rejects invalid supplied structures and accepts
     assert.throws(() => parseWorkflowOutcome('executor', { ...value, files: [path] }, ''), /invalid_outcome/);
   assert.throws(() => parseWorkflowOutcome('planner', value, ''), /invalid_outcome/);
   assert.throws(() => parseWorkflowOutcome('planner', undefined, `${JSON.stringify(value)}\n${JSON.stringify(value)}`), /invalid_outcome/);
+});
+
+test('text-only completion may omit files at the model boundary without changing its summary or source object', () => {
+  const summary = '本机时区观测结果：UTC+08:00，已通过只读命令核对。\n'.repeat(40);
+  const value = Object.freeze({ kind: 'completed', summary });
+  const expected = { ...value, files: [] };
+  const normalized = parseWorkflowOutcome('executor', value, 'ignored');
+  assert.deepEqual(normalized, expected); assert.notEqual(normalized, value);
+  assert.deepEqual(value, { kind: 'completed', summary }); assert.equal(Object.hasOwn(value, 'files'), false);
+  for (const finalText of [JSON.stringify(value), '```json\n' + JSON.stringify(value) + '\n```'])
+    assert.deepEqual(parseWorkflowOutcome('executor', undefined, finalText), expected);
+  assert.equal(validExecutionOutcome(value), false, 'The public outcome/wire validator still requires files');
+  assert.equal(validExecutionOutcome(normalized), true);
+  assert.throws(() => parseWorkflowOutcome('planner', value, ''), /workflow_invalid_outcome/);
+  assert.throws(() => parseWorkflowOutcome('planner', undefined, JSON.stringify(value)), /workflow_invalid_outcome/);
+  const explicit = Object.freeze({ ...expected, files: Object.freeze(['result.txt']) });
+  assert.equal(parseWorkflowOutcome('executor', explicit, ''), explicit, 'Explicit valid deliveries need no normalization');
+});
+
+test('completion normalization rejects explicit invalid files instead of replacing them or falling back to text', () => {
+  const goodText = JSON.stringify({ kind: 'completed', summary: 'done' });
+  for (const files of [undefined, null, 'result.txt', {}, 0, false, [null], ['../secret'], ['same.txt', 'same.txt']]) {
+    const value = Object.freeze({ kind: 'completed', summary: 'done', files });
+    assert.equal(Object.hasOwn(value, 'files'), true);
+    assert.throws(() => parseWorkflowOutcome('executor', value, goodText), /workflow_invalid_outcome/);
+    assert.equal(value.files, files);
+    // JSON cannot represent an own property whose value is undefined.
+    if (files !== undefined) assert.throws(() => parseWorkflowOutcome('executor', undefined, JSON.stringify(value)), /workflow_invalid_outcome/);
+  }
+});
+
+test('completion normalization keeps summary, unknown-field and complete-JSON requirements strict', () => {
+  const invalid = [
+    { kind: 'completed' }, { kind: 'completed', summary: '' }, { kind: 'completed', summary: null },
+    { kind: 'completed', summary: 1 }, { kind: 'completed', summary: 'a'.repeat(12_001) },
+    { kind: 'completed', summary: 'bad\u0000summary' }, { kind: 'completed', summary: 'done', extra: true },
+  ];
+  for (const value of invalid) {
+    const before = structuredClone(value);
+    assert.throws(() => parseWorkflowOutcome('executor', value, ''), /workflow_invalid_outcome/);
+    assert.throws(() => parseWorkflowOutcome('executor', undefined, JSON.stringify(value)), /workflow_invalid_outcome/);
+    assert.deepEqual(value, before);
+  }
+  const json = JSON.stringify({ kind: 'completed', summary: 'done' });
+  for (const text of [`Result: ${json}`, `${json}\n${json}`, ' '.repeat(56_001) + json])
+    assert.throws(() => parseWorkflowOutcome('executor', undefined, text), /workflow_invalid_outcome/);
+});
+
+test('non-completion outcomes still require explicit files while planner queries retain their own schema', () => {
+  const query = { text: 'Find material', kinds: ['file'], limit: 1 };
+  const plan = { summary: 'Continue', steps: [{ id: 'work', title: 'Work', instructions: 'Work', dependsOn: [],
+    nodeID: null, resources: [], software: [], requirements: {} }] };
+  const reference = { nodeID: 'B'.repeat(32), workspaceID: randomUUID(), id: 'a'.repeat(64), revision: 'b'.repeat(64) };
+  const values = [
+    { kind: 'query', query, reason: 'Need material', checkpoint: '' },
+    { kind: 'resources', resources: [reference], reason: 'Need material', checkpoint: '' },
+    { kind: 'handoff', nodeID: null, reason: 'Continue elsewhere', checkpoint: 'Saved', processesStopped: true },
+    { kind: 'expand', plan, checkpoint: 'Saved' },
+  ];
+  for (const value of values) {
+    assert.equal(validExecutionOutcome({ ...value, files: [] }), true, value.kind);
+    assert.throws(() => parseWorkflowOutcome('executor', value, ''), /workflow_invalid_outcome/);
+    assert.throws(() => parseWorkflowOutcome('executor', undefined, JSON.stringify(value)), /workflow_invalid_outcome/);
+    assert.equal(Object.hasOwn(value, 'files'), false);
+  }
+  const plannerQuery = { kind: 'query', query, reason: 'Need material' };
+  assert.equal(parseWorkflowOutcome('planner', plannerQuery, ''), plannerQuery);
 });
 
 test('planner file reference schema matches accepted catalog references and rejects tool names or versions', () => {

@@ -87,7 +87,10 @@ export type Workflow = {
   pendingConfirmation: { nodeID: string; stepID: string; waitingCount: number } | null;
   createdAt: string; updatedAt: string; error: string | null;
   rounds?: WorkflowRound[]; messages?: WorkflowMessage[]; roundRequestID?: string; roundCreatedAt?: string;
-  queuePaused?: boolean; queueError?: string; conversationContextFile?: TaskFileDescriptor;
+  queuePaused?: boolean;
+  /** Coordinator-local reason. Older paused queues omit it and need explicit continuation intent. */
+  queuePauseReason?: 'manual' | 'stopped' | 'context_error';
+  queueError?: string; conversationContextFile?: TaskFileDescriptor;
 };
 export function workflowAllSteps(value: Workflow): WorkflowStep[] {
   return [...(value.rounds || []).flatMap((round) => [round.planner, ...round.steps]), value.planner, ...value.steps];

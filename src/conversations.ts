@@ -1,7 +1,7 @@
 import type { Conversation } from '../shared/conversations.ts';
 import { workflowPendingMessages } from '../shared/workflows.ts';
 export { conversations, type Conversation } from '../shared/conversations.ts';
-import { t } from '../shared/i18n.ts';
+import { language, t } from '../shared/i18n.ts';
 import {
   activeStates,
   stateLabels,
@@ -68,6 +68,40 @@ export function conversationIsRunning(item: Conversation): boolean {
   if (item.remote && !['not_started', 'open', 'ready'].includes(item.remote.executionState))
     return item.remote.executionState === 'running';
   return item.brainTask?.status === 'running';
+}
+
+/** Presentation only: true exactly when conversationState() reports an execution failure. */
+export function conversationIsFailed(item: Conversation): boolean {
+  if (item.workflow) return !item.workflowAttention && item.workflow.state === 'failed' &&
+    !workflowPendingMessages(item.workflow).length;
+  if (item.localTask && !['open', 'ready'].includes(item.localTask.state))
+    return item.localTask.state === 'failed';
+  if (item.brainTask && ['completed', 'failed'].includes(item.brainTask.status))
+    return item.brainTask.status === 'failed';
+  if (item.remote && !['pending', 'accepted'].includes(item.remote.status)) return false;
+  return !!item.remote && item.remote.executionState === 'failed';
+}
+
+/** The history column is narrow; its tooltip and accessible name keep the full state. */
+export function conversationCompactState(item: Conversation): string {
+  const state = conversationState(item);
+  const compact: Record<string, string> = {
+    [t('执行失败')]: t('失败'),
+    [t('执行中断')]: t('已中断'),
+    [t('分析与规划')]: t('规划中'),
+    [t('消息队列已暂停')]: t('队列已暂停'),
+    [t('消息排队中')]: t('排队中'),
+    [t('已获执行槽')]: t('已获槽位'),
+    [t('未获准执行')]: t('未获准'),
+    [t('已拒绝执行')]: t('已拒绝'),
+  };
+  // These Chinese labels already fit the column; only their English translations are too long.
+  if (language() === 'en') Object.assign(compact, {
+    [t('待审批')]: t('需审批'),
+    [t('等待处理')]: t('待处理'),
+    [t('等待接收')]: t('待接收'),
+  });
+  return compact[state] || state;
 }
 
 export function conversationState(item: Conversation): string {

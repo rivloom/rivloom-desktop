@@ -1491,12 +1491,15 @@ export class RemoteTaskStore {
     return true;
   }
 
-  markDeliveryFailed(taskID: string, message: string) {
+  markDeliveryFailed(taskID: string, message: RemoteTaskMessage, error: string) {
     const task = this.values.get(taskID);
-    if (!task?.deliveryPending) return false;
+    const current = this.message(taskID);
+    // A reply belongs to the message that was sent, not a cancellation or newer control
+    // persisted under the same task ID while that request was in flight.
+    if (!task || !current || JSON.stringify(current) !== JSON.stringify(message)) return false;
     task.pendingControl = null;
     task.deliveryPending = false;
-    task.deliveryError = message.slice(0, 200);
+    task.deliveryError = error.slice(0, 200);
     task.updatedAt = new Date().toISOString();
     this.save();
     return true;

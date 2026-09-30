@@ -1,7 +1,15 @@
 import { t } from '../shared/i18n.ts';
 import type { WorkflowDiagnosticReason, WorkflowStepDiagnostic } from '../shared/workflow-diagnostics.ts';
 
-export function diagnosticPhaseLabel(phase: WorkflowStepDiagnostic['phase']) {
+export function diagnosticPhaseLabel(phase: WorkflowStepDiagnostic['phase'], planning = false) {
+  if (planning) {
+    const labels: Partial<Record<WorkflowStepDiagnostic['phase'], string>> = {
+      placement: t('正在检查规划条件'), queued: t('规划已排队'), running: t('正在分析与规划'),
+      admitted: t('已获槽位'), rejected: t('Node 已拒绝规划'), attention: t('等待规划反馈'),
+      unknown: t('规划状态待确认'), failed: t('规划失败'), completed: t('规划已完成'), stopped: t('规划已停止'),
+    };
+    if (labels[phase]) return labels[phase];
+  }
   const labels: Record<typeof phase, string> = {
     dependency: t('等待前置步骤'), placement: t('正在检查执行条件'), materials: t('正在准备输入材料'),
     queued: t('已进入执行队列'), dispatching: t('正在确认任务投递'), running: t('正在执行'),

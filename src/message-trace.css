@@ -14,6 +14,11 @@
 .trace-tool > summary { list-style: none; }
 .trace-tool > summary::-webkit-details-marker { display: none; }
 .trace-tool[open] .trace-chevron { transform: rotate(90deg); }
+.trace-process { min-width: 0; }
+.trace-process > summary { list-style: none; }
+.trace-process > summary::-webkit-details-marker { display: none; }
+.trace-process[open] > summary > .trace-chevron { transform: rotate(90deg); }
+.trace-process-content { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-top: 8px; }
 .trace-tool:not(.is-live):not(.failed) > summary > svg:first-child { color: #719b7c; }
 .trace-tool.failed > summary > svg:first-child, .trace-tool.failed > summary small { color: #b86450; }
 .trace-tool-body { margin: 5px 0 0 21px; padding: 12px 14px; border-left: 1px solid var(--line); background: #8a98a208; border-radius: 0 6px 6px 0; }

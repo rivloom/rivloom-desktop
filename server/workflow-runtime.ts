@@ -371,14 +371,18 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
     const network = this.options.network; const remote = network.remoteTask(attempt.executionID);
     if (!remote) return missing;
     if (remote.direction !== 'outgoing' || remote.targetNodeID !== attempt.nodeID) return 'unknown';
+    const stopped = (current: NonNullable<typeof remote>) =>
+      ['accepted', 'failed', 'stopped'].includes(current.executionState) ||
+      (['declined', 'expired', 'cancelled'].includes(current.status) && !current.deliveryPending && !current.deliveryError);
+    // A late cancellation acknowledgement is already terminal. Sequence-zero
+    // invites cannot accept execution controls, so consume that state first.
+    if (stopped(remote)) return 'stopped';
     try {
       if (remote.executionSequence === 0 && remote.status === 'pending') await network.cancelRemoteTask(remote.id);
       else if (!['stopped', 'accepted', 'failed'].includes(remote.executionState) && !remote.controlPending)
         await network.requestRemoteTaskControl(remote.id, remote.executionSequence, { kind: 'stop' });
       const current = network.remoteTask(remote.id);
-      if (!current) return 'unknown';
-      if (['accepted', 'failed', 'stopped'].includes(current.executionState)) return 'stopped';
-      if (['declined', 'expired', 'cancelled'].includes(current.status) && !current.deliveryPending && !current.deliveryError) return 'stopped';
+      if (current && stopped(current)) return 'stopped';
     } catch { /* Stop remains pending until an authenticated state confirms it. */ }
     return 'unknown';
   }
