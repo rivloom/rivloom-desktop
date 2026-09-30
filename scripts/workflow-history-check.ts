@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createSocket } from 'node:dgram';
 import { ServiceClient, modelFixture, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
 
@@ -19,7 +20,7 @@ process.env = { ...testEnvironment(runtime), HOME: taskHome, USERPROFILE: taskHo
   APPDATA: join(taskHome, 'AppData', 'Roaming'), LOCALAPPDATA: join(taskHome, 'AppData', 'Local'),
   RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'disabled' };
 const report: any = { status: 'running', evidence, runtime, remoteMode, realVendorRequests: 0, checks: [] };
-const requests: unknown[] = [], failures: string[] = [];
+const requests: unknown[] = [], failures: string[] = [], toolOutputFailures: unknown[] = [];
 const historySource = 'Keep original. Output PNG. HISTORY_FIRST\n' + '历史分页汉字'.repeat(1900) + '\nHISTORY_PAGE_END';
 const text = (content: any): string => typeof content === 'string' ? content : (content || []).map((part: any) => part.text || '').join('');
 const model = await modelFixture(30_000, input => {
@@ -29,7 +30,23 @@ const model = await modelFixture(30_000, input => {
     if (!main) return { content: 'History fixture' };
     const user = input.messages.filter((m: any) => m.role === 'user').map((m: any) => text(m.content)).join('\n');
     const planner = user.includes('只允许读取和规划');
-    const results = input.messages.filter((m: any) => m.role === 'tool').map((m: any) => JSON.parse(text(m.content)));
+    const results = input.messages.filter((m: any) => m.role === 'tool').map((message: any) => {
+      const content = text(message.content);
+      try { return JSON.parse(content); }
+      catch (error) {
+        const call = input.messages.flatMap((m: any) => m.tool_calls || [])
+          .find((value: any) => value.id === message.tool_call_id);
+        const diagnostic = {
+          toolCallID: String(message.tool_call_id || '').slice(0, 256),
+          name: String(call?.function?.name || '').slice(0, 128),
+          arguments: String(call?.function?.arguments || '').slice(0, 2000),
+          content: content.slice(0, 2000), contentBytes: Buffer.byteLength(content), truncated: content.length > 2000,
+        };
+        toolOutputFailures.push(diagnostic);
+        console.error('HISTORY_TOOL_OUTPUT_ERROR', JSON.stringify(diagnostic));
+        throw error;
+      }
+    });
     const tool = (name: string, args: Record<string, unknown>) => ({ toolName: name, arguments: args });
     if (!results.length) return tool('rivloom_history', { action: 'state' });
     const state = results[0]; assert(state.goal?.id && state.version);
@@ -78,7 +95,7 @@ if (worker) {
 }
 try {
   await service.start({ runtimeDirectory: runtime, discovery, logPath: join(evidence, 'service.log') });
-  const data = await service.bootstrap(); assert.equal(data.engine.version, '1.18.31-rivloom.9b07cf442a7e');
+  const data = await service.bootstrap(); assert.equal(data.engine.version, readEngineSource(join(import.meta.dirname, '..')).version);
   const project = await service.call('/projects', { name: 'History fixture', directory, trusted: true }, 201);
   let target: Workflow['target'] = { mode: 'automatic' };
   if (worker) {
@@ -134,7 +151,7 @@ try {
 } catch (error) { report.status = 'failed'; report.error = String(error instanceof Error ? error.stack : error); throw error; }
 finally {
   await service.stop(); await worker?.stop(); await model.close(); report.exitCode = service.child?.exitCode; report.workerExitCode = worker?.child?.exitCode;
-  report.syntheticRequests = requests.length; report.fixtureFailures = failures;
+  report.syntheticRequests = requests.length; report.fixtureFailures = failures; report.toolOutputFailures = toolOutputFailures;
   await writeFile(join(evidence, 'requests.json'), JSON.stringify(requests, null, 2));
   await writeFile(join(evidence, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ evidence, status: report.status, requests: requests.length, exitCode: report.exitCode }));

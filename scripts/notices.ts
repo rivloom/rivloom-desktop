@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const engineLicense = {
   repository: 'anomalyco/opencode',
-  revision: 'v1.18.31',
+  revision: 'v1.18.33',
   file: 'LICENSE',
   gitBlobSha1: '6439474beed8e0271df9862eff97ffd70ec2464c',
 };
@@ -64,7 +64,7 @@ function fallback(
       { repository: 'kubernetes/kubernetes', revision: 'v1.30.0', file: 'LICENSE', gitBlobSha1: 'd645695673349e3947e8e5ae42332d0ac3164cd7' },
     ], versionSource: 'https://registry.npmjs.org/kubernetes-types/1.30.0',
   };
-  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64', 'opencode-linux-x64-baseline', 'opencode-linux-arm64'].includes(name) && ['1.18.25', '1.18.31'].includes(version))
+  if (['@opencode-ai/sdk', '@opencode-ai/plugin', 'opencode-windows-x64', 'opencode-linux-x64-baseline', 'opencode-linux-arm64'].includes(name) && ['1.18.25', '1.18.31', '1.18.33'].includes(version))
     return {
       files: [{ ...engineLicense, revision: `v${version}` }],
       versionSource:
