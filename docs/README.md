@@ -1,10 +1,12 @@
 # Rivloom 文档
 
-**当前正式版：Windows / Linux x64 0.1.28（2026-09-28）。** [本机模型速率修复](releases/0.1.28.md)、[Linux 说明](releases/linux-0.1.28.md)、[验收与限制](releases/0.1.28-verification.md)及[R2 审计](releases/0.1.28-r2-retention.md)。官网下载与签名更新已同步。
+**当前正式版：Windows / Linux x64 0.1.29（2026-09-30）。** [版本说明](releases/0.1.29.md)、[Linux 说明](releases/linux-0.1.29.md)、[验收与限制](releases/0.1.29-verification.md)及[R2 审计](releases/0.1.29-r2-retention.md)。官网下载与签名更新已同步。
 
 这里保存随源码分发的说明。当前正式版以根目录 [README](../README.md) 和 [官网下载页](https://rivloom.com/download/) 为准；源码中的未发布功能以对应说明标注的状态为准。
 
 ## 使用与功能
+
+- [0.1.29 设备选择、消息续接与会话界面](releases/0.1.29.md)、[发行验收](releases/0.1.29-verification.md)
 
 - [0.1.28 模型连接右侧速率与短回复采样](releases/0.1.28.md)、[发行验收](releases/0.1.28-verification.md)
 
@@ -14,7 +16,7 @@
 - [0.1.24 Node 活动与侧栏反馈](releases/0.1.24.md)、[发行验收](releases/0.1.24-verification.md)
 
 - [随包使用说明](../DESKTOP-README.md)、[安全边界](../SECURITY.md)
-- [Linux 命令行执行节点（x64 0.1.28 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与上线验收](releases/linux-0.1.28.md)
+- [Linux 命令行执行节点（x64 0.1.29 已发布；ARM64 暂不发布）](LINUX.md)、[Linux 发行说明与上线验收](releases/linux-0.1.29.md)
 - [模型接入与选择](MODEL-ACCESS.md)、[输入区](COMPOSER.md)
 - [办公文件预览、文本编辑与多环境模型连接（0.1.23）](OFFICE-WORKSPACE.md)
 - [连续会话](CONVERSATION-CONTINUITY.md)、[历史管理](CONVERSATION-HISTORY.md)、[内容搜索](CONVERSATION-SEARCH.md)

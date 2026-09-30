@@ -8,9 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows / Linux x64 正式版为 **0.1.28**。模型速率位于主界面“模型连接”右侧同一行；修复订阅就绪和短回复采样，继续只统计本机执行。GitHub、官网下载与 Windows 签名更新已同步，见[版本说明](docs/releases/0.1.28.md)与[发行验收](docs/releases/0.1.28-verification.md)。
+当前 Windows / Linux x64 正式版为 **0.1.29**。更新设备选择、输入区停止、失败与停止后的消息续接，以及会话界面与结果展示。GitHub、官网下载和 Windows 签名更新已同步，见[版本说明](docs/releases/0.1.29.md)与[发行验收](docs/releases/0.1.29-verification.md)。
 
-同源码 CI、Windows 隔离安装、双平台公开完整下载、更新验签、Linux 隔离运行及官网实际内容验证通过。保留 111、暂缓 0、可删除 0、删除 0 个。检查完成，删除 0 个；未启用自动清理。Cloudflare Pages 集成检查成功，生产内容已核验。
+同源 CI、隔离安装、双平台公开完整下载、签名、官网与 R2 检查通过。保留 116、暂缓 0、可删除 0、删除 0 个。检查完成，删除 0 个；未启用自动清理。Cloudflare Pages 集成检查成功，生产内容已核验。
+
+**历史 0.1.28 发行：** 模型连接右侧速率、订阅就绪与短回复采样修复，见[版本说明](docs/releases/0.1.28.md)及[验收](docs/releases/0.1.28-verification.md)。
 
 **历史 0.1.27 发行：** 紧凑石墨历史会话栏与抽屉键盘修复，见[版本说明](docs/releases/0.1.27.md)及[验收](docs/releases/0.1.27-verification.md)。
 
@@ -34,7 +36,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.28 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.28.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，随包 Node.js 24.19.0。
+**Linux x86_64 命令行执行节点 0.1.29 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.29.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，随包 Node.js 24.19.0。
 
 ## 从源码运行
 
