@@ -31,6 +31,7 @@ export async function runBatch(
   expectedNames?: readonly string[],
 ) {
   const results: CaseResult[] = [];
+  const selectedNames: string[] = [];
   const stream = run({
     files: files.map((file) => resolve(file)),
     cwd,
@@ -50,13 +51,16 @@ export async function runBatch(
             ? 'passed'
             : 'failed';
       results.push({ name: data.name, status });
+      // The explicit mapping selects top-level tests; nested cases still count
+      // toward success and may independently fail, skip or remain todo.
+      if (data.nesting === 0) selectedNames.push(data.name);
       console.log(`${status.toUpperCase()} ${data.name}`);
       if (event.type === 'test:fail') console.error(data.details.error);
     } else if (event.type === 'test:summary' && !event.data.file) {
       successfulSummary = event.data.success;
     }
   }
-  const actualNames = results.map((result) => result.name).sort();
+  const actualNames = selectedNames.sort();
   const exactSelection =
     !expectedNames || JSON.stringify(actualNames) === JSON.stringify([...expectedNames].sort());
   const passed =

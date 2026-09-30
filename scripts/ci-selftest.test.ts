@@ -132,6 +132,12 @@ test('selected [one]', () => {});
 test('selected [one] extra', () => { throw new Error('must not be selected'); });
 test('failure', () => { throw new Error('intentional CI gate failure'); });
 test('skip', { skip: true }, () => {});
+test('todo', { todo: true }, () => {});
+test('nested pass', async (t) => { await t.test('child', () => {}); });
+test('nested failure', async (t) => { await t.test('child', () => { throw new Error('intentional nested failure'); }); });
+test('nested skip', async (t) => { await t.test('child', { skip: true }, () => {}); });
+test('nested todo', async (t) => { await t.test('child', { todo: true }, () => {}); });
+test('nested matching name', async (t) => { await t.test('nested matching name', () => {}); });
 `,
   );
   const runner = join(root, 'runner.mjs');
@@ -147,6 +153,13 @@ process.exitCode = result.passed ? 0 : 1;
     ['selected [one]', 0],
     ['failure', 1],
     ['skip', 1],
+    ['todo', 1],
+    ['nested pass', 0],
+    ['nested failure', 1],
+    ['nested skip', 1],
+    ['nested todo', 1],
+    ['nested matching name', 0],
+    ['child', 1],
     ['missing', 1],
   ] as const) {
     const result = spawnSync(process.execPath, [runner, file, name], {
