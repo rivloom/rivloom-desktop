@@ -14,6 +14,14 @@ export function parseEngineArguments(args: string[]) {
 function git(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 ** 2 }).trim();
 }
+export function cloneEngineSource(checkout: string, source: EngineSource, objectSource: string = source.repository) {
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'clone', '--no-checkout', '--no-hardlinks', '--', objectSource, checkout], { windowsHide: true, stdio: 'inherit' });
+  git(checkout, 'config', 'core.autocrlf', 'false');
+  // Windows readlink rewrites Git's portable '/' targets with backslashes. Keep the
+  // committed target bytes as files so both snapshot and producer hash the reviewed inventory.
+  if (source.target === 'windows-x64') git(checkout, 'config', 'core.symlinks', 'false');
+  git(checkout, 'checkout', '--detach', source.commit);
+}
 export function sourceSnapshot(root: string, source: EngineSource) {
   assert.equal(git(root, 'rev-parse', 'HEAD'), source.commit, 'Runtime checkout is not the pinned commit');
   assert.equal(git(root, 'rev-parse', 'HEAD^{tree}'), source.tree);
@@ -132,9 +140,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
     if (target === 'windows-x64') assert(checkout.length <= 120, 'The runtime checkout path is too long for Windows native dependencies. Move the desktop checkout to a shorter path.');
     console.log(`Building locked Rivloom runtime ${source.commit} in ${checkout}`);
     // No branch/latest lookup. A local repository is only an object source; dirty working files are not copied.
-    execFileSync('git', ['-c', 'core.autocrlf=false', 'clone', '--no-checkout', '--no-hardlinks', '--', options.path || source.repository, checkout], { windowsHide: true, stdio: 'inherit' });
-    git(checkout, 'config', 'core.autocrlf', 'false');
-    git(checkout, 'checkout', '--detach', source.commit);
+    cloneEngineSource(checkout, source, options.path || source.repository);
     proof = sourceSnapshot(checkout, source);
     artifact = target === 'linux-x64' ? join(run, 'artifact') : join(checkout, 'rivloom/dist/windows-x64');
     await build(root, checkout, source, artifact);

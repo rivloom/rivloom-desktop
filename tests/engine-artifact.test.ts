@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -427,3 +428,36 @@ if (process.platform === 'win32' && process.arch === 'x64') {
     assert.equal(result.recipeSHA256, undefined);
   });
 }
+
+test('Windows source checkout preserves Git symlink target bytes despite inherited link and CRLF settings', t => {
+  const value = fixture(t), objects = join(value.base, 'objects'), checkout = join(value.base, 'checkout');
+  mkdirSync(objects);
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: objects, encoding: 'utf8', windowsHide: true }).trim();
+  git('init', '--quiet');
+  writeFileSync(join(objects, 'source.txt'), 'ordinary source\n');
+  git('add', 'source.txt');
+  const target = '../targets/source.txt';
+  const linkObject = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: objects, input: target, encoding: 'utf8', windowsHide: true }).trim();
+  git('update-index', '--add', '--cacheinfo', '120000,' + linkObject + ',nested/link.txt');
+  git('-c', 'user.name=Rivloom test', '-c', 'user.email=ci@example.invalid', 'commit', '--quiet', '-m', 'Synthetic source with a Git link');
+  const source = { ...value.source, commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}'),
+    upstream: { ...value.source.upstream, commit: git('rev-parse', 'HEAD') }, inputs: { 'source.txt': engineDigest('ordinary source\n') },
+    sourceInventory: { files: 2, sha256: engineSourceInventoryDigest([
+      { path: 'source.txt', mode: '100644', sha256: engineDigest('ordinary source\n') },
+      { path: 'nested/link.txt', mode: '120000', sha256: engineDigest(target) },
+    ]) } };
+  const config = join(value.base, 'gitconfig');
+  writeFileSync(config, '[core]\nsymlinks = true\nautocrlf = true\n');
+  const entrypoint = new URL('../scripts/engine-prepare.ts', import.meta.url).href;
+  const script = 'import { readFileSync } from "node:fs"; import { cloneEngineSource, sourceSnapshot } from ' + JSON.stringify(entrypoint)
+    + '; const v=JSON.parse(readFileSync(0,"utf8")); cloneEngineSource(v.checkout,v.source,v.objects); console.log(JSON.stringify(sourceSnapshot(v.checkout,v.source)));';
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify({ checkout, objects, source }), encoding: 'utf8', windowsHide: true,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '0' } });
+  const proof = JSON.parse(output.trim().split('\n').at(-1)!);
+  assert.equal(proof.sourceSHA256, source.sourceInventory.sha256);
+  assert.equal(proof.files, 2);
+  assert.equal(lstatSync(join(checkout, 'nested/link.txt')).isSymbolicLink(), false);
+  assert.equal(readFileSync(join(checkout, 'nested/link.txt'), 'utf8'), target);
+  assert.equal(execFileSync('git', ['config', '--get', 'core.symlinks'], { cwd: checkout, encoding: 'utf8' }).trim(), 'false');
+  assert.equal(execFileSync('git', ['config', '--get', 'core.autocrlf'], { cwd: checkout, encoding: 'utf8' }).trim(), 'false');
+});
