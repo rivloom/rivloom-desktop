@@ -179,7 +179,8 @@ setTaskKnowledgeContext((value, directory) => {
   return `\nCurrent local project ID: ${value.projectID}. Node ID: ${knowledge.store.nodeID}.` + knowledge.tools.rules(knowledgeTask(value, directory));
 });
 const workflowRuntime = new WorkflowRuntime({ network: nodeNetwork, queue: nodeQueue, policies: executionPolicies,
-  resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()) });
+  resources: () => resources, queueHealth, occupiedSlots, kickQueue: () => queueMicrotask(() => void processRemoteTasks()),
+  suspended: () => updateMaintenance.active });
 const conversationHistory = new ConversationHistory(db, {
   runtime: new RuntimeHistory(db, { engineRoot, withClient: (binding, work) => binding.accountID
     ? accountEngines.maintenance(binding.accountID, work) : work(engineClient()) }),
@@ -505,13 +506,20 @@ function currentUpdateBlockers() {
   return updateBlockers({ tasks: tasks(), queues: nodeQueue.list(), workflows: workflowRuntime.store.list(),
     remoteTasks: network.remoteTasks, brainTasks: network.brainTasks,
     transfers: nodeNetwork.files.active ? nodeNetwork.files.deliveries().length : 0,
-    operations: updateMaintenance.pending + processingRemoteTasks.size + processingRemoteControls.size + nodeNetwork.updateOperations,
+    operations: updateMaintenance.pending + processingRemoteTasks.size + processingRemoteControls.size + nodeNetwork.updateOperations +
+      workflowRuntime.service.pendingOperations + Number(dispatchingQueue),
     modelChecks: Object.values(modelSettings().checks).filter((check) => check.status === 'testing').length });
 }
 app.post('/api/desktop-update/prepare', async (req, res) => {
   authorizeNativeUpdate(req);
   const body = z.object({ version: z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/).max(80) }).strict().parse(req.body);
+  // A queue start or remote control already inside its locks must finish with
+  // the original start guards. Acquiring maintenance mid-subscribe could turn
+  // unstarted work into an uncertain execution or consume a pending control.
+  if (dispatchingQueue || processingRemoteTasks.size || processingRemoteControls.size)
+    return void res.json({ ready: false, blockers: currentUpdateBlockers(), lease: null });
   requireThat(updateMaintenance.acquire(), 409, '已有更新安装正在准备。');
+  updateLease = null; updateTargetVersion = null;
   try {
     // Drain requests that entered before the gate. New intake is fenced synchronously.
     const deadline = Date.now() + 3000;
@@ -1266,7 +1274,7 @@ const onTaskUpdateForNetwork = (value: { taskID?: string }) => {
 updates.on('update', onTaskUpdateForNetwork);
 
 async function processRemoteTask(taskID: string) {
-  if (processingRemoteTasks.has(taskID)) return;
+  if (updateMaintenance.active || processingRemoteTasks.has(taskID)) return;
   processingRemoteTasks.add(taskID);
   try {
     await workerAdmission.run(async () => {
@@ -1638,6 +1646,7 @@ async function processRemoteTask(taskID: string) {
 
 async function processLocalQueue(entryID: string) {
   await workerAdmission.run(async () => {
+    if (updateMaintenance.active) return;
     let entry = nodeQueue.get(entryID);
     if (!entry || entry.source.kind !== 'local' || ['ended', 'held'].includes(entry.state)) return;
     const current = task(entry.source.taskID);
@@ -1730,6 +1739,7 @@ async function processRemoteTasks() {
       .remoteTasks.filter((remote) => remote.direction === 'incoming' && remote.automaticEligible);
     // Repair the durable offer -> SQLite gap; terminal queue rows are never recreated.
     for (const remote of remotes) {
+      if (updateMaintenance.active) return;
       try {
         intakeRemoteQueue(remote);
       } catch {
@@ -1739,21 +1749,26 @@ async function processRemoteTasks() {
     // Accepted M3.4 allocations retain priority over all new admissions.
     for (const remote of remotes.filter(
       (remote) => remote.brainTaskID && remote.status === 'accepted',
-    ))
+    )) {
+      if (updateMaintenance.active) return;
       await processRemoteTask(remote.id);
+    }
     const ordered = nodeQueue.list();
     for (const entry of [
       ...ordered.filter((e) => e.state === 'admitted'),
       ...ordered.filter((e) => e.state !== 'admitted'),
     ]) {
+      if (updateMaintenance.active) return;
       if (entry.state === 'ended') continue;
       if (entry.source.kind === 'local') await processLocalQueue(entry.id);
       else await processRemoteTask(entry.source.remoteTaskID);
     }
     for (const remote of remotes.filter(
       (remote) => remote.brainTaskID && remote.status === 'pending',
-    ))
+    )) {
+      if (updateMaintenance.active) return;
       await processRemoteTask(remote.id);
+    }
     await publishQueueReceipts();
   } finally {
     dispatchingQueue = false;
@@ -1769,7 +1784,7 @@ nodeNetwork.on('remote-task-offer', () => {
 });
 
 async function processRemoteControl(taskID: string, controlID: string) {
-  if (processingRemoteControls.has(controlID)) return;
+  if (updateMaintenance.active || processingRemoteControls.has(controlID)) return;
   processingRemoteControls.add(controlID);
   let localTaskID: string | null = null;
   try {
@@ -1865,8 +1880,10 @@ async function processRemoteControl(taskID: string, controlID: string) {
 }
 
 async function processRemoteControls() {
-  for (const pending of nodeNetwork.pendingRemoteTaskControls())
+  for (const pending of nodeNetwork.pendingRemoteTaskControls()) {
+    if (updateMaintenance.active) return;
     await processRemoteControl(pending.taskID, pending.control.controlID);
+  }
 }
 
 nodeNetwork.on('remote-task-control', (value: { taskID: string; controlID: string }) => {

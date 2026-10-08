@@ -1,5 +1,25 @@
 # OpenCode 接入与范围决策
 
+## 2026-09-30 开发源码：OpenCode 1.18.33 与双平台 schema 2（尚未发行）
+
+当前 Windows / Linux x64 开发引擎固定 Rivloom runtime 提交 `655285f835f8560dcf3b6c484d0e2f1faba9e67d`，tree `9bbec9cc7eb7062cb7bda8d3e8a4ad6b1c428351`，引擎版本 `1.18.33-rivloom.655285f835f8`。上游稳定版为 v1.18.33、提交 `51ef4be1d3c122f18fefb510dca8d778571f4f18`；SDK/plugin 精确锁定 1.18.33。Node.js 24.19.0、Bun 1.3.14 与 x64 平台范围保持不变。
+
+Windows [source lock](../shared/engine-source.json) 和 Linux [source lock](../shared/engine-source-linux.json) 都显式采用 producer schema 2，并固定完整源码清单的 6662 个文件及规范摘要。摘要按路径排序，绑定 Git 文件模式和文件内容 SHA256；符号链接只读取链接本身，Windows Git 文本形式使用同一模式与内容。构建 checkout 关闭 `core.autocrlf`，构建前后校验干净源码、完整清单及选定输入，清单不能仅靠重算 manifest、smoke 和 receipt 摘要替换。
+
+Windows 生产者产物包含 EXE、manifest、完整 `source-files.json`、许可、README、smoke 和 checksum。桌面消费端在执行 EXE 前后独立核对产物与固定清单；验证脚本、共享产物校验模块和 Windows 停止模块均由 source lock 固定摘要。消费端 smoke 保留 10 项实际引擎检查和两次归属进程树退出证明，报告绑定当次 producer manifest、源码清单与许可；receipt 再绑定锁文件、产物及完整源码证明。旧 schema 1 产物仍可按其原锁核验，新 schema 2 锁拒绝 schema 漂移。
+
+Linux 使用本仓库 `scripts/runtime-linux/` 的固定四文件 recipe 快照，独立绑定 recipe、ELF、完整源码清单、许可和 11 项 smoke。新引擎与内嵌原生库的 ABI 核对后，完整 Linux runtime 的 glibc 下限仍为 2.30；随包 Node.js 要求内核至少 4.18 与 `GLIBCXX_3.4.25`。ARM64 未进入本次验收与发行范围。
+
+当前隔离验收已通过 Windows/Linux 生产者各 11 项 smoke、Windows 消费端独立 10 项检查及双平台 vendor receipt 核验。桌面完整单元测试 875 项、CI 自检 87 项、20 项现有 Windows 服务检查与 Linux 原生桌面检查 29 项全部通过，无测试跳过；实际桌面 runtime 资源、344 个运行时依赖及许可清单核验通过。服务首轮三项深路径夹具失败保留，同一提交的短路径隔离快照复验通过；其中 Node SQLite 的 270 字符数据库路径限制已单独确证，未改动产品断言。它们覆盖模型模拟、会话和流式事件、工具批准/拒绝、取消、重启持久化、删除及插件依赖，不代表真实供应商 OAuth、真实模型调用、桌面安装/升级或实体多机已完成。上游本次更新涉及 GPT-6 Sol/Luna 订阅模型、Gemini 思考参数、Cloudflare AI Gateway 超时及 Bedrock 工具图片兼容；固定 models.dev 目录也已更新，实际供应商行为仍须单独验证。
+
+开发构建沿用 `npm run engine:prepare`；Windows 可用 `--source` 从本机 runtime 对象库克隆同一个固定提交，不能复制未提交文件。已有同锁、同哈希且核验通过的 vendor 产物优先复用。外部产物导入仍必须匹配 source lock 中实际批准的 binary/manifest/consumer-smoke 三项摘要；未列批准摘要时拒绝导入。生产者自身 smoke 不能代替桌面消费端验收。Windows 正式打包直接执行 `npm run desktop:build`，它已包含 prepare 和前端构建；Linux 执行 `npm run linux:build` 与 `npm run linux:smoke`。
+
+升级继续要求实际引擎上下文/压缩、权限、模型账号、任务和历史服务兼容检查，以及对应平台打包、安装/更新、公开下载和签名核验。正式发布仍按 [CI](CI.md)、[发行流程](RELEASING.md)及 [R2 保留策略](R2-RETENTION.md)收尾；客户端引擎自动更新保持关闭。
+
+**正式发行状态：** 当前 Windows / Linux x64 正式版仍为 0.1.29，内置 `1.18.31-rivloom.9b07cf442a7e`。本次更新是开发源码接入，未改变正式下载、更新清单或历史包的验收结论；最新正式验收见 [0.1.29](releases/0.1.29-verification.md)。以下日期段保留其当时状态，不覆盖本节开发基线。
+
+## 历史发行与实现记录
+
 **2026-09-22 · 0.1.20 Windows/Linux x64 已发行。** 两平台源码 [`ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3`](https://github.com/rivloom/rivloom-desktop/commit/ef9e4e75ef0d587c137eedfb0fcc4cda106f52b3)，核心仍固定 `9b07cf442a7eba60a6fe690f630251d23d24194a`，SDK/plugin 为 1.18.31。正式包的来源、云端安装、公开下载及签名核验见 [0.1.20 发行验收](releases/0.1.20-verification.md)。Windows 进程检查继续共享原有 5800 ms 总截止时间，并保留归属与实际退出证明；ARM64 暂不发布。
 
 **2026-09-22 · 0.1.19 Windows/Linux x64 自有 runtime 已发行。** 两平台发行源码 `c6d273d1f4bc6f9b510ebf649587f05373a88640`，核心仍固定 `9b07cf442a7eba60a6fe690f630251d23d24194a`，引擎为 `1.18.31-rivloom.9b07cf442a7e`。[Windows 构建与发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35629926540)与[Linux 独立发布](https://github.com/rivloom/rivloom-desktop/actions/runs/35632415575)、同提交 CI、Windows 隔离安装和原公钥更新签名、Linux 公开完整下载及隔离运行核验通过；ARM64 暂不发布。Windows 停止修复只限定辅助 PowerShell 的系统模块搜索，未放宽归属证明或超时门槛。Linux glibc 下限为 **2.30**。见[Windows 发行说明](releases/0.1.19.md)和[Linux 发行说明](releases/linux-0.1.19.md)。下方早期开发状态保留为历史。

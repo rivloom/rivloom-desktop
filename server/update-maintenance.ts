@@ -2,7 +2,6 @@ import type { DesktopUpdateBlockers } from '../shared/desktop-update.ts';
 import type { Task, RemoteTaskInvite, BrainTask } from '../shared/types.ts';
 import type { NodeQueueEntry } from '../shared/node-queue.ts';
 import type { Workflow } from '../shared/workflows.ts';
-import { workflowPendingMessages } from '../shared/workflows.ts';
 
 export type UpdateReadiness = {
   tasks: readonly Pick<Task, 'state'>[];
@@ -15,16 +14,18 @@ export type UpdateReadiness = {
   modelChecks: number;
 };
 
-/** Conservative first release: no active or uncertain work is silently stopped for an update. */
+/** Intake and coordinator/network dispatch must be fenced before reading this snapshot.
+ * Saved queues and remote/coordinator state survive shutdown, including unknown
+ * outcomes. Updating never declares them stopped or admits a replacement execution.
+ * Actual local execution, asynchronous writes and transfers still have to drain.
+ */
 export function updateBlockers(input: UpdateReadiness): DesktopUpdateBlockers {
   return {
     tasks: input.tasks.filter((t) => ['running', 'waiting_approval', 'waiting_input', 'stopping', 'interrupted', 'review'].includes(t.state)).length,
-    queues: input.queues.filter((q) => q.state !== 'ended').length,
-    workflows: input.workflows.filter((w) => !['completed', 'failed', 'stopped'].includes(w.state) ||
-      !w.queuePaused && workflowPendingMessages(w).length).length,
-    remoteTasks: input.remoteTasks.filter((r) => r.controlPending || r.deliveryPending || r.status === 'pending' ||
-      (r.status === 'accepted' && !['accepted', 'failed', 'stopped'].includes(r.executionState))).length,
-    brainTasks: input.brainTasks.filter((b) => b.deliveryPending || !['completed', 'failed'].includes(b.status)).length,
+    queues: 0,
+    workflows: 0,
+    remoteTasks: 0,
+    brainTasks: 0,
     transfers: input.transfers,
     operations: input.operations,
     modelChecks: input.modelChecks,

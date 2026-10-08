@@ -5,7 +5,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { engineBinaryName, engineDigest, engineRecipeDigest, engineVerificationDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { engineBinaryName, engineDigest, engineProducerSchema, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 
 export function parseEngineArguments(args: string[]) {
   assert(args.length === 0 || (args.length === 2 && ['--artifact', '--source'].includes(args[0]) && args[1] && !args[1].startsWith('--')), 'Usage: node scripts/engine-prepare.ts [--artifact VERIFIED_DIRECTORY | --source LOCAL_RUNTIME_REPOSITORY]');
@@ -13,6 +13,14 @@ export function parseEngineArguments(args: string[]) {
 }
 function git(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, maxBuffer: 32 * 1024 ** 2 }).trim();
+}
+export function cloneEngineSource(checkout: string, source: EngineSource, objectSource: string = source.repository) {
+  execFileSync('git', ['-c', 'core.autocrlf=false', 'clone', '--no-checkout', '--no-hardlinks', '--', objectSource, checkout], { windowsHide: true, stdio: 'inherit' });
+  git(checkout, 'config', 'core.autocrlf', 'false');
+  // Windows readlink rewrites Git's portable '/' targets with backslashes. Keep the
+  // committed target bytes as files so both snapshot and producer hash the reviewed inventory.
+  if (source.target === 'windows-x64') git(checkout, 'config', 'core.symlinks', 'false');
+  git(checkout, 'checkout', '--detach', source.commit);
 }
 export function sourceSnapshot(root: string, source: EngineSource) {
   assert.equal(git(root, 'rev-parse', 'HEAD'), source.commit, 'Runtime checkout is not the pinned commit');
@@ -27,9 +35,11 @@ export function sourceSnapshot(root: string, source: EngineSource) {
     const path = engineRelativePath(match[2]), file = join(root, path);
     // Hash the link itself, never its target. Windows may materialize Git links as text files.
     const bytes = match[1] === '120000' && lstatSync(file).isSymbolicLink() ? readlinkSync(file) : readFileSync(engineRegularFile(root, path));
-    return [path, match[1], engineDigest(bytes)];
+    return { path, mode: match[1], sha256: engineDigest(bytes) };
   });
-  return { commit: source.commit, tree: source.tree, clean: true, inputs, files: files.length, sourceSHA256: engineDigest(JSON.stringify(files)) };
+  const sourceSHA256 = engineSourceInventoryDigest(files);
+  if (source.sourceInventory) assert.deepEqual({ files: files.length, sha256: sourceSHA256 }, source.sourceInventory, 'Complete runtime source differs from the reviewed inventory');
+  return { commit: source.commit, tree: source.tree, clean: true, inputs, files: files.length, sourceSHA256 };
 }
 async function realDirectory(root: string, relative: string) {
   let cursor = root;
@@ -130,9 +140,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
     if (target === 'windows-x64') assert(checkout.length <= 120, 'The runtime checkout path is too long for Windows native dependencies. Move the desktop checkout to a shorter path.');
     console.log(`Building locked Rivloom runtime ${source.commit} in ${checkout}`);
     // No branch/latest lookup. A local repository is only an object source; dirty working files are not copied.
-    execFileSync('git', ['-c', 'core.autocrlf=false', 'clone', '--no-checkout', '--no-hardlinks', '--', options.path || source.repository, checkout], { windowsHide: true, stdio: 'inherit' });
-    git(checkout, 'config', 'core.autocrlf', 'false');
-    git(checkout, 'checkout', '--detach', source.commit);
+    cloneEngineSource(checkout, source, options.path || source.repository);
     proof = sourceSnapshot(checkout, source);
     artifact = target === 'linux-x64' ? join(run, 'artifact') : join(checkout, 'rivloom/dist/windows-x64');
     await build(root, checkout, source, artifact);
@@ -140,7 +148,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
   }
   assert(artifact);
   const result = verifyEngineArtifact(artifact, source, options.mode === 'artifact');
-  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(target === 'linux-x64' ? ['source-files.json'] : [])])
+  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(engineProducerSchema(source) === 2 ? ['source-files.json'] : [])])
     await copyFile(engineRegularFile(artifact, name), join(staging, name));
   if (target === 'linux-x64') await chmod(join(staging, 'opencode'), 0o755);
   let sourceProofSHA256: string | undefined;

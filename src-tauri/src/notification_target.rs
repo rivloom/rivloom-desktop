@@ -7,7 +7,7 @@ pub fn valid(target: &str) -> bool {
     let Some((kind, id)) = target.split_once(':') else {
         return false;
     };
-    ["local", "remote", "brain"].contains(&kind)
+    ["local", "remote", "brain", "workflow"].contains(&kind)
         && id.len() == 36
         && id.bytes().enumerate().all(|(i, b)| {
             if [8, 13, 18, 23].contains(&i) {
@@ -40,6 +40,7 @@ mod tests {
             "local:75f9d013-96d5-4906-8b7e-a901a751478f",
             "remote:75f9d013-96d5-4906-8b7e-a901a751478f",
             "brain:75f9d013-96d5-4906-8b7e-a901a751478f",
+            "workflow:75f9d013-96d5-4906-8b7e-a901a751478f",
         ] {
             assert_eq!(
                 activated_target("test.app", "test.app", target).as_deref(),
@@ -58,6 +59,8 @@ mod tests {
             "attention?run=1",
             "cmd:75f9d013-96d5-4906-8b7e-a901a751478f",
             "local:75f9d013-96d5-4906-8b7e-a901a751478f/extra",
+            "workflow:../../file",
+            "workflow:75f9d013-96d5-4906-8b7e-a901a751478f/extra",
             "attention\0extra",
         ] {
             assert_eq!(activated_target("test.app", "test.app", target), None);

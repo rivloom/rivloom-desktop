@@ -12,6 +12,10 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 同源 CI、隔离安装、双平台公开完整下载、签名、官网与 R2 检查通过。保留 116、暂缓 0、可删除 0、删除 0 个。检查完成，删除 0 个；未启用自动清理。Cloudflare Pages 集成检查成功，生产内容已核验。
 
+**2026-09-30 开发源码（尚未发行）：** Windows / Linux x64 引擎已升级到 OpenCode 稳定版 1.18.33，固定 Rivloom runtime 提交 `655285f835f8560dcf3b6c484d0e2f1faba9e67d`，版本 `1.18.33-rivloom.655285f835f8`；SDK/plugin 精确锁定 1.18.33，Node.js 24.19.0。两平台采用 schema 2 产物与完整源码清单，Windows/Linux 生产者各 11 项隔离 smoke、Windows 消费端独立 10 项检查已通过。本轮桌面 875 项单元测试、20 项现有服务检查、Linux 原生 29 项检查与桌面 runtime 资源清单验证已通过；正式安装/更新验收按[引擎说明](docs/ENGINE.md)和既有发行流程完成。
+
+正式 0.1.29 下载和更新渠道仍使用 `1.18.31-rivloom.9b07cf442a7e`，本次源码升级不修改已发布安装包、历史验收或用户数据。
+
 **历史 0.1.28 发行：** 模型连接右侧速率、订阅就绪与短回复采样修复，见[版本说明](docs/releases/0.1.28.md)及[验收](docs/releases/0.1.28-verification.md)。
 
 **历史 0.1.27 发行：** 紧凑石墨历史会话栏与抽屉键盘修复，见[版本说明](docs/releases/0.1.27.md)及[验收](docs/releases/0.1.27-verification.md)。

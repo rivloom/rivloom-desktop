@@ -44,7 +44,7 @@ const placedStep = (id: string, required: string | null = null, dependsOn: strin
     { rivloomPlacement: 1, mode: 'required', nodeID: required, reason: 'Model determined the required device' } :
     { rivloomPlacement: 1, mode: 'free', reason: 'Model determined this work is portable' }) + `\nComplete ${id}`,
 });
-function setup() {
+function setup(suspended: () => boolean = () => false) {
   const db = new DatabaseSync(':memory:'); const store = new WorkflowStore(db);
   const executions = new Map<string, WorkflowExecutionSnapshot>(); const starts: WorkflowAttempt[] = [];
   let queries = 0; let waitingCount = 0; let dropAfterAdmission = false; let stopUnknown = false;
@@ -74,7 +74,7 @@ function setup() {
     stageInputs: async (_value, _key, files) => files,
     retryReady: async (_value, attempt) => executions.get(attempt.executionID)?.safeToTransfer === true,
   };
-  let service = new WorkflowService(store, adapter);
+  let service = new WorkflowService(store, adapter, undefined, suspended);
   const request: WorkflowRequest = { requestID: randomUUID(), creatorID: 'owner', title: 'Make a short film',
     description: 'Write a script, find material and edit the film', projectID: 'project', model: 'fixture/model',
     approvalMode: 'ask', target: { mode: 'automatic' }, inputFiles: [] };
@@ -90,10 +90,77 @@ function setup() {
     get service() { return service; }, get queries() { return queries; },
     setQueue(value: number) { waitingCount = value; }, dropAck() { dropAfterAdmission = true; },
     uncertainStop(value: boolean) { stopUnknown = value; }, beforeDispatch(callback: () => void) { beforeDispatch = callback; },
-    restart() { service = new WorkflowService(new WorkflowStore(db), adapter); },
+    restart() { service = new WorkflowService(new WorkflowStore(db), adapter, undefined, suspended); },
   };
 }
 const complete = (summary = 'done'): ExecutionOutcome => ({ kind: 'completed', summary, files: [] });
+
+test('update maintenance preserves unknown stops and pauses new rounds without changing queue policy', async () => {
+  let held = false;
+  const f = setup(() => held);
+  try {
+    const stopping = f.create(); await f.service.advance(stopping.id);
+    const executionID = f.starts[0].executionID;
+    f.uncertainStop(true); f.service.control(stopping.id, 'stop'); await f.service.advance(stopping.id);
+    f.service.enqueue(stopping.id, randomUUID(), 'Keep this future round', []);
+    const completed = f.create({ requestID: randomUUID() });
+    f.store.update(completed.id, value => { value.state = 'completed'; value.planner.state = 'completed'; });
+    const requestID = randomUUID(); f.service.enqueue(completed.id, requestID, 'Next round after update', []);
+    const before = f.store.list(); held = true;
+    await f.service.tick(); await f.service.advance(stopping.id); await f.service.advance(completed.id);
+    assert.deepEqual(f.store.list(), before, 'Maintenance is temporary; no persisted pause or stop is invented');
+    assert.equal(f.service.pendingOperations, 0);
+    assert.equal(f.starts.length, 1);
+    held = false; await f.service.tick(); await f.service.tick();
+    const unchanged = f.store.get(stopping.id)!;
+    assert.equal(unchanged.state, 'stopping'); assert.equal(unchanged.queuePaused, true);
+    assert.equal(unchanged.planner.attempts[0].executionID, executionID);
+    assert.equal(unchanged.planner.attempts[0].phase, 'unknown');
+    assert.equal(unchanged.planner.attempts[0].handled, false);
+    assert.equal(f.store.get(completed.id)!.roundRequestID, requestID, 'Cancellation resumes normal admission');
+    assert.equal(f.starts.length, 2, 'Unknown execution is never replaced');
+  } finally { await f.service.close(); f.db.close(); }
+});
+
+test('update maintenance drains preparation already in flight without admitting a new execution', async () => {
+  let held = false;
+  const f = setup(() => held);
+  let release!: () => void; let started!: () => void;
+  const entered = new Promise<void>(done => { started = done; });
+  const waiting = new Promise<void>(done => { release = done; });
+  try {
+    f.adapter.legacyHistory = async () => { started(); await waiting; return undefined; };
+    const value = f.create(); const advance = f.service.advance(value.id);
+    await entered; assert.equal(f.service.pendingOperations, 1);
+    held = true; release(); await advance;
+    assert.equal(f.service.pendingOperations, 0);
+    assert.equal(f.starts.length, 0); assert.equal(f.store.get(value.id)!.planner.attempts.length, 0);
+    await f.service.tick(); assert.equal(f.starts.length, 0);
+    held = false; await f.service.tick(); assert.equal(f.starts.length, 1);
+  } finally { release(); await f.service.close(); f.db.close(); }
+});
+
+test('update maintenance arriving during context preparation leaves the next round unstarted', async () => {
+  let held = false;
+  const f = setup(() => held);
+  let release!: () => void; let started!: () => void;
+  const entered = new Promise<void>(done => { started = done; });
+  const waiting = new Promise<void>(done => { release = done; });
+  try {
+    const value = f.create();
+    f.store.update(value.id, current => { current.state = 'completed'; current.planner.state = 'completed'; });
+    const next = randomUUID(); f.service.enqueue(value.id, next, 'Keep queued message', []);
+    const context = { id: randomUUID(), name: 'history.json', bytes: 2, sha256: 'a'.repeat(64), mime: 'application/octet-stream' };
+    f.adapter.conversationContext = async () => { started(); await waiting; return context; };
+    const before = f.store.get(value.id); const advance = f.service.advance(value.id);
+    await entered; assert.equal(f.service.pendingOperations, 1);
+    held = true; release(); await advance;
+    assert.deepEqual(f.store.get(value.id), before);
+    assert.equal(f.service.pendingOperations, 0); assert.equal(f.starts.length, 0);
+    held = false; await f.service.tick(); await f.service.tick();
+    assert.equal(f.store.get(value.id)!.roundRequestID, next); assert.equal(f.starts.length, 1);
+  } finally { release(); await f.service.close(); f.db.close(); }
+});
 
 function idleRemoteBusyOrigin(f: ReturnType<typeof setup>, includeOrigin = true, backlog = 5) {
   f.adapter.candidates = () => [{ nodeID: B, kind: 'remote', waitingCount: 0 },
@@ -1235,6 +1302,122 @@ test('stop fences dispatch races, retains unknown stops and never continues a st
     f.restart(); f.uncertainStop(false); await f.service.advance(value.id);
     assert.equal(f.store.get(value.id)!.state, 'stopped'); await f.service.advance(value.id); assert.equal(f.starts.length, 0);
   } finally { f.db.close(); }
+});
+test('stopping during a completed planner query settles its attempt and permits a later conversation round', async () => {
+  for (const reject of [false, true]) {
+    const f = setup();
+    let entered!: () => void; let release!: () => void;
+    const querying = new Promise<void>(done => { entered = done; });
+    const waiting = new Promise<void>(done => { release = done; });
+    try {
+      const value = f.create(); await f.service.advance(value.id);
+      f.adapter.query = async () => { entered(); await waiting; if (reject) throw new Error('query_failed'); return { entries: [] }; };
+      const outcome = { kind: 'query' as const, query: { text: 'facts', kinds: [], limit: 5 }, reason: 'Need facts' };
+      f.finish(f.starts[0], outcome);
+      const advancing = f.service.advance(value.id); await querying;
+      assert.equal(f.store.get(value.id)!.planner.attempts[0].phase, 'completed');
+      assert.equal(f.store.get(value.id)!.planner.attempts[0].handled, false);
+      f.service.control(value.id, 'stop'); release(); await advancing;
+      const stopped = f.store.get(value.id)!;
+      assert.equal(stopped.state, 'stopped'); assert.equal(stopped.planner.state, 'cancelled');
+      assert.equal(stopped.planner.attempts[0].handled, true, 'Confirmed terminal execution must be settled when its result processing is cancelled');
+      assert.equal(stopped.planner.attempts[0].phase, 'completed');
+      assert.deepEqual(stopped.planner.attempts[0].outcome, outcome);
+      assert.equal(stopped.planner.queryRounds, 0); assert.equal(stopped.error, null);
+      assert.equal(f.starts.length, 1, 'Stop prevents the old query from starting a continuation');
+      const next = randomUUID(); f.service.enqueue(value.id, next, 'Continue after confirmed stop', []);
+      f.restart(); await f.service.tick(); await f.service.tick();
+      const continued = f.store.get(value.id)!;
+      assert.equal(continued.roundRequestID, next); assert.equal(continued.rounds![0].state, 'stopped');
+      assert.equal(continued.rounds![0].planner.attempts[0].handled, true); assert.equal(f.starts.length, 2);
+    } finally { release(); await f.service.close(); f.db.close(); }
+  }
+});
+test('stopping during completed executor resource materialization settles its attempt and preserves the stopped round', async () => {
+  for (const reject of [false, true]) {
+    const f = setup();
+    let entered!: () => void; let release!: () => void;
+    const fetching = new Promise<void>(done => { entered = done; });
+    const waiting = new Promise<void>(done => { release = done; });
+    try {
+      const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+      f.adapter.materialize = async () => { entered(); await waiting; if (reject) throw new Error('resource_failed'); return []; };
+      const outcome: ExecutionOutcome = { kind: 'resources', resources: [{ nodeID: A, workspaceID: randomUUID(), id: 'a'.repeat(64), revision: 'b'.repeat(64) }],
+        reason: 'Need material', checkpoint: 'No changes', files: [] };
+      f.finish(f.starts[1], outcome);
+      const advancing = f.service.advance(id); await fetching;
+      assert.equal(f.store.get(id)!.steps[0].attempts[0].phase, 'completed');
+      assert.equal(f.store.get(id)!.steps[0].attempts[0].handled, false);
+      f.service.control(id, 'stop'); release(); await advancing;
+      const stopped = f.store.get(id)!;
+      assert.equal(stopped.state, 'stopped'); assert.equal(stopped.steps[0].state, 'cancelled');
+      assert.equal(stopped.steps[0].attempts[0].handled, true, 'Cancelled result processing cannot leave a completed attempt unsettled');
+      assert.equal(stopped.steps[0].attempts[0].phase, 'completed');
+      assert.deepEqual(stopped.steps[0].attempts[0].outcome, outcome);
+      assert.equal(stopped.steps[0].queryRounds, 0); assert.deepEqual(stopped.steps[0].materials, []); assert.equal(stopped.error, null);
+      assert.equal(f.starts.length, 2, 'Stop prevents the old resource request from starting a continuation');
+      const next = randomUUID(); f.service.enqueue(id, next, 'New request after stop', []);
+      f.restart(); await f.service.tick(); await f.service.tick();
+      const continued = f.store.get(id)!;
+      assert.equal(continued.roundRequestID, next); assert.equal(continued.rounds![0].state, 'stopped');
+      assert.deepEqual(continued.rounds![0].steps, stopped.steps); assert.equal(f.starts.length, 3);
+    } finally { release(); await f.service.close(); f.db.close(); }
+  }
+});
+test('restart settles only completed results cancelled by a confirmed stop without resuming the saved queue', async () => {
+  const f = setup();
+  try {
+    const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+    f.service.control(id, 'stop'); await f.service.advance(id);
+    f.store.update(id, value => {
+      const attempt = value.steps[0].attempts[0];
+      attempt.phase = 'completed'; attempt.outcome = complete('Saved terminal result'); attempt.handled = false;
+    });
+    const before = f.store.get(id)!;
+    f.restart();
+    const recovered = f.store.get(id)!;
+    assert.equal(recovered.steps[0].attempts[0].handled, true);
+    assert.equal(recovered.state, 'stopped'); assert.equal(recovered.queuePaused, true); assert.equal(recovered.queuePauseReason, 'stopped');
+    assert.deepEqual(recovered.steps[0].attempts[0], { ...before.steps[0].attempts[0], handled: true });
+    assert.deepEqual(recovered.events, before.events); assert.equal(f.starts.length, 2);
+    await f.service.tick(); assert.equal(f.starts.length, 2); assert.equal(f.store.get(id)!.rounds, undefined);
+    const next = randomUUID(); f.service.enqueue(id, next, 'Continue the recovered conversation', []);
+    await f.service.tick(); await f.service.tick();
+    assert.equal(f.store.get(id)!.roundRequestID, next); assert.equal(f.starts.length, 3);
+    assert.equal(f.store.get(id)!.rounds![0].steps[0].attempts[0].handled, true);
+  } finally { await f.service.close(); f.db.close(); }
+});
+test('restart leaves ambiguous, active and unrelated unhandled workflow results unchanged', async () => {
+  const boundaries = ['stopping', 'queue_resumed', 'manual', 'legacy', 'queue_error', 'missing_stop', 'later_control',
+    'active_step', 'failed_step', 'unknown_execution', 'failed_execution', 'stopped_execution', 'earlier_unhandled', 'retired'] as const;
+  for (const boundary of boundaries) {
+    const f = setup();
+    try {
+      const id = await f.planned({ summary: 'Plan', steps: [step('work')] });
+      f.service.control(id, 'stop'); await f.service.advance(id);
+      f.store.update(id, value => {
+        const attempt = value.steps[0].attempts[0];
+        attempt.phase = 'completed'; attempt.outcome = complete('Saved result'); attempt.handled = false;
+        if (boundary === 'stopping') value.state = 'stopping';
+        if (boundary === 'queue_resumed') value.queuePaused = false;
+        if (boundary === 'manual') value.queuePauseReason = 'manual';
+        if (boundary === 'legacy') delete value.queuePauseReason;
+        if (boundary === 'queue_error') value.queueError = 'context_error';
+        if (boundary === 'missing_stop') value.events = [];
+        if (boundary === 'later_control') value.events.push({ ...value.events.at(-1)!, id: value.events.at(-1)!.id + 1, text: 'paused' });
+        if (boundary === 'active_step') value.steps[0].state = 'running';
+        if (boundary === 'failed_step') value.steps[0].state = 'failed';
+        if (boundary === 'unknown_execution') attempt.phase = 'unknown';
+        if (boundary === 'failed_execution') attempt.phase = 'failed';
+        if (boundary === 'stopped_execution') attempt.phase = 'stopped';
+        if (boundary === 'earlier_unhandled') value.steps[0].attempts.unshift({ ...structuredClone(attempt), executionID: randomUUID() });
+      });
+      const before = f.store.get(id)!;
+      if (boundary === 'retired') f.db.prepare('INSERT INTO conversation_retired VALUES (?,?,?,0)').run('workflow', id, `workflow:${id}`);
+      f.restart();
+      assert.deepEqual(f.store.get(id), before, boundary); assert.equal(f.starts.length, 2);
+    } finally { await f.service.close(); f.db.close(); }
+  }
 });
 test('queue confirmation belongs to the actual target and locked plans cannot escape through a handoff', async () => {
   const f = setup();

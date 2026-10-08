@@ -1644,7 +1644,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async syncBrainDirectory(node: RivloomNode, initialChannel?: SecureChannelSession) {
-    if (this.syncingDirectories.has(node.id)) return;
+    if (this.updateMaintenance() || this.syncingDirectories.has(node.id)) return;
     this.syncingDirectories.add(node.id);
     const previous = this.channelSendQueues.get(node.id) || Promise.resolve();
     const operation = previous
@@ -1924,7 +1924,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushTaskFiles(peerID: string) {
-    if (!this.files.active || this.transferringFiles.has(peerID)) return;
+    if (this.updateMaintenance() || !this.files.active || this.transferringFiles.has(peerID)) return;
     const peer = this.nodes.get(peerID);
     if (!peer?.online || !peer.trusted || !peer.channelReady) return;
     const deliveries = this.files.deliveries().filter((delivery) => {
@@ -1998,7 +1998,7 @@ export class NodeNetwork extends EventEmitter {
             file,
           });
           offset = response.receivedBytes;
-          for (let i = 0; i < 4 && response.state === 'receiving'; i++) {
+          for (let i = 0; i < 4 && response.state === 'receiving' && !this.updateMaintenance(); i++) {
             const sentAt = offset;
             const data = this.files.readChunk(fileID, offset);
             response = await this.exchangeTaskFile(peer, {
@@ -2106,7 +2106,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushRemoteTask(taskID: string) {
-    if (this.historyRetired(taskID)) return;
+    if (this.updateMaintenance() || this.historyRetired(taskID)) return;
     if (this.deliveringRemoteTasks.has(taskID)) return;
     const task = this.remoteTasks.record(taskID);
     const message = this.remoteTasks.message(taskID);
@@ -2208,6 +2208,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private replayQueueForChannel(peerNodeID: string) {
+    if (this.updateMaintenance()) return;
     const node = this.nodes.get(peerNodeID);
     const channelID = this.channels.get(peerNodeID)?.id;
     if (!channelID || !node?.capabilities.includes(queueReceiptCapability)) return;
@@ -2219,6 +2220,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushQueueReceipts(peerNodeID: string) {
+    if (this.updateMaintenance()) return;
     const node = this.nodes.get(peerNodeID);
     if (
       !node?.online ||
@@ -2231,6 +2233,7 @@ export class NodeNetwork extends EventEmitter {
     this.deliveringQueueReceipts.add(peerNodeID);
     try {
       for (const entry of this.queueReceipts.pending(peerNodeID)) {
+        if (this.updateMaintenance()) break;
         let message: QueueReceiptMessage;
         if (entry.key.startsWith('remote:')) {
           const remote = this.remoteTasks.record(entry.receipt.remoteTaskID);
@@ -2282,7 +2285,7 @@ export class NodeNetwork extends EventEmitter {
   }
 
   private async flushBrainTask(taskID: string) {
-    if (this.historyRetired(taskID)) return;
+    if (this.updateMaintenance() || this.historyRetired(taskID)) return;
     if (this.deliveringBrainTasks.has(taskID)) return;
     const task = this.brainTasks.record(taskID);
     const message = this.brainTasks.message(taskID);
@@ -2300,7 +2303,7 @@ export class NodeNetwork extends EventEmitter {
         error instanceof NodeNetworkError &&
         (error.status === 400 || error.status === 404 || error.status === 409)
       ) {
-        if (this.brainTasks.markDeliveryFailed(taskID, '对方拒绝了冲突或无效的 Brain Task。'))
+        if (this.brainTasks.markDeliveryFailed(taskID, message, '对方拒绝了冲突或无效的 Brain Task。'))
           this.update();
         return;
       }

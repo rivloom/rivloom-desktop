@@ -29,6 +29,7 @@ type RuntimeOptions = {
   network: NodeNetwork; queue: NodeQueueStore; policies: ExecutionPolicyStore;
   resources: () => { directory: ResourceNetwork; catalog: ResourceCatalog; files: ResourceFiles } | null;
   queueHealth: () => { waitingCount: number; accepting: boolean }; occupiedSlots: () => number; kickQueue: () => void;
+  suspended?: () => boolean;
 };
 const phaseFor = (value: Task): WorkflowExecutionSnapshot['phase'] => value.state === 'accepted' ? 'completed' :
   value.state === 'failed' ? 'failed' : value.state === 'stopped' ? 'stopped' : value.state === 'interrupted' ? 'unknown' :
@@ -45,7 +46,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
   private fileRequests = new Map<string, number>();
   historyBusy(taskIDs: string[]) { return this.outputs.historyBusy(taskIDs); }
   constructor(options: RuntimeOptions) {
-    this.options = options; this.store = new WorkflowStore(db); this.service = new WorkflowService(this.store, this, changed);
+    this.options = options; this.store = new WorkflowStore(db); this.service = new WorkflowService(this.store, this, changed, options.suspended);
     this.contexts = new WorkflowContexts(db, () => options.network.snapshot().local?.id || null, (id) => options.network.remoteTask(id));
     this.historyAccess = new WorkflowHistoryAccess(this.store, id => options.network.remoteTask(id), peer => options.network.isTrustedNode(peer),
       id => !db.prepare("SELECT 1 FROM conversation_retired WHERE kind='workflow' AND id=?").get(id));
@@ -70,7 +71,7 @@ export class WorkflowRuntime implements WorkflowExecutionAdapter {
       { root, path: join(root, '.rivloom-inputs', local.id, fileID, file.name) }];
   }
   kick() {
-    if (this.running || !this.interval) return;
+    if (this.running || !this.interval || this.options.suspended?.()) return;
     this.running = true;
     void this.service.tick().finally(() => { this.running = false; });
   }

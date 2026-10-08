@@ -13,7 +13,7 @@ export class ProjectChangesError extends Error {
 class GitOutputEncodingError extends Error {}
 const baseArgs = ['--no-pager', '--no-optional-locks', '--literal-pathspecs', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
   '-c', 'core.quotePath=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never',
-  '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, '-c', 'diff.autoRefreshIndex=false'];
+  '-c', 'core.hooksPath=/dev/null', '-c', 'diff.autoRefreshIndex=false'];
 export function projectGitEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   // Keep platform essentials, not credentials, shell startup files or dynamic loader overrides.
   const environment = Object.fromEntries(Object.entries(source).filter(([key]) =>
@@ -21,7 +21,8 @@ export function projectGitEnvironment(source: NodeJS.ProcessEnv = process.env): 
   for (const key of Object.keys(environment)) if (/^path$/i.test(key))
     environment[key] = (environment[key] || '').split(delimiter).filter(part => isAbsolute(part)).join(delimiter);
   return { ...environment, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_ATTR_NOSYSTEM: '1', LC_ALL: 'C', LANG: 'C' };
+    // Git for Windows also maps /dev/null; uppercase NUL fails with its 2.56 UCRT runtime.
+    GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1', LC_ALL: 'C', LANG: 'C' };
 }
 const noTrailingNewline = (text: string) => text.replace(/\r?\n$/, '');
 const contained = (root: string, path: string) => { const rel = relative(root, path); return rel === '' || (!rel.startsWith('..' + sep) && rel !== '..' && !/^(?:[a-z]:|[\\/])/i.test(rel)); };

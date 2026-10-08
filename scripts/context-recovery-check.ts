@@ -7,6 +7,7 @@ import { createSocket } from 'node:dgram';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ServiceClient, modelFixture, pairServices, until, workflowFixtureInstructions } from './m34-fixtures.ts';
 import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
+import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
 import type { Task } from '../shared/types.ts';
@@ -68,7 +69,7 @@ try {
   for (const client of clients) { fixture.configure(client.root); loadNodeIdentity(client.root); }
   await Promise.all(clients.map((client, index) => client.start({ runtimeDirectory: runtime, discovery, logPath: join(evidence, `service-${index}.log`) })));
   const data = await Promise.all(clients.map(client => client.bootstrap()));
-  assert(data.every(value => value.engine.version === '1.18.31-rivloom.9b07cf442a7e'));
+  assert(data.every(value => value.engine.version === readEngineSource(join(import.meta.dirname, '..')).version));
   nodes = (await Promise.all(clients.map(client => client.network()))).map(value => value.local!.id);
   const projects = [];
   for (const [index, client] of clients.entries()) projects.push(await client.call('/projects', { name: `Recovery ${index}`, directory: directories[index], trusted: true }, 201));

@@ -259,23 +259,23 @@
   },
   {
     "name": "@opencode-ai/plugin",
-    "version": "1.18.31",
+    "version": "1.18.33",
     "license": "MIT",
     "developmentOnly": false,
-    "integrity": "sha512-Rdc1bPK06PByaGyGd0kf7JUZ4pTkexz2OOUNlqZWLpHOiMEZ+/rFGjt46ypZ3QwA697gNdWwwwQbHbKG5NMwGA==",
+    "integrity": "sha512-fmhqCBJvNt+Vfbx6ckKP19S3xwMBhUXLCBQaK92R4wnv3wsWTZYkJQwYf2egiWfJNOl47jhs3vP7uQkl0mvHQw==",
     "packagePaths": [
       "node_modules/@opencode-ai/plugin"
     ],
-    "licenseFile": "licenses/npm/%40opencode-ai%2Fplugin/1.18.31/LICENSE",
+    "licenseFile": "licenses/npm/%40opencode-ai%2Fplugin/1.18.33/LICENSE",
     "licenseFiles": [
-      "licenses/npm/%40opencode-ai%2Fplugin/1.18.31/LICENSE"
+      "licenses/npm/%40opencode-ai%2Fplugin/1.18.33/LICENSE"
     ],
     "licenseSources": [
       {
         "kind": "upstream",
-        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.31",
-        "revision": "v1.18.31",
-        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/plugin/package.json",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.33",
+        "revision": "v1.18.33",
+        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.33/packages/plugin/package.json",
         "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
         "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
       }
@@ -283,23 +283,23 @@
   },
   {
     "name": "@opencode-ai/sdk",
-    "version": "1.18.31",
+    "version": "1.18.33",
     "license": "MIT",
     "developmentOnly": false,
-    "integrity": "sha512-Raouthf8Lhe9edjvYeeSK7SgvdoU6bBjH9qV3f70dHoa6h+z0X2TMz/e22/wKp/StlFUZ4kIRpYYxFnY8/k01w==",
+    "integrity": "sha512-Nyurky9+AA2tvZ6my8UtO5pxPoXxrNypqjeEqMshBGiR542glOy+KE1Y+3lwWU+Z6HC/hSmrdXNbX81+qiuTzg==",
     "packagePaths": [
       "node_modules/@opencode-ai/sdk"
     ],
-    "licenseFile": "licenses/npm/%40opencode-ai%2Fsdk/1.18.31/LICENSE",
+    "licenseFile": "licenses/npm/%40opencode-ai%2Fsdk/1.18.33/LICENSE",
     "licenseFiles": [
-      "licenses/npm/%40opencode-ai%2Fsdk/1.18.31/LICENSE"
+      "licenses/npm/%40opencode-ai%2Fsdk/1.18.33/LICENSE"
     ],
     "licenseSources": [
       {
         "kind": "upstream",
-        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.31",
-        "revision": "v1.18.31",
-        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.31/packages/sdk/js/package.json",
+        "url": "https://api.github.com/repos/anomalyco/opencode/contents/LICENSE?ref=v1.18.33",
+        "revision": "v1.18.33",
+        "packageVersionSource": "https://raw.githubusercontent.com/anomalyco/opencode/v1.18.33/packages/sdk/js/package.json",
         "gitBlobSha1": "6439474beed8e0271df9862eff97ffd70ec2464c",
         "sha256": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b"
       }

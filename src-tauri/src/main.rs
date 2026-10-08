@@ -527,8 +527,8 @@ mod tests {
     }
 
     #[test]
-    fn notification_click_only_accepts_task_routes() {
-        for target in ["attention", "local:75f9d013-96d5-4906-8b7e-a901a751478f", "remote:75f9d013-96d5-4906-8b7e-a901a751478f", "brain:75f9d013-96d5-4906-8b7e-a901a751478f"] {
+    fn notification_click_only_accepts_conversation_routes() {
+        for target in ["attention", "local:75f9d013-96d5-4906-8b7e-a901a751478f", "remote:75f9d013-96d5-4906-8b7e-a901a751478f", "brain:75f9d013-96d5-4906-8b7e-a901a751478f", "workflow:75f9d013-96d5-4906-8b7e-a901a751478f"] {
             assert!(valid_notification_target(target));
         }
         for target in ["https://example.com", "file:///C:/Windows", "local:../../file", "attention?run=1", "cmd:75f9d013-96d5-4906-8b7e-a901a751478f", "local:75f9d013-96d5-4906-8b7e-a901a751478f/extra"] {

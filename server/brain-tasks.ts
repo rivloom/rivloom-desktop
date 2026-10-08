@@ -771,9 +771,10 @@ export class BrainTaskStore {
     return true;
   }
 
-  markDeliveryFailed(taskID: string, error: string) {
+  markDeliveryFailed(taskID: string, message: BrainTaskMessage, error: string) {
     const task = this.tasks.get(taskID);
-    if (!task?.deliveryPending) return false;
+    const current = this.message(taskID);
+    if (!task || !current || JSON.stringify(current) !== JSON.stringify(message)) return false;
     task.deliveryPending = false;
     task.deliveryError = error.slice(0, 200);
     task.updatedAt = new Date().toISOString();

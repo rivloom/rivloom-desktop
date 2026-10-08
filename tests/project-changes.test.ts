@@ -59,6 +59,15 @@ test('Git project review separates index and working changes while leaving index
   assert.deepEqual(await readFile(join(root, '.git/index')), indexBefore);
   assert.equal(await readFile(join(root, 'example.txt'), 'utf8'), 'working\n');
 }));
+test('Git global isolation uses a portable null path and ignores broken user configuration', async () => fixture(async root => {
+  const syntheticHome = join(root, 'isolated-home'); await mkdir(syntheticHome);
+  const globalConfig = join(syntheticHome, '.gitconfig'); await writeFile(globalConfig, '[broken synthetic config\n');
+  const env = projectGitEnvironment({ ...process.env, HOME: syntheticHome, USERPROFILE: syntheticHome, GIT_CONFIG_GLOBAL: globalConfig });
+  assert.equal(env.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(execFileSync('git', ['config', '--global', '--list'], { cwd: root, env, encoding: 'utf8', windowsHide: true }), '');
+  assert.throws(() => execFileSync('git', ['config', '--global', '--list'], { cwd: root, env: { ...env, GIT_CONFIG_GLOBAL: globalConfig },
+    encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }), /bad config/);
+}));
 test('Git project review scopes nested projects and bounds sensitive, binary, large and literal filenames', async () => fixture(async (root, git) => {
   await seed(root, git); const scoped = join(root, 'scope'); await mkdir(scoped);
   for (const [name, body] of [['example.txt', 'scoped'], ['.env.local', 'secret'], ['-literal.txt', 'literal']]) await writeFile(join(scoped, name), body);
@@ -81,6 +90,10 @@ test('Git review disables clean, process, textconv and external diff helpers con
   const command = `"${process.execPath}" "${helper}"`;
   git('config', 'filter.unsafe.clean', command); git('config', 'filter.unsafe.process', command); git('config', 'filter.unsafe.required', 'true');
   git('config', 'diff.unsafe.textconv', command); git('config', 'diff.external', command); git('config', 'core.fsmonitor', command);
+  const hooks = join(root, 'unsafe-hooks'); await mkdir(hooks);
+  const hook = join(hooks, 'post-index-change');
+  await writeFile(hook, `#!/bin/sh\nprintf hook-executed > "${marker.replaceAll('\\', '/')}"\n`); await chmod(hook, 0o755);
+  git('config', 'core.hooksPath', hooks);
   await writeFile(join(root, '.gitattributes'), '*.txt filter=unsafe diff=unsafe\n');
   await writeFile(join(root, 'example.txt'), 'after\n');
   assert.equal((await readProjectChanges(root)).state, 'ready');
