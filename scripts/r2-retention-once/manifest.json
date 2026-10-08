@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Rivloom 0.1.30 one-time exact-object R2 retention cleanup",
+  "reviewReady": true,
+  "version": "0.1.30",
+  "releaseSourceCommit": "4a359ea99380678db66688732fb82672979ff036",
+  "websiteCommit": "fc1edc85998ff93a496a34debc620a516205f65a",
+  "bucket": "rivloom-downloads",
+  "issuedAt": "2026-10-08T17:53:18.001Z",
+  "expiresAt": "2026-10-08T21:53:18.001Z",
+  "maximumObjects": 6,
+  "readinessEvidence": {
+    "status": "passed",
+    "version": "0.1.30",
+    "sourceCommit": "4a359ea99380678db66688732fb82672979ff036",
+    "websiteCommit": "fc1edc85998ff93a496a34debc620a516205f65a",
+    "windowsPublicDownload": "passed",
+    "linuxPublicDownloadAndRuntime": "passed",
+    "originalUpdaterKeySignature": "passed",
+    "websiteProductionAndReviewedScreenshots": "passed",
+    "pagesDeployment": "passed",
+    "policyReportSHA256": "803cf747d7d20d5fde48b407ffa6f12321fd54d147e45d1de465dc47f71d54e5"
+  },
+  "reviewedInventory": {
+    "sourceCommit": "4a359ea99380678db66688732fb82672979ff036",
+    "runID": "37819496585",
+    "attempt": 1,
+    "artifactID": 11569071028,
+    "checkedAt": "2026-10-08T17:49:32.6501523Z",
+    "objectsSHA256": "d67cc5ebe391dc6166a3b2d794ddfef093e61d44137995d0a58aed3dd802503b"
+  },
+  "currentPointerSHA256": {
+    "releases/latest.json": "1ca944949a8a69d5e90454f9a712c8d23d9ba13e824697167162e983b4185551",
+    "updates/stable/latest.json": "84c30b61ed82e08015a04d9abf08eb868f37418458e75f932eaf9f88ca5d8d83",
+    "releases/linux/latest.json": "4483e640c63711e3c2fb6df17e5798c8cba0d648059577f4d000c204fae48638"
+  },
+  "candidates": [
+    {
+      "key": "releases/v0.1.4-31579065d318-9981226725/Rivloom_0.1.4_x64-setup.exe",
+      "bytes": 72720230,
+      "etag": "\"c0538932a25a3e0b261306fd07d06df2\"",
+      "lastModified": "2026-09-06T03:22:56.637000+00:00",
+      "releaseTag": "v0.1.4-31579065d318-9981226725",
+      "releasePublishedAt": "2026-09-06T02:36:37Z",
+      "formalAssetSHA256": "cea1d9251c978858482bb474e0289395e4734c5447e5e06be85036041c5c10d7",
+      "sourceCommit": "31579065d318853a83c8a6ee344454c0f7d2e887"
+    },
+    {
+      "key": "releases/v0.1.4-31579065d318-9981226725/SHA256SUMS.txt",
+      "bytes": 94,
+      "etag": "\"66bb02cf62ba79c11c84e224c827d4e9\"",
+      "lastModified": "2026-09-06T03:22:57.625000+00:00",
+      "releaseTag": "v0.1.4-31579065d318-9981226725",
+      "releasePublishedAt": "2026-09-06T02:36:37Z",
+      "formalAssetSHA256": "3a2f4a864a74355d8cabbd65c078dfe65d31c26671757323ef562be6c976a536",
+      "sourceCommit": "31579065d318853a83c8a6ee344454c0f7d2e887"
+    },
+    {
+      "key": "releases/v0.1.4-84dfc09fc756-9983464069/Rivloom_0.1.4_x64-setup.exe",
+      "bytes": 72693201,
+      "etag": "\"f671f105686d076a8e95f6b158c26c2f\"",
+      "lastModified": "2026-09-06T05:39:11.863000+00:00",
+      "releaseTag": "v0.1.4-84dfc09fc756-9983464069",
+      "releasePublishedAt": "2026-09-06T05:38:32Z",
+      "formalAssetSHA256": "db56e20eb5f3d6090ffc06eeacaa322e00baf9372bec2584daaaa49ef382e41c",
+      "sourceCommit": "84dfc09fc756140fe7675b72b1fd2440a786280a"
+    },
+    {
+      "key": "releases/v0.1.4-84dfc09fc756-9983464069/SHA256SUMS.txt",
+      "bytes": 94,
+      "etag": "\"87b3f10b926f3fec4be5d0e2505b23ce\"",
+      "lastModified": "2026-09-06T05:39:12.725000+00:00",
+      "releaseTag": "v0.1.4-84dfc09fc756-9983464069",
+      "releasePublishedAt": "2026-09-06T05:38:32Z",
+      "formalAssetSHA256": "34b3689339a82723f04b0c36db05dde5d56f2855469a3bf0d41e8509d6a2276f",
+      "sourceCommit": "84dfc09fc756140fe7675b72b1fd2440a786280a"
+    },
+    {
+      "key": "releases/v0.1.4-cad78d38a26c-10049753928/Rivloom_0.1.4_x64-setup.exe",
+      "bytes": 79774245,
+      "etag": "\"62ac2a1e73190617c156da4430c91db7\"",
+      "lastModified": "2026-09-08T09:38:08.785000+00:00",
+      "releaseTag": "v0.1.4-cad78d38a26c-10049753928",
+      "releasePublishedAt": "2026-09-08T09:37:29Z",
+      "formalAssetSHA256": "dccb3bf3ad0c9d805053235691898aa7f8ce581e4df86da5b4bfd7066532eb10",
+      "sourceCommit": "cad78d38a26cebc95909531870bf6b38cf58cac1"
+    },
+    {
+      "key": "releases/v0.1.4-cad78d38a26c-10049753928/SHA256SUMS.txt",
+      "bytes": 94,
+      "etag": "\"2654215daa784f4d2fb0d05b85c1db81\"",
+      "lastModified": "2026-09-08T09:38:10.049000+00:00",
+      "releaseTag": "v0.1.4-cad78d38a26c-10049753928",
+      "releasePublishedAt": "2026-09-08T09:37:29Z",
+      "formalAssetSHA256": "cbc01382f85ed74714ed9c3c1dafd4f993f108bca9c46914c2e79baa4e642c1c",
+      "sourceCommit": "cad78d38a26cebc95909531870bf6b38cf58cac1"
+    }
+  ]
+}
