@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "productCommit": "4a359ea99380678db66688732fb82672979ff036",
+  "productTree": "c94609d4317dd314bc8047181ac31e670523a0a7",
+  "files": [
+    {
+      "path": "windows/bind-release-source.mjs",
+      "bytes": 4810,
+      "sha256": "17f963af399a0a866d78cd7cc3d3eeecb0c6a9133203e38993b6c2172b0bdf31",
+      "beforeSHA256": "17f963af399a0a866d78cd7cc3d3eeecb0c6a9133203e38993b6c2172b0bdf31",
+      "adaptations": []
+    },
+    {
+      "path": "windows/bind-candidate.mjs",
+      "bytes": 2902,
+      "sha256": "3d4f8c4d09207142ddfc1715c72a000b78483c5213dc2afdbe431fe84243132a",
+      "beforeSHA256": "3d4f8c4d09207142ddfc1715c72a000b78483c5213dc2afdbe431fe84243132a",
+      "adaptations": []
+    },
+    {
+      "path": "windows/fetch-candidate-evidence.mjs",
+      "bytes": 17067,
+      "sha256": "f40f0e849c2391b77c825c42c2a7509cb2442f488fca94db8b4075b262482e70",
+      "beforeSHA256": "f40f0e849c2391b77c825c42c2a7509cb2442f488fca94db8b4075b262482e70",
+      "adaptations": []
+    },
+    {
+      "path": "windows/verify-static-runtime.mjs",
+      "bytes": 5837,
+      "sha256": "3d86ea44f739ae2e22c1504f3b1d42c1c596677456fd3cb937ae276062d4f1f7",
+      "beforeSHA256": "3d86ea44f739ae2e22c1504f3b1d42c1c596677456fd3cb937ae276062d4f1f7",
+      "adaptations": []
+    },
+    {
+      "path": "windows/expected-release.mjs",
+      "bytes": 1666,
+      "sha256": "2f79bf19e05a2f3f59bf1579ae04d60fd2898d194ea91846596b3286ab7b941c",
+      "beforeSHA256": "2f79bf19e05a2f3f59bf1579ae04d60fd2898d194ea91846596b3286ab7b941c",
+      "adaptations": []
+    },
+    {
+      "path": "windows/verify-release.mjs",
+      "bytes": 7070,
+      "sha256": "7ea30e7eacf49fbbf599a6d566a60dc0064b244a95947baf21c8a938d4d06002",
+      "beforeSHA256": "7ea30e7eacf49fbbf599a6d566a60dc0064b244a95947baf21c8a938d4d06002",
+      "adaptations": []
+    },
+    {
+      "path": "windows/preflight-windows-candidate.mjs",
+      "bytes": 4075,
+      "sha256": "d44ac72b6f6107065f85c2334da9f9d4c3513b8ac4e8de800cafec528120c703",
+      "beforeSHA256": "d44ac72b6f6107065f85c2334da9f9d4c3513b8ac4e8de800cafec528120c703",
+      "adaptations": []
+    },
+    {
+      "path": "windows/measure-packaged-ui.mjs",
+      "bytes": 6412,
+      "sha256": "d9784e3a366026464371c0c5a9fc09dff60e6d2f4d48041887b6d2d993cd5a41",
+      "beforeSHA256": "d9784e3a366026464371c0c5a9fc09dff60e6d2f4d48041887b6d2d993cd5a41",
+      "adaptations": []
+    },
+    {
+      "path": "windows/read-executable-version.ps1",
+      "bytes": 554,
+      "sha256": "555c2aaa3cae1624e0ec0a4ccaa86da89508faec76552d8b7f1215092b71ff8f",
+      "beforeSHA256": "555c2aaa3cae1624e0ec0a4ccaa86da89508faec76552d8b7f1215092b71ff8f",
+      "adaptations": []
+    },
+    {
+      "path": "windows/verify-candidate.mjs",
+      "bytes": 10654,
+      "sha256": "10d1a54acde402caf06befecb46a6914d004301bdc92d4b3cbef0ec44dc6755f",
+      "beforeSHA256": "be6f83b8ab184e96c523b1af72f5b223603179550432a4b19690d28ac03ab0b1",
+      "adaptations": [
+        {
+          "from": "const sevenZip = 'C:/Program Files/7-Zip/7z.exe';",
+          "to": "const sevenZip = JSON.parse(await readFile(new URL('./verification-inputs.json', import.meta.url), 'utf8')).extractor.path;"
+        }
+      ]
+    },
+    {
+      "path": "linux/expected-release.mjs",
+      "bytes": 1988,
+      "sha256": "83ab35c0eaf8968a884610aab6f8f0b0d78befba8312559a4fbb01615d1fc00b",
+      "beforeSHA256": "83ab35c0eaf8968a884610aab6f8f0b0d78befba8312559a4fbb01615d1fc00b",
+      "adaptations": []
+    },
+    {
+      "path": "linux/verify-package.mjs",
+      "bytes": 9984,
+      "sha256": "3742c45f40120dc82ee5fb891cfc74938bbeb528377adc3e0d08ee09a2881ac0",
+      "beforeSHA256": "3742c45f40120dc82ee5fb891cfc74938bbeb528377adc3e0d08ee09a2881ac0",
+      "adaptations": []
+    },
+    {
+      "path": "linux/verify-full-source.mjs",
+      "bytes": 6549,
+      "sha256": "49777fcf43110cf87ebea21d55e5767ab722e3d5be30d3506535d903ff1f3643",
+      "beforeSHA256": "49777fcf43110cf87ebea21d55e5767ab722e3d5be30d3506535d903ff1f3643",
+      "adaptations": []
+    },
+    {
+      "path": "linux/safe-extract.mjs",
+      "bytes": 2691,
+      "sha256": "85efd1f8378904c6a12270965ad55d5e96e5779cfe6a101798601998d5a07437",
+      "beforeSHA256": "85efd1f8378904c6a12270965ad55d5e96e5779cfe6a101798601998d5a07437",
+      "adaptations": []
+    },
+    {
+      "path": "linux/verify-public.mjs",
+      "bytes": 11583,
+      "sha256": "56481f47328f7713593467be0f27015d36adda3ed0550e975adc844a13787658",
+      "beforeSHA256": "56481f47328f7713593467be0f27015d36adda3ed0550e975adc844a13787658",
+      "adaptations": []
+    },
+    {
+      "path": "linux/public-wsl-check.mjs",
+      "bytes": 29275,
+      "sha256": "0ca753420513e6498b747d7cd429767b3640a7a3cd2ea796158e37ab0524728e",
+      "beforeSHA256": "c1ebb9753db2f30341bfbe2375ea7a739ff77c7fb1c682dcf95015a2e549051d",
+      "adaptations": [
+        {
+          "from": "assert.equal(process.version, 'v24.19.0'); assert.equal(process.getuid(), 1000);",
+          "to": "assert.equal(process.version, 'v24.19.0'); assert(Number.isSafeInteger(process.getuid()) && process.getuid() > 0, 'Use the actual non-root hosted consumer UID');"
+        },
+        {
+          "from": "harnessNode: process.version, kernel: kernel()",
+          "to": "harnessNode: process.version, uid: process.getuid(), kernel: kernel(), environment: 'independent GitHub-hosted Ubuntu native consumer'"
+        },
+        {
+          "from": "Real public curl/wget downloads and isolated WSL x64 package startup/restart/SIGTERM;",
+          "to": "Real public curl/wget downloads and isolated GitHub-hosted Ubuntu x64 package startup/restart/SIGTERM;"
+        },
+        {
+          "from": "const actualCommand = wgetReplacement ? selected[tool].replace('wget --https-only', 'wget --tries=1 --timeout=90 --https-only') : selected[tool];",
+          "to": "const actualCommand = tool === 'wget' ? selected[tool].replace('wget --https-only', 'wget --tries=1 --timeout=90 --https-only') : selected[tool];"
+        },
+        {
+          "from": "if (wgetReplacement) await save('actual-wget.sh', actualCommand + '\\n');",
+          "to": "if (tool === 'wget') await save('actual-wget.sh', actualCommand + '\\n');"
+        },
+        {
+          "from": "...(wgetReplacement ? { freshFile: true, automaticRetries: 0, partialResumed: false } : {})",
+          "to": "...(tool === 'wget' ? { automaticRetries: 0, partialResumed: false, tries: 1 } : {})"
+        }
+      ]
+    },
+    {
+      "path": "linux/linux-owned-cleanup.mjs",
+      "bytes": 8400,
+      "sha256": "8c70f758e355a9fc9508182a6578cf225b3944d2f7de90b7954c0e88d2c8b822",
+      "beforeSHA256": "1470b7794ef78277465092af4c20dd82a1f6536e01c8678752d80c947a062596",
+      "adaptations": [
+        {
+          "from": "const target = proof.sandbox;",
+          "to": "const target = proof.sandbox;\nconst ownerUID = proof.environment.uid; assert(Number.isSafeInteger(ownerUID) && ownerUID > 0);\nassert([0, ownerUID].includes(process.getuid()), 'Inspect only this hosted consumer owner');"
+        },
+        {
+          "from": "assert.equal(proof.status, 'passed');",
+          "to": "assert(['passed', 'download-runtime-passed-awaiting-website'].includes(proof.status));"
+        },
+        {
+          "from": "assert.equal(proof.checks['website-commands'].pages.length, 2);",
+          "to": "assert.equal(proof.checks['retained-archive'].sha256, proof.release.artifact.sha256);\nassert.equal(proof.checks['runtime-integrity'].sourceCommit, source.commit);"
+        },
+        {
+          "from": "assert.equal(info.uid, 1000)",
+          "to": "assert.equal(info.uid, ownerUID)"
+        },
+        {
+          "from": "assert.equal(info.uid, 1000)",
+          "to": "assert.equal(info.uid, ownerUID)"
+        },
+        {
+          "from": "assert.equal(info.uid, 1000)",
+          "to": "assert.equal(info.uid, ownerUID)"
+        },
+        {
+          "from": "if (info.uid !== 1000) continue;",
+          "to": "if (info.uid !== ownerUID) continue;"
+        },
+        {
+          "from": "boundary: { uid: 1000,",
+          "to": "boundary: { uid: ownerUID,"
+        },
+        {
+          "from": "Full public download, isolated lifecycle, and live website command acceptance completed; retain reports and one official archive.",
+          "to": "Full public download and isolated hosted native lifecycle completed; website acceptance remains separate; retain reports and an archive until the consumer readers finish."
+        }
+      ]
+    }
+  ]
+}

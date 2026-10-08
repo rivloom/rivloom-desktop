@@ -15,3 +15,6 @@ docs/licenses/** -whitespace
 # Keep versioned upstream originals byte-for-byte, including their original line endings.
 docs/licenses/npm/** -text
 docs/licenses/rust/** -text
+
+# This temporary branch must preserve the exact reviewed consumer method bytes.
+scripts/release-readonly/** -text whitespace=cr-at-eol

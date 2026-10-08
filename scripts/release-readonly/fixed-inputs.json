@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.30",
+  "productCommit": "4a359ea99380678db66688732fb82672979ff036",
+  "productTree": "c94609d4317dd314bc8047181ac31e670523a0a7",
+  "trackedFiles": 1822,
+  "runtimeCore": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+  "runs": {
+    "windowsCI": 37792285299,
+    "windowsServices": 37792285178,
+    "lan": 37792285326,
+    "linux": 37792285176,
+    "windowsRelease": 37792783459,
+    "linuxRelease": 37793806390
+  },
+  "windowsArtifactID": 11558656328,
+  "linuxArtifactID": 11556789261,
+  "expectedFrontendFiles": 14,
+  "nodeVersion": "24.19.0",
+  "windowsInputs": {
+    "version": "0.1.30",
+    "previousVersion": "0.1.29",
+    "runtimeCore": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+    "runtimeVersion": "1.18.33-rivloom.655285f835f8",
+    "packageVersion": "1.18.33",
+    "nodeVersion": "24.19.0",
+    "nodeSHA256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237",
+    "nodeLicenseSHA256": "148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5",
+    "originalPublicKeySHA256": "0bdeb1bda7c41f5c3318cb4b0a36d45a310e720ebbf17da2012e1f27de5515c1",
+    "reviewedEngineSource": {
+      "schemaVersion": 1,
+      "kind": "rivloom-source",
+      "repository": "https://github.com/rivloom/rivloom-opencode-runtime.git",
+      "commit": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+      "tree": "9bbec9cc7eb7062cb7bda8d3e8a4ad6b1c428351",
+      "version": "1.18.33-rivloom.655285f835f8",
+      "packageVersion": "1.18.33",
+      "target": "windows-x64",
+      "artifactPath": "vendor/rivloom-opencode/windows-x64/655285f835f8",
+      "upstream": {
+        "repository": "anomalyco/opencode",
+        "tag": "v1.18.33",
+        "commit": "51ef4be1d3c122f18fefb510dca8d778571f4f18",
+        "version": "1.18.33"
+      },
+      "toolchain": {
+        "node": "24.19.0",
+        "bun": "1.3.14",
+        "bunArchiveSHA256": "538f9c846355d9e847b2671bc00c47da4229a0befb24df3282b739770f3b475f"
+      },
+      "inputs": {
+        "bun.lock": "b68e7ece1128eb383663e55ffca4f9f08e451530cc09fc9cf84c489bf41bdc2a",
+        "rivloom/runtime.json": "bdebe6b48fc83b159f383934c39454595b529aa25487346841028c99c914e0a5",
+        "rivloom/build.mjs": "5d819ef3e9bed80f4349dbfd2aef305f94fd4eaa045ae43a4141129a3b80b51a",
+        "rivloom/build.ps1": "d40ff47ca93e4efd68b31423d5d1d840c8871e70444f0ca7254d523c8dbab453",
+        "rivloom/smoke.mjs": "343fa7fbd246740dcf93da0517545b56cea293a1d146041726d4669cbfdf568c",
+        "rivloom/models.json": "58e29fa343539c2ba27f364eb98314b962f16afab4d5c5afbb5401ff901d954b",
+        "LICENSE": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+        "rivloom/artifact.mjs": "943685bc2190cfb27ba15f723b46e4194b27cf0ad8fa369bf0c92324b73e3b85",
+        "packages/opencode/script/build.ts": "946167808e209e0e863727f1493b28a5377ce3e43c6139c13b95653914d52aad"
+      },
+      "verification": {
+        "files": {
+          "scripts/runtime-windows/smoke.mjs": "edb8132db46b656f7760173a221562fce3a6ee01a31d7c05334da417b720b0ae",
+          "server/engine-artifact.ts": "3d8965d19ceff0390ef488bf9bc782e215db2292af2c924541d574b55859e8ad",
+          "server/windows-engine-stop.mjs": "ff3d72bcb796a301c16a66cc2ee855a932d8a163ea03180a798b43b2edf15900"
+        }
+      },
+      "producerSchemaVersion": 2,
+      "sourceInventory": {
+        "files": 6662,
+        "sha256": "cbd8267dec752aff60c50b0180b3b0eafc4f8039ce66124fba55415d38751765"
+      },
+      "approvedArtifact": {
+        "binarySHA256": "554f2ca11812180863fcbc2afbd3afb24a1b924163611eecf942e502376813d0",
+        "manifestSHA256": "a8ae257c63455e00b3103762e26e66180c956ebf3418bafae7f98dfb8e9bdeb5",
+        "smokeSHA256": "1c14004542d0526fb515a191d56f1e8e5c58904c794e2595d8cc1c2d3b0f0997"
+      }
+    },
+    "notesIncludes": [
+      "0.1.30",
+      "1.18.33"
+    ]
+  },
+  "extractorSHA256": "254cf6411d38903b2440819f7e0a847f0cfee7f8096cfad9e90fea62f42b0c23",
+  "criticalFiles": [
+    {
+      "path": "server/brain-tasks.ts",
+      "canonicalSHA256": "84cbfe7208a68b6a7153c72241de88fc6e37d784fa323d00d037bdff1334dc56"
+    },
+    {
+      "path": "server/workflow-service.ts",
+      "canonicalSHA256": "67aa101ccc62baf35d306ef2e3e31b93c31831e811266196d17928fe5794eb6d"
+    },
+    {
+      "path": "server/workflow-contexts.ts",
+      "canonicalSHA256": "5589032d104a946ed58c41e0588a66c4a7b4c919a72aac8ab2f4b602544747a5"
+    },
+    {
+      "path": "server/index.ts",
+      "canonicalSHA256": "4b92cdec733786f1dd3bbf9ef31fbcf68a0d89f25f68fd83334593101228a75c"
+    },
+    {
+      "path": "server/node-network.ts",
+      "canonicalSHA256": "c78f5e31f3db4475a5d827214545e4a4e316dedd3d5f788fc88788f4921a04ca"
+    },
+    {
+      "path": "server/update-maintenance.ts",
+      "canonicalSHA256": "95e94d7fadfdc72bf12e48acf974a35bc6a7f3bd2a170f53b09e9b637a27be57"
+    },
+    {
+      "path": "server/workflow-runtime.ts",
+      "canonicalSHA256": "980820c821b9a6a42812d309da1c5f5c32fdff20ad7e867115f4ce2166db9855"
+    },
+    {
+      "path": "src/provider-settings.tsx",
+      "canonicalSHA256": "59f1d98b6dec1a3345838a12f063eb5935bef61edc9d86efd0b05b64ea9af2f4"
+    },
+    {
+      "path": "src-tauri/src/main.rs",
+      "canonicalSHA256": "b744c7613f7144699a270ae405078dfa610d7b6b9653b2a67987ae4b22a80849"
+    },
+    {
+      "path": "src-tauri/src/notification_target.rs",
+      "canonicalSHA256": "9fef7dbd7243018be8aa32d47fd079c0e81dddb47aa7f23a1d2012f0c9bd34bd"
+    },
+    {
+      "path": "tests/workflow-service.test.ts",
+      "canonicalSHA256": "1c5c24e7b726db392b1040b92ac1434d5e335355a8ab628c259426d568f9167d"
+    },
+    {
+      "path": "tests/workflow-contexts.test.ts",
+      "canonicalSHA256": "04850a02dd865a4313fe0f4639f51aa8ecd3b87ad9df3431332c18d354bfa74f"
+    },
+    {
+      "path": "tests/node-network.test.ts",
+      "canonicalSHA256": "19e0cb3972ba0b71e0cdc786d9c4e6cf1ed559ea00fc9ecfca01d7c505cac017"
+    },
+    {
+      "path": "tests/desktop-update.test.ts",
+      "canonicalSHA256": "1bdba37b3e62827bfd110b95915d80556a5ef6f4fec649b87fb6dd1ad59aa896"
+    },
+    {
+      "path": "scripts/ci-test-suites.ts",
+      "canonicalSHA256": "6028d26017f33cbf46c8b86fcbd85e37f418bd7cc0e6fbb067bbc2af78112c20"
+    },
+    {
+      "path": "server/project-changes.ts",
+      "canonicalSHA256": "f42a78969421589deef8029c60ddd92285e72dec78c44e9047e7c0bd6b266098"
+    },
+    {
+      "path": "tests/project-changes.test.ts",
+      "canonicalSHA256": "be84bb6349a45db311a60fa9807b80d3be72ef55e1be42f0443e1b16e398d63a"
+    },
+    {
+      "path": "scripts/engine-prepare.ts",
+      "canonicalSHA256": "ca60903fdb8099c7d8243024b6c0d27ce06e6888db011967c5eaca43842a433a"
+    },
+    {
+      "path": "scripts/engine-publication.ts",
+      "canonicalSHA256": "c22841af89c8be4bbe05c28fd8662e08582b3b992736f7376cca1e0d2bbc82ee"
+    },
+    {
+      "path": "tests/engine-artifact.test.ts",
+      "canonicalSHA256": "e34aa350cf31bca18ce1a899fdeb919f1b4b2a96d652227a79615b793eae6902"
+    }
+  ],
+  "expectedWindowsArchive": {
+    "bytes": 101463278,
+    "sha256": "a7211d96a21ff95868af616cd29d99cc6e1f06f5b775b2033f81c0c8e3284104"
+  },
+  "expectedWindowsInstaller": {
+    "bytes": 101386626,
+    "sha256": "734ae436f68b30bf4dbf57c7d278cc7549fb449dc1fb5211ae6efd498037eb4d"
+  },
+  "expectedLinuxPackage": {
+    "bytes": 157260273,
+    "sha256": "27042b2f708f2f46ef464624483d0b87e30c8d7301402183bdcfc8480fd1ad0d"
+  },
+  "expectedFrontend": [
+    {
+      "path": "assets/bell-DSNNBMJ8.wav",
+      "bytes": 79424,
+      "sha256": "27727d29f431eb4e6897716141bf218ed11d3593157cfa771132b636b325c50a"
+    },
+    {
+      "path": "assets/chime-DyrHDHni.wav",
+      "bytes": 70604,
+      "sha256": "c29f8cc35ddbbf56ddc54a5aac05ef29238f15914dd1b0cf695e8332bbf8d99b"
+    },
+    {
+      "path": "assets/cursor-editorTextHighlight-kG3uUOwL.svg",
+      "bytes": 5402,
+      "sha256": "c6252b0edcb68dac87557a027180fcbdbd93466841aa34792530f7cce54cec5d"
+    },
+    {
+      "path": "assets/index-BF9IcJ2X.css",
+      "bytes": 265138,
+      "sha256": "0813fbbf06a6e8a28959d1c84cb91ccbf4d6c6b2896c6eea8eff21c3813023ef"
+    },
+    {
+      "path": "assets/index-CAY5E81h.js",
+      "bytes": 1093543,
+      "sha256": "918bddb9512e004645c1e03fc9dba767602922c2d824ba6e0725cab229f00ae2"
+    },
+    {
+      "path": "assets/manrope-latin-variable-DHIcAJRg.woff2",
+      "bytes": 24836,
+      "sha256": "a30ddcd349703aff7464c34bef3fffdff405ee50c113440d7c8693c02d210972"
+    },
+    {
+      "path": "assets/pdf-preview-BFXgkkwz.js",
+      "bytes": 433135,
+      "sha256": "8430469cdb472335e061e33a62f4150ae7ee3cb3a26c1df1d7040356c3a47903"
+    },
+    {
+      "path": "assets/pdf-preview-CvNwDP7y.css",
+      "bytes": 229879,
+      "sha256": "fe3433ca5ed7edc558ceba1cb4f90e657dd70690f0ff8a79e2c0589f3a8ae4b6"
+    },
+    {
+      "path": "assets/pdf.worker.min-Dswkl-cV.mjs",
+      "bytes": 1265413,
+      "sha256": "8ab0e5e30031b4a06ecfddd5ae9562f0227f830ee7ec9ed1a968b134243d2386"
+    },
+    {
+      "path": "assets/preload-helper-CY_jGW_g.js",
+      "bytes": 472022,
+      "sha256": "338f112b74396d91f9ee257f030901ae2d4995730b8f7747f643a97918e4eaab"
+    },
+    {
+      "path": "assets/pulse-DNY6YMNw.wav",
+      "bytes": 48554,
+      "sha256": "8080e3cbdecfb0afa35265793ffe111d50fc92e8d19cf0729785e50bf3082f29"
+    },
+    {
+      "path": "assets/rivloom-favicon-DUTeZnCS.png",
+      "bytes": 953,
+      "sha256": "512dfadc3ea2c07c89874a29bd3e9221278b188e310154a8d1f2fd2596f3acd3"
+    },
+    {
+      "path": "assets/rivloom-wordmark-L3usxsIW.png",
+      "bytes": 231495,
+      "sha256": "d95f7ac65b07aa86ec12daa0ee550937d78396800838b5f682361c2a4105135c"
+    },
+    {
+      "path": "index.html",
+      "bytes": 628,
+      "sha256": "4676bc67b2988f69660093d1f21c3f250052ea8a50c3f60d5282bad9b22369d1"
+    }
+  ]
+}
