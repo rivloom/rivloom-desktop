@@ -1,8 +1,10 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
-**2026-10-08：0.1.30 发行准备。** 整合固定 OpenCode 1.18.33 与会话停止、Brain 投递、更新维护、工作流通知、模型凭据保存及元数据配额修复，补齐网络测试精确分类。当前提交的云端 CI、候选安装、双平台公开下载、原公钥签名、官网和 R2 收尾按本次实际结果记录，旧版或旧 PR 的验收不替代本次输入。见[版本说明](releases/0.1.30.md)。
+**2026-10-09：Windows/Linux x64 0.1.30 收尾完成（发行日期 2026-10-08）。** 固定核心 1.18.33、Node 24.19.0；同源 main 27 checks、原云端安装、独立托管消费/完整下载与原公钥验签、官网实际 Pages/live 及 R2 检查完成。保留 115、暂缓并保留 0、实际删除 6 个。逐对象删除和复核已完成。未启用自动清理。 具体范围见[发行验收](releases/0.1.30-verification.md)。
 
-**2026-09-30：0.1.30 发行准备中。** Windows/Linux x64 固定核心与 SDK/plugin 更新至 OpenCode 1.18.33，补齐 Windows schema 2 的完整源码清单与独立消费端校验。Windows 源码构建固定 Git 链接为原目标文本，避免 runner 的链接分隔符影响清单。正式发行源码仍须完成同提交云端 CI、安装、公开下载与签名、官网部署及 R2 保留检查；既有 0.1.29 结果保留为历史。见[版本说明](releases/0.1.30.md)。
+**历史准备 · 2026-10-08：0.1.30。** 整合固定 OpenCode 1.18.33 与会话停止、Brain 投递、更新维护、工作流通知、模型凭据保存及元数据配额修复，补齐网络测试精确分类。当前提交的云端 CI、候选安装、双平台公开下载、原公钥签名、官网和 R2 收尾按本次实际结果记录，旧版或旧 PR 的验收不替代本次输入。见[版本说明](releases/0.1.30.md)。
+
+**历史准备 · 2026-09-30：0.1.30。** Windows/Linux x64 固定核心与 SDK/plugin 更新至 OpenCode 1.18.33，补齐 Windows schema 2 的完整源码清单与独立消费端校验。Windows 源码构建固定 Git 链接为原目标文本，避免 runner 的链接分隔符影响清单。正式发行源码仍须完成同提交云端 CI、安装、公开下载与签名、官网部署及 R2 保留检查；既有 0.1.29 结果保留为历史。见[版本说明](releases/0.1.30.md)。
 
 **2026-09-30：Windows/Linux x64 0.1.29 发布完成。** 设备选择、停止收尾、消息续接与会话界面改动已发行。同源 CI、Windows 隔离安装、双平台公开完整下载、原公钥更新验签、Linux 隔离运行、官网与 R2 检查通过；Cloudflare Pages 集成检查成功，生产内容已核验。见[本版验收](releases/0.1.29-verification.md)。
 
@@ -41,7 +43,7 @@ Windows 验证仍要求固定核心全部 10 项 smoke；消费端单独锁定�
 
 ## 2026-09-19 当前源码：Linux 自有引擎（未发布）
 
-Linux x64 CI 在任何真实引擎服务检查前运行 `engine:prepare`。该步骤按 `shared/engine-source-linux.json` 克隆固定自有源码并校验本仓库的 runtime Linux recipe 快照，然后原生编译 baseline ELF、运行合成模型 smoke。SDK/plugin 为1.18.31；ARM64 不进入本次构建矩阵。Linux 包不再下载/安装官方 npm 引擎。
+Linux x64 CI 在任何真实引擎服务检查前运行 `engine:prepare`。该步骤按 `shared/engine-source-linux.json` 克隆固定自有源码并校验本仓库的 runtime Linux recipe 快照，然后原生编译 baseline ELF、运行合成模型 smoke。SDK/plugin 为1.18.33；ARM64 不进入本次构建矩阵。Linux 包不再下载/安装官方 npm 引擎。
 
 原三文件候选契约保留；build/smoke 新增源码 commit/tree、source lock、recipe 和 receipt 摘要，绑定实际 ELF 哈希与仓库来源。解包 smoke 重新验证源码清单、构建记录、许可、SDK/plugin 和完整文件树，再执行启动/重启/停止。纯 Node 发行 job 按当前 lock 核对同一候选证据与归档，不声称独立重跑模型或产生签名。工作流变更尚未提交运行，以下 Linux0.1.18 已发布历史不代表新 runtime 已上线。
 

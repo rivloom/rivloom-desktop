@@ -8,13 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows / Linux x64 正式版为 **0.1.29**。更新设备选择、输入区停止、失败与停止后的消息续接，以及会话界面与结果展示。GitHub、官网下载和 Windows 签名更新已同步，见[版本说明](docs/releases/0.1.29.md)与[发行验收](docs/releases/0.1.29-verification.md)。
+当前 Windows / Linux x64 正式版为 **0.1.30**。固定核心 `1.18.33-rivloom.655285f835f8`，SDK/plugin 1.18.33，Node.js 24.19.0；包含停止续聊、Brain 派发、更新维护、通知、凭据保存、元数据配额和 Git 兼容修复。见[版本说明](docs/releases/0.1.30.md)与[发行验收](docs/releases/0.1.30-verification.md)。
 
-同源 CI、隔离安装、双平台公开完整下载、签名、官网与 R2 检查通过。保留 116、暂缓 0、可删除 0、删除 0 个。检查完成，删除 0 个；未启用自动清理。Cloudflare Pages 集成检查成功，生产内容已核验。
+原云端隔离安装与独立托管公开完整下载/消费/签名验收通过；本机大包 GET 未完成，没有本机安装或 WSL 成功声明。官网 Pages 与实际 live 已核验。R2 保留 115、暂缓并保留 0、实际删除 6 个。逐对象删除和复核已完成。未启用自动清理。
 
-**2026-09-30 开发源码（尚未发行）：** Windows / Linux x64 引擎已升级到 OpenCode 稳定版 1.18.33，固定 Rivloom runtime 提交 `655285f835f8560dcf3b6c484d0e2f1faba9e67d`，版本 `1.18.33-rivloom.655285f835f8`；SDK/plugin 精确锁定 1.18.33，Node.js 24.19.0。两平台采用 schema 2 产物与完整源码清单，Windows/Linux 生产者各 11 项隔离 smoke、Windows 消费端独立 10 项检查已通过。本轮桌面 875 项单元测试、20 项现有服务检查、Linux 原生 29 项检查与桌面 runtime 资源清单验证已通过；正式安装/更新验收按[引擎说明](docs/ENGINE.md)和既有发行流程完成。
-
-正式 0.1.29 下载和更新渠道仍使用 `1.18.31-rivloom.9b07cf442a7e`，本次源码升级不修改已发布安装包、历史验收或用户数据。
+**历史 0.1.29 发行：** 设备选择、停止收尾、消息续接与会话界面，见[版本说明](docs/releases/0.1.29.md)和[验收](docs/releases/0.1.29-verification.md)。
 
 **历史 0.1.28 发行：** 模型连接右侧速率、订阅就绪与短回复采样修复，见[版本说明](docs/releases/0.1.28.md)及[验收](docs/releases/0.1.28-verification.md)。
 
@@ -40,7 +38,7 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 **共享 Skills 与渐进式 Wiki 记忆** 默认保留本机，手动分享给 Brain；其他节点通过 Brain 发现并按需读取共享内容。任务首次读取时固定版本，新任务获取来源最新版。整理功能目前生成分类索引和标记完全重复正文，不包含独立 AI 后台语义重写。详情见 [知识库说明](docs/KNOWLEDGE-LIBRARY.md)和 [0.1.15 版本说明](docs/releases/0.1.15.md)。
 
-**Linux x86_64 命令行执行节点 0.1.29 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.29.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.31-rivloom.9b07cf442a7e`，SDK/plugin 1.18.31，随包 Node.js 24.19.0。
+**Linux x86_64 命令行执行节点 0.1.30 已发布**，面向无 GUI 的局域网设备，经 SSH 配置、配对并接收任务。原生 CI、公开包完整性与隔离启动验收已通过，实际下载验证方式及范围见 [Linux 发行说明](docs/releases/linux-0.1.30.md)；[官网下载页](https://rivloom.com/download/) 和中英文指南提供下载、校验值及 curl/wget 命令。ARM64 保留源码适配，待原生架构验收后单独发布，目前不提供下载。运行要求见 [Linux CLI](docs/LINUX.md)。macOS 和 Codex runtime 尚未接入。固定核心为 `1.18.33-rivloom.655285f835f8`，SDK/plugin 1.18.33，随包 Node.js 24.19.0。
 
 ## 从源码运行
 
