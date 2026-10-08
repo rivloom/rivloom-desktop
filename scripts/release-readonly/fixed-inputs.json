@@ -83,6 +83,14 @@
     ]
   },
   "extractorSHA256": "254cf6411d38903b2440819f7e0a847f0cfee7f8096cfad9e90fea62f42b0c23",
+  "windowsExtractorBootstrap": {
+    "version": "22.01",
+    "fileName": "7z2201-x64.exe",
+    "url": "https://downloads.sourceforge.net/project/sevenzip/7-Zip/22.01/7z2201-x64.exe",
+    "installerSHA256": "b055fee85472921575071464a97a79540e489c1c3a14b9bdfbdbab60e17f36e4",
+    "maximumBytes": 8388608,
+    "maximumRedirects": 4
+  },
   "criticalFiles": [
     {
       "path": "server/brain-tasks.ts",

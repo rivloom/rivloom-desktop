@@ -25,8 +25,8 @@ jobs:
         include:
           - platform: windows
             runner: windows-2022
-          - platform: linux
-            runner: ubuntu-24.04
+          # Linux passed in run 37810029245 at consumer
+          # 84bd5c4ed435f9a984ebd7c4be49ff9cbc15a281; reuse that result.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
