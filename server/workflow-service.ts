@@ -7,6 +7,7 @@ import { canRetryWorkflowPlanning, canRetryWorkflowStep, validExecutionOutcome, 
 import type { ResourceQuery, ResourceReference } from '../shared/resources.ts';
 import { workflowCandidateAllowed } from '../shared/workflow-diagnostics.ts';
 import { WorkflowStore, workflowEvent, workflowStep, type WorkflowRequest } from './workflows.ts';
+import { HistoryError } from './conversation-history.ts';
 import { workflowHistoryGuide } from '../shared/workflow-history.ts';
 import { decodeWorkflowPlacementPlan, workflowEffectiveTarget, workflowPlacementContract, workflowPlacementPolicy } from '../shared/workflow-origin.ts';
 
@@ -39,6 +40,22 @@ const terminalStep = (step: WorkflowStep) => ['completed', 'failed', 'cancelled'
 const terminalWorkflow = (workflow: Workflow) => ['stopped', 'completed', 'failed'].includes(workflow.state);
 const roundEnded = (workflow: Workflow) => terminalWorkflow(workflow) && [workflow.planner, ...workflow.steps]
   .every((step) => step.attempts.every((attempt) => terminalAttempt(attempt) && attempt.handled));
+function cancelledCompletedResultsPending(value: Workflow) {
+  if (value.state !== 'stopped' || !value.queuePaused || value.queuePauseReason !== 'stopped' || value.queueError ||
+    value.events.findLast(event => event.kind === 'state' && event.stepID === null)?.text !== 'stopped') return false;
+  let pending = false;
+  for (const step of [value.planner, ...value.steps]) {
+    if (!terminalStep(step)) return false;
+    for (const [index, attempt] of step.attempts.entries()) {
+      if (!terminalAttempt(attempt)) return false;
+      if (!attempt.handled) {
+        if (step.state !== 'cancelled' || index !== step.attempts.length - 1 || attempt.phase !== 'completed') return false;
+        pending = true;
+      }
+    }
+  }
+  return pending;
+}
 function stoppedContinuationPending(value: Workflow) {
   if (value.state !== 'stopped' || !value.queuePaused || value.queuePauseReason !== 'stopped' || value.queueError || !roundEnded(value)) return false;
   // Earlier versions kept even a new send after stop confirmation paused. Recover only that
@@ -88,15 +105,30 @@ export class WorkflowService {
   private assignedByWorkflow = new Map<string, string[]>();
   private assigned = new Map<string, number>();
   private closed = false;
+  private suspended: () => boolean;
+  get pendingOperations() { return this.advancing.size; }
   isAdvancing(id: string) { return this.advancing.has(id); }
   preparation(value: Workflow, step: WorkflowStep) {
     const detail = this.preparationDetails.get(`${value.id}:${step.id}`);
     return step.state === 'ready' && detail?.plan === stepRevision(step) && detail.round === (value.roundRequestID || value.requestID) &&
       (detail.active || Date.now() - Date.parse(detail.observedAt) < 15_000) ? { nodeID: detail.nodeID, observedAt: detail.observedAt } : null;
   }
-  constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}) {
-    this.store = store; this.adapter = adapter; this.onChange = onChange;
-    for (const value of store.list()) this.trackAssignments(value);
+  constructor(store: WorkflowStore, adapter: WorkflowExecutionAdapter, onChange: () => void = () => {}, suspended: () => boolean = () => false) {
+    this.store = store; this.adapter = adapter; this.onChange = onChange; this.suspended = suspended;
+    for (let value of store.list()) {
+      if (cancelledCompletedResultsPending(value)) {
+        try {
+          value = store.update(value.id, current => {
+            if (!cancelledCompletedResultsPending(current)) return;
+            for (const step of [current.planner, ...current.steps]) for (const attempt of step.attempts) attempt.handled = true;
+          });
+        } catch (error) {
+          // Retired conversations remain untouched; they may still be restored by their owner.
+          if (!(error instanceof HistoryError) || error.status !== 410) throw error;
+        }
+      }
+      this.trackAssignments(value);
+    }
   }
   private update(id: string, change: (workflow: Workflow) => void, version?: number) {
     const result = this.store.update(id, (value) => {
@@ -274,24 +306,26 @@ export class WorkflowService {
   advance(id: string): Promise<void> {
     const previous = this.advancing.get(id);
     if (previous) return previous;
+    if (this.closed || this.suspended()) return Promise.resolve();
     const pending = this.advanceOne(id).finally(() => this.advancing.delete(id));
     this.advancing.set(id, pending); return pending;
   }
   async tick() {
+    if (this.closed || this.suspended()) return;
     const ids = this.store.list().filter((w) => !terminalWorkflow(w) || this.nextMessage(w) || stoppedContinuationPending(w)).map((w) => w.id);
-    for (let start = 0; start < ids.length && !this.closed; start += 4)
+    for (let start = 0; start < ids.length && !this.closed && !this.suspended(); start += 4)
       await Promise.allSettled(ids.slice(start, start + 4).map((id) => this.advance(id)));
   }
   async close() { this.closed = true; await Promise.allSettled([...this.advancing.values()]); this.preparationDetails.clear(); }
   private mayStart(id: string, stepID: string, executionID?: string) {
-    if (this.closed) return false;
+    if (this.closed || this.suspended()) return false;
     const value = this.store.get(id);
     return !!value && ['planning', 'running'].includes(value.state) &&
       (executionID ? !!currentStep(value, stepID, executionID) : getStep(value, stepID)?.state === 'ready');
   }
   private async advanceOne(id: string) {
     let value = this.store.get(id);
-    if (!value || this.closed) return;
+    if (!value || this.closed || this.suspended()) return;
     if (stoppedContinuationPending(value)) value = this.update(id, (latest) => {
       if (stoppedContinuationPending(latest)) continueMessages(latest);
     });
@@ -300,6 +334,7 @@ export class WorkflowService {
     if (value.state === 'stopping') { await this.stopAll(value); return; }
     const steps = value.planVersion ? value.steps : [value.planner];
     await Promise.all(steps.filter((step) => step.state === 'running').map((step) => this.reconcile(value!, step)));
+    if (this.closed || this.suspended()) return;
     value = this.store.get(id)!;
     if (value.state === 'stopping') { await this.stopAll(value); return; }
     if (terminalWorkflow(value)) return;
@@ -318,7 +353,7 @@ export class WorkflowService {
     if (!message || !roundEnded(value)) return;
     const stillCurrent = (latest: Workflow) => {
       const pending = this.nextMessage(latest);
-      return !this.closed && roundEnded(latest) &&
+      return !this.closed && !this.suspended() && roundEnded(latest) &&
         (latest.roundRequestID || latest.requestID) === (value.roundRequestID || value.requestID) &&
         pending?.requestID === message.requestID && pending.text === message.text && pending.model === message.model &&
         pending.reasoningEffort === message.reasoningEffort && pending.originNodeID === message.originNodeID && pending.placementPolicy === message.placementPolicy;
@@ -326,6 +361,7 @@ export class WorkflowService {
     try {
       // Preparation is repeatable; the atomic archive/reset below is the only admission point.
       const context = await this.adapter.conversationContext?.(value);
+      if (this.closed || this.suspended()) return;
       const inherited = new Map<string, TaskFileDescriptor>();
       for (const file of [...value.inputFiles.filter((f) => f.id !== value.conversationContextFile?.id),
         ...value.steps.flatMap((s) => s.attempts.at(-1)?.outputFiles || []), ...message.inputFiles]) inherited.set(file.name, file);
@@ -351,6 +387,7 @@ export class WorkflowService {
           dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} });
       });
     } catch (error) {
+      if (this.closed || this.suspended()) return;
       this.update(value.id, (latest) => {
         if (!stillCurrent(latest)) return;
         latest.queuePaused = true; latest.queuePauseReason = 'context_error';
@@ -371,7 +408,14 @@ export class WorkflowService {
           if (state === 'stopped') { execution.handled = true; current.state = 'cancelled'; }
           else { execution.error = 'workflow_stop_unconfirmed'; latest.error = execution.error; }
         });
-      } else if (!terminalStep(step)) this.update(value.id, (latest) => { getStep(latest, step.id)!.state = 'cancelled'; });
+      } else if ((attempt && !attempt.handled) || !terminalStep(step)) this.update(value.id, (latest) => {
+        const current = getStep(latest, step.id)!;
+        const execution = current.attempts.at(-1);
+        // Stop can interrupt async result processing after lookup records completion.
+        // Settle that terminal attempt without applying its cancelled continuation.
+        if (execution && terminalAttempt(execution)) execution.handled = true;
+        if (!terminalStep(current)) current.state = 'cancelled';
+      });
     }));
     const latest = this.store.get(value.id)!;
     if ([latest.planner, ...latest.steps].every((step) => !step.attempts.length || terminalAttempt(step.attempts.at(-1)!)))

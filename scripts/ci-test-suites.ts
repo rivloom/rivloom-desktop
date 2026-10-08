@@ -126,7 +126,12 @@ export const networkCases = {
     'execution policy trusts paired senders and persists the local AI approval mode',
   ],
   protocol: [
+    'update maintenance leaves pending remote, Brain and queue deliveries unchanged until release',
+    'update maintenance drains an old delivery while retaining a newer cancellation for the same execution',
+    'update maintenance records an in-flight queue acknowledgement without sending the next receipt',
+    'update maintenance keeps the acknowledged file offset and resumes the same delivery after release',
     'remote task delivery replies cannot replace a newer cancellation',
+    'brain task delivery replies cannot replace a newer execution assignment',
     'collaboration extensions serialize authenticated queries without creating task executions',
     'brain task placement rejects remote Master-only capacity and resumes the original queue on a third Worker',
     'shared workers register with two Brains and a declined Execution is reassigned safely',

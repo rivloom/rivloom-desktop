@@ -39,8 +39,16 @@ export class WorkflowContexts {
     }
     // A preexisting offer without this context belongs to another creation. Never retrofit execution authority.
     if (this.remote(payload.executionID)) throw new Error('workflow_execution_already_exists');
-    const pending = this.db.prepare("SELECT COUNT(*) AS count FROM workflow_contexts WHERE owner_node_id=? AND json_extract(body,'$.localTaskID') IS NULL").get(peer)!;
-    if (!integer(Number(pending.count), 127)) throw new Error('workflow_metadata_quota');
+    const ownNodeID = this.ownNode();
+    const pending = this.db.prepare("SELECT execution_id FROM workflow_contexts WHERE owner_node_id=? AND json_extract(body,'$.localTaskID') IS NULL").all(peer)
+      .filter(row => {
+        const remote = this.remote(String(row.execution_id));
+        // Confirmed terminal offers never created a local execution. Keep their
+        // metadata for replay and audit, while releasing only their pending quota.
+        return !remote || remote.direction !== 'incoming' || remote.ownerNodeID !== peer || remote.targetNodeID !== ownNodeID ||
+          remote.localTaskID !== null || !['cancelled', 'declined', 'expired'].includes(remote.status);
+      }).length;
+    if (!integer(pending, 127)) throw new Error('workflow_metadata_quota');
     const value: WorkflowContextRecord = { executionID: payload.executionID, ownerNodeID: peer, digest, context: payload.context,
       ...(payload.resultDelivery === 'on-demand' ? { resultDelivery: 'on-demand' } : {}),
       inputFiles: payload.inputFiles, localTaskID: null, createdAt: new Date().toISOString() };

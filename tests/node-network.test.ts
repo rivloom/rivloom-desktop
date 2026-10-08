@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { createSocket } from 'node:dgram';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -45,6 +45,7 @@ import {
   validRemoteTaskOffer,
   validRemoteTaskPreparation,
   validRemoteTaskResponse,
+  type RemoteTaskMessage,
 } from '../server/remote-tasks.ts';
 import { ExecutionPolicyStore } from '../server/execution-policy.ts';
 import {
@@ -60,11 +61,231 @@ import {
   BrainTaskStore,
   validBrainTaskSubmission,
   validBrainTaskUpdate,
+  type BrainTaskMessage,
 } from '../server/brain-tasks.ts';
 import { WorkerAdmissionGate } from '../server/worker-admission.ts';
 import { TaskQueueReceiptStore, type QueueReceiptMessage } from '../server/task-queue-receipts.ts';
 import { queueReceiptCapability } from '../shared/task-queue-receipts.ts';
 import type { RivloomNode } from '../shared/types.ts';
+import { taskFileCapability, taskFileChunkBytes, taskFileMime, type TaskFileMessage, type TaskFileResponse } from '../shared/task-files.ts';
+
+function updateMaintenanceFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'rivloom-update-network-'));
+  const localID = 'A'.repeat(32), peerID = 'B'.repeat(32), brainID = randomUUID();
+  const network = new NodeNetwork(root, false);
+  const wire = network as unknown as {
+    identity: { nodeID: string } | null;
+    nodes: Map<string, RivloomNode>;
+    remoteTasks: RemoteTaskStore; brainTasks: BrainTaskStore; queueReceipts: TaskQueueReceiptStore;
+    flushRemoteTask(id: string): Promise<void>; flushBrainTask(id: string): Promise<void>;
+    flushQueueReceipts(id: string): Promise<void>; flushTaskFiles(id: string): Promise<void>;
+    syncBrainDirectory(node: RivloomNode): Promise<void>;
+    sendChannelEvent(node: RivloomNode, message: RemoteTaskMessage | BrainTaskMessage | QueueReceiptMessage): Promise<boolean>;
+    exchangeTaskFile(node: RivloomNode, message: TaskFileMessage): Promise<TaskFileResponse>;
+    assertFilePeer(): void;
+  };
+  wire.identity = { nodeID: localID };
+  const peer: RivloomNode = { id: peerID, name: 'Offline fixture transport', fingerprint: '', protocolVersion: 1,
+    addresses: [], port: 1, online: true, local: false, trusted: true, verified: true, channelReady: true,
+    lastSeen: new Date().toISOString(), capabilities: [queueReceiptCapability, taskFileCapability], brains: [], worker: null };
+  wire.nodes.set(peerID, peer);
+  let held = false;
+  network.setUpdateMaintenance(() => held);
+  const input = { title: 'Maintenance fixture', description: 'Preserve durable work without starting any model.', criteria: 'Same task identity after resume.' };
+  const outgoing = () => wire.remoteTasks.create(localID, brainID, peerID, brainID, input);
+  const incoming = () => {
+    const sender = new RemoteTaskStore(join(root, 'sender'));
+    const remote = sender.create(peerID, brainID, localID, brainID, input);
+    const offer = sender.message(remote.id); assert(validRemoteTaskOffer(offer));
+    wire.remoteTasks.receiveOffer(offer);
+    return wire.remoteTasks.list().find(value => value.id === remote.id)!;
+  };
+  return { root, localID, peerID, brainID, network, wire, peer, input, outgoing, incoming,
+    hold: (value: boolean) => { held = value; },
+    close: () => {
+      network.files.close();
+      assert.equal(resolve(root, '..'), resolve(tmpdir()));
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test('update maintenance leaves pending remote, Brain and queue deliveries unchanged until release', async () => {
+  const f = updateMaintenanceFixture();
+  try {
+    const remote = f.outgoing();
+    const brain = f.wire.brainTasks.create('submitted', f.localID, f.brainID, f.peerID,
+      { ...f.input, requestedProjectID: null, requirements: {} });
+    const incoming = f.incoming();
+    f.wire.queueReceipts.publish(incoming, { state: 'queued', position: 1, reason: null });
+    const before = [f.wire.remoteTasks.list(), f.wire.brainTasks.list(), f.wire.queueReceipts.pending(f.peerID)];
+    const sent: (RemoteTaskMessage | BrainTaskMessage | QueueReceiptMessage)[] = [];
+    f.wire.sendChannelEvent = async (_node, message) => { sent.push(message); return true; };
+    f.hold(true);
+    await Promise.all([f.wire.flushRemoteTask(remote.id), f.wire.flushBrainTask(brain.id),
+      f.wire.flushQueueReceipts(f.peerID), f.wire.syncBrainDirectory(f.peer)]);
+    assert.equal(sent.length, 0); assert.equal(f.network.updateOperations, 0);
+    assert.deepEqual([f.wire.remoteTasks.list(), f.wire.brainTasks.list(), f.wire.queueReceipts.pending(f.peerID)], before);
+    f.hold(false);
+    await Promise.all([f.wire.flushRemoteTask(remote.id), f.wire.flushBrainTask(brain.id), f.wire.flushQueueReceipts(f.peerID)]);
+    assert.deepEqual(sent.map(message => 'taskID' in message ? message.taskID : message.receipt.remoteTaskID).sort(),
+      [remote.id, brain.id, incoming.id].sort());
+    assert.equal(f.wire.remoteTasks.record(remote.id)!.deliveryPending, false);
+    assert.equal(f.wire.brainTasks.record(brain.id)!.deliveryPending, false);
+    assert.deepEqual(f.wire.queueReceipts.pending(f.peerID), []);
+    assert.equal(f.network.updateOperations, 0);
+  } finally { f.close(); }
+});
+
+test('update maintenance drains an old delivery while retaining a newer cancellation for the same execution', async () => {
+  const f = updateMaintenanceFixture();
+  let finish: (() => void) | undefined, sending: Promise<void> | undefined;
+  try {
+    const remote = f.outgoing(), sent: RemoteTaskMessage[] = [];
+    const completion = new Promise<void>(resolve => { finish = resolve; });
+    f.wire.sendChannelEvent = async (_node, message) => {
+      assert(validRemoteTaskOffer(message) || validRemoteTaskCancel(message));
+      sent.push(message); if (sent.length === 1) await completion; return true;
+    };
+    sending = f.wire.flushRemoteTask(remote.id);
+    assert.equal(f.network.updateOperations, 1);
+    f.wire.remoteTasks.cancel(remote.id); f.hold(true);
+    finish!(); await sending; await Promise.resolve();
+    assert.deepEqual(sent.map(message => message.type), ['remote-task-offer']);
+    assert.equal(f.network.updateOperations, 0);
+    const saved = f.wire.remoteTasks.record(remote.id)!;
+    assert.equal(saved.status, 'cancelled'); assert.equal(saved.deliveryPending, true);
+    assert.equal(saved.executionSequence, 0); assert.equal(saved.deliveredAt, null);
+    const restored = new RemoteTaskStore(f.root); restored.load();
+    assert.deepEqual(restored.record(remote.id), { ...saved, transmissionState: 'transmission_unknown' });
+    f.hold(false); await f.wire.flushRemoteTask(remote.id);
+    assert.deepEqual(sent.map(message => [message.type, message.taskID]),
+      [['remote-task-offer', remote.id], ['remote-task-cancel', remote.id]]);
+    assert.equal(f.wire.remoteTasks.record(remote.id)!.deliveryPending, false);
+  } finally { finish?.(); await sending?.catch(() => undefined); f.close(); }
+});
+
+test('update maintenance records an in-flight queue acknowledgement without sending the next receipt', async () => {
+  const f = updateMaintenanceFixture();
+  let finish: (() => void) | undefined, sending: Promise<void> | undefined;
+  try {
+    const first = f.incoming(), second = f.incoming(), sent: string[] = [];
+    for (const [index, remote] of [first, second].entries())
+      f.wire.queueReceipts.publish(remote, { state: 'queued', position: index + 1, reason: null });
+    const completion = new Promise<void>(resolve => { finish = resolve; });
+    f.wire.sendChannelEvent = async (_node, message) => {
+      assert(message.type === 'remote-task-queue'); sent.push(message.receipt.remoteTaskID);
+      if (sent.length === 1) await completion; return true;
+    };
+    sending = f.wire.flushQueueReceipts(f.peerID); assert.equal(f.network.updateOperations, 1);
+    f.hold(true); finish!(); await sending;
+    assert.deepEqual(sent, [first.id]); assert.equal(f.network.updateOperations, 0);
+    assert.deepEqual(f.wire.queueReceipts.pending(f.peerID).map(value => value.receipt.remoteTaskID), [second.id]);
+    f.hold(false); await f.wire.flushQueueReceipts(f.peerID);
+    assert.deepEqual(sent, [first.id, second.id]); assert.deepEqual(f.wire.queueReceipts.pending(f.peerID), []);
+  } finally { finish?.(); await sending?.catch(() => undefined); f.close(); }
+});
+
+test('update maintenance keeps the acknowledged file offset and resumes the same delivery after release', async () => {
+  const f = updateMaintenanceFixture();
+  let finish: (() => void) | undefined, sending: Promise<void> | undefined;
+  try {
+    const content = Buffer.alloc(taskFileChunkBytes + 512, 120), file = { id: randomUUID(), name: 'update.txt', bytes: content.length,
+      sha256: createHash('sha256').update(content).digest('hex'), mime: taskFileMime('update.txt') };
+    f.network.files.beginUpload('fixture', file);
+    for (let offset = 0; offset < content.length; offset += taskFileChunkBytes)
+      f.network.files.uploadChunk('fixture', file.id, offset, content.subarray(offset, offset + taskFileChunkBytes).toString('base64'));
+    const remote = f.wire.remoteTasks.create(f.localID, f.brainID, f.peerID, f.brainID, { ...f.input, inputFiles: [file] });
+    const offer = f.wire.remoteTasks.message(remote.id); assert(validRemoteTaskOffer(offer));
+    f.wire.remoteTasks.markDelivered(remote.id, offer, true);
+    const route = { scope: 'remote' as const, taskID: remote.id, purpose: 'input' as const };
+    f.network.files.bindExisting(route, [file]); f.network.files.queueDelivery(route, file.id, f.peerID);
+    f.wire.assertFilePeer = () => {};
+    const completion = new Promise<void>(resolve => { finish = resolve; }), sent: TaskFileMessage[] = [];
+    let chunkStarted!: () => void;
+    const started = new Promise<void>(resolve => { chunkStarted = resolve; });
+    let received = 0;
+    f.wire.exchangeTaskFile = async (_node, message) => {
+      sent.push(message);
+      if (message.data) {
+        if (received === 0) { chunkStarted(); await completion; }
+        received += Buffer.from(message.data, 'base64').length;
+      }
+      return { type: 'task-file-response', version: 1, requestID: message.requestID, route: message.route,
+        fileID: file.id, sha256: file.sha256, receivedBytes: received, state: received === file.bytes ? 'complete' : 'receiving' };
+    };
+    f.hold(true); const before = f.network.files.deliveries();
+    await f.wire.flushTaskFiles(f.peerID);
+    assert.equal(sent.length, 0); assert.deepEqual(f.network.files.deliveries(), before);
+    f.hold(false); sending = f.wire.flushTaskFiles(f.peerID); await started;
+    assert.equal(f.network.updateOperations, 1);
+    f.hold(true); finish!(); await sending;
+    assert.equal(sent.length, 2); assert.equal(f.network.updateOperations, 0);
+    assert.equal(f.network.files.deliveries()[0].bytes, taskFileChunkBytes);
+    assert.equal(f.network.files.deliveries()[0].error, null);
+    f.hold(false); await f.wire.flushTaskFiles(f.peerID);
+    assert.deepEqual(sent.map(message => [message.route.taskID, message.file.id, message.offset]),
+      [[route.taskID, file.id, undefined], [route.taskID, file.id, 0], [route.taskID, file.id, undefined], [route.taskID, file.id, taskFileChunkBytes]]);
+    assert.deepEqual(f.network.files.deliveries(), []); assert.equal(received, file.bytes);
+    assert.equal(f.network.updateOperations, 0);
+  } finally { finish?.(); await sending?.catch(() => undefined); f.close(); }
+});
+
+test('brain task delivery replies cannot replace a newer execution assignment', async (t) => {
+  for (const scenario of [
+    { name: 'late failure preserves and delivers assignment', fail: true, assign: true },
+    { name: 'late success preserves and delivers assignment', fail: false, assign: true },
+    { name: 'current failure still records the rejection', fail: true, assign: false },
+    { name: 'current success still records delivery', fail: false, assign: false },
+  ]) await t.test(scenario.name, async () => {
+    const f = updateMaintenanceFixture();
+    let finish: (() => void) | undefined, sending: Promise<void> | undefined;
+    try {
+      const brain = f.wire.brainTasks.create('owned', f.peerID, f.brainID, f.localID,
+        { ...f.input, requestedProjectID: null, requirements: {} });
+      assert(f.wire.brainTasks.markWaitingForWorker(brain.id, 'Original queued update.'));
+      const completion = new Promise<void>(resolve => { finish = resolve; }), sent: BrainTaskMessage[] = [];
+      f.wire.sendChannelEvent = async (_node, message) => {
+        assert(validBrainTaskUpdate(message));
+        sent.push(message);
+        if (sent.length === 1) {
+          await completion;
+          if (scenario.fail) throw new NodeNetworkError(409, 'Synthetic delayed conflict.');
+        }
+        return true;
+      };
+      sending = f.wire.flushBrainTask(brain.id);
+      assert.equal(sent.length, 1); assert(validBrainTaskUpdate(sent[0])); assert.equal(sent[0].status, 'queued');
+      const executionID = randomUUID();
+      if (scenario.assign) {
+        f.wire.brainTasks.assign(brain.id, 'C'.repeat(32), executionID);
+        await f.wire.flushBrainTask(brain.id); // The queued update still owns the delivery lock.
+        const current = f.wire.brainTasks.message(brain.id);
+        assert(validBrainTaskUpdate(current)); assert.equal(current.executionID, executionID);
+        assert.equal(sent.length, 1);
+      }
+      finish!(); await sending;
+      const deadline = Date.now() + 1000;
+      while (f.network.updateOperations && Date.now() < deadline) await wait(1);
+      assert.equal(f.network.updateOperations, 0);
+      const current = f.wire.brainTasks.record(brain.id)!;
+      if (scenario.assign) {
+        assert.deepEqual(sent.map(message => validBrainTaskUpdate(message) ? message.status : message.type), ['queued', 'assigned']);
+        assert.equal(current.status, 'assigned'); assert.equal(current.executionID, executionID);
+        assert.equal(current.deliveryPending, false); assert.equal(current.deliveryError, null);
+        assert.equal(current.executionAttempt, 1); assert.equal(current.executionSequence, 0);
+      } else {
+        assert.equal(sent.length, 1); assert.equal(current.status, 'queued');
+        assert.equal(current.deliveryPending, false);
+        if (scenario.fail) assert.match(current.deliveryError!, /拒绝/);
+        else assert.equal(current.deliveryError, null);
+        assert.equal(current.executionAttempt, 0);
+      }
+      const restored = new BrainTaskStore(f.root); restored.load();
+      assert.deepEqual(restored.record(brain.id), current);
+    } finally { finish?.(); await sending?.catch(() => undefined); f.close(); }
+  });
+});
 
 test('node rate limits isolate discovery, hello and channel budgets without bypassing caps', () => {
   // An unstarted store only reads this nonexistent root; no identity or files are created.

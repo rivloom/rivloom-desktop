@@ -63,3 +63,54 @@ test('remote completion replies require a bound session, generation and exact bo
   assert(!validWorkflowOutcomeReply({ ...reply, outcome: null }));
   assert(!validWorkflowOutcomeReply({ ...reply, rootToken: 'extra' }));
 });
+
+test('terminal unbound incoming workflow metadata releases pending quota while preserving replay and audit records', () => {
+  for (const status of ['cancelled', 'declined', 'expired'] as const) {
+    const db = new DatabaseSync(':memory:'); const remotes = new Map<string, RemoteTaskInvite>();
+    try {
+      let store = new WorkflowContexts(db, () => B, id => remotes.get(id) || null);
+      const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+        target: { mode: 'automatic' }, instructions: 'Find facts', evidence: '', priorContext: '' };
+      const first = { executionID: randomUUID(), context, inputFiles: [] };
+      const firstAck = store.receive(A, first);
+      remotes.set(first.executionID, { id: first.executionID, direction: 'incoming', ownerNodeID: A, targetNodeID: B,
+        localTaskID: null, status } as RemoteTaskInvite);
+      for (let count = 1; count < 128; count++) {
+        const executionID = randomUUID(); store.receive(A, { executionID, context, inputFiles: [] });
+        remotes.set(executionID, { id: executionID, direction: 'incoming', ownerNodeID: A, targetNodeID: B,
+          localTaskID: null, status } as RemoteTaskInvite);
+      }
+      const saved = store.get(first.executionID);
+      store = new WorkflowContexts(db, () => B, id => remotes.get(id) || null);
+      const next = { executionID: randomUUID(), context, inputFiles: [] };
+      assert.doesNotThrow(() => store.receive(A, next), status);
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM workflow_contexts').get()!.count, 129, 'Quota relief retains every terminal metadata record');
+      assert.deepEqual(store.receive(A, first), firstAck); assert.deepEqual(store.get(first.executionID), saved);
+      assert.throws(() => store.receive(B, first), /metadata_conflict/);
+      assert.throws(() => store.receive(A, { ...first, context: { ...context, instructions: 'Changed result' } }), /metadata_conflict/);
+    } finally { db.close(); }
+  }
+});
+test('workflow metadata quota retains orphan, active, ambiguous and mismatched execution records', () => {
+  const boundaries = ['orphan', 'pending', 'accepted', 'unknown_status', 'outgoing', 'owner', 'target', 'local_task', 'missing_local_task', 'unknown_own_node'] as const;
+  for (const boundary of boundaries) {
+    const db = new DatabaseSync(':memory:'); const remotes = new Map<string, RemoteTaskInvite>();
+    try {
+      const ownNode = () => boundary === 'unknown_own_node' ? null : B;
+      const store = new WorkflowContexts(db, ownNode, id => remotes.get(id) || null);
+      const context: WorkflowExecutionContext = { workflowID: randomUUID(), stepID: 'planner', attempt: 1, role: 'planner',
+        target: { mode: 'automatic' }, instructions: 'Find facts', evidence: '', priorContext: '' };
+      for (let count = 0; count < 128; count++) {
+        const executionID = randomUUID(); store.receive(A, { executionID, context, inputFiles: [] });
+        if (boundary !== 'orphan') remotes.set(executionID, { id: executionID,
+          direction: boundary === 'outgoing' ? 'outgoing' : 'incoming', ownerNodeID: boundary === 'owner' ? B : A,
+          targetNodeID: boundary === 'target' ? A : B,
+          ...(boundary === 'missing_local_task' ? {} : { localTaskID: boundary === 'local_task' ? randomUUID() : null }),
+          status: boundary === 'pending' ? 'pending' : boundary === 'accepted' ? 'accepted' : boundary === 'unknown_status' ? 'unknown' : 'cancelled',
+        } as RemoteTaskInvite);
+      }
+      assert.throws(() => store.receive(A, { executionID: randomUUID(), context, inputFiles: [] }), /metadata_quota/, boundary);
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM workflow_contexts').get()!.count, 128);
+    } finally { db.close(); }
+  }
+});

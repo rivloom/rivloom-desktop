@@ -277,6 +277,10 @@ export function ProviderSettings({
     setSaved(false);
     try {
       const result = await api<OAuthStatus>('/model-settings/' + path, body);
+      // Retain an unsaved key for retries; clear it once the credential write succeeds,
+      // even if the following catalog refresh fails.
+      if (kind === 'settings' && (path === 'provider/key' || path === 'provider/custom'))
+        setKey('');
       if (kind === 'oauth') {
         setOAuth(result);
         if (result.accountID || result.status === 'connected')
@@ -315,7 +319,6 @@ export function ProviderSettings({
       setError((e as Error).message);
     } finally {
       setBusy(false);
-      setKey('');
     }
   }
   const connected = providers.filter((p) => p.connected || p.custom || p.account);
