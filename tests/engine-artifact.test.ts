@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { execFileSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { engineDigest, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineTarget, readEngineSource, verifyEngineArtifact, verifyEngineProducer, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 import { prepareEngine, verifyEngineRecipe, verifyEngineVerification } from '../scripts/engine-prepare.ts';
+import { capturePublicationWorkspace, publicationFailureMatches, recoverPublication, type ProducerFailure } from '../scripts/engine-publication.ts';
+import { pathToFileURL } from 'node:url';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 
@@ -460,4 +462,168 @@ test('Windows source checkout preserves Git symlink target bytes despite inherit
   assert.equal(readFileSync(join(checkout, 'nested/link.txt'), 'utf8'), target);
   assert.equal(execFileSync('git', ['config', '--get', 'core.symlinks'], { cwd: checkout, encoding: 'utf8' }).trim(), 'false');
   assert.equal(execFileSync('git', ['config', '--get', 'core.autocrlf'], { cwd: checkout, encoding: 'utf8' }).trim(), 'false');
+});
+
+function publicationFixture(t: TestContext, options: { failUntil?: number; otherError?: boolean; archive?: boolean } = {}) {
+  const value = windowsSchema2Fixture(t), checkout = join(value.root, '.data/engine-builds/build-ABC123/source');
+  mkdirSync(join(checkout, 'rivloom'), { recursive: true });
+  const lines = Array.from({ length: 71 }, () => '');
+  lines[0] = "import { renameSync as actualRename, mkdirSync } from 'node:fs'; let calls=0; export const count=()=>calls;";
+  lines[1] = `function renameSync(stage,target) { const code=++calls===2&&${!!options.otherError}?'EACCES':'EPERM'; if(calls<=${options.failUntil ?? 2}) throw Object.assign(new Error(code+\": operation not permitted, rename '\"+stage+\"' -> '\"+target+\"'\"),{errno:-4048,code,syscall:'rename',path:stage,dest:target}); actualRename(stage,target); }`;
+  lines[68] = 'export function publishDirectory(root,stage,target) {';
+  lines[69] = '  renameSync(stage,target)';
+  lines[70] = options.archive ? "  mkdirSync(root+'/archive');" + '\n}' : '}';
+  const publisher = lines.join('\n') + '\n';
+  const compilerLines = Array.from({ length: 97 }, () => '');
+  compilerLines[0] = "import {publishDirectory} from './artifact.mjs'; const [root,stage,target]=process.argv.slice(2);";
+  compilerLines[96] = 'publishDirectory(root,stage,target)';
+  const compiler = compilerLines.join('\n') + '\n';
+  for (const [file, bytes] of [['rivloom/artifact.mjs', publisher], ['rivloom/build.mjs', compiler]]) {
+    writeFileSync(join(checkout, file), bytes); const digest = engineDigest(bytes);
+    value.source.inputs[file] = digest; value.inventory.files.find(row => row.path === file)!.sha256 = digest;
+    value.manifest.inputs.files[file] = digest;
+  }
+  value.source.sourceInventory = { files: value.inventory.files.length, sha256: engineSourceInventoryDigest(value.inventory.files) };
+  rehashWindowsMetadata(value);
+  const proof = { commit: value.source.commit, tree: value.source.tree, clean: true, inputs: structuredClone(value.source.inputs),
+    files: value.source.sourceInventory.files, sourceSHA256: value.source.sourceInventory.sha256 };
+  const workspace = capturePublicationWorkspace(value.root, checkout, value.source, proof);
+  mkdirSync(workspace.dist); const stage = join(workspace.dist, '.stage-11111111-2222-4333-8444-555555555555');
+  for (const file of ['smoke-report.json', 'engine-build.json', 'source-proof.json']) rmSync(join(value.directory, file));
+  writeFileSync(join(value.directory, 'SHA256SUMS'), ['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json']
+    .map(file => `${engineDigest(readFileSync(join(value.directory, file)))}  ${file}\n`).join(''));
+  renameSync(value.directory, stage);
+  // A real Node child executes only this synthetic publisher, never the PE fixture.
+  // Its original failed publication produces the same complete native Error formatting.
+  const failed = spawnSync(process.execPath, [join(checkout, 'rivloom/build.mjs'), workspace.dist, stage, workspace.target],
+    { encoding: 'utf8', windowsHide: true });
+  assert.equal(failed.status, 1); assert.equal(failed.signal, null); assert(!failed.error);
+  const failure: ProducerFailure = { code: failed.status, signal: failed.signal, stderr: failed.stderr, stderrOverflow: false };
+  const count = async () => (await import(pathToFileURL(join(checkout, 'rivloom/artifact.mjs')).href)).count() as number;
+  return { ...value, workspace, checkout, stage, proof, failure, count };
+}
+
+test('publication recovery recognizes the actual CI EPERM block and rejects misleading metadata', () => {
+  const checkout = String.raw`D:\a\rivloom-desktop\rivloom-desktop\.data\engine-builds\build-zQmslY\source`;
+  const stage = checkout + String.raw`\rivloom\dist\.stage-436e0ee8-f4b7-4e02-80f7-2b60e2fbacd8`, target = checkout + String.raw`\rivloom\dist\windows-x64`;
+  // Preserved from permissions job 113232117314; brace belongs to the last stack line.
+  const stderr = String.raw`Error: EPERM: operation not permitted, rename 'D:\a\rivloom-desktop\rivloom-desktop\.data\engine-builds\build-zQmslY\source\rivloom\dist\.stage-436e0ee8-f4b7-4e02-80f7-2b60e2fbacd8' -> 'D:\a\rivloom-desktop\rivloom-desktop\.data\engine-builds\build-zQmslY\source\rivloom\dist\windows-x64'
+    at renameSync (node:fs:1074:11)
+    at publishDirectory (file:///D:/a/rivloom-desktop/rivloom-desktop/.data/engine-builds/build-zQmslY/source/rivloom/artifact.mjs:70:3)
+    at file:///D:/a/rivloom-desktop/rivloom-desktop/.data/engine-builds/build-zQmslY/source/rivloom/build.mjs:97:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'rename',
+  path: 'D:\\a\\rivloom-desktop\\rivloom-desktop\\.data\\engine-builds\\build-zQmslY\\source\\rivloom\\dist\\.stage-436e0ee8-f4b7-4e02-80f7-2b60e2fbacd8',
+  dest: 'D:\\a\\rivloom-desktop\\rivloom-desktop\\.data\\engine-builds\\build-zQmslY\\source\\rivloom\\dist\\windows-x64'
+}
+Node.js v24.19.0`;
+  const paths = { stage, target, publisherURL: 'file:///D:/a/rivloom-desktop/rivloom-desktop/.data/engine-builds/build-zQmslY/source/rivloom/artifact.mjs',
+    compilerURL: 'file:///D:/a/rivloom-desktop/rivloom-desktop/.data/engine-builds/build-zQmslY/source/rivloom/build.mjs' };
+  const failure: ProducerFailure = { code: 1, signal: null, stderr, stderrOverflow: false };
+  assert(publicationFailureMatches(failure, paths));
+  for (const changed of [stderr.replace("syscall: 'rename'", "syscall: 'unlink'"), stderr.replace('artifact.mjs:70:3', 'foreign.mjs:70:3'),
+    stderr.replace('code: \'EPERM\'', 'code: \'EACCES\''), stderr.replace('dest:', 'path:'), stderr + '\n' + stderr])
+    assert.equal(publicationFailureMatches({ ...failure, stderr: changed }, paths), false);
+});
+
+test('publication recovery resumes only the original validated stage and leaves smoke and receipts pending', async t => {
+  const value = publicationFixture(t);
+  assert.throws(() => capturePublicationWorkspace(value.root, value.checkout, value.source, value.proof), /already exists/,
+    'A recovery workspace cannot be adopted after the producer has already created its output');
+  assert.throws(() => capturePublicationWorkspace(value.root, join(value.base, 'unowned/source'), value.source, value.proof), /equal/);
+  const result = await recoverPublication(value.workspace, value.failure, () => value.proof);
+  assert(result); assert.equal(result.attempts, 3); assert.equal(result.state, 'publication-recovered-awaiting-smoke');
+  assert.equal(await value.count(), 3); assert(!existsSync(value.stage));
+  assert.equal(verifyEngineProducer(value.workspace.target, value.source).manifest.source.commit, value.source.commit);
+  assert.throws(() => verifyEngineArtifact(value.workspace.target, value.source), /ENOENT/);
+  assert(!existsSync(join(value.workspace.target, 'engine-build.json'))); assert(!existsSync(value.directory));
+});
+
+test('publication recovery never retries other producer failures or an incomplete error block', async t => {
+  const value = publicationFixture(t);
+  for (const changed of [ { ...value.failure, code: 2 }, { ...value.failure, signal: 'SIGTERM' as const },
+    { ...value.failure, stderrOverflow: true }, { ...value.failure, stderr: value.failure.stderr.replaceAll('EPERM', 'EACCES') },
+    { ...value.failure, stderr: value.failure.stderr.replace('artifact.mjs:70:3', 'artifact.mjs:71:3') },
+    { ...value.failure, stderr: value.failure.stderr.replaceAll(value.stage, value.stage + '-other') },
+    { ...value.failure, stderr: 'EPERM rename publishDirectory ' + value.failure.stderr.split('\n')[0] } ])
+    assert.equal(await recoverPublication(value.workspace, changed, () => value.proof), null);
+  assert.equal(await value.count(), 0); assert(existsSync(value.stage)); assert(!existsSync(value.workspace.target));
+});
+
+test('publication recovery rejects extra stages, existing targets, links and hard links without publishing', async t => {
+  for (const change of ['extra-stage', 'target', 'junction', 'dist-junction', 'hardlink', 'extra-file', 'failed-smoke'] as const) {
+    const value = publicationFixture(t);
+    if (change === 'extra-stage') mkdirSync(join(value.workspace.dist, '.stage-99999999-8888-4777-8666-555555555555'));
+    if (change === 'target') mkdirSync(value.workspace.target);
+    if (change === 'junction') { const target = join(value.base, 'linked-stage'); renameSync(value.stage, target); symlinkSync(target, value.stage, 'junction'); }
+    if (change === 'dist-junction') { const target = join(value.base, 'linked-dist'); renameSync(value.workspace.dist, target); symlinkSync(target, value.workspace.dist, 'junction'); }
+    if (change === 'hardlink') linkSync(join(value.stage, 'opencode.exe'), join(value.base, 'linked.exe'));
+    if (change === 'extra-file') writeFileSync(join(value.stage, 'unlisted.txt'), 'extra');
+    if (change === 'failed-smoke') writeFileSync(join(value.stage, 'smoke-report.json'), '{"passed":false}');
+    if (change === 'extra-stage') assert.equal(await recoverPublication(value.workspace, value.failure, () => value.proof), null);
+    else await assert.rejects(recoverPublication(value.workspace, value.failure, () => value.proof));
+    assert.equal(await value.count(), 0, change); assert(!existsSync(value.directory));
+  }
+});
+
+test('publication recovery rejects binary, checksum, source and pinned publisher changes', async t => {
+  for (const change of ['binary', 'checksums', 'source', 'publisher'] as const) {
+    const value = publicationFixture(t);
+    if (change === 'binary') { const file = join(value.stage, 'opencode.exe'), bytes = readFileSync(file); bytes[300] ^= 1; writeFileSync(file, bytes); }
+    if (change === 'checksums') writeFileSync(join(value.stage, 'SHA256SUMS'), 'not the five complete hashes');
+    if (change === 'publisher') writeFileSync(join(value.checkout, 'rivloom/artifact.mjs'), 'export const publishDirectory=()=>{};');
+    const proof = change === 'source' ? { ...value.proof, sourceSHA256: engineDigest('changed source') } : value.proof;
+    await assert.rejects(recoverPublication(value.workspace, value.failure, () => proof));
+    assert(existsSync(value.stage)); assert(!existsSync(value.workspace.target)); assert(!existsSync(value.directory));
+  }
+});
+
+test('publication retry budgets do not discard slow mandatory validation or accept persistent and non-EPERM locks', async t => {
+  const slow = publicationFixture(t); let elapsed = 0;
+  const result = await recoverPublication(slow.workspace, slow.failure, () => { elapsed += 6000; return slow.proof; },
+    { now: () => elapsed, wait: async milliseconds => { elapsed += milliseconds; } });
+  assert(result); assert(result.durationMs > 5000); assert.equal(result.waitedMs, 300);
+  const persistent = publicationFixture(t, { failUntil: 9 }); elapsed = 0;
+  await assert.rejects(recoverPublication(persistent.workspace, persistent.failure, () => persistent.proof,
+    { now: () => elapsed, wait: async milliseconds => { elapsed += milliseconds; } }), /EPERM/);
+  assert.equal(await persistent.count(), 5); assert(!existsSync(persistent.workspace.target));
+  const expired = publicationFixture(t); elapsed = 0;
+  await assert.rejects(recoverPublication(expired.workspace, expired.failure, () => expired.proof,
+    { now: () => elapsed, wait: async () => { elapsed += 5001; } }), /EPERM/);
+  assert.equal(await expired.count(), 1);
+  const validationExpired = publicationFixture(t); elapsed = 0;
+  await assert.rejects(recoverPublication(validationExpired.workspace, validationExpired.failure, () => { elapsed = 120001; return validationExpired.proof; },
+    { now: () => elapsed, wait: async () => {} }), /deadline expired/);
+  assert.equal(await validationExpired.count(), 0);
+  const denied = publicationFixture(t, { otherError: true });
+  await assert.rejects(recoverPublication(denied.workspace, denied.failure, () => denied.proof), /EACCES/);
+  assert.equal(await denied.count(), 2);
+});
+
+test('publication recovery detects byte changes during waits and unexpected archives after rename', async t => {
+  for (const change of ['bytes', 'source'] as const) {
+    const value = publicationFixture(t); let proof = value.proof;
+    await assert.rejects(recoverPublication(value.workspace, value.failure, () => proof, { now: () => 0, wait: async () => {
+      if (change === 'bytes') writeFileSync(join(value.stage, 'README.md'), 'changed during retry');
+      else proof = { ...proof, sourceSHA256: engineDigest('source changed during retry') };
+    } }));
+    assert.equal(await value.count(), 1); assert(!existsSync(value.workspace.target));
+  }
+  const archived = publicationFixture(t, { failUntil: 1, archive: true });
+  await assert.rejects(recoverPublication(archived.workspace, archived.failure, () => archived.proof), /archive|entry|equal/);
+  assert(existsSync(join(archived.workspace.dist, 'archive'))); assert(!existsSync(archived.directory));
+});
+
+test('a recovered publication with a later failed smoke cannot become a prepared engine', async t => {
+  const value = publicationFixture(t); assert(await recoverPublication(value.workspace, value.failure, () => value.proof));
+  const smoke = { ...value.smoke, passed: false, error: 'controlled downstream smoke failure' };
+  writeFileSync(join(value.workspace.target, 'smoke-report.json'), JSON.stringify(smoke) + '\n');
+  writeFileSync(join(value.workspace.target, 'SHA256SUMS'), ['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json', 'smoke-report.json']
+    .map(file => `${engineDigest(readFileSync(join(value.workspace.target, file)))}  ${file}\n`).join(''));
+  assert.throws(() => verifyEngineArtifact(value.workspace.target, value.source), /smoke did not pass/);
+  assert(!existsSync(value.directory)); assert(!existsSync(join(value.workspace.target, 'engine-build.json')));
 });

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { engineBinaryName, engineDigest, engineProducerSchema, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { capturePublicationWorkspace, recoverPublication, type ProducerFailure } from './engine-publication.ts';
 
 export function parseEngineArguments(args: string[]) {
   assert(args.length === 0 || (args.length === 2 && ['--artifact', '--source'].includes(args[0]) && args[1] && !args[1].startsWith('--')), 'Usage: node scripts/engine-prepare.ts [--artifact VERIFIED_DIRECTORY | --source LOCAL_RUNTIME_REPOSITORY]');
@@ -90,21 +91,35 @@ async function prepareWindowsBun(checkout: string, source: EngineSource) {
   const executable = engineRegularFile(directory, 'bun-windows-x64-baseline/bun.exe');
   assert.equal(execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim(), source.toolchain.bun);
 }
-async function build(root: string, checkout: string, source: EngineSource, artifact: string) {
+async function build(root: string, checkout: string, source: EngineSource, artifact: string, proof: ReturnType<typeof sourceSnapshot>) {
   const linux = source.target === 'linux-x64';
   verifyEngineRecipe(root, source);
   verifyEngineVerification(root, source);
   if (source.verification) await prepareWindowsBun(checkout, source);
-  await new Promise<void>((accept, reject) => {
+  const publication = !linux && source.verification && engineProducerSchema(source) === 2
+    ? capturePublicationWorkspace(root, checkout, source, proof) : null;
+  const producer = await new Promise<ProducerFailure>((accept, reject) => {
     const command = linux ? process.execPath : 'pwsh.exe';
     const args = linux ? [join(root, source.recipe!.directory, 'build.mjs'), '--source', checkout, '--output', artifact]
       : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(checkout, 'rivloom/build.ps1'), '-RequireClean', ...(source.verification ? ['-SkipSmoke'] : [])];
     const child = spawn(command, args, {
-      cwd: checkout, windowsHide: true, stdio: 'inherit', env: { ...process.env, CI: 'true' },
+      cwd: checkout, windowsHide: true, stdio: ['ignore', 'inherit', 'pipe'], env: { ...process.env, CI: 'true' },
+    });
+    const stderr: Buffer[] = []; let stderrBytes = 0, stderrOverflow = false;
+    child.stderr.on('data', (bytes: Buffer) => {
+      process.stderr.write(bytes); stderrBytes += bytes.length;
+      if (stderrBytes <= 512 * 1024) stderr.push(bytes); else stderrOverflow = true;
     });
     child.once('error', reject);
-    child.once('exit', code => code === 0 ? accept() : reject(new Error(`Pinned runtime build failed (${code}); no fallback engine will be used.`)));
+    child.once('close', (code, signal) => accept({ code, signal, stderr: Buffer.concat(stderr).toString('utf8'), stderrOverflow }));
   });
+  if (producer.code !== 0 || producer.signal !== null) {
+    const recovered = publication && await recoverPublication(publication, producer, () => sourceSnapshot(checkout, source));
+    if (!recovered) throw new Error(`Pinned runtime build failed (${producer.code}); no fallback engine will be used.`);
+    writeFileSync(join(checkout, '..', 'publication-recovery.json'), JSON.stringify({ ...recovered, originalProducerExit: producer.code,
+      sourceSnapshotSHA256: proof.sourceSHA256, smokePassed: false }, null, 2) + '\n', { flag: 'wx' });
+    console.log('RIVLOOM_ENGINE_PUBLICATION_RECOVERED ' + JSON.stringify(recovered));
+  }
   if (source.verification) {
     verifyEngineVerification(root, source);
     await new Promise<void>((accept, reject) => {
@@ -143,7 +158,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
     cloneEngineSource(checkout, source, options.path || source.repository);
     proof = sourceSnapshot(checkout, source);
     artifact = target === 'linux-x64' ? join(run, 'artifact') : join(checkout, 'rivloom/dist/windows-x64');
-    await build(root, checkout, source, artifact);
+    await build(root, checkout, source, artifact, proof);
     assert.deepEqual(sourceSnapshot(checkout, source), proof, 'Runtime source changed while building');
   }
   assert(artifact);
