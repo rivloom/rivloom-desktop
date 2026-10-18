@@ -133,7 +133,7 @@ Pages Hook 返回成功只证明构建请求被接受；桌面同步 job 当前�
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、协作文件、session 崩溃窗口 | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI 成功结束后自动触发，也保留手动或 `ci-v<应用版本>` tag 入口。构建前须核对三份 Windows CI 工作流在同一源码提交上的最新运行均成功；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
+另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI、Windows official engine checks、Windows discovery transport regression 任一组成功结束后检查打包条件，也保留手动或 `ci-v<应用版本>` tag 入口。只有三组检查在同一源码提交上的最新运行全部成功，且该提交尚无成功的自动候选构建时才开始自动打包。检查未齐或失败时跳过候选，上游真实失败仍保留；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
@@ -215,7 +215,13 @@ CI 自检包含真实故意失败/skip/空选择的子测试，以及非零退�
 
 候选 job 只接受 `desktop`，identifier 固定为 `com.rivloom.desktop`，产品名固定为 Rivloom。它检查 package、npm lock、Cargo、Cargo lock、Tauri 的版本一致性，要求干净源码、完整 commit 与 GitHub 请求的 commit 相符；tag 必须为精确的 `ci-v<应用版本>`。旧 Preview 候选及安装证明不能通过新版身份门禁。开发用 Preview 配置继续保持独立身份，不进入普通发行。
 
-自动触发取 `workflow_run.head_sha`，checkout、候选预期 commit、ref 与产物名称统一绑定该 SHA。不能把该事件中的默认分支最新 `github.sha` 当作触发源码。只接受同仓库 main 的 push 成功事件；手动/tag 构建同样必须通过精确源码 CI 门禁。`ci-candidate-gate.ts` 查询三份工作流的最新 run/attempt，不筛选旧成功结果，不接受其他分支、PR、其他仓库、取消、跳过或缺失检查。最多等待 22 分钟，将检查时间、运行链接与结果写入 `ci-gate.json`；失败时停止打包。构建前通过是该时间点的检查快照。仅重跑另外两份工作流不会再自动触发候选，可在修复检查后重跑 Windows CI 或手动运行候选。[GitHub workflow_run 语义](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+自动触发取 `workflow_run.head_sha`，候选 checkout、预期 commit、ref 与产物名称统一绑定该 SHA。不能把该事件中的默认分支最新 `github.sha` 当作触发源码。只接受同仓库 main 的 push 成功事件；手动/tag 构建同样必须通过精确源码 CI 门禁。[GitHub workflow_run 语义](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+
+独立 `readiness` job 使用可信工作流版本的只读 checkout 运行 `ci-candidate-readiness.ts`，因此也能处理来自旧源码的延迟事件。它查询三组同源码最新 run/attempt；检查缺失、仍在执行或已失败时记录原因并跳过打包，不再因为服务矩阵尚未完成而触发候选的 22 分钟等待超时。API 错误或无效响应仍阻止构建并报错。任一上游失败重跑成功都会重新判断条件，无需额外重跑 Windows CI。判断与检查链接单独保存为 `test-results/candidate-readiness/readiness.json`，不替代候选验收报告。
+
+同源码的整个候选工作流串行执行，运行标题显式包含目标 SHA。就绪检查分页查询相同标题的自动运行及其全部 job，只有实际 `Build and verify Rivloom candidate` job 成功才抑制重复自动打包；仅就绪检查成功、候选被跳过不算已构建。判断不依赖运行 ID 的先后顺序，也不把 `workflow_run` 自身默认分支 SHA 当作候选源码。候选成功但后续发布失败时，应重跑原来的失败 job 复用原产物；需要主动重新构建时使用手动/tag 入口。上线前没有源码标题的旧运行不用于去重。
+
+真正构建前仍运行 `ci-candidate-gate.ts`，再次查询三份工作流的最新 run/attempt，不筛选旧成功结果，不接受其他分支、PR、其他仓库、取消、跳过或缺失检查。严格门禁最多等待 22 分钟，将检查时间、运行链接与结果写入 `ci-gate.json`；失败时停止打包。构建前通过是该时间点的检查快照，就绪判断不能绕过它。
 
 流水线按以下顺序执行：精确源码的全 CI 门禁；锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile desktop`；运行 `ci-verify-runtime.ts --profile desktop`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行固定工具链的 `cargo test --release --locked`（Windows x64，异步工作线程限制为 1）；执行正式身份的 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
 

@@ -31,7 +31,7 @@
     "test:context-service": "node scripts/context-service-check.ts",
     "ci:versions": "node scripts/ci-version-check.ts",
     "ci:coverage": "node scripts/ci-tests.ts --list",
-    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/ci-desktop-install-smoke.test.ts scripts/ci-release.test.ts scripts/download-record.test.ts scripts/ci-r2-storage.test.ts scripts/ci-website-download.test.ts scripts/updater-manifest.test.ts scripts/ci-updater.test.ts scripts/ci-workflow-policy.test.ts scripts/linux-build.test.ts scripts/linux-release.test.ts",
+    "ci:selftest": "node --test scripts/ci-selftest.test.ts scripts/ci-candidate.test.ts scripts/ci-candidate-gate.test.ts scripts/ci-candidate-readiness.test.ts scripts/ci-desktop-install-smoke.test.ts scripts/ci-release.test.ts scripts/download-record.test.ts scripts/ci-r2-storage.test.ts scripts/ci-website-download.test.ts scripts/updater-manifest.test.ts scripts/ci-updater.test.ts scripts/ci-workflow-policy.test.ts scripts/linux-build.test.ts scripts/linux-release.test.ts",
     "test:ci:logic": "node scripts/ci-tests.ts logic",
     "test:ci:protocol": "node scripts/ci-tests.ts protocol",
     "test:ci:engine": "node scripts/ci-tests.ts engine",
