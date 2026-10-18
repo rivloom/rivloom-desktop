@@ -4,6 +4,7 @@ import { ArrowDownToLine, CircleCheck, LoaderCircle, RotateCw } from 'lucide-rea
 import { t } from '../shared/i18n.ts';
 import { shouldPromptForUpdate, updateDownloadPercent, updateIsBusy, updateIsInstalling, type DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
 import { desktop, desktopUpdateSnapshot, checkDesktopUpdate, skipDesktopUpdate, downloadDesktopUpdate, cancelDesktopUpdate, installDesktopUpdate } from './desktop';
+import { displayVersion } from './app-version';
 import { Button, Modal } from './ui';
 import './desktop-update.css';
 
@@ -128,6 +129,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   };
   const busy = actionBusy || !!snapshot && updateIsBusy(snapshot.phase);
   const phase = snapshot?.phase;
+  const currentVersion = displayVersion(snapshot?.currentVersion);
   const percent = snapshot ? updateDownloadPercent(snapshot) : null;
   const failure = requestError || updateError(snapshot?.error || null);
   const installing = startingInstall || !!phase && updateIsInstalling(phase);
@@ -151,7 +153,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       <div className="desktop-update" aria-live="polite">
         {(!snapshot && !unavailable && !failure) || phase === 'checking' ? <p className="desktop-update-state"><LoaderCircle size={19} className="spin" />{t('正在检查官网版本…')}</p> :
           phase === 'disabled' ? <p>{t('当前运行环境不支持应用内更新。')}</p> :
-          phase === 'idle' && !failure ? <p className="desktop-update-state"><CircleCheck size={20} />{t('已是最新版本。')}</p> : null}
+          phase === 'idle' && !failure ? <p className="desktop-update-state"><CircleCheck size={20} />{currentVersion ? t('Rivloom {{version}} 已是最新版本。', { version: currentVersion }) : t('已是最新版本。')}</p> : null}
         {snapshot?.release?.notes && <div className="desktop-update-notes"><h3>{t('更新内容')}</h3><p>{snapshot.release.notes}</p></div>}
         {snapshot?.release && phase !== 'downloading' &&
           <p className="desktop-update-note">{t('更新会保留你的任务、模型设置和配对设备。安装完成后将重新打开 Rivloom。')}</p>}
