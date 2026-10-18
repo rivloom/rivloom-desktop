@@ -1085,6 +1085,7 @@
   "当前 {{current}} → 新版本 {{next}}": "Current {{current}} → New {{next}}",
   "正在检查官网版本…": "Checking for updates…",
   "已是最新版本。": "You are up to date.",
+  "Rivloom {{version}} 已是最新版本。": "Rivloom {{version}} is up to date.",
   "更新内容": "What is new",
   "更新会保留你的任务、模型设置和配对设备。安装完成后将重新打开 Rivloom。": "Your tasks, model settings and paired devices will be kept. Rivloom will reopen after installation.",
   "正在下载更新…": "Downloading update…",
