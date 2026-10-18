@@ -1,11 +1,12 @@
 name: Windows build and release
+run-name: Windows build and release / ${{ github.event.workflow_run.head_sha || github.sha }}
 
 on:
   workflow_dispatch:
   push:
     tags: [ci-v*]
   workflow_run:
-    workflows: [Windows CI]
+    workflows: [Windows CI, Windows official engine checks, Windows discovery transport regression]
     types: [completed]
     branches: [main]
 
@@ -29,8 +30,8 @@ env:
   RIVLOOM_CANDIDATE_REF_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
 
 jobs:
-  candidate:
-    name: Build and verify Rivloom candidate
+  readiness:
+    name: Check whether the exact source is ready to build
     if: >-
       github.repository == 'rivloom/rivloom-desktop' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
@@ -40,6 +41,41 @@ jobs:
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: windows-2022
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.readiness.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Use the trusted workflow revision for orchestration, including late
+          # events from commits that predate this helper. The candidate below
+          # still checks out and verifies the triggering source SHA.
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          architecture: x64
+          package-manager-cache: false
+      - name: Check CI, published versions and duplicate automatic builds
+        id: readiness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci-candidate-readiness.ts
+      - name: Preserve the build readiness decision
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-readiness-${{ env.RIVLOOM_CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/candidate-readiness/readiness.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  candidate:
+    name: Build and verify Rivloom candidate
+    needs: readiness
+    if: needs.readiness.outputs.ready == 'true'
     runs-on: windows-2022
     timeout-minutes: 60
     outputs:

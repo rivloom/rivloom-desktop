@@ -34,10 +34,57 @@ function audit(name: string, workflow: any) {
       'workflow_dispatch',
       'workflow_run',
     ]);
-    assert.equal(compact(workflow.jobs.candidate.if), candidateCondition, 'Candidate trust gate');
+    assert.equal(compact(workflow.jobs.readiness.if), candidateCondition, 'Candidate trust gate');
+    assert.deepEqual(
+      workflow.on.workflow_run,
+      {
+        workflows: [
+          'Windows CI',
+          'Windows official engine checks',
+          'Windows discovery transport regression',
+        ],
+        types: ['completed'],
+        branches: ['main'],
+      },
+      'Every required Windows CI completion must re-evaluate readiness',
+    );
+    assert.equal(
+      workflow['run-name'],
+      'Windows build and release / ${{ github.event.workflow_run.head_sha || github.sha }}',
+    );
+    assert.deepEqual(
+      workflow.concurrency,
+      {
+        group: 'windows-rivloom-candidate-${{ github.event.workflow_run.head_sha || github.sha }}',
+        'cancel-in-progress': false,
+      },
+      'Readiness and packaging must be serialized for the triggering source',
+    );
+    assert.equal(workflow.jobs.candidate.needs, 'readiness');
+    assert.equal(workflow.jobs.candidate.if, "needs.readiness.outputs.ready == 'true'");
+    assert.deepEqual(workflow.jobs.readiness.outputs, {
+      ready: '${{ steps.readiness.outputs.ready }}',
+    });
+    const readiness = workflow.jobs.readiness.steps.find((step: any) => step.id === 'readiness');
+    assert.equal(readiness?.run, 'node scripts/ci-candidate-readiness.ts');
+    assert.equal(readiness?.env.GITHUB_TOKEN, '${{ github.token }}');
+    assert(!workflow.jobs.readiness['continue-on-error'] && !readiness['continue-on-error']);
+    const candidateSteps = workflow.jobs.candidate.steps;
+    const strictGate = candidateSteps.findIndex(
+      (step: any) => step.run === 'node scripts/ci-candidate-gate.ts',
+    );
+    const prepare = candidateSteps.findIndex(
+      (step: any) => step.run === 'npm.cmd run engine:prepare',
+    );
+    assert(
+      strictGate >= 0 && prepare > strictGate,
+      'Readiness must not replace the strict candidate gate',
+    );
+    assert(!candidateSteps[strictGate].if && !candidateSteps[strictGate]['continue-on-error']);
     assert.deepEqual(Object.keys(workflow.jobs).sort(), [
       'candidate',
       'publish',
+      'readiness',
       'updater',
       'website-download',
     ]);
@@ -87,7 +134,7 @@ function audit(name: string, workflow: any) {
         'Unexpected write permission',
       );
     assert(!JSON.stringify(job.env ?? {}).includes('secrets.'), 'Job-level secret');
-    if (release && (id === 'candidate' || id === 'publish'))
+    if (release && (id === 'readiness' || id === 'candidate' || id === 'publish'))
       assert(
         !JSON.stringify(job).includes('secrets.'),
         'Build/publication cannot access deployment secrets',
@@ -116,7 +163,7 @@ function audit(name: string, workflow: any) {
       assert(!step.uses.startsWith('actions/cache@'), 'Shared cache crosses trust boundary');
       if (step.uses.startsWith('actions/checkout@')) {
         assert.equal(step.with['persist-credentials'], false);
-        if (release) assert.equal(step.with.ref, '${{ env.RIVLOOM_CANDIDATE_SHA }}');
+        if (release) assert.equal(step.with.ref, id === 'readiness' ? '${{ github.sha }}' : '${{ env.RIVLOOM_CANDIDATE_SHA }}');
         if (linuxRelease) assert.equal(step.with.ref, '${{ github.sha }}');
       }
       if (step.uses.startsWith('actions/download-artifact@')) {
@@ -176,6 +223,29 @@ test('workflow policy rejects bypassed release gates and artifacts from another 
   };
   mutate((w) => {
     w.jobs.candidate.if = 'true';
+  });
+  mutate((w) => {
+    w.jobs.readiness.if = 'true';
+  });
+  mutate((w) => {
+    w.jobs.candidate.needs = [];
+  });
+  mutate((w) => {
+    w.concurrency['cancel-in-progress'] = true;
+  });
+  mutate((w) => {
+    w.on.workflow_run.workflows = ['Windows CI'];
+  });
+  mutate((w) => {
+    w['run-name'] = 'Windows build and release';
+  });
+  mutate((w) => {
+    w.jobs.readiness.steps[0].with.ref = '${{ env.RIVLOOM_CANDIDATE_SHA }}';
+  });
+  mutate((w) => {
+    w.jobs.candidate.steps = w.jobs.candidate.steps.filter(
+      (s: any) => s.run !== 'node scripts/ci-candidate-gate.ts',
+    );
   });
   mutate((w) => {
     w.jobs.publish.needs = [];
