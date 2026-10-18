@@ -8,7 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows / Linux x64 正式版为 **0.1.30**。固定核心 `1.18.33-rivloom.655285f835f8`，SDK/plugin 1.18.33，Node.js 24.19.0；包含停止续聊、Brain 派发、更新维护、通知、凭据保存、元数据配额和 Git 兼容修复。见[版本说明](docs/releases/0.1.30.md)与[发行验收](docs/releases/0.1.30-verification.md)。
+当前 Windows x64 正式版为 **0.1.31**；Linux x64 保持 **0.1.30**。本次更新在“已是最新版本”提示中显示实际安装版本，并整合自动候选就绪与已发布版本保护。固定核心 `1.18.33-rivloom.655285f835f8`，SDK/plugin 1.18.33，Node.js 24.19.0，沿用原应用内更新信任公钥。 见[版本说明](docs/releases/0.1.31.md)、[发行验收](docs/releases/0.1.31-verification.md)及[Linux 0.1.30 说明](docs/releases/linux-0.1.30.md)。
+
+同源 main 27 项检查、原候选云端隔离安装，以及 GitHub 托管 Windows runner 的独立完整公开 GET、消费与原公钥验签通过；包内前端与冻结清单一致。官网 Pages、实际页面/资源和视觉复核完成，保留一项已知轻微布局问题，见本轮验收。R2 保留 90、暂缓并保留 0、实际删除 28 个。逐对象删除、权威存储状态及当前公开入口复核已完成。未启用自动清理。
+
+**历史 0.1.30 发行：** Windows / Linux x64 0.1.30。固定核心 `1.18.33-rivloom.655285f835f8`，SDK/plugin 1.18.33，Node.js 24.19.0；包含停止续聊、Brain 派发、更新维护、通知、凭据保存、元数据配额和 Git 兼容修复。见[版本说明](docs/releases/0.1.30.md)与[发行验收](docs/releases/0.1.30-verification.md)。
 
 原云端隔离安装与独立托管公开完整下载/消费/签名验收通过；本机大包 GET 未完成，没有本机安装或 WSL 成功声明。官网 Pages 与实际 live 已核验。R2 保留 115、暂缓并保留 0、实际删除 6 个。逐对象删除和复核已完成。未启用自动清理。
 

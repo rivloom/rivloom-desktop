@@ -1,10 +1,12 @@
 # Rivloom 文档
 
-**当前正式版：Windows / Linux x64 0.1.30（2026-10-08，2026-10-09 收尾）。** [版本说明](releases/0.1.30.md)、[Linux 说明](releases/linux-0.1.30.md)、[验收与限制](releases/0.1.30-verification.md)及[R2 实际审计](releases/0.1.30-r2-retention.md)。
+**当前正式版：Windows x64 0.1.31；Linux x64 0.1.30（2026-10-18 本轮收尾）。** [Windows 版本说明](releases/0.1.31.md)、[本轮验收与限制](releases/0.1.31-verification.md)、[Linux 说明](releases/linux-0.1.30.md)及[R2 实际审计](releases/0.1.31-r2-retention.md)。
 
 这里保存随源码分发的说明。当前正式版以根目录 [README](../README.md) 和 [官网下载页](https://rivloom.com/download/) 为准；源码中的未发布功能以对应说明标注的状态为准。
 
 ## 使用与功能
+
+- [0.1.31 更新版本提示与自动发布门槛](releases/0.1.31.md)、[发行验收](releases/0.1.31-verification.md)
 
 - [0.1.30 固定核心与可靠性修复](releases/0.1.30.md)、[发行验收](releases/0.1.30-verification.md)
 
