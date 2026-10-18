@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "status": "frozen-for-independent-consumer",
+  "productCommit": "4f7471f0d1b997a6830255c928c83269569dfc84",
+  "productTree": "6e5a5cf32fbb45e3da3bdf2b11422ad8221cd8c5",
+  "controllerSHA256": "82432f2426afde6039414edb3c79fd84c9d559a4e116b798c3ca41f8e087dcc8",
+  "contractSHA256": "15a4cc1891f8230781f063f857e44d844912a1690bdc4a2d803f03c24c1d3a16",
+  "files": [
+    {
+      "path": "windows/bind-release-source.mjs",
+      "bytes": 4810,
+      "sha256": "17f963af399a0a866d78cd7cc3d3eeecb0c6a9133203e38993b6c2172b0bdf31",
+      "beforeSHA256": "17f963af399a0a866d78cd7cc3d3eeecb0c6a9133203e38993b6c2172b0bdf31",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/bind-candidate.mjs",
+      "bytes": 2902,
+      "sha256": "3d4f8c4d09207142ddfc1715c72a000b78483c5213dc2afdbe431fe84243132a",
+      "beforeSHA256": "3d4f8c4d09207142ddfc1715c72a000b78483c5213dc2afdbe431fe84243132a",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/fetch-candidate-evidence.mjs",
+      "bytes": 17067,
+      "sha256": "f40f0e849c2391b77c825c42c2a7509cb2442f488fca94db8b4075b262482e70",
+      "beforeSHA256": "f40f0e849c2391b77c825c42c2a7509cb2442f488fca94db8b4075b262482e70",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/verify-static-runtime.mjs",
+      "bytes": 5837,
+      "sha256": "3d86ea44f739ae2e22c1504f3b1d42c1c596677456fd3cb937ae276062d4f1f7",
+      "beforeSHA256": "3d86ea44f739ae2e22c1504f3b1d42c1c596677456fd3cb937ae276062d4f1f7",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/expected-release.mjs",
+      "bytes": 1666,
+      "sha256": "2f79bf19e05a2f3f59bf1579ae04d60fd2898d194ea91846596b3286ab7b941c",
+      "beforeSHA256": "2f79bf19e05a2f3f59bf1579ae04d60fd2898d194ea91846596b3286ab7b941c",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/verify-release.mjs",
+      "bytes": 7070,
+      "sha256": "7ea30e7eacf49fbbf599a6d566a60dc0064b244a95947baf21c8a938d4d06002",
+      "beforeSHA256": "7ea30e7eacf49fbbf599a6d566a60dc0064b244a95947baf21c8a938d4d06002",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/preflight-windows-candidate.mjs",
+      "bytes": 4075,
+      "sha256": "d44ac72b6f6107065f85c2334da9f9d4c3513b8ac4e8de800cafec528120c703",
+      "beforeSHA256": "d44ac72b6f6107065f85c2334da9f9d4c3513b8ac4e8de800cafec528120c703",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/measure-packaged-ui.mjs",
+      "bytes": 6412,
+      "sha256": "d9784e3a366026464371c0c5a9fc09dff60e6d2f4d48041887b6d2d993cd5a41",
+      "beforeSHA256": "d9784e3a366026464371c0c5a9fc09dff60e6d2f4d48041887b6d2d993cd5a41",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/read-executable-version.ps1",
+      "bytes": 554,
+      "sha256": "555c2aaa3cae1624e0ec0a4ccaa86da89508faec76552d8b7f1215092b71ff8f",
+      "beforeSHA256": "555c2aaa3cae1624e0ec0a4ccaa86da89508faec76552d8b7f1215092b71ff8f",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    },
+    {
+      "path": "windows/verify-candidate.mjs",
+      "bytes": 10654,
+      "sha256": "10d1a54acde402caf06befecb46a6914d004301bdc92d4b3cbef0ec44dc6755f",
+      "beforeSHA256": "10d1a54acde402caf06befecb46a6914d004301bdc92d4b3cbef0ec44dc6755f",
+      "adaptations": [],
+      "priorCommit": "fd14d06c57ba6b202f78a3d0102c2dfbe7e68f88"
+    }
+  ]
+}
