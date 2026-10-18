@@ -1,13 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { candidateWorkflows, type CandidateWorkflowRun } from './ci-candidate-gate.ts';
 import { runCandidateReadiness } from './ci-candidate-readiness.ts';
+import { ciRoot } from './ci-workspace.ts';
 
 const repository = 'rivloom/rivloom-desktop';
 const commit = '1'.repeat(40);
 const token = 'PRIVATE_TOKEN_MUST_NOT_APPEAR';
 const title = 'Windows build and release / ' + commit;
 const candidateJob = 'Build and verify Rivloom candidate';
+const signingFixtures = new URL('../tests/fixtures/updater/', import.meta.url);
+const publicKey = readFileSync(new URL('public.pub', signingFixtures), 'utf8');
+const signedManifest = (suffix = '') =>
+  JSON.parse(readFileSync(new URL(`manifest${suffix}.json`, signingFixtures), 'utf8'));
 type Workflow = (typeof candidateWorkflows)[number];
 type HistoryRun = CandidateWorkflowRun & { display_title: string };
 
@@ -65,6 +73,10 @@ interface FixtureOptions {
   event?: unknown;
   eventText?: string;
   environment?: NodeJS.ProcessEnv;
+  sourceVersion?: unknown;
+  latestManifest?: unknown;
+  versionedManifest?: unknown;
+  publicKey?: string;
   intercept?: (url: URL) => Response | undefined;
 }
 
@@ -73,15 +85,44 @@ async function fixture(options: FixtureOptions = {}) {
   const waits: number[] = [];
   const files: Record<string, string> = {};
   const observations = new Map<string, number>();
+  const reads: string[] = [];
   let saved: object | undefined;
   const request: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     calls.push(url);
+    assert(init?.signal instanceof AbortSignal);
+    assert.equal(init?.redirect, 'error');
+    if (url.origin === 'https://downloads.rivloom.com') {
+      assert.equal((init?.headers as Record<string, string>).Authorization, undefined);
+      assert.equal((init?.headers as Record<string, string>)['Cache-Control'], 'no-cache');
+      const intercepted = options.intercept?.(url);
+      if (intercepted) return intercepted;
+      if (url.pathname === '/updates/stable/latest.json')
+        return json(options.latestManifest ?? signedManifest());
+      assert.equal(url.pathname, `/updates/stable/${options.sourceVersion ?? '0.1.6'}.json`);
+      return options.versionedManifest === undefined
+        ? new Response(null, { status: 404 })
+        : json(options.versionedManifest);
+    }
     assert.equal(url.origin, 'https://api.github.com');
     assert.equal((init?.headers as Record<string, string>).Authorization, 'Bearer ' + token);
-    assert(init?.signal instanceof AbortSignal);
     const intercepted = options.intercept?.(url);
     if (intercepted) return intercepted;
+    if (url.pathname.endsWith('/contents/package.json')) {
+      assert.equal(url.searchParams.get('ref'), commit);
+      assert.equal(url.searchParams.size, 1);
+      const bytes = Buffer.from(
+        JSON.stringify({ name: 'rivloom-opencode', version: options.sourceVersion ?? '0.1.6' }),
+      );
+      return json({
+        type: 'file',
+        path: 'package.json',
+        encoding: 'base64',
+        size: bytes.length,
+        content: bytes.toString('base64') + '\n',
+        sha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+      });
+    }
     let items: unknown[];
     let key: 'workflow_runs' | 'jobs';
     if (url.pathname.endsWith('/workflows/windows-candidate.yml/runs')) {
@@ -132,8 +173,11 @@ async function fixture(options: FixtureOptions = {}) {
     },
     {
       readText: async (path) => {
-        assert.equal(path, '/event.json');
-        return options.eventText ?? JSON.stringify(options.event ?? event());
+        reads.push(path);
+        if (path === '/event.json')
+          return options.eventText ?? JSON.stringify(options.event ?? event());
+        assert.equal(path, join(ciRoot, 'src-tauri', 'updater.pub'));
+        return options.publicKey ?? publicKey;
       },
       saveReport: async (report) => {
         saved = report;
@@ -147,7 +191,7 @@ async function fixture(options: FixtureOptions = {}) {
   assert.equal(files['/output'], 'ready=' + result.report.ready + '\n');
   assert(files['/summary'].length < 1500);
   assert(!JSON.stringify({ saved, files }).includes(token));
-  return { ...result, calls, waits, files };
+  return { ...result, calls, waits, files, reads };
 }
 
 test('early completion skips successfully instead of waiting 22 minutes and sending a failure', async () => {
@@ -288,6 +332,7 @@ test('manual main and CI tag runs continue to the existing strict gate without a
     assert.equal(result.report.reason, 'explicit-trigger');
     assert.equal(result.report.ready, true);
     assert.equal(result.calls.length, 0);
+    assert.deepEqual(result.reads, ['/event.json']);
   }
   const result = await fixture({
     environment: { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/feature' },
@@ -452,5 +497,139 @@ test('malformed event files and invalid runner contexts produce a bounded error 
     assert.equal(result.exitCode, 1);
     assert.equal(result.report.ready, false);
     assert.equal(result.calls.length, 0);
+  }
+});
+
+test('automatic CI-only commits and older application versions skip before rebuilding or publishing', async () => {
+  for (const sourceVersion of ['0.1.5', '0.1.4']) {
+    const result = await fixture({ sourceVersion });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.report.ready, false);
+    assert.equal(result.report.reason, 'version-not-newer');
+    assert.equal(result.report.sourceVersion, sourceVersion);
+    assert.equal(result.report.latestVersion, '0.1.5');
+    assert.equal(result.report.versionedExisting, undefined);
+    assert.equal(
+      result.calls.some((url) => url.pathname.includes('windows-candidate.yml')),
+      false,
+    );
+    assert.equal(
+      result.calls.some((url) => url.pathname === `/updates/stable/${sourceVersion}.json`),
+      false,
+    );
+  }
+});
+
+test('a new application version can build only when signed immutable metadata does not already exist', async () => {
+  const unpublished = await fixture();
+  assert.equal(unpublished.report.ready, true);
+  assert.equal(unpublished.report.sourceVersion, '0.1.6');
+  assert.equal(unpublished.report.latestVersion, '0.1.5');
+  assert.equal(unpublished.report.versionedExisting, false);
+  const partial = await fixture({ versionedManifest: signedManifest('-next') });
+  assert.equal(partial.exitCode, 0);
+  assert.equal(partial.report.ready, false);
+  assert.equal(partial.report.reason, 'version-already-signed');
+  assert.equal(partial.report.versionedExisting, true);
+  assert.equal(
+    partial.calls.some((url) => url.pathname.includes('windows-candidate.yml')),
+    false,
+  );
+});
+
+test('manual and tag requests preserve their explicit candidate semantics without reading public state', async () => {
+  for (const environment of [
+    { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main' },
+    { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/tags/ci-v0.1.5' },
+  ]) {
+    const result = await fixture({ environment, sourceVersion: '0.1.5', publicKey: 'invalid' });
+    assert.equal(result.report.ready, true);
+    assert.equal(result.calls.length, 0);
+    assert.deepEqual(result.reads, ['/event.json']);
+  }
+});
+
+test('only exact-source bounded canonical package metadata can determine the application version', async () => {
+  for (const sourceVersion of ['0.1.6-beta', '0.1.6+build', '01.1.6', '0.1.6\n', '', 16]) {
+    const result = await fixture({ sourceVersion });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.ready, false);
+    assert.equal(result.report.reason, 'invalid-source-package-version');
+    assert.deepEqual(result.reads, ['/event.json']);
+  }
+  const bytes = Buffer.from('{"version":"0.1.6"}');
+  const valid = {
+    type: 'file',
+    path: 'package.json',
+    encoding: 'base64',
+    size: bytes.length,
+    content: bytes.toString('base64'),
+    sha: createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),
+  };
+  for (const changes of [
+    { type: 'symlink' },
+    { path: 'other/package.json' },
+    { encoding: 'utf8' },
+    { size: 65 * 1024 },
+    { size: bytes.length + 1 },
+    { sha: '0'.repeat(40) },
+    { content: valid.content + '$' },
+  ]) {
+    const result = await fixture({
+      intercept: (url) =>
+        url.pathname.endsWith('/contents/package.json')
+          ? json({ ...valid, ...changes })
+          : undefined,
+    });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.ready, false);
+  }
+});
+
+test('missing latest, failed or redirected requests and oversized metadata never authorize automatic release', async () => {
+  for (const path of [
+    '/contents/package.json',
+    '/updates/stable/latest.json',
+    '/updates/stable/0.1.6.json',
+  ]) {
+    for (const response of [
+      () => new Response(null, { status: 503 }),
+      () => new Response(null, { status: 302, headers: { Location: 'https://example.com/' } }),
+      () => new Response('x'.repeat(64 * 1024 + 1)),
+      () => new Response(token),
+      () => {
+        throw new Error(token);
+      },
+    ]) {
+      const result = await fixture({
+        intercept: (url) => (url.pathname.endsWith(path) ? response() : undefined),
+      });
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.report.ready, false);
+    }
+  }
+  const result = await fixture({
+    intercept: (url) =>
+      url.pathname === '/updates/stable/latest.json'
+        ? new Response(null, { status: 404 })
+        : undefined,
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.report.reason, 'public-metadata-http-404');
+});
+
+test('public version decisions require original-key signatures and the exact versioned object identity', async () => {
+  const tampered = signedManifest();
+  tampered.version = '99.0.0';
+  for (const options of [
+    { latestManifest: tampered },
+    { versionedManifest: tampered },
+    { publicKey: 'invalid' },
+    { versionedManifest: signedManifest() },
+    { versionedManifest: null },
+  ]) {
+    const result = await fixture(options);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.report.ready, false);
   }
 });

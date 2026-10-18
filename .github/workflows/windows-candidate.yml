@@ -58,7 +58,7 @@ jobs:
           node-version: 24.19.0
           architecture: x64
           package-manager-cache: false
-      - name: Check completed CI and avoid duplicate automatic builds
+      - name: Check CI, published versions and duplicate automatic builds
         id: readiness
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -133,7 +133,7 @@ Pages Hook 返回成功只证明构建请求被接受；桌面同步 job 当前�
 | `.github/workflows/windows-services.yml` | 官方 OpenCode 端口/生命周期，以及模型设置、权限、M3.5 P0、协作文件、session 崩溃窗口 | PR、main push、手动 |
 | `.github/workflows/lan-regression.yml`   | 同机纯 mDNS、同机 UDP fallback，两个独立 job                                | PR、main push、手动 |
 
-另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI、Windows official engine checks、Windows discovery transport regression 任一组成功结束后检查打包条件，也保留手动或 `ci-v<应用版本>` tag 入口。只有三组检查在同一源码提交上的最新运行全部成功，且该提交尚无成功的自动候选构建时才开始自动打包。检查未齐或失败时跳过候选，上游真实失败仍保留；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
+另有 `.github/workflows/windows-candidate.yml`（Windows build and release）：同仓库 main push 的 Windows CI、Windows official engine checks、Windows discovery transport regression 任一组成功结束后检查打包条件，也保留手动或 `ci-v<应用版本>` tag 入口。只有三组检查在同一源码提交上的最新运行全部成功、应用版本尚未发布且高于当前签名更新版本、该提交尚无成功的自动候选构建时才开始自动打包。检查未齐、失败或版本已经发布时跳过候选，上游真实失败仍保留；候选与安装验收通过后，独立 job 自动创建普通 Rivloom Release。官网同步还要求 `RIVLOOM_PUBLIC_DOWNLOADS_ENABLED=true`，当前已启用；见[下文](#同步-rivloom-到官网公开下载)。
 
 使用明确的 `windows-2022` x64 runner 与 Node **24.19.0**；`npm ci` 使用锁文件，`npm run build` 已包括 typecheck，不重复执行同一检查。基础 PR 的构建指 TypeScript/Vite；候选工作流另行安装并验证 Rust/Cargo **1.98.1** 与 `x86_64-pc-windows-msvc` 目标，不把预装 Rust 版本或前端构建当作原生/NSIS 证明。
 
@@ -221,6 +221,10 @@ CI 自检包含真实故意失败/skip/空选择的子测试，以及非零退�
 
 同源码的整个候选工作流串行执行，运行标题显式包含目标 SHA。就绪检查分页查询相同标题的自动运行及其全部 job，只有实际 `Build and verify Rivloom candidate` job 成功才抑制重复自动打包；仅就绪检查成功、候选被跳过不算已构建。判断不依赖运行 ID 的先后顺序，也不把 `workflow_run` 自身默认分支 SHA 当作候选源码。候选成功但后续发布失败时，应重跑原来的失败 job 复用原产物；需要主动重新构建时使用手动/tag 入口。上线前没有源码标题的旧运行不用于去重。
 
+自动构建还读取目标提交的 `package.json`，并用可信工作流版本中的原更新公钥验证官方 `updates/stable/latest.json`。目标版本不高于已签名版本时正常跳过整个候选与发布链；目标版本更高时，还须确认该版本的不可变签名清单尚不存在。无法读取当前频道、验签失败或响应异常均阻止构建；只有精确版本清单的 404 表示该版本尚未签名发布。读取公开清单不携带 GitHub token，也不需要 R2 或签名私钥。这样，同版本的 CI/文档维护仍运行源码检查，但不重新发布安装器。需要发布新产品版本时，必须先统一提升应用版本号并完成原有发行验收。
+
+手动/tag 入口仍是显式构建请求，不受自动构建的版本预检抑制，也不代表允许覆盖已发布版本。已发布同版本不能用新构建替换；部分发布失败应重跑原运行的失败 job，复用同一候选及签名清单。自动预检不能代替发布时的不可变对象与条件写入保护。
+
 真正构建前仍运行 `ci-candidate-gate.ts`，再次查询三份工作流的最新 run/attempt，不筛选旧成功结果，不接受其他分支、PR、其他仓库、取消、跳过或缺失检查。严格门禁最多等待 22 分钟，将检查时间、运行链接与结果写入 `ci-gate.json`；失败时停止打包。构建前通过是该时间点的检查快照，就绪判断不能绕过它。
 
 流水线按以下顺序执行：精确源码的全 CI 门禁；锁定安装依赖与 Cargo 源码缓存；执行一次 `desktop:prepare -- --profile desktop`；运行 `ci-verify-runtime.ts --profile desktop`；记录已验证 manifest 哈希与整个 runtime 文件树摘要；执行固定工具链的 `cargo test --release --locked`（Windows x64，异步工作线程限制为 1）；执行正式身份的 Tauri NSIS 构建；再次执行只读 runtime 验证；生成 `candidate-build.json` 并核对 manifest 与 runtime 文件树在构建前后未改变。
@@ -235,7 +239,7 @@ Tauri 仅在本次 CLI 合并生成的配置，把已执行的 `beforeBuildComma
 
 ## 自动发布到 GitHub Releases
 
-用户已要求 main 更新后自动发布，并从 0.1.4 去掉 Preview。流程为：推送 main → 三组 CI 全部通过 → 原生构建与安装验收 → 上传精确候选 artifact → `ci-release.ts` → 普通 GitHub Release。本地 commit 不触发云端任务；PR 不发布。被取消、失败或未完成验收的运行不发布安装包。
+用户已要求 main 更新后自动发布，并从 0.1.4 去掉 Preview。自动流程为：推送 main → 三组 CI 全部通过且目标应用版本尚未发布、比当前签名版本更高 → 原生构建与安装验收 → 上传精确候选 artifact → `ci-release.ts` → 普通 GitHub Release。本地 commit 不触发云端任务；PR 不发布。仅维护 CI/文档且保持已发布版本号时跳过自动打包和发布；被取消、失败或未完成验收的运行不发布安装包。
 
 `publish` 依赖 `candidate` 成功，按上传步骤输出的唯一 artifact ID 下载当前运行的产物，并在新 checkout 中再次校验八份候选文件、实际源码 SHA、CI/安装报告、runtime 和安装器哈希。下载使用固定的官方 action，并把 artifact 摘要不匹配视为失败。发布脚本只使用 Node 原生模块。
 

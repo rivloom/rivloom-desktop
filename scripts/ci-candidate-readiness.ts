@@ -2,12 +2,20 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createHash } from 'node:crypto';
 import {
   candidateWorkflows,
   evaluateCandidateChecks,
   type CandidateWorkflowRun,
 } from './ci-candidate-gate.ts';
 import { ciRoot } from './ci-workspace.ts';
+import { boundedBytes, discard } from './ci-r2-storage.ts';
+import {
+  compareUpdateVersion,
+  parseSignedUpdate,
+  stableUpdateVersion,
+  updaterEndpoint,
+} from './updater-manifest.ts';
 
 const apiRoot = 'https://api.github.com';
 const candidateWorkflow = 'windows-candidate.yml';
@@ -79,14 +87,24 @@ export interface ReadinessDependencies {
   request?: typeof fetch;
   wait?: (milliseconds: number) => Promise<unknown>;
   token: string;
+  readPublicKey: () => Promise<string>;
 }
 
 export interface ReadinessDecision {
   ready: boolean;
   reason:
-    'explicit-trigger' | 'untrusted-trigger' | 'ci-not-ready' | 'already-built' | 'checks-passed';
+    | 'explicit-trigger'
+    | 'untrusted-trigger'
+    | 'ci-not-ready'
+    | 'already-built'
+    | 'checks-passed'
+    | 'version-not-newer'
+    | 'version-already-signed';
   checks: Checks;
   previousBuild?: { runId: number; attempt: number; jobId: number };
+  sourceVersion?: string;
+  latestVersion?: string;
+  versionedExisting?: boolean;
 }
 
 /** A short preflight, independent of the strict gate that still runs inside the build job. */
@@ -162,6 +180,7 @@ export async function determineCandidateReadiness(
             Authorization: 'Bearer ' + dependencies.token,
             'X-GitHub-Api-Version': '2022-11-28',
           },
+          redirect: 'error',
           signal: AbortSignal.timeout(15_000),
         });
       } catch {
@@ -240,6 +259,112 @@ export async function determineCandidateReadiness(
     await wait(2_000);
   }
 
+  async function metadata(url: URL, authenticated: boolean, allowNotFound = false) {
+    let response: Response;
+    try {
+      response = await request(url, {
+        headers: authenticated
+          ? {
+              Accept: 'application/vnd.github+json',
+              Authorization: 'Bearer ' + dependencies.token,
+              'X-GitHub-Api-Version': '2022-11-28',
+            }
+          : {
+              Accept: 'application/json',
+              'Cache-Control': 'no-cache',
+              'Accept-Encoding': 'identity',
+            },
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new ReadinessError(
+        authenticated ? 'source-package-request-failed' : 'public-metadata-request-failed',
+      );
+    }
+    if (allowNotFound && response.status === 404) {
+      await discard(response);
+      return undefined;
+    }
+    requireValue(
+      response.status === 200,
+      (authenticated ? 'source-package-http-' : 'public-metadata-http-') + response.status,
+    );
+    try {
+      return JSON.parse((await boundedBytes(response, 64 * 1024)).toString('utf8')) as unknown;
+    } catch {
+      throw new ReadinessError(
+        authenticated ? 'invalid-source-package-response' : 'invalid-public-metadata-response',
+      );
+    }
+  }
+
+  // The orchestration checkout can be newer than the triggering source. Read
+  // only its exact-SHA package metadata, never execute code from that source.
+  const sourceURL = new URL(`${apiRoot}/repos/${repository}/contents/package.json`);
+  sourceURL.searchParams.set('ref', sourceCommit);
+  const source = await metadata(sourceURL, true);
+  requireValue(
+    record(source) &&
+      source.type === 'file' &&
+      source.path === 'package.json' &&
+      source.encoding === 'base64' &&
+      typeof source.content === 'string' &&
+      positiveId(source.size) &&
+      source.size <= 64 * 1024 &&
+      typeof source.sha === 'string' &&
+      /^[0-9a-f]{40}$/.test(source.sha),
+    'invalid-source-package-response',
+  );
+  const encoded = source.content.replace(/\n/g, '');
+  const bytes = Buffer.from(encoded, 'base64');
+  requireValue(
+    bytes.length === source.size &&
+      bytes.toString('base64') === encoded &&
+      createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex') ===
+        source.sha,
+    'invalid-source-package-content',
+  );
+  let packageManifest: unknown;
+  try {
+    packageManifest = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new ReadinessError('invalid-source-package-json');
+  }
+  requireValue(
+    record(packageManifest) &&
+      stableUpdateVersion(packageManifest.version) &&
+      packageManifest.version === packageManifest.version.trim(),
+    'invalid-source-package-version',
+  );
+  const sourceVersion = packageManifest.version;
+  // Use only the original public key from the trusted orchestration checkout.
+  const publicKey = await dependencies.readPublicKey();
+  const latest = parseSignedUpdate(
+    await metadata(new URL(updaterEndpoint), false),
+    publicKey,
+  ).metadata;
+  const versionEvidence = { sourceVersion, latestVersion: latest.version };
+  if (compareUpdateVersion(sourceVersion, latest.version) <= 0) {
+    return { ready: false, reason: 'version-not-newer', checks, ...versionEvidence };
+  }
+  const versioned = await metadata(new URL(`${sourceVersion}.json`, updaterEndpoint), false, true);
+  if (versioned !== undefined) {
+    requireValue(
+      parseSignedUpdate(versioned, publicKey).metadata.version === sourceVersion,
+      'versioned-metadata-version-mismatch',
+    );
+    // A prior publication may have written its immutable version before latest.
+    // Resume that run's failed publishing job with the original artifact.
+    return {
+      ready: false,
+      reason: 'version-already-signed',
+      checks,
+      ...versionEvidence,
+      versionedExisting: true,
+    };
+  }
+
   // workflow_run's head_sha can be the default branch's newer tip. The explicit
   // run-name is the source binding; do not filter this history by head_sha.
   const title = 'Windows build and release / ' + sourceCommit;
@@ -286,6 +411,8 @@ export async function determineCandidateReadiness(
               ready: false,
               reason: 'already-built',
               checks,
+              ...versionEvidence,
+              versionedExisting: false,
               previousBuild: { runId: run.id, attempt: job.run_attempt, jobId: job.id },
             };
           }
@@ -293,7 +420,13 @@ export async function determineCandidateReadiness(
       }
     }
   }
-  return { ready: true, reason: 'checks-passed', checks };
+  return {
+    ready: true,
+    reason: 'checks-passed',
+    checks,
+    ...versionEvidence,
+    versionedExisting: false,
+  };
 }
 
 interface ReadinessIO {
@@ -314,7 +447,7 @@ const fileIO: ReadinessIO = {
 
 export async function runCandidateReadiness(
   environment: NodeJS.ProcessEnv = process.env,
-  dependencies: Omit<ReadinessDependencies, 'token'> = {},
+  dependencies: Omit<ReadinessDependencies, 'token' | 'readPublicKey'> = {},
   io: ReadinessIO = fileIO,
 ) {
   const repository = environment.GITHUB_REPOSITORY || '';
@@ -344,7 +477,11 @@ export async function runCandidateReadiness(
         ref: environment.GITHUB_REF || '',
         runId: Number(environment.GITHUB_RUN_ID),
       },
-      { ...dependencies, token: environment.GITHUB_TOKEN || '' },
+      {
+        ...dependencies,
+        token: environment.GITHUB_TOKEN || '',
+        readPublicKey: () => io.readText(join(ciRoot, 'src-tauri', 'updater.pub')),
+      },
     );
   } catch (error) {
     exitCode = 1;
@@ -365,6 +502,9 @@ export async function runCandidateReadiness(
       environment.GITHUB_STEP_SUMMARY,
       `### Windows candidate readiness\n\nResult: ${report.status} (${decision.reason}).\n\n` +
         `Source: ${report.sourceCommit || 'invalid'}.\n\n` +
+        (decision.sourceVersion
+          ? `Application version: ${decision.sourceVersion}; signed stable version: ${decision.latestVersion}.\n\n`
+          : '') +
         decision.checks.map((check) => `- ${check.workflow}: ${check.status}\n`).join('') +
         (decision.previousBuild
           ? `\nExisting successful candidate: run ${decision.previousBuild.runId}, attempt ${decision.previousBuild.attempt}.\n`
