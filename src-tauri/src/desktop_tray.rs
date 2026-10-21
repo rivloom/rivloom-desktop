@@ -120,8 +120,13 @@ pub fn request_hide(app: &AppHandle) {
         return;
     }
     let callback_app = app.clone();
+    let message = if cfg!(target_os = "macos") {
+        "关闭窗口后，Rivloom 会留在菜单栏，任务继续在后台运行。点击菜单栏图标或程序坞图标可重新打开；如需退出，请在菜单中选择“退出 Rivloom”。点击“知道了”后不再提示。"
+    } else {
+        "关闭窗口后，Rivloom 会留在任务栏右下角的系统托盘，任务继续在后台运行。点击托盘图标可重新打开；如需退出，请右键点击托盘图标，选择“退出 Rivloom”。点击“知道了”后不再提示。"
+    };
     app.dialog()
-        .message(native_text(&desktop.data_dir, "关闭窗口后，Rivloom 会留在任务栏右下角的系统托盘，任务继续在后台运行。点击托盘图标可重新打开；如需退出，请右键点击托盘图标，选择“退出 Rivloom”。点击“知道了”后不再提示。"))
+        .message(native_text(&desktop.data_dir, message))
         .title(native_text(&desktop.data_dir, "关闭后仍在后台运行"))
         .parent(&window)
         .buttons(MessageDialogButtons::OkCancelCustom(native_text(&desktop.data_dir, "知道了"), native_text(&desktop.data_dir, "留在工作区")))
@@ -166,7 +171,7 @@ fn show_error(app: &AppHandle, message: &str) {
     });
 }
 
-fn request_quit(app: &AppHandle) {
+pub(crate) fn request_quit(app: &AppHandle) {
     let desktop = app.state::<DesktopState>();
     if desktop.closing.swap(true, Ordering::SeqCst) {
         return;

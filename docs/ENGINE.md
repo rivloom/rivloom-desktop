@@ -1,5 +1,9 @@
 # OpenCode 接入与范围决策
 
+## macOS Apple Silicon 预览构建
+
+Mac 预览沿用下述固定 Runtime 基线，并通过独立的 [Mac source lock](../shared/engine-source-macos.json) 绑定原生配方和命令启动适配。实际编译源码包括经过前后哈希核验的中央 spawn 补丁与守护适配模块；产物同时提供干净基线清单、实际编译清单、补丁全文、适配源码和真实 Bun 集成报告，不能将其描述为未经修改的固定提交。Windows/Linux 的核心源码、编译配方和发行渠道不受此覆盖影响。详见 [Mac 构建范围](MACOS.md) 和 [进程管理决策](adr/0017-macos-managed-command-groups.md)。
+
 ## 2026-09-30 开发源码：OpenCode 1.18.33 与双平台 schema 2（尚未发行）
 
 当前 Windows / Linux x64 开发引擎固定 Rivloom runtime 提交 `655285f835f8560dcf3b6c484d0e2f1faba9e67d`，tree `9bbec9cc7eb7062cb7bda8d3e8a4ad6b1c428351`，引擎版本 `1.18.33-rivloom.655285f835f8`。上游稳定版为 v1.18.33、提交 `51ef4be1d3c122f18fefb510dca8d778571f4f18`；SDK/plugin 精确锁定 1.18.33。Node.js 24.19.0、Bun 1.3.14 与 x64 平台范围保持不变。

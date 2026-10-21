@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/rivloom/rivloom-opencode-runtime.git",
+    "commit": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+    "tree": "9bbec9cc7eb7062cb7bda8d3e8a4ad6b1c428351"
+  },
+  "upstream": {
+    "repository": "anomalyco/opencode",
+    "tag": "v1.18.33",
+    "commit": "51ef4be1d3c122f18fefb510dca8d778571f4f18",
+    "version": "1.18.33"
+  },
+  "nodeVersion": "24.19.0",
+  "sourceOverlay": {
+    "patch": {
+      "file": "core-spawn.patch.json",
+      "sha256": "d5dddd57806f0a76a864c6b72d44866e278ecedb96772dd6f461ec25658f720b"
+    },
+    "module": {
+      "file": "spawn-guard.ts",
+      "sha256": "fbaf3804acabded7e6dd4db353bfa163cd25ab0833f63afefed6517ff25d6ed3"
+    }
+  },
+  "bun": {
+    "version": "1.3.14",
+    "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
+    "sha256": "d8b96221828ad6f97ac7ac0ab7e95872341af763001e8803e8267652c2652620"
+  },
+  "inputs": {
+    "bun.lock": "b68e7ece1128eb383663e55ffca4f9f08e451530cc09fc9cf84c489bf41bdc2a",
+    "rivloom/runtime.json": "bdebe6b48fc83b159f383934c39454595b529aa25487346841028c99c914e0a5",
+    "rivloom/build.mjs": "5d819ef3e9bed80f4349dbfd2aef305f94fd4eaa045ae43a4141129a3b80b51a",
+    "rivloom/build.ps1": "d40ff47ca93e4efd68b31423d5d1d840c8871e70444f0ca7254d523c8dbab453",
+    "rivloom/smoke.mjs": "343fa7fbd246740dcf93da0517545b56cea293a1d146041726d4669cbfdf568c",
+    "rivloom/models.json": "58e29fa343539c2ba27f364eb98314b962f16afab4d5c5afbb5401ff901d954b",
+    "LICENSE": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
+    "packages/opencode/script/build.ts": "946167808e209e0e863727f1493b28a5377ce3e43c6139c13b95653914d52aad"
+  },
+  "target": "darwin-arm64",
+  "channel": "rivloom",
+  "profile": {
+    "baseline": false,
+    "embedWebUI": false,
+    "signed": true,
+    "signingIdentity": "ad-hoc",
+    "desktopIntegrated": false
+  },
+  "integrationSources": {
+    "native/macos-process.c": "3023c5c36d68bdc03fd12930836e2dd8152b37b34426edb60fec9aed2d41e1ca",
+    "scripts/macos-process-build.ts": "46ca8f9b2fc1aa81667cf9ff515a0aca49fd26b4f1d5e32b072c61ba632925e2",
+    "server/engine-host.mjs": "a870a68fb18debca34b74bf1e8b573b6073212cb855c655254b746e18e132dc8",
+    "server/macos-process.mjs": "be0b886cf57b770969cb74e5eb05d6a1a12de77dfdefee92b63ad6edb2951fb6"
+  }
+}

@@ -7,6 +7,7 @@ import { createSocket } from 'node:dgram';
 import { setTimeout as wait } from 'node:timers/promises';
 import { modelFixture, ServiceClient, pairServices, until } from './m34-fixtures.ts';
 import type { Task, NodeNetwork } from '../shared/types.ts';
+import type { NodeQueueSnapshot } from '../shared/node-queue.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 
 const root = resolve('.data', 'origin-concurrency', String(Date.now())); mkdirSync(root, { recursive: true });
@@ -14,18 +15,56 @@ const assertions: string[] = [];
 const pass = (message: string) => { assertions.push(message); console.log('PASS', message); };
 const entered = new Map<string, { at: number; releasedAt?: number }>();
 const release = new Map<string, () => void>();
+const remoteTaskIDs = new Map<string, string>();
+const peakActive = { initial: 0, raised: 0 };
+const activeModelRequests = { initial: 0, raised: 0 };
+const remoteBatch = (label: string) => /^CONCURRENCY_REMOTE_[0-3]$/.test(label) ? 'initial' :
+  /^CONCURRENCY_REMOTE_(?:1[0-9]|20)$/.test(label) ? 'raised' : null;
 const fixture = await modelFixture(600_000, async (input) => {
   const content = (role: string) => (input.messages || []).filter((m: any) => m.role === role).map((m: any) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
   const label = /CONCURRENCY_(?:LOCAL|REMOTE)_\d+/.exec(content('user'))?.[0];
   if (label && content('system').includes('The current task uses permission mode')) {
     const interval = { at: Date.now(), releasedAt: undefined as number | undefined }; entered.set(label, interval);
-    await new Promise<void>((ok) => release.set(label, ok)); interval.releasedAt = Date.now(); release.delete(label);
+    const batch = remoteBatch(label);
+    await new Promise<void>((ok) => {
+      release.set(label, ok);
+      if (batch) peakActive[batch] = Math.max(peakActive[batch], ++activeModelRequests[batch]);
+    });
+    if (batch) activeModelRequests[batch]--;
+    interval.releasedAt = Date.now(); release.delete(label);
   }
   return { content: 'Verified concurrency fixture completion.' };
 });
 fixture.release();
 const clients = [new ServiceClient(join(root, 'sender')), new ServiceClient(join(root, 'receiver'))];
 const [sender, receiver] = clients;
+const connectionFlags = (node: NodeNetwork['local']) => node && ({
+  online: node.online, trusted: node.trusted, channelReady: node.channelReady,
+});
+const connectionSnapshot = (network: NodeNetwork, peerID: string | null) => {
+  const peer = network.nearby.find((node) => node.id === peerID);
+  return {
+    status: network.status, local: connectionFlags(network.local), peer: connectionFlags(peer || null),
+    concurrency: network.local?.nodeQueue?.concurrency ?? null,
+    brains: network.brains.slice(0, 8).map((brain) => ({
+      state: brain.state, online: brain.online, sharedWithPeer: !!peer?.brains.some((entry) => entry.id === brain.id),
+    })),
+    omittedBrains: Math.max(0, network.brains.length - 8),
+  };
+};
+let senderID: string | null = null, receiverID: string | null = null;
+let failureNetwork: Record<string, ReturnType<typeof connectionSnapshot> | { readFailed: true }> | null = null;
+let failureActivity: { active: string[]; entered: string[] } | null = null;
+const queueObservations: unknown[] = [];
+const readRemoteQueue = async (labels: string[]) => {
+  const queue = await receiver.call<NodeQueueSnapshot>('/node-queue');
+  return labels.flatMap(label => {
+    const remoteTaskID = remoteTaskIDs.get(label);
+    const entry = queue.entries.find(item => item.source.kind === 'remote' && item.source.remoteTaskID === remoteTaskID);
+    return entry ? [{ label, remoteTaskID, receivedSequence: entry.receivedSequence, order: entry.order,
+      state: entry.state, blockReason: entry.blockReason?.code ?? null, localTaskID: entry.localTaskID }] : [];
+  });
+};
 const socket = createSocket('udp4'); await new Promise<void>((ok) => socket.bind(0, '127.0.0.1', ok));
 const discovery = { port: socket.address().port, mdns: false }; await new Promise<void>((ok) => socket.close(() => ok()));
 let status = 'failed', failure = '';
@@ -47,11 +86,13 @@ try {
   const project = await receiver.call('/projects', { name: 'Shared fixture directory', directory, trusted: true }, 201);
   await receiver.call('/network/execution-policy', { enabled: true, projectID: project.id, model: 'fixture/m34', approvalMode: 'ask', confirmed: true });
   await pairServices(sender, receiver);
-  const receiverID = (await receiver.network()).local!.id;
-  await until(() => sender.network(), (network) => {
+  senderID = (await sender.network()).local!.id;
+  receiverID = (await receiver.network()).local!.id;
+  const waitReceiverReady = (label: string) => until(() => sender.network(), (network) => {
     const peer = network.nearby.find((n) => n.id === receiverID);
-    return !!peer?.channelReady && network.brains.some((b) => b.state === 'established' && b.online && peer.brains.some((p) => p.id === b.id));
-  }, 'established shared Brain directory');
+    return !!peer?.online && peer.trusted && peer.channelReady && network.brains.some((b) => b.state === 'established' && b.online && peer.brains.some((p) => p.id === b.id));
+  }, `${label}: receiver ready with established shared Brain directory`, 45_000);
+  await waitReceiverReady('initial pairing');
   const operator = initial.user.id;
   const local = (n: number) => receiver.call<Task>('/tasks', {
     requestID: randomUUID(), runRequested: true, queueConfirmedFor: receiverID, projectID: project.id,
@@ -59,22 +100,40 @@ try {
     assigneeID: operator, approverID: operator, reviewerID: operator, model: 'fixture/m34', approvalMode: 'ask',
   }, 201);
   const remote = async (n: number) => {
+    const requestID = randomUUID();
+    await waitReceiverReady(`CONCURRENCY_REMOTE_${n}`);
     const response = await sender.call<NodeNetwork & { createdTaskID: string }>(`/network/nodes/${receiverID}/tasks`, {
-      requestID: randomUUID(), queueConfirmedFor: receiverID, title: `CONCURRENCY_REMOTE_${n}`,
+      requestID, queueConfirmedFor: receiverID, title: `CONCURRENCY_REMOTE_${n}`,
       description: `CONCURRENCY_REMOTE_${n} Reply briefly. Do not use tools.`, criteria: 'Return a short answer.', requirements: {}, confirmed: true,
     }, 201);
+    remoteTaskIDs.set(`CONCURRENCY_REMOTE_${n}`, response.createdTaskID);
     return response.createdTaskID;
   };
   const count = async () => (await receiver.network()).local!.nodeQueue!.concurrency!;
   const active = (kind: 'LOCAL' | 'REMOTE') => [...release.keys()].filter((key) => key.startsWith(`CONCURRENCY_${kind}_`)).length;
   const waitActive = (kind: 'LOCAL' | 'REMOTE', n: number) => until(async () => active(kind), (value) => value === n, `${n} simultaneous ${kind} official model requests`, 90_000);
+  const queuedBatch = async (numbers: number[], limit: number) => {
+    const labels = numbers.map(n => `CONCURRENCY_REMOTE_${n}`);
+    const entries = await until(() => readRemoteQueue(labels), (items) => items.length === labels.length &&
+      items.filter(entry => entry.state === 'admitted').length === limit &&
+      items.filter(entry => entry.state === 'waiting' && entry.blockReason === 'slot' && !entry.localTaskID).length === 1,
+    'all incoming tasks received with one durably waiting for a slot');
+    const admitted = entries.filter(entry => entry.state === 'admitted');
+    const waiting = entries.find(entry => entry.state === 'waiting')!;
+    assert.deepEqual([...release.keys()].filter(label => labels.includes(label)).sort(), admitted.map(entry => entry.label).sort());
+    assert(!entered.has(waiting.label));
+    queueObservations.push({ limit, entries });
+    return { admitted, waiting };
+  };
   for (let i = 0; i < 11; i++) await local(i);
   await waitActive('LOCAL', 11);
+  // A sender's 201 confirms local persistence, not receiver order. Identify the actual waiting queue entry.
   for (let i = 0; i < 4; i++) await remote(i);
   await waitActive('REMOTE', 3);
   await until(count, (c) => c.remoteOccupied === 3 && c.localExecuting === 11, 'split public report');
+  const initialBatch = await queuedBatch([0, 1, 2, 3], 3);
   await wait(1500); assert.equal(active('REMOTE'), 3);
-  assert(!entered.has('CONCURRENCY_REMOTE_3'));
+  assert.equal(peakActive.initial, 3); assert(!entered.has(initialBatch.waiting.label));
   const live = (await receiver.bootstrap()).tasks.filter((t) => t.state === 'running');
   assert.equal(live.length, 14); assert(live.every((t) => t.projectID === project.id && t.sessionID));
   assert.equal(new Set(live.map((t) => t.sessionID)).size, 14);
@@ -83,21 +142,23 @@ try {
   pass('Eleven local tasks in one project and three incoming tasks overlap in 14 distinct official sessions; fourth incoming waits and local tasks consume no incoming slots');
   await receiver.call('/network/execution-concurrency', { maxConcurrent: 1 });
   assert.equal(active('REMOTE'), 3);
-  release.get('CONCURRENCY_REMOTE_0')!(); release.get('CONCURRENCY_REMOTE_1')!();
+  release.get(initialBatch.admitted[0]!.label)!(); release.get(initialBatch.admitted[1]!.label)!();
   await waitActive('REMOTE', 1);
   await until(count, (c) => c.remoteOccupied === 1 && c.remoteLimit === 1, 'lowered limit report');
-  await wait(1500); assert(!entered.has('CONCURRENCY_REMOTE_3'));
+  await wait(1500); assert(!entered.has(initialBatch.waiting.label));
   await local(11); await waitActive('LOCAL', 12);
-  release.get('CONCURRENCY_REMOTE_2')!();
-  await until(async () => entered.has('CONCURRENCY_REMOTE_3'), Boolean, 'waiting incoming starts after remaining slot is released');
+  release.get(initialBatch.admitted[2]!.label)!();
+  await until(async () => entered.has(initialBatch.waiting.label), Boolean, 'waiting incoming starts after remaining slot is released');
   assert.equal(active('REMOTE'), 1);
-  release.get('CONCURRENCY_REMOTE_3')!();
+  release.get(initialBatch.waiting.label)!();
   await until(count, (c) => c.remoteOccupied === 0, 'old incoming complete');
   pass('Lowering 3 to 1 leaves all running tasks intact, waits until occupancy drops below 1 and never blocks a new local task');
   await receiver.call('/network/execution-concurrency', { maxConcurrent: 10 });
   for (let i = 10; i < 21; i++) await remote(i);
   await waitActive('REMOTE', 10);
-  await wait(1500); assert(!entered.has('CONCURRENCY_REMOTE_20'));
+  await until(count, (c) => c.remoteOccupied === 10 && c.remoteExecuting === 10 && c.remoteLimit === 10, 'ten incoming slots occupied');
+  const raisedBatch = await queuedBatch(Array.from({ length: 11 }, (_, i) => i + 10), 10);
+  await wait(1500); assert.equal(active('REMOTE'), 10); assert.equal(peakActive.raised, 10); assert(!entered.has(raisedBatch.waiting.label));
   await local(12); await waitActive('LOCAL', 13);
   await until(count, (c) => c.remoteExecuting === 10 && c.localExecuting === 13 && c.remoteLimit === 10, '23 simultaneous sessions');
   const beforeRestart = (await receiver.bootstrap()).tasks;
@@ -113,14 +174,30 @@ try {
   }
   await wait(2000);
   const recovered = await count(); assert.equal(recovered.remoteOccupied, 10);
-  assert(!entered.has('CONCURRENCY_REMOTE_20'));
+  assert(!entered.has(raisedBatch.waiting.label));
+  const waitingAfterRestart = await readRemoteQueue([raisedBatch.waiting.label]);
+  assert.equal(waitingAfterRestart.length, 1);
+  assert.equal(waitingAfterRestart[0]!.remoteTaskID, raisedBatch.waiting.remoteTaskID);
+  assert.equal(waitingAfterRestart[0]!.state, 'waiting'); assert.equal(waitingAfterRestart[0]!.localTaskID, null);
+  assert.equal(peakActive.initial, 3); assert.equal(peakActive.raised, 10);
+  queueObservations.push({ phase: 'after-restart', entries: waitingAfterRestart });
   pass('Restart preserves configured 10, task/session identities and all uncertain incoming reservations; queued work cannot duplicate or overbook them');
   status = 'passed';
 } catch (error) {
   failure = error instanceof Error ? error.stack || error.message : String(error); console.error(failure); process.exitCode = 1;
+  failureActivity = { active: [...release.keys()].sort().slice(0, 64), entered: [...entered.keys()].sort().slice(0, 64) };
+  console.error('Model activity at failure:', JSON.stringify(failureActivity));
+  const snapshots = await Promise.allSettled(clients.map((client) => client.network()));
+  failureNetwork = Object.fromEntries(snapshots.map((snapshot, index) => [index === 0 ? 'sender' : 'receiver',
+    snapshot.status === 'fulfilled' ? connectionSnapshot(snapshot.value, index === 0 ? receiverID : senderID) : { readFailed: true as const },
+  ]));
+  console.error('Connection status at failure:', JSON.stringify(failureNetwork));
+  try { queueObservations.push({ phase: 'failure', entries: await readRemoteQueue([...remoteTaskIDs.keys()]) }); }
+  catch { queueObservations.push({ phase: 'failure', readFailed: true }); }
+  console.error('Queue status at failure:', JSON.stringify({ peakActive, queueObservations }));
 } finally {
   for (const resolve of release.values()) resolve();
   await Promise.all(clients.map((client) => client.stop())); await fixture.close();
-  writeFileSync(join(root, 'report.json'), JSON.stringify({ status, failure, assertions, root, intervals: [...entered] }, null, 2));
+  writeFileSync(join(root, 'report.json'), JSON.stringify({ status, failure, failureNetwork, failureActivity, peakActive, queueObservations, assertions, root, intervals: [...entered] }, null, 2));
   console.log('Report:', join(root, 'report.json'));
 }

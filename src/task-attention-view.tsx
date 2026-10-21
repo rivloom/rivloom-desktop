@@ -2,7 +2,7 @@ import { t, systemText, language } from '../shared/i18n.ts';
 import { useEffect, useRef, useState } from 'react';
 import { Bell, BellOff, CheckCheck, ChevronRight, CircleAlert, Inbox, Play, RefreshCw, Volume2 } from 'lucide-react';
 import { api } from './api';
-import { desktop, notifyAttention, takeNotificationTarget } from './desktop';
+import { desktop, notifyAttention, takeNotificationTarget, useDesktopCapabilities } from './desktop';
 import { reuseJson } from './desktop-refresh';
 import { useDisplayClock } from './use-display-clock';
 import { playCompletionSound } from './completion-sound';
@@ -15,6 +15,7 @@ import {
 } from '../shared/task-attention';
 
 export function useTaskAttention(identity: string, open: (key: string) => void) {
+  const capabilities = useDesktopCapabilities();
   const [snapshot, setSnapshot] = useState<Pick<AttentionSnapshot, 'items' | 'preferences'> | null>(
     null,
   );
@@ -29,11 +30,12 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
   openRef.current = open;
   useEffect(() => { setSnapshot(null); setError(''); setFilter('all'); }, [identity]);
   useEffect(() => {
+    if (!capabilities.ready) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     let targetPending = false;
     async function takeTarget() {
-      if (!desktop || cancelled || targetPending) return;
+      if (!capabilities.notifications || cancelled || targetPending) return;
       targetPending = true;
       try {
         const target = await takeNotificationTarget();
@@ -59,12 +61,12 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
         );
         setError('');
         const sound = completionSoundFor(value);
-        if (sound) {
+        if (sound && (!desktop || capabilities.nativeSound)) {
           try { await playCompletionSound(sound); if (!cancelled) setSoundError(false); }
           catch { if (!cancelled) setSoundError(true); }
         }
         if (cancelled) return;
-        if (desktop && value.notifications.length) {
+        if (capabilities.notifications && value.notifications.length) {
           const first = value.notifications[0];
           try {
             await notifyAttention(
@@ -96,7 +98,7 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
       clearTimeout(timer);
       window.removeEventListener('focus', takeTarget);
     };
-  }, [identity, revision]);
+  }, [identity, revision, capabilities.ready, capabilities.notifications, capabilities.nativeSound]);
   async function preferences(value: NotificationPreferences) {
     if (saving) return;
     setSaving(true);
@@ -120,6 +122,7 @@ export function useTaskAttention(identity: string, open: (key: string) => void) 
     catch { setSoundError(true); }
   }
   return {
+    capabilities,
     snapshot,
     error,
     notificationError,
@@ -141,7 +144,7 @@ export function TaskAttentionView({
   controller: ReturnType<typeof useTaskAttention>;
   open: (key: string, attentionKey?: string) => void;
 }) {
-  const { snapshot, error, notificationError, soundError, previewSound, saving, refreshing, preferences, refresh, filter, setFilter } = controller;
+  const { capabilities, snapshot, error, notificationError, soundError, previewSound, saving, refreshing, preferences, refresh, filter, setFilter } = controller;
   const items = snapshot?.items || [];
   const prefs = snapshot?.preferences;
   const now = useDisplayClock(!!prefs?.quietUntil && prefs.quietUntil > Date.now());
@@ -164,14 +167,14 @@ export function TaskAttentionView({
         </button>
       </div>
       <details className="notification-settings">
-      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{!prefs ? t('状态待确认') : quiet ? t('免打扰中') : prefs.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
+      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{!prefs || !capabilities.ready ? t('状态待确认') : desktop && !capabilities.notifications ? t('此平台暂未提供系统通知和提示音。') : quiet ? t('免打扰中') : prefs.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
       <div className="attention-preferences">
         <Bell size={18} />
         <label>
           <input
             type="checkbox"
-            checked={prefs?.enabled ?? false}
-            disabled={!prefs || saving}
+            checked={(!desktop || capabilities.notifications) && (prefs?.enabled ?? false)}
+            disabled={!prefs || saving || (desktop && !capabilities.notifications)}
             onChange={(e) => prefs && void preferences({ ...prefs, enabled: e.target.checked })}
           />
           {t('桌面通知')}
@@ -198,7 +201,7 @@ export function TaskAttentionView({
                   minute: '2-digit',
                 }),
               })
-            : desktop
+            : capabilities.notifications
               ? t('应用运行时提醒；通知只显示状态，不展示任务正文。')
               : t('系统通知在 Windows 安装版中提供。')}
         </small>
@@ -206,14 +209,14 @@ export function TaskAttentionView({
       <div className="attention-sound-preferences">
         <Volume2 size={18} aria-hidden="true" />
         <label htmlFor="completion-sound">{t('任务完成提示音')}</label>
-        <select id="completion-sound" value={prefs?.completionSound ?? 'chime'} disabled={!prefs || saving}
+        <select id="completion-sound" value={prefs?.completionSound ?? 'chime'} disabled={!prefs || saving || (desktop && !capabilities.nativeSound)}
           onChange={event => prefs && void preferences({ ...prefs, completionSound: event.target.value as CompletionSound })}>
           <option value="off">{t('关闭声音')}</option>
           <option value="chime">{t('轻柔双音')}</option>
           <option value="bell">{t('清脆铃声')}</option>
           <option value="pulse">{t('简短提示')}</option>
         </select>
-        <button type="button" className="button" disabled={!prefs || saving || prefs.completionSound === 'off'}
+        <button type="button" className="button" disabled={!prefs || saving || prefs.completionSound === 'off' || (desktop && !capabilities.nativeSound)}
           onClick={() => prefs && void previewSound(prefs.completionSound)}><Play size={14} />{t('试听')}</button>
         <small>{t('在此设备播放，也提醒远端 Node 完成的任务。关闭桌面通知或开启免打扰时保持静音。')}</small>
       </div>

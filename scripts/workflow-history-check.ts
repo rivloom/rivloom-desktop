@@ -9,6 +9,7 @@ import { isolatedWorkspace, testEnvironment } from './ci-workspace.ts';
 import { readEngineSource } from '../server/engine-artifact.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import type { Workflow } from '../shared/workflows.ts';
+import type { NodeNetwork } from '../shared/types.ts';
 
 const parent = join(import.meta.dirname, '..', 'test-results', 'workflow-history');
 const remoteMode = process.argv.includes('--remote');
@@ -21,9 +22,10 @@ process.env = { ...testEnvironment(runtime), HOME: taskHome, USERPROFILE: taskHo
   RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'disabled' };
 const report: any = { status: 'running', evidence, runtime, remoteMode, realVendorRequests: 0, checks: [] };
 const requests: unknown[] = [], failures: string[] = [], toolOutputFailures: unknown[] = [];
+const networkObservations: unknown[] = [];
 const historySource = 'Keep original. Output PNG. HISTORY_FIRST\n' + '历史分页汉字'.repeat(1900) + '\nHISTORY_PAGE_END';
 const text = (content: any): string => typeof content === 'string' ? content : (content || []).map((part: any) => part.text || '').join('');
-const model = await modelFixture(30_000, input => {
+const model = await modelFixture(30_000, async input => {
   requests.push(input);
   try {
     const main = input.tools?.some((tool: any) => tool.function?.name === 'rivloom_history');
@@ -82,11 +84,38 @@ const model = await modelFixture(30_000, input => {
       { id: 'verify', title: 'Verify history', instructions: workflowFixtureInstructions('Read current state and report the active format without changing files.'),
         dependsOn: [], nodeID: null, resources: [], software: [], requirements: {} },
     ] } }) };
-  } catch (error) { failures.push(String(error)); return { content: JSON.stringify({ kind: 'completed', summary: `Fixture failed: ${error}`, files: [] }) }; }
+  } catch (error) {
+    failures.push(String(error));
+    await observeNetwork('model-fixture-failed');
+    return { content: JSON.stringify({ kind: 'completed', summary: `Fixture failed: ${error}`, files: [] }) };
+  }
 });
 model.configure(application); model.release(); loadNodeIdentity(application);
 const service = new ServiceClient(application), outsider = new ServiceClient(application);
 const worker = remoteMode ? new ServiceClient(join(runtime, '.data', 'worker')) : null;
+async function observeNetwork(phase: string) {
+  if (!worker || networkObservations.length >= 12) return;
+  // Read only bounded fixture diagnostics. Never log cookies, keys, addresses or task content.
+  const snapshot = async (client: ServiceClient): Promise<NodeNetwork | null> => {
+    try {
+      const response = await fetch(`${client.base}/api/network`, {
+        headers: { Cookie: client.cookie, 'X-Rivloom-Request': '1' }, signal: AbortSignal.timeout(3000),
+      });
+      return response.ok ? await response.json() as NodeNetwork : null;
+    } catch { return null; }
+  };
+  const [origin, executor] = await Promise.all([snapshot(service), snapshot(worker)]);
+  const state = (value: NodeNetwork | null, peerID: string | undefined) => {
+    const peer = value?.paired?.find(node => node.id === peerID);
+    return { readable: !!value, status: value?.status ?? null, peerPresent: !!peer,
+      online: peer?.online ?? false, trusted: peer?.trusted ?? false, channelReady: peer?.channelReady ?? false,
+      historyCapable: peer?.capabilities.includes('workflow-history-v1') ?? false };
+  };
+  const observation = { phase, at: new Date().toISOString(),
+    origin: state(origin, executor?.local?.id), worker: state(executor, origin?.local?.id) };
+  networkObservations.push(observation);
+  console.error('HISTORY_NETWORK_STATE', JSON.stringify(observation));
+}
 let discovery: { port: number; mdns: boolean } | undefined;
 if (worker) {
   const socket = createSocket('udp4'); await new Promise<void>(ok => socket.bind(0, '127.0.0.1', ok));
@@ -114,6 +143,7 @@ try {
     projectID: project.id, model: 'fixture/m34', approvalMode: 'auto', target }, 201);
   const completed = await until(() => service.call<Workflow>(`/workflows/${created.id}`), value => ['completed', 'failed'].includes(value.state), 'first round', 60_000);
   assert.equal(completed.state, 'completed', JSON.stringify(completed)); assert.deepEqual(failures, []);
+  await observeNetwork('first-round-completed');
   const before = await service.call(`/workflows/${created.id}/context`);
   assert.equal(before.notes.length, 1); assert.equal(before.notes[0].text, 'Output PNG');
   const confirmed = await service.call(`/workflows/${created.id}/context/notes`, { requestID: randomUUID(), expectedVersion: before.version,
@@ -130,7 +160,17 @@ try {
   await service.stop(); assert.equal(service.child?.exitCode, 0);
   await service.start({ runtimeDirectory: runtime, discovery, logPath: join(evidence, 'restart.log') });
   const targetNode = target.mode === 'locked' ? target.nodeID : null;
-  if (worker) await until(() => service.network(), value => !!value.paired?.find(n => n.id === targetNode)?.channelReady, 'reconnected worker');
+  if (worker) {
+    await observeNetwork('origin-restarted');
+    // Each snapshot describes only that service's view; wait for both directions.
+    const ready = (value: NodeNetwork, peerID: string | null | undefined) => {
+      const peer = value.paired?.find(node => node.id === peerID);
+      return !!peer?.online && peer.trusted && peer.channelReady && peer.capabilities.includes('workflow-history-v1');
+    };
+    await until(() => Promise.all([service.network(), worker.network()]),
+      ([origin, executor]) => ready(origin, targetNode) && ready(executor, origin.local?.id), 'bidirectional history reconnection');
+    await observeNetwork('bidirectional-history-ready');
+  }
   const restored = await service.call(`/workflows/${created.id}/context`); assert.equal(restored.notes.length, 2);
   await service.call(`/workflows/${created.id}/messages`, { requestID: randomUUID(), text: 'Keep original. Output JPG instead of PNG. HISTORY_SECOND' }, 201);
   const final = await until(() => service.call<Workflow>(`/workflows/${created.id}`), value => !!value.rounds?.length && ['completed', 'failed'].includes(value.state), 'second round', 60_000);
@@ -148,10 +188,15 @@ try {
   assert(history.entries.some((n: any) => n.kind === 'request'));
   report.checks.push('Restart preserves confirmed notes and previous sources', 'A later user request supersedes the inferred format; old revisions remain readable');
   report.final = final; report.state = state; report.status = 'passed';
-} catch (error) { report.status = 'failed'; report.error = String(error instanceof Error ? error.stack : error); throw error; }
+} catch (error) {
+  report.status = 'failed'; report.error = String(error instanceof Error ? error.stack : error);
+  await observeNetwork('check-failed');
+  throw error;
+}
 finally {
   await service.stop(); await worker?.stop(); await model.close(); report.exitCode = service.child?.exitCode; report.workerExitCode = worker?.child?.exitCode;
   report.syntheticRequests = requests.length; report.fixtureFailures = failures; report.toolOutputFailures = toolOutputFailures;
+  report.networkObservations = networkObservations;
   await writeFile(join(evidence, 'requests.json'), JSON.stringify(requests, null, 2));
   await writeFile(join(evidence, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ evidence, status: report.status, requests: requests.length, exitCode: report.exitCode }));

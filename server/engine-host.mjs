@@ -2,6 +2,12 @@
 import { spawn } from 'node:child_process';
 import { writeSync } from 'node:fs';
 import { stopWindowsEngineTree } from './windows-engine-stop.mjs';
+if (process.platform === 'darwin') {
+  try {
+    const { runMacosEngineHost } = await import('./macos-process.mjs');
+    process.exit(await runMacosEngineHost(process.argv.slice(2)));
+  } catch { process.exit(1); }
+}
 function stopDiagnostic(value) {
   // Synchronous and bounded so process.exit cannot discard the final evidence.
   try { writeSync(2, `RIVLOOM_ENGINE_STOP ${JSON.stringify(value)}\n`); } catch { /* Diagnostics are best effort. */ }

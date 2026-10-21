@@ -46,6 +46,13 @@ export function testEnvironment(directory: string): NodeJS.ProcessEnv {
     'PROCESSOR_ARCHITECTURE',
     'PROCESSOR_IDENTIFIER',
     'NUMBER_OF_PROCESSORS',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'TMPDIR',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
   ]);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => systemNames.has(name.toUpperCase())),

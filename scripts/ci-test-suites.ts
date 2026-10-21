@@ -5,6 +5,14 @@ import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/headless-task-evidence.test.ts',
+  'tests/engine-startup-diagnostic.test.ts',
+  'tests/macos-startup-evidence.test.ts',
+  'tests/macos-identity.test.ts',
+  'tests/macos-process.test.ts',
+  'tests/macos-runtime.test.ts',
+  'tests/macos-spawn-guard.test.ts',
+  'tests/macos-source-overlay.test.ts',
   'tests/node-model-activity.test.ts',
   'tests/operation-activity.test.ts',
   'tests/node-activity-api.test.ts',
@@ -97,6 +105,8 @@ export const logicFiles = [
   'tests/ci-runtime.test.ts',
 ] as const;
 export const engineFiles = ['tests/engine-ports.test.ts', 'tests/provider-oauth-engine.test.ts'] as const;
+// Native tests have an explicit Mac lane; Windows keeps rejecting skipped tests.
+export const macosNativeFiles = ['tests/macos-process-native.test.ts', 'tests/macos-command-guard-native.test.ts'] as const;
 export const networkFile = 'tests/node-network.test.ts';
 
 // Exact names, not broad exclusions: the audit fails on unclassified/new/renamed tests.
@@ -188,7 +198,7 @@ export function auditCoverage(root = resolve('.')) {
   const command = String(manifest.scripts.test).trim().split(/\s+/);
   assert.deepEqual(command.slice(0, 2), ['node', '--test'], 'Keep the npm test full-suite entry');
   const fullFiles = command.slice(2);
-  const mappedFiles = [...logicFiles, ...engineFiles, networkFile];
+  const mappedFiles = [...logicFiles, ...engineFiles, ...macosNativeFiles, networkFile];
   const discoveredFiles = readdirSync(resolve(root, 'tests'), { recursive: true, encoding: 'utf8' })
     .filter((file) => file.endsWith('.test.ts'))
     .map((file) => `tests/${file.replaceAll('\\', '/')}`);
@@ -214,6 +224,7 @@ export function auditCoverage(root = resolve('.')) {
     fullFiles,
     logicFiles,
     engineFiles,
+    macosNativeFiles,
     networkFile,
     networkCases,
     networkCount,

@@ -52,7 +52,14 @@ pub fn open(path: &str, directory: bool) -> Result<(), String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn open(path: &str, directory: bool) -> Result<(), String> {
+    let path = Path::new(path);
+    validate_kind(path, directory)?;
+    mac_open(path, false, directory)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn open(_path: &str, _directory: bool) -> Result<(), String> {
     Err("无法打开文件，请检查默认应用或另存后打开。".into())
 }
@@ -91,7 +98,38 @@ pub fn reveal(path: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn reveal(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    validate(path)?;
+    mac_open(path, true, false)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_open_command(path: &Path, reveal: bool, directory: bool) -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/open");
+    if reveal { command.arg("-R"); }
+    else if directory {
+        // Directory navigation must never invoke an application bundle's own
+        // executable merely because its directory name ends with .app.
+        command.args(["-a", "/System/Library/CoreServices/Finder.app"]);
+    }
+    command.arg(path);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn mac_open(path: &Path, reveal: bool, directory: bool) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    // Absolute, validated local paths are passed as one argument. Never invoke
+    // a shell, URL scheme, user-selected executable or interpolated AppleScript.
+    let mut command: Command = mac_open_command(path, reveal, directory);
+    let status = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+        .status().map_err(|_| "无法打开文件，请检查默认应用或另存后打开。")?;
+    if status.success() { Ok(()) } else { Err("无法打开文件，请检查默认应用或另存后打开。".into()) }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn reveal(_path: &str) -> Result<(), String> {
     Err("无法打开文件所在文件夹。".into())
 }
@@ -99,6 +137,18 @@ pub fn reveal(_path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_directory_navigation_selects_finder_even_for_application_bundles() {
+        let path = Path::new("/tmp/Synthetic Project.app");
+        let arguments = |command: std::process::Command| command.get_args().map(|value| value.to_os_string()).collect::<Vec<_>>();
+        assert_eq!(arguments(mac_open_command(path, false, true)),
+            ["-a", "/System/Library/CoreServices/Finder.app", "/tmp/Synthetic Project.app"].map(std::ffi::OsString::from));
+        assert_eq!(arguments(mac_open_command(path, true, false)),
+            ["-R", "/tmp/Synthetic Project.app"].map(std::ffi::OsString::from));
+        assert_eq!(arguments(mac_open_command(Path::new("/tmp/report.pdf"), false, false)),
+            [std::ffi::OsString::from("/tmp/report.pdf")]);
+    }
     #[test]
     fn rejects_non_file_locations() {
         assert!(validate(Path::new("relative.txt")).is_err());

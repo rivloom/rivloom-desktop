@@ -38,14 +38,18 @@ export const workflowFixtureInstructions = (instructions: string) =>
 export async function modelFixture(timeout = 120_000, replyFor?: (input: any) => FixtureModelReply | Promise<FixtureModelReply>) {
   let released = false;
   let requests = 0;
+  let connections = 0, httpRequests = 0, bodyCompleted = 0, unknownRoute = 0;
   const pending = new Set<() => void>();
   const sockets = new Set<import('node:net').Socket>();
   const server = createServer(async (request, response: ServerResponse) => {
+    httpRequests++;
     // Decode across HTTP chunks; a chunk boundary may split a Chinese character or emoji.
     request.setEncoding('utf8');
     let body = '';
     for await (const chunk of request) body += chunk;
+    bodyCompleted++;
     if (request.url !== '/v1/chat/completions') {
+      unknownRoute++;
       response.writeHead(404).end();
       return;
     }
@@ -114,6 +118,7 @@ export async function modelFixture(timeout = 120_000, replyFor?: (input: any) =>
     response.once('close', () => pending.delete(finish));
   });
   server.on('connection', (socket) => {
+    connections++;
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
   });
@@ -123,6 +128,9 @@ export async function modelFixture(timeout = 120_000, replyFor?: (input: any) =>
   return {
     get requests() {
       return requests;
+    },
+    get transport() {
+      return { connections, httpRequests, bodyCompleted, unknownRoute };
     },
     get pendingRequests() {
       return pending.size;

@@ -3,7 +3,7 @@ import { ShieldCheck, RefreshCw } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { NodeNetwork } from '../shared/types.ts';
 import { firewallCanRepair, firewallCoverageLabel, firewallErrorLabel, type LanFirewallReport } from '../shared/lan-firewall.ts';
-import { desktop, inspectLanFirewall, repairLanFirewall } from './desktop';
+import { desktop, inspectLanFirewall, repairLanFirewall, useDesktopCapabilities } from './desktop';
 import { api } from './api';
 
 export function LanConnection({ network, owner, onReport }: {
@@ -19,7 +19,8 @@ export function LanConnection({ network, owner, onReport }: {
   const generation = useRef(0);
   const operating = useRef(false);
   const port = network.local?.port || 0;
-  const available = desktop && owner;
+  const capabilities = useDesktopCapabilities();
+  const available = desktop && owner && capabilities.lanFirewallRepair;
   const onReportRef = useRef(onReport); onReportRef.current = onReport;
   useEffect(() => { onReportRef.current?.(report, stale); }, [report, stale]);
   useEffect(() => {
