@@ -56,13 +56,26 @@ function control(helper: string, request: Record<string, unknown>): Record<strin
     input: JSON.stringify({ version: 1, ...request }), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  // Do not surface native stderr or the input, which may contain the temporary password.
-  assert(!result.error && result.signal === null && result.status === 0, 'Isolated CI keychain operation failed');
+  // Only fixed operation/phase labels and numeric OSStatus values are diagnostic.
+  // Never surface native stderr, raw stdout or the request's temporary password.
+  const operation = ['test-snapshot', 'test-create', 'test-activate', 'test-restore'].includes(String(request.operation)) ? String(request.operation) : 'unknown';
+  if (result.error || result.signal !== null || result.status === null) {
+    const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+    const reason = code && ['ETIMEDOUT', 'ENOENT', 'EACCES', 'EPERM', 'ENOBUFS', 'ENOMEM'].includes(code) ? code : 'process-failed';
+    const signal = result.signal && /^SIG[A-Z]+$/.test(result.signal) ? result.signal : 'none';
+    throw new Error(`Isolated CI keychain operation failed: stage=${operation}, code=${reason}, signal=${signal}`);
+  }
   let response: unknown;
   try { response = JSON.parse(result.stdout); } catch { throw new Error('Invalid isolated CI keychain response'); }
   assert(response && typeof response === 'object' && !Array.isArray(response), 'Invalid isolated CI keychain response');
   const value = response as Record<string, unknown>;
-  assert(value.version === 1 && value.ok === true, 'Isolated CI keychain operation failed');
+  if (value.version === 1 && value.ok === false) {
+    const phases = ['disable-interaction', 'snapshot-default', 'snapshot-search-list', 'verify-default', 'verify-search-list', 'create', 'create-restore-search-list', 'create-cleanup-delete', 'unlock-created', 'configure-created', 'created-path', 'activate-open', 'activate-default', 'activate-search-list', 'restore-current-default', 'restore-default', 'restore-search-list', 'restore-delete'];
+    const codes = ['not-found', 'duplicate', 'access-denied', 'unavailable', 'invalid-request', 'invalid-data', 'internal-error'];
+    assert(Object.keys(value).every(key => ['version', 'ok', 'error', 'phase', 'nativeStatus'].includes(key)) && phases.includes(String(value.phase)) && codes.includes(String(value.error)) && (value.nativeStatus === undefined || Number.isInteger(value.nativeStatus) && Number(value.nativeStatus) >= -2147483648 && Number(value.nativeStatus) <= 2147483647), 'Invalid isolated CI keychain failure response');
+    throw new Error(`Isolated CI keychain operation failed: stage=${operation}/${value.phase}, code=${value.error}${value.nativeStatus === undefined ? '' : `, OSStatus=${value.nativeStatus}`}`);
+  }
+  assert(result.status === 0 && value.version === 1 && value.ok === true, 'Isolated CI keychain operation failed');
   return value;
 }
 
@@ -82,19 +95,22 @@ export async function setupMacosTestKeychain() {
   const directory = join(root, '.data', `rivloom-macos-keychain-${randomUUID()}`);
   realDirectory(directory);
   const keychainPath = join(directory, 'rivloom-macos-ci.keychain-db');
-  const result = control(built.path, { operation: 'test-create', keychainPath, password: randomBytes(32).toString('hex') });
-  const state = validateState({ schemaVersion: 1, status: 'prepared', keychainPath: result.keychainPath,
-    previousDefault: result.previousDefault, previousSearchList: result.previousSearchList, helperSHA256: built.sha256 });
-  assert.equal(state.keychainPath, keychainPath, 'The system created an unexpected keychain location');
-  // Persist recovery information before changing either default or search list.
+  const snapshot = control(built.path, { operation: 'test-snapshot', keychainPath });
+  const state = validateState({ schemaVersion: 1, status: 'prepared', keychainPath,
+    previousDefault: snapshot.previousDefault, previousSearchList: snapshot.previousSearchList, helperSHA256: built.sha256 });
+  // Creation itself may alter the search list. Persist recovery before that first mutation.
   writeState(state);
   try {
+    const result = control(built.path, { operation: 'test-create', keychainPath, password: randomBytes(32).toString('hex'),
+      previousDefault: state.previousDefault, previousSearchList: state.previousSearchList });
+    assert.equal(result.keychainPath, keychainPath, 'The system created an unexpected keychain location');
     control(built.path, { operation: 'test-activate', keychainPath });
     state.status = 'active';
     writeState(state);
-  } catch {
-    await cleanupMacosTestKeychain();
-    throw new Error('Could not activate the isolated CI keychain');
+  } catch (error) {
+    try { await cleanupMacosTestKeychain(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Isolated CI keychain setup and recovery both failed'); }
+    throw error;
   }
   console.log('Isolated macOS CI keychain is active; the original default and search list are recorded for cleanup.');
 }
@@ -110,18 +126,20 @@ export function requireIsolatedMacosKeychain() {
 
 export async function cleanupMacosTestKeychain() {
   requireRunner();
-  if (!existsSync(macosKeychainStatePath)) { console.log('No isolated macOS CI keychain was prepared.'); return; }
+  if (!existsSync(macosKeychainStatePath)) { console.log('No isolated CI keychain recovery state exists; setup did not reach its first mutation.'); return; }
   const stat = lstatSync(macosKeychainStatePath);
   assert(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 24 * 1024 && stat.uid === process.getuid?.() && (stat.mode & 0o077) === 0, 'Invalid CI keychain recovery file');
   const state = validateState(JSON.parse(readFileSync(macosKeychainStatePath, 'utf8')));
-  if (state.status === 'cleaned') { console.log('Isolated macOS CI keychain was already restored and deleted.'); return; }
+  if (state.status === 'cleaned') { console.log('Original keychain settings were already restored; no isolated CI keychain remains active.'); return; }
   const helper = join(root, '.data/macos-keychain-control/native/rivloom-keychain-testing');
   assert.equal(verifyMacosKeychainExecutable(helper), state.helperSHA256, 'CI keychain control helper has changed');
-  control(helper, { operation: 'test-restore', keychainPath: state.keychainPath,
+  const result = control(helper, { operation: 'test-restore', keychainPath: state.keychainPath,
     previousDefault: state.previousDefault, previousSearchList: state.previousSearchList });
+  assert.equal(typeof result.deleted, 'boolean', 'Missing isolated keychain deletion result');
   state.status = 'cleaned';
   writeState(state);
-  console.log('Original macOS keychain settings restored; only the isolated CI keychain was deleted.');
+  console.log(result.deleted ? 'Original macOS keychain settings restored; only the isolated CI keychain was deleted.'
+    : 'Original macOS keychain settings restored; no temporary keychain file existed to delete.');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

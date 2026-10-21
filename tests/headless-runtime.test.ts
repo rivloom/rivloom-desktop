@@ -13,11 +13,12 @@ import { privateDirectory, readPrivateFile, writePrivateFile } from '../server/p
 import { linuxMediaProcessCount } from '../server/workflow-quiescence.ts';
 import { acquireDataLock, linuxProcessIdentity } from '../server/process-lock.ts';
 
-test('engine targets select the pinned Rivloom fork on Windows and Linux x64', () => {
+test('engine targets select the pinned Rivloom fork on Windows and Linux x64 and Mac ARM64', () => {
   assert.equal(enginePackage('win32', 'x64'), 'rivloom-opencode-runtime');
   assert.equal(enginePackage('linux', 'x64'), 'rivloom-opencode-runtime');
+  assert.equal(enginePackage('darwin', 'arm64'), 'rivloom-opencode-runtime');
   assert.throws(() => enginePackage('linux', 'arm64'), /Unsupported/);
-  for (const [platform, arch] of [['linux', 'ia32'], ['darwin', 'arm64'], ['win32', 'arm64']] as const)
+  for (const [platform, arch] of [['linux', 'ia32'], ['darwin', 'x64'], ['win32', 'arm64']] as const)
     assert.throws(() => enginePackage(platform, arch), /Unsupported/);
 });
 

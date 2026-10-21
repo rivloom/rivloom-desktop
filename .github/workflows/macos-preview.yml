@@ -40,7 +40,7 @@ jobs:
           node scripts/macos-process-build.ts
           node scripts/macos-keychain-build.ts
       - name: Verify platform contracts and native process ownership
-        run: node --test tests/macos-runtime.test.ts tests/macos-process.test.ts tests/macos-process-native.test.ts tests/macos-identity.test.ts
+        run: node scripts/macos-tests.ts
       - name: Prepare an isolated CI Keychain
         run: node scripts/macos-keychain-ci.ts setup
       - name: Verify persistent Keychain identity across processes
@@ -50,7 +50,7 @@ jobs:
       - name: Build the isolated ad-hoc-signed preview application and DMG
         run: npm run desktop:build -- --config src-tauri/tauri.macos.conf.json
       - name: Verify native desktop behavior
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml
       - name: Verify model configuration, restart and clean service exit
         run: node scripts/headless-service-check.ts
       - name: Verify two-node pairing and task execution with a local synthetic model

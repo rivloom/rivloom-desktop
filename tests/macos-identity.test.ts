@@ -135,7 +135,7 @@ test('failed Keychain creation does not publish plaintext or leak native errors'
   } finally { f.cleanup(); }
 });
 
-test('macOS identity rejects symbolic links and oversized metadata before Keychain access', { skip: process.platform === 'win32' }, () => {
+if (process.platform !== 'win32') test('macOS identity rejects symbolic links and oversized metadata before Keychain access', () => {
   const f = fixture(), memory = memoryStore();
   try {
     symlinkSync(join(f.root, 'missing'), f.path);
