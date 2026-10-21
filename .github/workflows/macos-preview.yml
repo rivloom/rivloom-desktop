@@ -56,6 +56,9 @@ jobs:
         run: node scripts/headless-task-check.ts
       - name: Build the isolated ad-hoc-signed preview application and DMG
         id: preview-build
+        # Collect independent package diagnostics after a source-check failure.
+        # Final package upload still requires every mandatory step to succeed.
+        if: ${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}
         run: npm run desktop:build -- --config src-tauri/tauri.macos.conf.json
       - name: Verify native desktop behavior
         if: ${{ !cancelled() && steps.preview-build.outcome == 'success' }}

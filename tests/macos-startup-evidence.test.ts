@@ -57,6 +57,51 @@ test('startup evidence reads at most 64 KiB and discards incomplete boundary rec
   } finally { await f.cleanup(); }
 });
 
+test('startup evidence observes exact source-locked core phase messages without exposing their fields', async () => {
+  const f = await fixture();
+  const canary = 'private-phase-session-and-project';
+  try {
+    await writeFile(f.log, [
+      `timestamp=2026-10-22 level=INFO run=private message=bootstrapping directory=${canary}`,
+      `timestamp=2026-10-22 level=INFO run=private message=loop session.id=${canary} step=0`,
+      `timestamp=2026-10-22 level=INFO run=private message="shell tool using shell" shell=/private/${canary}`,
+      `timestamp=2026-10-22 level=INFO run=private message=stream session.id=${canary} providerID=${canary}`,
+      `timestamp=2026-10-22 level=ERROR run=private message="prompt_async failed" sessionID=${canary} cause=${JSON.stringify(`TypeError: ${canary}\n    at /private/${canary}`)}`,
+      '',
+    ].join('\n'));
+    const actual = await readMacosStartupEvidence(f.root);
+    assert.equal(actual.status, 'read');
+    assert.deepEqual(actual.phaseMarkers, { instanceBootstrap: true, promptLoop: true, shellToolInit: true, llmStream: true, asyncPromptFailed: true });
+    assert.deepEqual(actual.errorNames, ['TypeError']);
+    for (const secret of [canary, '/private', f.root]) assert(!JSON.stringify(actual).includes(secret));
+  } finally { await f.cleanup(); }
+});
+
+test('startup evidence does not infer phases from substrings, other fields, levels, or incomplete records', async () => {
+  const f = await fixture();
+  try {
+    await writeFile(f.log, [
+      'level=INFO message="bootstrapping private-project"',
+      'level=INFO message=not-loop',
+      'level=INFO message="shell tool using shell failed"',
+      'level=INFO message="stream ended"',
+      'level=ERROR message="prompt_async failed later"',
+      'level=INFO message=unrelated error="prompt_async failed" cause=loop route=stream',
+      'level=WARN message=bootstrapping',
+      'level=DEBUG message=loop',
+      'level=ERROR message="shell tool using shell"',
+      'level=WARN message=stream',
+      'level=INFO message="prompt_async failed"',
+      'level=INFO message=unrelated message=stream',
+      'level=INFO message=stream',
+    ].join('\n'));
+    const actual = await readMacosStartupEvidence(f.root);
+    assert.equal(actual.status, 'read');
+    assert.equal(actual.partialEndDiscarded, true);
+    assert.deepEqual(actual.phaseMarkers, { instanceBootstrap: false, promptLoop: false, shellToolInit: false, llmStream: false, asyncPromptFailed: false });
+  } finally { await f.cleanup(); }
+});
+
 test('startup evidence rejects hard links and nonregular files without returning their content', async () => {
   const f = await fixture();
   try {

@@ -4,9 +4,9 @@ import { readEngineSource } from '../server/engine-artifact.ts';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,6 +17,86 @@ import { modelFixture, ServiceClient, until } from './m34-fixtures.ts';
 import { testEnvironment } from './ci-workspace.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
 import { parseMacosEngineStopDiagnostic, type MacosEngineStopDiagnostic } from '../server/macos-process.mjs';
+import { readMacosStartupEvidence } from './macos-startup-evidence.ts';
+
+/** Failure evidence only: never return prompt, tool input/output, IDs, paths or raw errors. */
+export function readTaskSessionEvidence(dataDirectory: string, sessionID: string | null) {
+  if (!sessionID) return { status: 'not-applicable' as const };
+  let database: DatabaseSync | undefined;
+  try {
+    if (!isAbsolute(dataDirectory) || dataDirectory.includes('\0') || sessionID.length > 120 || sessionID.includes('\0'))
+      return { status: 'rejected' as const };
+    const safeDirectory = (path: string) => {
+      const info = lstatSync(path);
+      if (!info.isDirectory() || info.isSymbolicLink() || typeof process.getuid === 'function' && info.uid !== process.getuid())
+        throw new Error('unsafe-directory');
+    };
+    safeDirectory(dataDirectory);
+    let path = realpathSync(dataDirectory);
+    for (const segment of ['engine', 'data', 'opencode']) { path = join(path, segment); safeDirectory(path); }
+    path = join(path, 'opencode.db');
+    const before = lstatSync(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1
+      || typeof process.getuid === 'function' && before.uid !== process.getuid()) return { status: 'rejected' as const };
+    database = new DatabaseSync(path, { readOnly: true });
+    database.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=100');
+    const after = lstatSync(path);
+    if (before.dev !== after.dev || before.ino !== after.ino) return { status: 'rejected' as const };
+    // Schema verified against the source-locked core's packages/core/src/session/sql.ts.
+    // SQLite selects fixed classifications; raw JSON data never crosses this boundary.
+    const messages = database.prepare(`SELECT
+      CASE WHEN json_valid(data) THEN CASE json_extract(data,'$.role') WHEN 'user' THEN 'user' WHEN 'assistant' THEN 'assistant' ELSE 'unknown' END ELSE 'unknown' END AS role,
+      CASE WHEN json_valid(data) THEN CASE WHEN json_type(data,'$.time.completed') IN ('integer','real') AND json_extract(data,'$.time.completed') > 0 THEN 1 ELSE 0 END ELSE 0 END AS completed,
+      CASE WHEN json_valid(data) THEN CASE WHEN json_type(data,'$.error') IS NOT NULL AND json_type(data,'$.error') != 'null' THEN 1 ELSE 0 END ELSE 0 END AS failed
+      FROM message WHERE session_id=? ORDER BY time_created DESC,id DESC LIMIT 257`).all(sessionID);
+    const parts = database.prepare(`SELECT
+      CASE WHEN json_valid(data) THEN CASE json_extract(data,'$.type') WHEN 'text' THEN 'text' WHEN 'reasoning' THEN 'reasoning' WHEN 'tool' THEN 'tool' WHEN 'step-start' THEN 'step-start' WHEN 'step-finish' THEN 'step-finish' ELSE 'other' END ELSE 'other' END AS type,
+      CASE WHEN json_valid(data) THEN CASE json_extract(data,'$.state.status') WHEN 'pending' THEN 'pending' WHEN 'running' THEN 'running' WHEN 'completed' THEN 'completed' WHEN 'error' THEN 'error' ELSE 'unknown' END ELSE 'unknown' END AS toolState
+      FROM part WHERE session_id=? ORDER BY time_created DESC,id DESC LIMIT 257`).all(sessionID);
+    const messageSample = messages.slice(0, 256), partSample = parts.slice(0, 256);
+    return {
+      status: 'read' as const,
+      sessionPresent: !!database.prepare('SELECT 1 FROM session WHERE id=?').get(sessionID),
+      messages: { sampled: messageSample.length, truncated: messages.length > 256,
+        user: messageSample.filter(row => row.role === 'user').length,
+        assistant: messageSample.filter(row => row.role === 'assistant').length,
+        unknown: messageSample.filter(row => row.role === 'unknown').length,
+        assistantCompleted: messageSample.filter(row => row.role === 'assistant' && row.completed === 1).length,
+        assistantError: messageSample.filter(row => row.role === 'assistant' && row.failed === 1).length },
+      parts: { sampled: partSample.length, truncated: parts.length > 256,
+        text: partSample.filter(row => row.type === 'text').length,
+        reasoning: partSample.filter(row => row.type === 'reasoning').length,
+        tool: partSample.filter(row => row.type === 'tool').length,
+        stepStart: partSample.filter(row => row.type === 'step-start').length,
+        stepFinish: partSample.filter(row => row.type === 'step-finish').length,
+        toolPending: partSample.filter(row => row.type === 'tool' && row.toolState === 'pending').length,
+        toolRunning: partSample.filter(row => row.type === 'tool' && row.toolState === 'running').length,
+        toolCompleted: partSample.filter(row => row.type === 'tool' && row.toolState === 'completed').length,
+        toolError: partSample.filter(row => row.type === 'tool' && row.toolState === 'error').length },
+    };
+  } catch { return { status: 'unavailable' as const }; }
+  finally { try { database?.close(); } catch { /* Diagnostic cleanup must not mask the original failure. */ } }
+}
+
+export function summarizeTaskContextEvidence(value: unknown, sessionID: string, runAfter: number) {
+  const source = value as { records?: unknown } | null;
+  if (!source || !Array.isArray(source.records)) return { status: 'invalid-response' as const };
+  const records = source.records.slice(0, 20) as Array<{ sessionID?: unknown; runAfter?: unknown; observationCount?: unknown; observations?: unknown }>;
+  const current = records.find(row => row && row.sessionID === sessionID && row.runAfter === runAfter);
+  const observations = current && Array.isArray(current.observations) ? current.observations.slice(0, 50) : [];
+  const number = current?.observationCount;
+  return { status: 'read' as const, recordPresent: !!current,
+    observationCount: typeof number === 'number' && Number.isSafeInteger(number) && number >= 0 && number <= 1_000_000 ? number : null,
+    truncated: source.records.length > 20 || !!current && Array.isArray(current.observations) && current.observations.length > 50,
+    observations: {
+      execution: observations.filter(row => row?.kind === 'execution').length,
+      compaction: observations.filter(row => row?.kind === 'compaction').length,
+      matched: observations.filter(row => row?.system === 'matched').length,
+      restored: observations.filter(row => row?.system === 'restored').length,
+      mismatch: observations.filter(row => row?.system === 'mismatch').length,
+      notApplicable: observations.filter(row => row?.system === 'not_applicable').length,
+    } };
+}
 
 export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..')) {
   const previousUmask = process.umask(0o077);
@@ -117,12 +197,19 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
       } catch { return { status: null }; }
     }
     const nodes = await Promise.all(([['origin', origin, workerID], ['worker', worker, originID]] as const).map(async ([role, node, peerID]) => {
-      const [bootstrap, queue] = await Promise.all([read<Bootstrap>(node, '/bootstrap'), read<NodeQueueSnapshot>(node, '/node-queue')]);
+      const [bootstrap, queue, coreLog] = await Promise.all([read<Bootstrap>(node, '/bootstrap'), read<NodeQueueSnapshot>(node, '/node-queue'),
+        process.platform === 'darwin' ? readMacosStartupEvidence(node.root) : undefined]);
       const state = bootstrap.value;
       const peer = state?.network.nearby.find(item => item.id === peerID);
+      const currentTask = state?.tasks.find(item => item.remoteOrigin?.remoteTaskID === remoteID);
+      const context = currentTask?.sessionID ? await read(node, `/tasks/${encodeURIComponent(currentTask.id)}/context`) : undefined;
       return {
         role, child: { exitCode: node.child?.exitCode ?? null, signalCode: node.child?.signalCode ?? null },
         stopReceipts: node.observeStopReceipts(),
+        ...(coreLog ? { coreLog } : {}),
+        coreSession: readTaskSessionEvidence(node.root, currentTask?.sessionID ?? null),
+        context: context ? { httpStatus: context.status,
+          ...(context.value ? summarizeTaskContextEvidence(context.value, currentTask!.sessionID!, currentTask!.runAfter) : {}) } : null,
         bootstrapStatus: bootstrap.status, queueStatus: queue.status,
         ...(state ? taskState(state) : {}),
         network: state ? { status: state.network.status, errorPresent: !!state.network.error,
@@ -133,7 +220,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
             endReason: item.endReason?.code ?? null, receivedSequence: item.receivedSequence, localTaskPresent: !!item.localTaskID })) } : null,
       };
     }));
-    failureDiagnostics = { phase, at: new Date().toISOString(), modelRequests: fixture.requests,
+    failureDiagnostics = { phase, at: new Date().toISOString(), modelRequests: fixture.requests, fixtureTransport: fixture.transport,
       remoteCreated: !!remoteID, lastPermissionObservation, nodes };
     console.error('HEADLESS_TASK_DIAGNOSTIC', JSON.stringify(failureDiagnostics));
   }

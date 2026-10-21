@@ -20,6 +20,8 @@ export type MacosStartupEvidence = {
   partialEndDiscarded: boolean;
   lines: { complete: number; parsed: number; unparsed: number; error: number; warn: number };
   observedRoutes: { health: boolean; provider: boolean };
+  // Literal milestones in the sampled log, without ordering or per-session attribution.
+  phaseMarkers: { instanceBootstrap: boolean; promptLoop: boolean; shellToolInit: boolean; llmStream: boolean; asyncPromptFailed: boolean };
   errorNames: ErrorName[];
   errorCodes: ErrorCode[];
   markers: { moduleMissing: boolean; permissionDenied: boolean; networkFailure: boolean; timeout: boolean };
@@ -29,7 +31,9 @@ function emptyEvidence(): MacosStartupEvidence {
   return { schemaVersion: 1, status: 'unavailable', exists: false, bytes: 0, sampledBytes: 0,
     tailTruncated: false, partialStartDiscarded: false, partialEndDiscarded: false,
     lines: { complete: 0, parsed: 0, unparsed: 0, error: 0, warn: 0 },
-    observedRoutes: { health: false, provider: false }, errorNames: [], errorCodes: [],
+    observedRoutes: { health: false, provider: false },
+    phaseMarkers: { instanceBootstrap: false, promptLoop: false, shellToolInit: false, llmStream: false, asyncPromptFailed: false },
+    errorNames: [], errorCodes: [],
     markers: { moduleMissing: false, permissionDenied: false, networkFailure: false, timeout: false } };
 }
 
@@ -91,6 +95,16 @@ function summarize(bytes: Buffer, offset: number, evidence: MacosStartupEvidence
     const level = values.get('level')?.toUpperCase();
     if (level === 'ERROR' || level === 'FATAL') evidence.lines.error++;
     if (level === 'WARN' || level === 'WARNING') evidence.lines.warn++;
+    // Exact level/message pairs from the source-locked core (655285f835f8).
+    // Shell initialization and LLM stream entry do not prove registry completion or an HTTP request.
+    const message = values.get('message');
+    if (level === 'INFO') {
+      evidence.phaseMarkers.instanceBootstrap ||= message === 'bootstrapping';
+      evidence.phaseMarkers.promptLoop ||= message === 'loop';
+      evidence.phaseMarkers.shellToolInit ||= message === 'shell tool using shell';
+      evidence.phaseMarkers.llmStream ||= message === 'stream';
+    }
+    if (level === 'ERROR') evidence.phaseMarkers.asyncPromptFailed ||= message === 'prompt_async failed';
     for (const key of ['path', 'route', 'url', 'request.path', 'http.path']) {
       const value = values.get(key);
       if (value === '/global/health') evidence.observedRoutes.health = true;

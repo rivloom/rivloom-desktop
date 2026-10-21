@@ -165,7 +165,8 @@ function audit(name: string, workflow: any) {
         const step = job.steps.find((step: any) => step.run === required);
         assert(step && !step['continue-on-error'], `Mac preview must require ${required}`);
         assert.equal(commands.filter((command: string) => command === required).length, 1, `Mac preview must run ${required} exactly once`);
-        if (sourceChecks.includes(required)) assert.equal(step.if, "${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}", 'Independent source checks must run after engine preparation even if the other source check fails');
+        if (sourceChecks.includes(required) || required === 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json')
+          assert.equal(step.if, "${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}", 'Independent source checks and package diagnostics must run after engine preparation even if another check fails');
         else if (afterBuild.includes(required)) assert.equal(step.if, "${{ !cancelled() && steps.preview-build.outcome == 'success' }}", 'Independent acceptance checks must run after a successful build even if an earlier check fails');
         else assert(!step.if, `Mac preparation must require ${required}`);
       }
@@ -236,7 +237,8 @@ test('Mac preview cannot skip installation verification or gain publication cred
     (workflow: any) => { delete workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-service-check.ts').if; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-task-check.ts').if = "${{ !cancelled() && steps.preview-build.outcome == 'success' }}"; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'npm run engine:prepare').id = 'wrong-engine'; },
-    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.id === 'preview-build').if = "${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}"; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.id === 'preview-build').if = 'always()'; },
+    (workflow: any) => { delete workflow.jobs.preview.steps.find((step: any) => step.id === 'preview-build').if; },
     (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.push(steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/headless-service-check.ts'), 1)[0]); },
     (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.unshift(steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/headless-task-check.ts'), 1)[0]); },
     (workflow: any) => { workflow.jobs.preview.steps.push({ run: 'npm run build' }); },
@@ -244,6 +246,8 @@ test('Mac preview cannot skip installation verification or gain publication cred
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup').if = 'success()'; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('test-results/macos/*.json')).if = 'success()'; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg')).if = 'always()'; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg')).if = "${{ !cancelled() && steps.preview-build.outcome == 'success' }}"; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg'))['continue-on-error'] = true; },
     (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.unshift(steps.splice(steps.findIndex((step: any) => step.with?.path?.includes('bundle/dmg')), 1)[0]); },
   ]) {
     const workflow = load('macos-preview.yml'); mutate(workflow);
