@@ -157,7 +157,7 @@ function audit(name: string, workflow: any) {
       assert.equal(job['runs-on'], 'macos-15', 'Mac preview requires native hosted Apple Silicon');
       assert.deepEqual(Object.keys(workflow.jobs), ['preview']);
       const commands = job.steps.map((step: any) => step.run).filter(Boolean);
-      for (const required of ['node scripts/macos-tests.ts', 'node scripts/macos-keychain-ci.ts setup', 'node scripts/macos-identity-smoke.ts', 'npm run engine:prepare', 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json', 'node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts', 'node scripts/macos-package-smoke.ts']) {
+      for (const required of ['node scripts/macos-tests.ts', 'node scripts/macos-keychain-ci.ts setup', 'node scripts/macos-identity-smoke.ts', 'npm run engine:prepare', 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json', 'cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml', 'node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts', 'node scripts/macos-package-smoke.ts']) {
         const step = job.steps.find((step: any) => step.run === required);
         assert(step && !step.if && !step['continue-on-error'], `Mac preview must require ${required}`);
       }
@@ -208,6 +208,8 @@ test('public workflows preserve PR isolation, release provenance and action pins
 test('Mac preview cannot skip installation verification or gain publication credentials', () => {
   for (const mutate of [
     (workflow: any) => { workflow.jobs.preview.steps = workflow.jobs.preview.steps.filter((step: any) => step.run !== 'node scripts/macos-package-smoke.ts'); },
+    (workflow: any) => { workflow.jobs.preview.steps = workflow.jobs.preview.steps.filter((step: any) => !step.run?.startsWith('cargo test ')); },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run?.startsWith('cargo test '))['continue-on-error'] = true; },
     (workflow: any) => { workflow.jobs.preview.permissions = { contents: 'write' }; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup').if = 'success()'; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg')).if = 'always()'; },

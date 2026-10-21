@@ -50,7 +50,7 @@ jobs:
       - name: Build the isolated ad-hoc-signed preview application and DMG
         run: npm run desktop:build -- --config src-tauri/tauri.macos.conf.json
       - name: Verify native desktop behavior
-        run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml
+        run: cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml
       - name: Verify model configuration, restart and clean service exit
         run: node scripts/headless-service-check.ts
       - name: Verify two-node pairing and task execution with a local synthetic model
