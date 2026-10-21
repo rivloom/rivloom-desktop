@@ -12,8 +12,14 @@ const native = { skip: process.platform !== 'darwin', timeout: 40_000 };
 const hostPath = fileURLToPath(new URL('../server/engine-host.mjs', import.meta.url));
 type Event = { kind: string; label?: string; root?: number; owner?: number; guard?: number; target?: number;
   grandchild?: number; code?: number | null; signal?: string | null; input?: string; ordinaryEnv?: string;
-  privateEnvAbsent?: boolean; controlClosed?: boolean; value?: string };
+  privateEnvAbsent?: boolean; controlClosed?: boolean; value?: string; phase?: string;
+  exceptionName?: string; exceptionCode?: string };
 type Frozen = { identities: MacosProcess[]; sessions: number[] };
+const failureNames = ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'AssertionError', 'URIError', 'EvalError', 'unknown'];
+const failureCodes = ['EPIPE', 'ECONNRESET', 'ECONNABORTED', 'EBADF', 'EINVAL', 'EIO', 'ENFILE', 'EMFILE', 'ENOENT',
+  'ENOMEM', 'ENOSYS', 'ENOTSUP', 'EPERM', 'EACCES', 'ERR_INVALID_ARG_TYPE', 'ERR_INVALID_ARG_VALUE', 'ERR_OUT_OF_RANGE',
+  'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END', 'ABORT_ERR', 'unknown'];
+const fixturePhases = ['configuration', 'spawn-options', 'spawn', 'attach-streams', 'stdin', 'running', 'action'];
 
 // These fixtures exercise the shipped host/helper protocol. Their independent
 // 20-second lifetimes are only a failed-test containment measure; every product
@@ -49,24 +55,37 @@ function fixtureSource(actionPath: string, mode: string) {
     const fs = require('node:fs');
     const helper = process.env.RIVLOOM_MACOS_PROCESS_HELPER;
     const socket = process.env.RIVLOOM_MACOS_PROCESS_SOCKET;
-    const send = value => console.log('GUARD_FIXTURE ' + JSON.stringify(value));
+    const send = value => {
+      try { fs.writeSync(1, 'GUARD_FIXTURE ' + JSON.stringify(value) + '\\n'); }
+      catch { process.exit(76); }
+    };
+    const safeError = error => ({
+      exceptionName: ${JSON.stringify(failureNames)}.includes(error?.name) ? error.name : 'unknown',
+      exceptionCode: ${JSON.stringify(failureCodes)}.includes(error?.code) ? error.code : 'unknown'
+    });
+    let phase = 'configuration';
+    process.on('uncaughtException', error => { send({kind:'fixture-exception',phase,...safeError(error)}); process.exit(74); });
+    process.on('unhandledRejection', error => { send({kind:'fixture-rejection',phase,...safeError(error)}); process.exit(75); });
     if (!helper || !socket) { send({kind:'configuration-missing'}); process.exit(71); }
     const guards = new Map();
     const owner = process.ppid;
     send({kind:'root',root:process.pid,owner});
     function start(label, targetCode, wide = false) {
+      phase = 'spawn-options';
       const controlFD = wide ? 64 : 3;
       const channels = Array(controlFD + 1).fill('ignore');
       channels[0] = 'pipe'; channels[1] = 'pipe'; channels[2] = 'pipe'; channels[controlFD] = 'pipe';
       if (wide) channels[3] = 'pipe';
+      phase = 'spawn';
       const child = spawn(helper, ['guard','--control-fd',String(controlFD),'--','/bin/sh','-c',
         'exec "$FIXTURE_NODE" -e "$FIXTURE_CODE"'], {
         detached:false, shell:false, stdio:channels,
         env:{...process.env,FIXTURE_NODE:process.execPath,FIXTURE_CODE:targetCode,FIXTURE_LABEL:label,
           FIXTURE_ORDINARY_VALUE:'ordinary-value-survives'}
       });
+      phase = 'attach-streams';
       guards.set(label,child);
-      child.on('error', () => send({kind:'launch-error',label}));
+      child.on('error', error => send({kind:'launch-error',label,phase:'spawn',...safeError(error)}));
       child.once('spawn', () => send({kind:'spawned',label,guard:child.pid}));
       let output = '';
       child.stdout.on('data', chunk => {
@@ -80,12 +99,14 @@ function fixtureSource(actionPath: string, mode: string) {
       child.stderr.resume();
       child.once('close', (code,signal) => send({kind:'exit',label,code,signal}));
       child.stdio[controlFD].on('error', () => {});
+      phase = 'stdin';
       if (wide) {
         let extra = '';
         child.stdio[3].on('data', chunk => extra += chunk.toString());
         child.stdio[3].on('end', () => { send({kind:'extra',label,value:extra}); child.stdin.end(); });
         child.stdin.write('stdin survives the guard\\n');
       } else child.stdin.end();
+      phase = 'running';
       return child;
     }
     const mode = ${JSON.stringify(mode)};
@@ -97,6 +118,7 @@ function fixtureSource(actionPath: string, mode: string) {
       let action;
       try { action = JSON.parse(fs.readFileSync(${JSON.stringify(actionPath)},'utf8')); } catch { return; }
       if (action.sequence <= sequence) return;
+      phase = 'action';
       sequence = action.sequence;
       if (action.kind === 'cancel') guards.get(action.label).stdio[3].write('T');
       else if (action.kind === 'kill') guards.get(action.label).stdio[3].write('K');
@@ -146,15 +168,26 @@ async function start(mode: string) {
     }
   });
   child.stderr!.on('data', chunk => { errors = (errors + chunk.toString()).slice(-65536); });
+  const diagnostics = () => JSON.stringify({
+    host: { exitCode: child.exitCode, signalCode: child.signalCode },
+    stop: errors.split('\n').map(parseMacosEngineStopDiagnostic).filter(Boolean).slice(-2),
+    fixture: events.filter(value => ['fixture-exception', 'fixture-rejection', 'launch-error'].includes(value.kind)).slice(-4).map(value => ({
+      kind: value.kind,
+      phase: fixturePhases.includes(value.phase!) ? value.phase : 'unknown',
+      exceptionName: failureNames.includes(value.exceptionName!) ? value.exceptionName : 'unknown',
+      exceptionCode: failureCodes.includes(value.exceptionCode!) ? value.exceptionCode : 'unknown',
+    })),
+  });
   const wait = async (kind: string, label?: string, timeout = 6000) => {
     const deadline = performance.now() + timeout;
     while (performance.now() < deadline) {
       const event = events.find(value => value.kind === kind && (label === undefined || value.label === label));
       if (event) return event;
-      assert(child.exitCode === null && child.signalCode === null, `Guard fixture exited before ${kind}; events=${events.map(value => value.kind).join(',')}`);
+      assert(child.exitCode === null && child.signalCode === null,
+        `Guard fixture exited before ${kind}; events=${events.map(value => value.kind).join(',')}; diagnostics=${diagnostics()}`);
       await delay(25);
     }
-    assert.fail(`Guard fixture timed out before ${kind}; events=${events.map(value => value.kind).join(',')}`);
+    assert.fail(`Guard fixture timed out before ${kind}; events=${events.map(value => value.kind).join(',')}; diagnostics=${diagnostics()}`);
   };
   const cleanup = async () => {
     if (child.connected) child.disconnect();
