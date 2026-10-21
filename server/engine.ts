@@ -11,6 +11,7 @@ import { prepareEnginePluginDependencies } from './engine-plugin-dependencies.ts
 import { privateDirectory } from './private-storage.ts';
 import { engineBinaryName, engineTarget, findPreparedEngine, readEngineSource } from './engine-artifact.ts';
 import { parseWindowsEngineStopDiagnostic } from './windows-engine-stop.mjs';
+import { parseMacosEngineStopDiagnostic } from './macos-process.mjs';
 
 const runtimeRoot = fileURLToPath(new URL('..', import.meta.url));
 export const ENGINE_VERSION = readEngineSource(runtimeRoot).version;
@@ -224,7 +225,8 @@ async function stopFailedEngine(child: ChildProcess | undefined, requireSuccessf
 async function startEngineOnPort(cwd: string, port: number, password: string, root: string, scope: EngineScope) {
   let child: ChildProcess | undefined;
   let announced = false;
-  const stopDiagnostics: NonNullable<ReturnType<typeof parseWindowsEngineStopDiagnostic>>[] = [];
+  const stopDiagnostics: NonNullable<ReturnType<typeof parseWindowsEngineStopDiagnostic> | ReturnType<typeof parseMacosEngineStopDiagnostic>>[] = [];
+  let forwardedMacosDiagnostics = 0;
   try {
     const url = await new Promise<string>((ok, fail) => {
       child = spawn(
@@ -278,8 +280,17 @@ async function startEngineOnPort(cwd: string, port: number, password: string, ro
             if (diagnosticLine.length > 768) { diagnosticLine = ''; discardDiagnosticLine = true; }
           }
           if (part.endsWith('\n')) {
-            const diagnostic = parseWindowsEngineStopDiagnostic(diagnosticLine.trimEnd());
-            if (diagnostic) { stopDiagnostics.push(diagnostic); if (stopDiagnostics.length > 8) stopDiagnostics.shift(); }
+            const diagnostic = process.platform === 'darwin'
+              ? parseMacosEngineStopDiagnostic(diagnosticLine.trimEnd())
+              : parseWindowsEngineStopDiagnostic(diagnosticLine.trimEnd());
+            if (diagnostic) {
+              stopDiagnostics.push(diagnostic); if (stopDiagnostics.length > 8) stopDiagnostics.shift();
+              // Only the parser's reconstructed fixed fields may cross this stderr boundary.
+              if (process.platform === 'darwin' && forwardedMacosDiagnostics < 8) {
+                forwardedMacosDiagnostics++;
+                console.error(`RIVLOOM_ENGINE_STOP ${JSON.stringify(diagnostic)}`);
+              }
+            }
             diagnosticLine = ''; discardDiagnosticLine = false;
           }
         }

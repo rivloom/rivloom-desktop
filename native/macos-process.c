@@ -27,17 +27,24 @@ static uint64_t milliseconds(void) {
     return (uint64_t)value.tv_sec * 1000 + (uint64_t)value.tv_nsec / 1000000;
 }
 static bool vanished(void) { return errno == ESRCH || errno == ENOENT; }
+static int inventory_failure(const char *reason) {
+    // Callers pass fixed labels only. Never disclose the observed PID or process data.
+    fprintf(stderr, "RIVLOOM_PROCESS_INVENTORY_FAILURE {\"reason\":\"%s\"}\n", reason);
+    return 70;
+}
 
 static int inventory(bool media) {
     // The headroom covers ordinary forks during enumeration. Filling the entire
     // buffer is ambiguous and fails rather than silently truncating the table.
     int needed = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-    if (needed <= 0 || needed > (MAX_PROCESSES - 512) * (int)sizeof(pid_t)) return 70;
+    if (needed <= 0) return inventory_failure("list");
+    if (needed > (MAX_PROCESSES - 512) * (int)sizeof(pid_t)) return inventory_failure("capacity");
     int capacity = needed + 512 * (int)sizeof(pid_t);
     pid_t *pids = calloc(1, (size_t)capacity);
-    if (!pids) return 70;
+    if (!pids) return inventory_failure("allocation");
     int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, capacity);
-    if (bytes <= 0 || bytes >= capacity || bytes % (int)sizeof(pid_t)) { free(pids); return 70; }
+    if (bytes >= capacity) { free(pids); return inventory_failure("capacity"); }
+    if (bytes <= 0 || bytes % (int)sizeof(pid_t)) { free(pids); return inventory_failure("list"); }
     int count = 0, emitted = 0;
     if (!media) fputs("{\"schemaVersion\":1,\"processes\":[", stdout);
     for (int i = 0; i < bytes / (int)sizeof(pid_t); i++) {
@@ -49,7 +56,7 @@ static int inventory(bool media) {
         errno = 0;
         int result = proc_pidinfo(pids[i], PROC_PIDT_SHORTBSDINFO, 1, &summary, sizeof(summary));
         if (result == 0 && vanished()) continue;
-        if (result != (int)sizeof(summary) || summary.pbsi_pid != (uint32_t)pids[i]) { free(pids); return 70; }
+        if (result != (int)sizeof(summary) || summary.pbsi_pid != (uint32_t)pids[i]) { free(pids); return inventory_failure("short-info"); }
         if (media) {
             summary.pbsi_comm[sizeof(summary.pbsi_comm) - 1] = 0;
             if (summary.pbsi_status != SZOMB && (!strcmp(summary.pbsi_comm, "ffmpeg") || !strcmp(summary.pbsi_comm, "ffprobe"))) count++;
@@ -58,7 +65,7 @@ static int inventory(bool media) {
         errno = 0;
         pid_t session = getsid(pids[i]);
         if (session < 0 && vanished()) continue;
-        if (session <= 0) { free(pids); return 70; }
+        if (session <= 0) { free(pids); return inventory_failure("session-before"); }
         if (summary.pbsi_uid != geteuid()) {
             printf("%s{\"pid\":%u,\"parentPid\":%u,\"group\":%u,\"session\":%d,\"uid\":%u,\"created\":null,\"zombie\":%s}",
                 emitted++ ? "," : "", summary.pbsi_pid, summary.pbsi_ppid, summary.pbsi_pgid,
@@ -69,20 +76,21 @@ static int inventory(bool media) {
         errno = 0;
         result = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 1, &before, sizeof(before));
         if (result == 0 && vanished()) continue;
-        if (result != (int)sizeof(before) || before.pbi_pid != (uint32_t)pids[i] ||
-            before.pbi_start_tvsec == 0 || before.pbi_start_tvusec >= 1000000) { free(pids); return 70; }
+        if (result != (int)sizeof(before) || before.pbi_pid != (uint32_t)pids[i]) { free(pids); return inventory_failure("full-info-before"); }
+        if (before.pbi_start_tvsec == 0 || before.pbi_start_tvusec >= 1000000) { free(pids); return inventory_failure("birth-invalid"); }
         errno = 0;
         session = getsid(pids[i]);
         if (session < 0 && vanished()) continue;
-        if (session <= 0) { free(pids); return 70; }
+        if (session <= 0) { free(pids); return inventory_failure("session-after"); }
         // getsid and proc_pidinfo are separate observations: never combine two
         // different incarnations of a PID into one identity.
         errno = 0;
         result = proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 1, &after, sizeof(after));
         if (result == 0 && vanished()) continue;
-        if (result != (int)sizeof(after) || before.pbi_start_tvsec != after.pbi_start_tvsec ||
-            before.pbi_start_tvusec != after.pbi_start_tvusec || before.pbi_pgid != after.pbi_pgid ||
-            before.pbi_uid != after.pbi_uid) { free(pids); return 70; }
+        if (result != (int)sizeof(after) || after.pbi_pid != (uint32_t)pids[i]) { free(pids); return inventory_failure("full-info-after"); }
+        if (before.pbi_start_tvsec != after.pbi_start_tvsec || before.pbi_start_tvusec != after.pbi_start_tvusec) { free(pids); return inventory_failure("birth-changed"); }
+        if (before.pbi_pgid != after.pbi_pgid) { free(pids); return inventory_failure("group-changed"); }
+        if (before.pbi_uid != after.pbi_uid) { free(pids); return inventory_failure("uid-changed"); }
         printf("%s{\"pid\":%u,\"parentPid\":%u,\"group\":%u,\"session\":%d,\"uid\":%u,\"created\":\"%llu%06llu\",\"zombie\":%s}",
             emitted++ ? "," : "", after.pbi_pid, after.pbi_ppid, after.pbi_pgid, session,
             after.pbi_uid, (unsigned long long)after.pbi_start_tvsec,
@@ -90,7 +98,7 @@ static int inventory(bool media) {
     }
     free(pids);
     if (media) printf("%d\n", count); else fputs("]}\n", stdout);
-    return ferror(stdout) ? 70 : 0;
+    return ferror(stdout) ? inventory_failure("output") : 0;
 }
 
 static void report(const char *event, pid_t root, int code) {

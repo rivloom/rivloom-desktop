@@ -158,19 +158,32 @@ function audit(name: string, workflow: any) {
       assert.deepEqual(Object.keys(workflow.jobs), ['preview']);
       assert(!job['continue-on-error'], 'Mac acceptance failures must fail the job');
       const commands = job.steps.map((step: any) => step.run).filter(Boolean);
-      const afterBuild = ['cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml', 'node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts', 'node scripts/macos-package-smoke.ts'];
-      for (const required of ['node scripts/macos-tests.ts', 'node scripts/macos-keychain-ci.ts setup', 'node scripts/macos-identity-smoke.ts', 'npm run engine:prepare', 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json', 'cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml', 'node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts', 'node scripts/macos-package-smoke.ts']) {
+      const sourceChecks = ['node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts'];
+      const afterBuild = ['cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml', 'node scripts/macos-package-smoke.ts'];
+      const ordered = ['node scripts/macos-tests.ts', 'node scripts/macos-keychain-ci.ts setup', 'node scripts/macos-identity-smoke.ts', 'npm run engine:prepare', ...sourceChecks, 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json', ...afterBuild];
+      for (const required of ordered) {
         const step = job.steps.find((step: any) => step.run === required);
         assert(step && !step['continue-on-error'], `Mac preview must require ${required}`);
-        if (afterBuild.includes(required)) assert.equal(step.if, "${{ !cancelled() && steps.preview-build.outcome == 'success' }}", 'Independent acceptance checks must run after a successful build even if an earlier check fails');
+        assert.equal(commands.filter((command: string) => command === required).length, 1, `Mac preview must run ${required} exactly once`);
+        if (sourceChecks.includes(required)) assert.equal(step.if, "${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}", 'Independent source checks must run after engine preparation even if the other source check fails');
+        else if (afterBuild.includes(required)) assert.equal(step.if, "${{ !cancelled() && steps.preview-build.outcome == 'success' }}", 'Independent acceptance checks must run after a successful build even if an earlier check fails');
         else assert(!step.if, `Mac preparation must require ${required}`);
       }
+      assert.equal(job.steps.find((step: any) => step.run === 'npm run engine:prepare')?.id, 'engine-prepare');
       assert.equal(job.steps.find((step: any) => step.run === 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json')?.id, 'preview-build');
-      assert(commands.indexOf('npm run engine:prepare') < commands.indexOf('npm run desktop:build -- --config src-tauri/tauri.macos.conf.json'));
+      assert(ordered.every((command, index) => index === 0 || commands.indexOf(command) > commands.indexOf(ordered[index - 1])),
+        'Mac source checks must follow engine preparation and precede packaging; native installation checks must follow packaging');
+      assert(!commands.some((command: string) => /\bnpm(?:\.cmd)? run (?:build|desktop:prepare)\b/.test(command)),
+        'Mac preview must not repeat the frontend build already included by desktop:build');
       assert.equal(job.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup')?.if, 'always()');
+      const evidence = job.steps.filter((step: any) => step.uses?.startsWith('actions/upload-artifact@') && step.with?.path?.includes('test-results/macos/*.json'));
+      assert.equal(evidence.length, 1);
+      assert.equal(evidence[0].if, 'always()', 'Mac failure evidence must always be preserved');
       const packages = job.steps.filter((step: any) => step.uses?.startsWith('actions/upload-artifact@') && step.with?.path?.includes('bundle/dmg'));
       assert.equal(packages.length, 1);
       assert(!packages[0].if && !packages[0]['continue-on-error'], 'Mac package upload must require all acceptance checks');
+      assert(job.steps.indexOf(packages[0]) > job.steps.findIndex((step: any) => step.run === afterBuild.at(-1)),
+        'Mac package upload must follow all required acceptance checks');
     } else assert.equal(job['runs-on'], linuxRelease ? 'ubuntu-22.04' : 'windows-2022', 'Use disposable hosted runners');
     for (const step of job.steps ?? []) {
       if (!step.uses) continue;
@@ -218,9 +231,20 @@ test('Mac preview cannot skip installation verification or gain publication cred
     (workflow: any) => { workflow.jobs.preview['continue-on-error'] = true; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/macos-package-smoke.ts').if = 'always()'; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-task-check.ts').if = 'false'; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-service-check.ts')['continue-on-error'] = true; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-task-check.ts')['continue-on-error'] = true; },
+    (workflow: any) => { delete workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-service-check.ts').if; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/headless-task-check.ts').if = "${{ !cancelled() && steps.preview-build.outcome == 'success' }}"; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'npm run engine:prepare').id = 'wrong-engine'; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.id === 'preview-build').if = "${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}"; },
+    (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.push(steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/headless-service-check.ts'), 1)[0]); },
+    (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.unshift(steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/headless-task-check.ts'), 1)[0]); },
+    (workflow: any) => { workflow.jobs.preview.steps.push({ run: 'npm run build' }); },
     (workflow: any) => { workflow.jobs.preview.permissions = { contents: 'write' }; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup').if = 'success()'; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('test-results/macos/*.json')).if = 'success()'; },
     (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg')).if = 'always()'; },
+    (workflow: any) => { const steps = workflow.jobs.preview.steps; steps.unshift(steps.splice(steps.findIndex((step: any) => step.with?.path?.includes('bundle/dmg')), 1)[0]); },
   ]) {
     const workflow = load('macos-preview.yml'); mutate(workflow);
     assert.throws(() => audit('macos-preview.yml', workflow));

@@ -46,19 +46,20 @@ jobs:
       - name: Verify persistent Keychain identity across processes
         run: node scripts/macos-identity-smoke.ts
       - name: Build and verify the source-locked Mac engine
+        id: engine-prepare
         run: npm run engine:prepare
+      - name: Verify model configuration, restart and clean service exit
+        if: ${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}
+        run: node scripts/headless-service-check.ts
+      - name: Verify two-node pairing and task execution with a local synthetic model
+        if: ${{ !cancelled() && steps.engine-prepare.outcome == 'success' }}
+        run: node scripts/headless-task-check.ts
       - name: Build the isolated ad-hoc-signed preview application and DMG
         id: preview-build
         run: npm run desktop:build -- --config src-tauri/tauri.macos.conf.json
       - name: Verify native desktop behavior
         if: ${{ !cancelled() && steps.preview-build.outcome == 'success' }}
         run: cargo test --release --locked --bin rivloom-desktop --manifest-path src-tauri/Cargo.toml
-      - name: Verify model configuration, restart and clean service exit
-        if: ${{ !cancelled() && steps.preview-build.outcome == 'success' }}
-        run: node scripts/headless-service-check.ts
-      - name: Verify two-node pairing and task execution with a local synthetic model
-        if: ${{ !cancelled() && steps.preview-build.outcome == 'success' }}
-        run: node scripts/headless-task-check.ts
       - name: Verify the installed DMG application, bundled hashes and restart
         if: ${{ !cancelled() && steps.preview-build.outcome == 'success' }}
         run: node scripts/macos-package-smoke.ts

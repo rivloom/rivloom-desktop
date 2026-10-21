@@ -6,12 +6,29 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chmod, copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { macosMediaProcessCount, macosProcessHelper, readMacosProcesses, type MacosProcess } from '../server/macos-process.mjs';
+import { macosMediaProcessCount, macosProcessHelper, parseMacosEngineStopDiagnostic, readMacosProcesses, type MacosProcess } from '../server/macos-process.mjs';
 
 const native = { skip: process.platform !== 'darwin', timeout: 15_000 };
 const hostPath = fileURLToPath(new URL('../server/engine-host.mjs', import.meta.url));
 type Fixture = { root: number; leader: number; child?: number };
-const code = (mode: string) => `
+const code = (mode: string) => mode === 'churn' ? `
+  const {spawn} = require('node:child_process');
+  console.log('FIXTURE ' + JSON.stringify({root:process.pid,leader:process.ppid}));
+  const deadline = performance.now() + 4000;
+  let completed = 0, finished = 0;
+  function next() {
+    const child = spawn('/bin/sh', ['-c', 'exec /usr/bin/true'], {stdio:'ignore'});
+    child.once('error', () => process.exit(1));
+    child.once('exit', (code, signal) => {
+      if (code !== 0 || signal !== null) process.exit(1);
+      completed++;
+      if (performance.now() < deadline) setImmediate(next);
+      else if (++finished === 4) console.log('CHURN ' + JSON.stringify({completed}));
+    });
+  }
+  for (let index = 0; index < 4; index++) next();
+  setInterval(() => {}, 1000);
+` : `
   const {spawn} = require('node:child_process');
   const child = spawn(process.execPath, ['-e', ${JSON.stringify(mode === 'escape'
     ? 'setTimeout(() => process.exit(0), 6000); setInterval(() => {}, 1000)'
@@ -33,7 +50,7 @@ async function start(mode: string) {
   const deadline = performance.now() + 6000;
   while (performance.now() < deadline) {
     const line = output.split('\n').find(value => value.startsWith('FIXTURE '));
-    if (line) return { child, fixture: JSON.parse(line.slice(8)) as Fixture, errors: () => errors };
+    if (line) return { child, fixture: JSON.parse(line.slice(8)) as Fixture, errors: () => errors, output: () => output };
     assert.equal(child.exitCode, null, `Fixture failed to start: ${errors}`);
     await delay(30);
   }
@@ -66,6 +83,44 @@ async function proveGone(before: MacosProcess[], session: number, timeout = 7000
   }
   assert.fail('The recorded native fixture or a session descendant survived shutdown');
 }
+
+test('macOS native monitoring preserves a live engine during sustained short-lived child churn', { ...native, timeout: 20_000 }, async () => {
+  const fixture = await start('churn');
+  let before: MacosProcess[] = [];
+  let cleaned = false;
+  try {
+    before = await freeze(fixture.fixture);
+    const deadline = performance.now() + 6000;
+    let snapshots = 0, complete: string | undefined;
+    while (performance.now() < deadline) {
+      assert.equal(fixture.child.exitCode, null, fixture.errors());
+      assert.equal(fixture.child.signalCode, null, fixture.errors());
+      const rows = await readMacosProcesses();
+      for (const owned of before)
+        assert(rows.some(row => row.pid === owned.pid && row.created === owned.created && !row.zombie), 'Engine and private leader must remain alive during ordinary child churn');
+      snapshots++;
+      complete = fixture.output().split('\n').find(line => line.startsWith('CHURN '));
+      if (complete) break;
+      await delay(80);
+    }
+    assert(complete, `Short-lived child churn did not complete: ${fixture.errors()}`);
+    const result = JSON.parse(complete.slice(6));
+    assert(Number.isSafeInteger(result.completed) && result.completed >= 64, 'The fixture must exercise real repeated fork/exec/exit activity');
+    assert(snapshots >= 2, 'The native inventory must be sampled while the root stays alive');
+    fixture.child.disconnect();
+    assert.equal(await exited(fixture.child), 0, fixture.errors());
+    await proveGone(before, fixture.fixture.leader);
+    cleaned = true;
+    const diagnostic = fixture.errors().split('\n').map(parseMacosEngineStopDiagnostic).find(Boolean);
+    assert(diagnostic && diagnostic.outcome === 'ok' && diagnostic.proof === 'observed-exit' && diagnostic.failure === 'none', 'Ordinary churn must retain the complete normal-shutdown proof');
+  } finally {
+    if (!cleaned) {
+      if (fixture.child.connected) fixture.child.disconnect();
+      await exited(fixture.child);
+      await proveGone(before, fixture.fixture.leader);
+    }
+  }
+});
 
 test('macOS native cancellation kills a TERM-resistant descendant and proves group exit', native, async () => {
   const fixture = await start('cancel');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MacosProcessOwnership, macosProcessSnapshot, parseMacosLifecycle, waitForMacosExit,
+import { MacosProcessOwnership, macosProcessSnapshot, parseMacosLifecycle, parseMacosInventoryFailure, parseMacosEngineStopDiagnostic, waitForMacosExit,
   type MacosProcess } from '../server/macos-process.mjs';
 
 const row = (pid: number, parentPid: number, order = pid, group = 100, session = 100): MacosProcess => ({
@@ -14,6 +14,28 @@ function clock() {
   return { now: () => elapsed, wait: async (milliseconds: number) => { elapsed += milliseconds; } };
 }
 const exited = () => ({ exited: true, expected: true, engineExited: true });
+
+test('macOS native inventory diagnostics admit only fixed bounded failure labels', () => {
+  const line = (value: unknown) => `RIVLOOM_PROCESS_INVENTORY_FAILURE ${JSON.stringify(value)}\n`;
+  for (const reason of ['capacity', 'short-info', 'full-info-before', 'full-info-after', 'session-before', 'session-after', 'birth-changed', 'group-changed', 'uid-changed'])
+    assert.equal(parseMacosInventoryFailure(line({ reason })), reason);
+  for (const value of [null, { reason: 'private/path' }, { reason: 'short-info', pid: 123 }, { reason: 'short-info', secret: 'credential' }])
+    assert.equal(parseMacosInventoryFailure(line(value)), undefined);
+  assert.equal(parseMacosInventoryFailure(`${line({ reason: 'short-info' })}private output`), undefined);
+  assert.equal(parseMacosInventoryFailure('x'.repeat(257)), undefined);
+});
+
+test('macOS host diagnostics reconstruct safe fields and reject unbounded or unknown failures', () => {
+  const value = { phase: 'result', outcome: 'failed', durationMs: 12, proof: 'unproven', recorded: 4,
+    failure: 'inventory-unavailable', inventoryFailure: 'group-changed' };
+  const line = (diagnostic: unknown) => `RIVLOOM_ENGINE_STOP ${JSON.stringify(diagnostic)}`;
+  assert.deepEqual(parseMacosEngineStopDiagnostic(line({ ...value, command: 'secret command', environment: { token: 'private' } })), value);
+  for (const change of [{ phase: 'private' }, { outcome: 'skipped' }, { durationMs: -1 }, { durationMs: 1.5 },
+    { recorded: 65537 }, { proof: 'private/path' }, { outcome: 'ok' }, { failure: 'secret' }, { inventoryFailure: 'Bearer secret' }])
+    assert.equal(parseMacosEngineStopDiagnostic(line({ ...value, ...change })), undefined);
+  assert.equal(parseMacosEngineStopDiagnostic(line({ ...value, extra: 'x'.repeat(769) })), undefined);
+  assert.equal(parseMacosEngineStopDiagnostic(`private prefix ${line(value)}`), undefined);
+});
 
 test('macOS inventory rejects incomplete, duplicated or malformed process identities', () => {
   for (const value of [null, [], { schemaVersion: 2, processes: [leader] }, { schemaVersion: 1, processes: [] },
@@ -106,6 +128,17 @@ test('macOS permission failure, partial evidence, unexpected owner exit and time
   const result = await waitForMacosExit(owner(), { ...clock(), timeoutMs: 250,
     status: () => ({ exited: true, expected: false, engineExited: true }), snapshot: async () => [unrelated], quit: () => {} });
   assert.equal(result.stopped, false);
+});
+
+test('macOS stop failure preserves a fixed inventory cause without weakening unknown-state rejection', async () => {
+  const error = Object.assign(new Error('private native text'), { inventoryFailure: 'group-changed' });
+  const result = await waitForMacosExit(owner(), { ...clock(), timeoutMs: 250, status: exited,
+    snapshot: async () => { throw error; }, quit: () => assert.fail('Unavailable inventory cannot request quit') });
+  assert.deepEqual(result, { stopped: false, proof: 'unproven', recorded: 2,
+    failure: 'inventory-unavailable', inventoryFailure: 'group-changed' });
+  const unknown = await waitForMacosExit(owner(), { ...clock(), timeoutMs: 250, status: exited,
+    snapshot: async () => { throw Object.assign(new Error('secret'), { inventoryFailure: 'secret' }); }, quit: () => {} });
+  assert.equal(unknown.inventoryFailure, 'query-failed');
 });
 
 test('macOS late query results cannot cross the shared stop deadline', async () => {

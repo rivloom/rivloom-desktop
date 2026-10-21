@@ -73,7 +73,8 @@ function applicationAction(pid: number, action: 'activate' | 'quit') {
 }
 
 type RuntimeInfo = { desktopPID: number; backendPID: number; url: string; version: string };
-type LaunchedApp = { child: ChildProcess; info?: RuntimeInfo; owned: Map<string, MacosProcess>; launchError?: Error };
+type ReadinessEvidence = { polls: number; runtimeFile: boolean; phase: 'runtime' | 'engine' | 'frontend' | 'identity'; healthStatus?: number; engineReady?: boolean; fetchFailure?: 'timeout' | 'network' };
+type LaunchedApp = { child: ChildProcess; info?: RuntimeInfo; owned: Map<string, MacosProcess>; launchError?: Error; readiness?: ReadinessEvidence };
 
 async function observeOwned(app: LaunchedApp) {
   const rows = await readMacosProcesses();
@@ -101,10 +102,13 @@ async function observeOwned(app: LaunchedApp) {
 
 async function ready(app: LaunchedApp, data: string, version: string) {
   const deadline = Date.now() + 60_000;
+  const evidence: ReadinessEvidence = app.readiness = { polls: 0, runtimeFile: false, phase: 'runtime' };
   while (Date.now() < deadline) {
+    evidence.polls++;
     assert(!app.launchError, 'Native application could not launch');
     assert(alive(app.child), 'Native application exited before becoming ready');
     if (existsSync(join(data, 'desktop-runtime.json'))) {
+      evidence.runtimeFile = true;
       let info: RuntimeInfo | undefined;
       try { info = JSON.parse(await readFile(join(data, 'desktop-runtime.json'), 'utf8')); } catch { /* The app may still be writing its bounded diagnostic. */ }
       if (info) {
@@ -113,16 +117,22 @@ async function ready(app: LaunchedApp, data: string, version: string) {
         assert(Number.isSafeInteger(info.backendPID) && info.backendPID > 1);
         const url = new URL(info.url);
         assert(url.protocol === 'http:' && url.hostname === '127.0.0.1' && Number(url.port) >= 49152 && url.pathname === '/' && !url.search && !url.hash && !url.username && !url.password, 'Native runtime URL is not owned loopback');
-        app.info = info;
+        evidence.phase = 'engine';
         const observed = await observeOwned(app);
         assert(observed.some(row => row.pid === info.backendPID && row.parentPid === app.child.pid), 'Backend does not belong to the launched app');
+        app.info = info;
         try {
           const response = await fetch(`${info.url}/api/health`, { signal: AbortSignal.timeout(2000) });
           const health = await response.json() as { ok?: boolean; engineReady?: boolean };
+          evidence.healthStatus = response.status;
+          evidence.engineReady = health.engineReady === true;
+          delete evidence.fetchFailure;
           if (response.ok && health.ok && health.engineReady) {
+            evidence.phase = 'frontend';
             const home = await fetch(info.url, { signal: AbortSignal.timeout(5000) });
             assert.equal(home.status, 200);
             assert((await home.text()).includes('<html'), 'The installed application did not serve its frontend');
+            evidence.phase = 'identity';
             const identityPath = join(data, 'node-identity.json');
             const identityBytes = await readFile(identityPath, 'utf8'), identity = JSON.parse(identityBytes);
             assert.equal(identity.protection, 'macos-keychain');
@@ -133,12 +143,47 @@ async function ready(app: LaunchedApp, data: string, version: string) {
           }
         } catch (error) {
           if (!(error instanceof TypeError) && !(error instanceof DOMException)) throw error;
+          evidence.fetchFailure = error instanceof DOMException ? 'timeout' : 'network';
         }
       }
     }
     await delay(300);
   }
   throw new Error('Installed macOS application did not become ready within 60 seconds');
+}
+
+/** Bounded failure-only API inspection. Credentials and response bodies never enter the report. */
+async function failureSnapshot(app: LaunchedApp, data: string) {
+  const result: Record<string, unknown> = { applicationAlive: alive(app.child), readiness: app.readiness ?? null };
+  let observed: MacosProcess[];
+  try { observed = await observeOwned(app); result.ownedProcesses = observed.length; }
+  catch { result.processInventoryUnavailable = true; return result; }
+  if (!app.info || !alive(app.child) || !observed.some(row => row.pid === app.info!.backendPID && row.parentPid === app.child.pid)) return result;
+  const signal = AbortSignal.timeout(4000);
+  try {
+    // app.info.url was already checked as this exact application's owned loopback listener.
+    const tokenPath = join(data, 'desktop-auth-token.txt');
+    const tokenInfo = await regular(tokenPath);
+    assert(tokenInfo.uid === process.getuid?.() && (tokenInfo.mode & 0o077) === 0 && tokenInfo.size > 0 && tokenInfo.size <= 4096);
+    const token = (await readFile(tokenPath, 'utf8')).trim();
+    const auth = await fetch(`${app.info.url}/api/auth/desktop`, { method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json', 'X-Rivloom-Request': '1', 'X-Rivloom-Desktop-Token': token }, body: '{}' });
+    result.authenticationStatus = auth.status;
+    const cookie = auth.headers.get('set-cookie')?.split(';')[0];
+    await auth.body?.cancel();
+    if (!auth.ok || !cookie) return result;
+    const response = await fetch(`${app.info.url}/api/bootstrap`, { signal, headers: { Cookie: cookie, 'X-Rivloom-Request': '1' } });
+    result.bootstrapStatus = response.status;
+    if (!response.ok) { await response.body?.cancel(); return result; }
+    const state = await response.json() as { engine?: { ready?: boolean; error?: unknown; models?: unknown[] }; network?: { status?: unknown; local?: unknown } };
+    result.engine = { ready: state.engine?.ready === true, models: Array.isArray(state.engine?.models) ? state.engine.models.length : null,
+      failure: state.engine?.error === 'OpenCode 服务已退出，请重启应用。' ? 'host-exited'
+        : state.engine?.error === 'OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。' ? 'initialization-failed'
+          : state.engine?.error ? 'reported' : 'none' };
+    result.network = { localIdentity: !!state.network?.local,
+      status: ['starting', 'online', 'degraded', 'disabled'].includes(String(state.network?.status)) ? state.network?.status : 'invalid' };
+  } catch { result.apiSnapshotUnavailable = true; }
+  return result;
 }
 
 async function stop(app: LaunchedApp, data: string) {
@@ -227,6 +272,8 @@ export async function smokeMacosPackage(dmgArgument?: string) {
     }
     report.package = { version, identifier, desktopSHA256, runtimeManifestSHA256: sha(manifestBytes), runtimeFiles: files.length,
       runtimeInventorySHA256: sha(JSON.stringify(files)), node: manifest.node, opencode: manifest.opencode, nativeHelpers: manifest.nativeHelpers };
+    report.checks = { readOnlyDmgCopy: true, bundleIdentity: true, nativeArm64: true, codesignIntegrity: true,
+      exactPreparedRuntime: true, nodeVersion: true, engineSourceReceipt: true, nativeHelperHashes: true, notices: true };
     await writeFile(join(output, 'package-files.json'), JSON.stringify(files, null, 2) + '\n');
     const environment: NodeJS.ProcessEnv = { ...process.env, RIVLOOM_DATA_DIR: data, RIVLOOM_MDNS_NETWORK: 'disabled', RIVLOOM_DISCOVERY_FALLBACK: 'disabled' };
     for (const key of ['NODE_OPTIONS', 'NODE_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH']) delete environment[key];
@@ -258,7 +305,10 @@ export async function smokeMacosPackage(dmgArgument?: string) {
       restartIdentity: true, normalApplicationQuit: true, ownedProcessesExited: true, runtimeDiagnosticRemoved: true };
     report.shutdown = [firstStop, secondStop];
     report.status = 'passed';
-  } catch (error) { failure = error; report.error = error instanceof Error ? error.message : String(error); }
+  } catch (error) {
+    failure = error; report.error = error instanceof Error ? error.message : String(error);
+    if (app) report.failureEvidence = await failureSnapshot(app, data);
+  }
   finally {
     if (app) {
       try { await stop(app, data); app = undefined; }

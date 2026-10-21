@@ -11,10 +11,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Bootstrap, ModelSettings, NodeNetwork, NodePairing, Project, Task } from '../shared/types.ts';
+import type { NodeQueueSnapshot } from '../shared/node-queue.ts';
 import { taskFileMime, type TaskFileConversation, type TaskFileDescriptor } from '../shared/task-files.ts';
 import { modelFixture, ServiceClient, until } from './m34-fixtures.ts';
 import { testEnvironment } from './ci-workspace.ts';
 import { loadNodeIdentity } from '../server/node-identity.ts';
+import { parseMacosEngineStopDiagnostic, type MacosEngineStopDiagnostic } from '../server/macos-process.mjs';
 
 export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..')) {
   const previousUmask = process.umask(0o077);
@@ -45,8 +47,14 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
 
   class ManagedNode extends ServiceClient {
     readonly headless: boolean;
+    readonly stopReceipts: MacosEngineStopDiagnostic[] = [];
     logs = '';
     constructor(name: string, headless: boolean) { super(join(sandbox, name)); this.headless = headless; }
+    observeStopReceipts() {
+      const receipts = this.logs.split(/\r?\n/).map(parseMacosEngineStopDiagnostic).filter(value => value !== undefined).slice(-8);
+      this.stopReceipts.splice(0, this.stopReceipts.length, ...receipts);
+      return this.stopReceipts;
+    }
     async launch() {
       assert(!this.child || this.child.exitCode !== null || this.child.signalCode !== null);
       this.base = ''; this.cookie = ''; this.output = '';
@@ -88,6 +96,47 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     }
   }
   const origin = new ManagedNode('desktop-origin', false), worker = new ManagedNode('headless-worker', true);
+  let phase = 'initializing', originID = '', workerID = '', remoteID = '';
+  let lastPermissionObservation: unknown, failureDiagnostics: unknown;
+  const taskState = (state: Bootstrap) => {
+    const task = state.tasks.find(item => item.remoteOrigin?.remoteTaskID === remoteID);
+    const remote = state.network.remoteTasks.find(item => item.id === remoteID);
+    return {
+      engine: { ready: state.engine.ready, errorPresent: !!state.engine.error, fixtureModelPresent: state.engine.models.some(model => model.id === 'fixture/m34') },
+      task: task ? { state: task.state, sessionPresent: !!task.sessionID, approvals: task.approvals.length, errorPresent: !!task.error } : null,
+      remote: remote ? { status: remote.status, transmissionState: remote.transmissionState ?? null, deliveryPending: remote.deliveryPending,
+        deliveryErrorPresent: !!remote.deliveryError, executionStatus: remote.executionStatus, executionState: remote.executionState, localTaskPresent: !!remote.localTaskID } : null,
+    };
+  };
+  async function observeFailure() {
+    async function read<T>(node: ManagedNode, route: string): Promise<{ status: number | null; value?: T }> {
+      if (!node.base) return { status: null };
+      try {
+        const response = await fetch(`${node.base}/api${route}`, { headers: { cookie: node.cookie, 'x-rivloom-request': '1' }, signal: AbortSignal.timeout(3000) });
+        return { status: response.status, ...(response.ok ? { value: await response.json() as T } : {}) };
+      } catch { return { status: null }; }
+    }
+    const nodes = await Promise.all(([['origin', origin, workerID], ['worker', worker, originID]] as const).map(async ([role, node, peerID]) => {
+      const [bootstrap, queue] = await Promise.all([read<Bootstrap>(node, '/bootstrap'), read<NodeQueueSnapshot>(node, '/node-queue')]);
+      const state = bootstrap.value;
+      const peer = state?.network.nearby.find(item => item.id === peerID);
+      return {
+        role, child: { exitCode: node.child?.exitCode ?? null, signalCode: node.child?.signalCode ?? null },
+        stopReceipts: node.observeStopReceipts(),
+        bootstrapStatus: bootstrap.status, queueStatus: queue.status,
+        ...(state ? taskState(state) : {}),
+        network: state ? { status: state.network.status, errorPresent: !!state.network.error,
+          peerPresent: !!peer, online: !!peer?.online, trusted: !!peer?.trusted, channelReady: !!peer?.channelReady } : null,
+        queue: queue.value ? { paused: queue.value.paused, entries: queue.value.entries
+          .filter(item => item.source.kind === 'remote' && item.source.remoteTaskID === remoteID).slice(0, 4)
+          .map(item => ({ state: item.state, admissionPhase: item.admissionPhase, blockReason: item.blockReason?.code ?? null,
+            endReason: item.endReason?.code ?? null, receivedSequence: item.receivedSequence, localTaskPresent: !!item.localTaskID })) } : null,
+      };
+    }));
+    failureDiagnostics = { phase, at: new Date().toISOString(), modelRequests: fixture.requests,
+      remoteCreated: !!remoteID, lastPermissionObservation, nodes };
+    console.error('HEADLESS_TASK_DIAGNOSTIC', JSON.stringify(failureDiagnostics));
+  }
   async function cliCommand<T = unknown>(args: string[]): Promise<T> {
     return new Promise<T>((done, reject) => {
       const child = spawn(process.execPath, [cli, '--data-dir', worker.root, ...args], { cwd: root, env: environment, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -116,8 +165,10 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     for (const node of [origin, worker]) { mkdirSync(node.root, { recursive: true, mode: 0o700 }); fixture.configure(node.root); }
     // Model the existing desktop installation that a new Linux worker joins.
     loadNodeIdentity(origin.root);
+    phase = 'launching';
     await Promise.all([origin.launch(), worker.launch()]);
-    const originID = (await origin.network()).local!.id, workerID = (await worker.network()).local!.id;
+    originID = (await origin.network()).local!.id; workerID = (await worker.network()).local!.id;
+    phase = 'configuring_worker';
     const project = await cliCommand<Project>(['projects', 'add', projectDirectory, '--name', 'Headless execution fixture', '--confirm']);
     assert((await cliCommand<ModelSettings>(['models', 'list'])).models.some(model => model.id === 'fixture/m34'));
     await cliCommand(['models', 'default', 'fixture/m34']);
@@ -125,6 +176,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     await cliCommand(['execution', 'concurrency', '1']);
     pass('The worker is configured through the real CLI with an isolated project, loopback model and explicit ask policy');
 
+    phase = 'pairing';
     await until(() => origin.network(), network => network.nearby.some(node => node.id === workerID && node.online), 'worker discovery');
     await until(() => worker.network(), network => network.nearby.some(node => node.id === originID && node.online), 'origin discovery');
     await origin.call('/network/pairings', { nodeID: workerID }, 201);
@@ -142,9 +194,12 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
 
     const request = { requestID: randomUUID(), title: 'Headless execution fixture', description: 'Write headless-result.txt in the selected project and return a short completion summary.', criteria: 'The file contains the fixture output and returns to the originating desktop node.', requirements: {}, confirmed: true };
     const route = `/network/nodes/${workerID}/tasks`;
+    phase = 'submitting';
     const sent = await origin.call<NodeNetwork & { createdTaskID: string }>(route, request, 201);
-    const remoteID = sent.createdTaskID; assert(remoteID);
+    remoteID = sent.createdTaskID; assert(remoteID);
+    phase = 'waiting_permission';
     const pending = await until(() => worker.bootstrap(), state => {
+      lastPermissionObservation = { at: new Date().toISOString(), ...taskState(state) };
       const task = taskFor(state, remoteID);
       if (task?.state === 'failed') throw new Error(`Official task failed: ${task.error}`);
       return task?.state === 'waiting_approval' && task.approvals.length > 0;
@@ -153,7 +208,9 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     assert(!existsSync(outputPath), 'File must not be written before permission approval');
     const cliPending = await cliCommand<{ taskID: string; approvals: Task['approvals'] }[]>(['pending']);
     assert(cliPending.find(task => task.taskID === localTask.id)?.approvals.some(approval => approval.id === localTask.approvals[0].id));
+    phase = 'approving';
     await cliCommand(['approve', localTask.id, localTask.approvals[0].id, 'once']);
+    phase = 'waiting_completion';
     const complete = await until(() => worker.bootstrap(), state => taskFor(state, remoteID)?.state === 'accepted', 'official task completion', 90_000);
     const completedTask = taskFor(complete, remoteID)!;
     assert.equal(readFileSync(outputPath, 'utf8'), outputText);
@@ -164,6 +221,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
 
     // Explicitly select the file that OpenCode actually wrote, using the existing
     // result-attachment API; this does not claim all arbitrary output files auto-publish.
+    phase = 'delivering_result';
     const bytes = readFileSync(outputPath);
     const descriptor: TaskFileDescriptor = { id: randomUUID(), name: 'headless-result.txt', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), mime: taskFileMime('headless-result.txt') };
     await worker.call('/task-files/uploads', descriptor, 201);
@@ -178,9 +236,11 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     await until(async () => fixture.pendingRequests, count => count === 0, 'model responses settled');
     const beforeRestartRequests = fixture.requests;
     assert.deepEqual(sessionIDs(), [completedTask.sessionID]);
+    phase = 'restarting';
     await worker.stop();
     await worker.launch();
     await Promise.all([waitChannel(origin, workerID), waitChannel(worker, originID)]);
+    phase = 'verifying_restart';
     const restarted = await worker.bootstrap();
     assert.equal(restarted.network.local!.id, workerID);
     assert.equal(restarted.network.pairings.length, 0);
@@ -195,14 +255,24 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
     assert.equal(readFileSync(outputPath, 'utf8'), outputText);
     assert.equal((await origin.bootstrap()).tasks.length, 0);
     pass('Headless restart preserves identity and trust; retrying the original request creates no extra task, session or model request', { modelRequests: fixture.requests, sessions: 1, tasks: 1 });
-  } catch (error) { failure = error; }
+  } catch (error) {
+    failure = error;
+    try { await observeFailure(); }
+    catch { failureDiagnostics = { phase, observationFailed: true, modelRequests: fixture.requests, nodes: [
+      { role: 'origin', stopReceipts: origin.stopReceipts }, { role: 'worker', stopReceipts: worker.stopReceipts },
+    ] }; }
+  }
   finally {
     for (const node of [worker, origin]) {
       try { await node.stop(); } catch (error) { failure ||= error; }
+      node.observeStopReceipts();
       writeFileSync(join(sandbox, node.headless ? 'worker.log' : 'origin.log'), node.logs);
     }
     await fixture.close();
-    writeFileSync(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, engineVersion: readEngineSource(root).version, platform: process.platform, arch: process.arch, modelRequests: fixture.requests, discoveryPort, shutdown: process.platform === 'win32' ? 'headless test IPC -> exported shutdown; desktop stdin lifecycle' : 'headless SIGTERM; desktop stdin lifecycle', scope: 'Two isolated services; real CLI, pairing, encrypted task/result transport and Rivloom OpenCode with a deterministic loopback model. No real provider, physical devices or systemd enablement.', ...(failure ? { error: String(failure) } : {}) }, null, 2) + '\n');
+    if (failure && !failureDiagnostics) failureDiagnostics = { phase, nodes: [
+      { role: 'origin', stopReceipts: origin.stopReceipts }, { role: 'worker', stopReceipts: worker.stopReceipts },
+    ] };
+    writeFileSync(join(sandbox, 'report.json'), JSON.stringify({ status: failure ? 'failed' : 'passed', checks, engineVersion: readEngineSource(root).version, platform: process.platform, arch: process.arch, modelRequests: fixture.requests, discoveryPort, shutdown: process.platform === 'win32' ? 'headless test IPC -> exported shutdown; desktop stdin lifecycle' : 'headless SIGTERM; desktop stdin lifecycle', scope: 'Two isolated services; real CLI, pairing, encrypted task/result transport and Rivloom OpenCode with a deterministic loopback model. No real provider, physical devices or systemd enablement.', ...(failure ? { error: String(failure), diagnostics: failureDiagnostics } : {}) }, null, 2) + '\n');
     process.umask(previousUmask);
   }
   console.log(`Headless task report: ${join(sandbox, 'report.json')}`);
