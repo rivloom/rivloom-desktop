@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createRequire } from "node:module"
-import { readFile, realpath } from "node:fs/promises"
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { writeSync } from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -9,8 +9,19 @@ import { setTimeout as delay } from "node:timers/promises"
 const checks = []
 let phase = "configuration"
 const emit = value => writeSync(1, `RIVLOOM_MACOS_GUARD_FIXTURE ${JSON.stringify(value)}\n`)
+const phases = new Set(["configuration", "imports", "git-path", "shell-status", "stdio", "concurrent-cancel", "operation-timeout", "abort", "complete"])
+const beginPhase = value => {
+  assert.ok(phases.has(value))
+  phase = value
+  emit({ event: "stage", phase, stage: "begin" })
+}
+const stdioStage = stage => {
+  assert.ok(["handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed"].includes(stage))
+  emit({ event: "stage", phase: "stdio", stage })
+}
 
 async function main() {
+  beginPhase("configuration")
   assert.equal(process.platform, "darwin")
   assert.equal(process.arch, "arm64")
   assert.ok(process.versions.bun, "This fixture must use the pinned Bun executable")
@@ -31,7 +42,7 @@ async function main() {
     if (!released) await delay(20)
   }
   assert.ok(released, "The parent must freeze the engine identity before any managed command starts")
-  phase = "imports"
+  beginPhase("imports")
   // Resolve the exact dependency graph installed for the source being compiled,
   // rather than a second Effect copy from the desktop or recipe directory.
   const sourceRequire = createRequire(path.join(root, "packages/core/package.json"))
@@ -45,14 +56,14 @@ async function main() {
   const text = stream => Stream.runCollect(stream).pipe(Effect.map(chunks => Buffer.concat(chunks.map(value => Buffer.from(value))).toString("utf8")))
   const pass = name => { checks.push(name); emit({ event: "check", name }) }
 
-  phase = "git-path"
+  beginPhase("git-path")
   const git = await run(ChildProcessSpawner.ChildProcessSpawner.use(service => service.string(
     ChildProcess.make("git", ["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd: root, stdin: "ignore" }),
   )))
   assert.equal(await realpath(git.split(/\r?\n/)[0]), await realpath(root))
   pass("git-path-and-discovery")
 
-  phase = "shell-status"
+  beginPhase("shell-status")
   await run(Effect.gen(function* () {
     const handle = yield* ChildProcess.make("printf", ["shell-output;", "exit", "37"], { shell: true, stdin: "ignore" })
     assert.equal(yield* text(handle.stdout), "shell-output")
@@ -60,18 +71,29 @@ async function main() {
   }))
   pass("shell-and-exit-status")
 
-  phase = "stdio"
+  beginPhase("stdio")
+  const stdioDirectory = path.join(directory, "stdio-evidence")
+  await mkdir(stdioDirectory, { mode: 0o700 })
+  const stdioProgress = path.join(stdioDirectory, "stdio-progress.jsonl")
+  await writeFile(stdioProgress, "", { mode: 0o600, flag: "wx" })
   await run(Effect.gen(function* () {
     const code = `
       const fs = require('node:fs'); let input = '';
+      const progress = (event, bytes) => fs.appendFileSync(${JSON.stringify(stdioProgress)},
+        JSON.stringify(bytes === undefined ? {event} : {event,bytes}) + '\\n');
+      progress('started');
       fs.writeSync(3, 'additional-output\\n'); fs.closeSync(3);
+      progress('fd3-closed');
       process.stdin.setEncoding('utf8');
-      process.stdin.on('data', value => input += value);
+      process.stdin.on('data', value => { input += value; progress('stdin-data', Buffer.byteLength(value, 'utf8')); });
       process.stdin.on('end', () => {
+        progress('stdin-end');
         process.stdout.write(JSON.stringify({input,ordinary:process.env.ONLY_FIXTURE_VALUE,
           privateAbsent:!('RIVLOOM_MACOS_PROCESS_HELPER' in process.env) && !('RIVLOOM_MACOS_PROCESS_SOCKET' in process.env),
           inheritedHome:'HOME' in process.env}));
+        progress('stdout-written');
         process.stderr.write('stderr-output\\n');
+        progress('stderr-written');
       });
     `
     const handle = yield* ChildProcess.make(node, ["-e", code], {
@@ -79,11 +101,17 @@ async function main() {
       env: { ONLY_FIXTURE_VALUE: "kept" }, extendEnv: false,
       additionalFds: { fd3: { type: "output" } },
     })
-    const [out, error, extra] = yield* Effect.all([text(handle.stdout), text(handle.stderr), text(handle.getOutputFd(3))], { concurrency: 3 })
+    stdioStage("handle-acquired")
+    const complete = (stream, stage) => text(stream).pipe(Effect.tap(() => Effect.sync(() => stdioStage(stage))))
+    const [out, error, extra] = yield* Effect.all([
+      complete(handle.stdout, "stdout-complete"), complete(handle.stderr, "stderr-complete"), complete(handle.getOutputFd(3), "fd3-complete"),
+    ], { concurrency: 3 })
     assert.deepEqual(JSON.parse(out), { input: "input-through-effect\n", ordinary: "kept", privateAbsent: true, inheritedHome: false })
     assert.equal(error, "stderr-output\n")
     assert.equal(extra, "additional-output\n")
-    assert.equal(yield* handle.exitCode, 0)
+    const exitCode = yield* handle.exitCode
+    stdioStage("exit-code-observed")
+    assert.equal(exitCode, 0)
   }))
   pass("stdio-extra-fd-and-environment")
 
@@ -140,7 +168,7 @@ async function main() {
       "Cancelling another command must preserve this exact process incarnation")
   }
 
-  phase = "concurrent-cancel"
+  beginPhase("concurrent-cancel")
   let second
   await run(Effect.gen(function* () {
     const a = longCommand(), b = longCommand()
@@ -162,7 +190,7 @@ async function main() {
   pass("concurrent-force-kill-isolation")
   pass("scope-finalizer-descendant-cleanup")
 
-  phase = "operation-timeout"
+  beginPhase("operation-timeout")
   let timedOut
   const timeoutResult = await run(Effect.gen(function* () {
     const value = longCommand()
@@ -174,7 +202,7 @@ async function main() {
   await proveGone(timedOut)
   pass("operation-timeout-descendant-cleanup")
 
-  phase = "abort"
+  beginPhase("abort")
   const abort = new AbortController()
   let aborted
   let interrupted = false
@@ -191,7 +219,7 @@ async function main() {
   await proveGone(aborted)
   pass("abort-descendant-cleanup")
 
-  phase = "complete"
+  beginPhase("complete")
   emit({ event: "complete", passed: true, checks })
 }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { lstatSync, readFileSync } from "node:fs"
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -11,6 +11,9 @@ import { macosProcessHelper, parseMacosEngineStopDiagnostic, readMacosProcesses 
 
 const expectedChecks = ["git-path-and-discovery", "shell-and-exit-status", "stdio-extra-fd-and-environment",
   "concurrent-force-kill-isolation", "scope-finalizer-descendant-cleanup", "operation-timeout-descendant-cleanup", "abort-descendant-cleanup"]
+const phases = ["configuration", "imports", "git-path", "shell-status", "stdio", "concurrent-cancel", "operation-timeout", "abort", "complete"]
+const stages = ["begin", "handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed"]
+const stdioEvents = ["started", "fd3-closed", "stdin-data", "stdin-end", "stdout-written", "stderr-written"]
 const recipeRoot = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(recipeRoot, "../..")
 const hostPath = path.join(desktopRoot, "server/engine-host.mjs")
@@ -79,6 +82,41 @@ const report = { schemaVersion: 1, passed: false, target: "darwin-arm64", checks
     fixtureSHA256: digest(fixturePath), harnessSHA256: digest(fileURLToPath(import.meta.url)) } }
 let child, output = "", errors = "", overflow = false, complete, fixtureFailure, failurePhase, frozen, closed = false
 const events = []
+const stageTrace = []
+const startedAt = performance.now()
+const stdioEvidence = () => {
+  const result = { status: "unavailable", events: [] }
+  let descriptor
+  try {
+    const folder = path.join(directory, "stdio-evidence")
+    const parent = lstatSync(folder)
+    assert.ok(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid())
+    const file = path.join(folder, "stdio-progress.jsonl"), before = lstatSync(file)
+    assert.ok(before.isFile() && !before.isSymbolicLink() && before.nlink === 1 && before.uid === process.getuid() && before.size <= 8192)
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const opened = fstatSync(descriptor)
+    assert.ok(opened.isFile() && opened.dev === before.dev && opened.ino === before.ino && opened.nlink === 1 && opened.uid === process.getuid() && opened.size <= 8192)
+    const buffer = Buffer.alloc(8193), bytes = readSync(descriptor, buffer, 0, buffer.length, 0)
+    assert.ok(bytes <= 8192)
+    const text = buffer.subarray(0, bytes).toString("utf8")
+    // An interrupted append may leave one partial record. Never expose it.
+    const lines = text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean)
+    assert.ok(lines.length <= 64)
+    for (const line of lines) {
+      const value = JSON.parse(line)
+      assert.ok(value && stdioEvents.includes(value.event))
+      assert.deepEqual(Object.keys(value).sort(), value.event === "stdin-data" ? ["bytes", "event"] : ["event"])
+      if (value.event === "stdin-data") {
+        assert.ok(Number.isSafeInteger(value.bytes) && value.bytes >= 0 && value.bytes <= 1048576)
+        result.events.push({ event: value.event, bytes: value.bytes })
+      } else result.events.push({ event: value.event })
+    }
+    result.status = "read"
+    result.partialRecord = text.length > 0 && !text.endsWith("\n")
+  } catch { result.status = "unavailable" }
+  finally { if (descriptor !== undefined) { try { closeSync(descriptor) } catch { result.status = "unavailable" } } }
+  return result
+}
 const exit = async timeout => {
   const deadline = performance.now() + timeout
   while (child.exitCode === null && child.signalCode === null && performance.now() < deadline) await delay(40)
@@ -106,7 +144,7 @@ try {
       const line = output.slice(0, end); output = output.slice(end + 1)
       const prefix = "RIVLOOM_MACOS_GUARD_FIXTURE "
       if (!line.startsWith(prefix)) continue
-      try { events.push(JSON.parse(line.slice(prefix.length))) } catch { overflow = true }
+      try { if (events.length < 128) events.push(JSON.parse(line.slice(prefix.length))); else overflow = true } catch { overflow = true }
     }
   })
   child.stderr.on("data", data => { errors = (errors + data.toString()).slice(-65536) })
@@ -128,6 +166,11 @@ try {
         })
         frozen = { session: event.ownerPID, identities }
         await writeFile(path.join(directory, "start"), "go", { flag: "wx", mode: 0o600 })
+      } else if (event.event === "stage") {
+        assert.deepEqual(Object.keys(event).sort(), ["event", "phase", "stage"])
+        assert.ok(phases.includes(event.phase) && stages.includes(event.stage) && stageTrace.length < 32)
+        assert.ok(event.stage === "begin" || event.phase === "stdio")
+        stageTrace.push({ phase: event.phase, stage: event.stage, elapsedMs: Math.round(performance.now() - startedAt) })
       } else if (event.event === "check") {
         assert.equal(event.name, expectedChecks[report.checks.length])
         report.checks.push(event.name)
@@ -137,7 +180,7 @@ try {
         complete = true
       } else if (event.event === "failed") {
         fixtureFailure = "core-fixture"
-        if (["configuration", "imports", "git-path", "shell-status", "stdio", "concurrent-cancel", "operation-timeout", "abort"].includes(event.phase)) failurePhase = event.phase
+        if (phases.includes(event.phase)) failurePhase = event.phase
       }
       else fixtureFailure = "fixture-protocol"
     }
@@ -145,6 +188,7 @@ try {
     if (closed) break
     await delay(30)
   }
+  if (!complete && !fixtureFailure) fixtureFailure = closed ? "host-closed" : "deadline"
   assert.ok(complete && !fixtureFailure, "Pinned Bun and the patched core spawner must finish every integration check")
   await exit(8000)
   assert.equal(child.exitCode, 0)
@@ -157,6 +201,19 @@ try {
   report.shutdown = diagnostic
   report.passed = true
 } finally {
+  report.stageTrace = stageTrace
+  if (!report.passed) {
+    report.stdioProgressBeforeStop = stdioEvidence()
+    if (frozen) {
+      try {
+        const rows = await readMacosProcesses()
+        report.liveBeforeStop = {
+          frozenSession: rows.filter(row => !row.zombie && row.session === frozen.session).length,
+          frozenIdentities: frozen.identities.filter(value => rows.some(row => !row.zombie && row.pid === value.pid && row.created === value.created)).length,
+        }
+      } catch { report.liveBeforeStop = { unavailable: true } }
+    }
+  }
   if (child && child.exitCode === null && child.signalCode === null) {
     if (child.connected) child.disconnect()
     await exit(8000).catch(() => { report.cleanupUnproven = true })
