@@ -33,6 +33,7 @@ import { canContinueTask, isOrdinaryLocalTask, type TaskMessageRequest } from '.
 import { taskContinuationContext, taskMessageDigest, taskVisibleMessages } from './task-continuation.ts';
 import { uuid } from '../shared/collaboration.ts';
 import { nodeModelActivity, type ModelActivityTask } from './node-model-activity.ts';
+import { summarizeEngineStartupFailure, type EngineStartupDiagnostic, type EngineStartupPhase } from './engine-startup-diagnostic.ts';
 
 export const updates = new EventEmitter();
 updates.setMaxListeners(200);
@@ -45,7 +46,10 @@ export function changed(taskID?: string) {
   });
   updates.emit('update', { taskID });
 }
-export const engineStatus = {
+export const engineStatus: {
+  ready: boolean; version: string; models: AvailableModel[]; connectedProviders: string[]; error: string | null;
+  startupDiagnostic?: EngineStartupDiagnostic;
+} = {
   ready: false,
   version: ENGINE_VERSION,
   models: [] as AvailableModel[],
@@ -170,6 +174,7 @@ export async function initializeEngine() {
       activity(value.id, null, 'session_create_uncertain', '恢复时发现未确认的会话创建意图。');
     }
   }
+  let startupPhase: EngineStartupPhase = 'start-engine';
   try {
     engine = await startEngine(dataRoot);
     engine.child.once('exit', () => {
@@ -188,9 +193,15 @@ export async function initializeEngine() {
       }
       changed();
     });
+    startupPhase = 'providers';
     await refreshEngineModels();
     engineStatus.ready = true;
-  } catch {
+    if (process.platform === 'darwin') delete engineStatus.startupDiagnostic;
+  } catch (error) {
+    if (process.platform === 'darwin') engineStatus.startupDiagnostic = {
+      ...summarizeEngineStartupFailure(error, startupPhase), engineAssigned: engine !== null,
+      hostRunning: engine !== null && engine.child.exitCode === null && engine.child.signalCode === null,
+    };
     engineStatus.error = 'OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。';
   }
   changed();

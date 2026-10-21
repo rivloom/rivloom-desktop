@@ -7,6 +7,7 @@ import { macosNativeFiles } from './ci-test-suites.ts';
 assert(process.platform === 'darwin' && process.arch === 'arm64', 'Mac tests require native Apple Silicon');
 const root = resolve(import.meta.dirname, '..');
 const result = await runBatch([
+  'tests/engine-startup-diagnostic.test.ts', 'tests/macos-startup-evidence.test.ts',
   'tests/macos-runtime.test.ts', 'tests/macos-spawn-guard.test.ts', 'tests/macos-source-overlay.test.ts',
   'tests/macos-process.test.ts', 'tests/macos-identity.test.ts', ...macosNativeFiles,
 ].map(path => resolve(root, path)), root);

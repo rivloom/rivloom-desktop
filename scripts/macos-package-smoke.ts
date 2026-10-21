@@ -8,8 +8,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { engineSourceFile, verifyPreparedEngine } from '../server/engine-artifact.ts';
 import { readMacosProcesses, type MacosProcess } from '../server/macos-process.mjs';
+import { parseEngineStartupDiagnostic } from '../server/engine-startup-diagnostic.ts';
 import { assertMacosArm64Executable, desktopNodeVersion, desktopPlatforms } from './desktop-platform.ts';
 import { requireIsolatedMacosKeychain } from './macos-keychain-ci.ts';
+import { readMacosStartupEvidence } from './macos-startup-evidence.ts';
 
 const checkout = resolve(import.meta.dirname, '..');
 const output = join(checkout, 'test-results/macos');
@@ -154,7 +156,8 @@ async function ready(app: LaunchedApp, data: string, version: string) {
 
 /** Bounded failure-only API inspection. Credentials and response bodies never enter the report. */
 async function failureSnapshot(app: LaunchedApp, data: string) {
-  const result: Record<string, unknown> = { applicationAlive: alive(app.child), readiness: app.readiness ?? null };
+  const result: Record<string, unknown> = { applicationAlive: alive(app.child), readiness: app.readiness ?? null,
+    coreLog: await readMacosStartupEvidence(data) };
   let observed: MacosProcess[];
   try { observed = await observeOwned(app); result.ownedProcesses = observed.length; }
   catch { result.processInventoryUnavailable = true; return result; }
@@ -175,11 +178,12 @@ async function failureSnapshot(app: LaunchedApp, data: string) {
     const response = await fetch(`${app.info.url}/api/bootstrap`, { signal, headers: { Cookie: cookie, 'X-Rivloom-Request': '1' } });
     result.bootstrapStatus = response.status;
     if (!response.ok) { await response.body?.cancel(); return result; }
-    const state = await response.json() as { engine?: { ready?: boolean; error?: unknown; models?: unknown[] }; network?: { status?: unknown; local?: unknown } };
+    const state = await response.json() as { engine?: { ready?: boolean; error?: unknown; models?: unknown[]; startupDiagnostic?: unknown }; network?: { status?: unknown; local?: unknown } };
     result.engine = { ready: state.engine?.ready === true, models: Array.isArray(state.engine?.models) ? state.engine.models.length : null,
       failure: state.engine?.error === 'OpenCode 服务已退出，请重启应用。' ? 'host-exited'
         : state.engine?.error === 'OpenCode 启动失败。检查系统架构和已锁定的引擎安装；重启应用后再试。' ? 'initialization-failed'
-          : state.engine?.error ? 'reported' : 'none' };
+          : state.engine?.error ? 'reported' : 'none',
+      startupDiagnostic: parseEngineStartupDiagnostic(state.engine?.startupDiagnostic) ?? null };
     result.network = { localIdentity: !!state.network?.local,
       status: ['starting', 'online', 'degraded', 'disabled'].includes(String(state.network?.status)) ? state.network?.status : 'invalid' };
   } catch { result.apiSnapshotUnavailable = true; }
