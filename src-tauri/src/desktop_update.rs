@@ -503,6 +503,7 @@ mod tests {
         assert!(finish_startup_cleanup(&root, "0.1.7").is_err()); assert!(backup.exists());
         fs::write(&marker, b"broken").unwrap();
         assert!(finish_startup_cleanup(&root, "0.1.8").is_err()); assert!(backup.exists());
+        #[cfg(all(windows, target_arch = "x86_64"))]
         assert!(!UpdateState::new(&root, true).startup_recovery_ok);
         fs::remove_file(marker).unwrap();
         assert!(finish_startup_cleanup(&root, "0.1.8").unwrap()); assert!(!backup.exists());
@@ -524,6 +525,34 @@ mod tests {
             format!("{good}?next=evil"), good.replace("0.1.5_x64", "0.1.4_x64"), good.replace("/releases/", "/previews/"),
             good.replace("https://", "https://name@"), good.replace("-123/", "-0123/")] { assert!(!official_installer(&bad, "0.1.5"), "{bad}"); }
     }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    #[test]
+    fn unsupported_platform_keeps_updates_disabled_and_preserves_existing_update_state() {
+        let root = std::env::temp_dir().join(format!("rivloom-update-disabled-{}-{}", std::process::id(), now()));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("rivloom.sqlite"), b"live database").unwrap();
+        let backup = update_backup::backup(&root, "0.1.5", "0.1.6", |_| {}).unwrap();
+        let directory = root.join(".updates");
+        fs::write(directory.join("preferences.json"), b"invalid preferences").unwrap();
+        fs::write(directory.join("pending-install.json"), b"invalid pending install").unwrap();
+        for requested in [false, true] {
+            let state = UpdateState::new(&root, requested);
+            assert!(!state.enabled);
+            assert_eq!(state.acquire().err().as_deref(), Some("update_disabled"));
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.phase, "disabled");
+            assert!(snapshot.error.is_none() && snapshot.skipped_version.is_none());
+            assert!(state.startup_recovery_ok);
+            assert!(!state.startup_cleanup_complete.load(Ordering::SeqCst));
+            assert!(backup.exists());
+            assert_eq!(fs::read(directory.join("preferences.json")).unwrap(), b"invalid preferences");
+            assert_eq!(fs::read(directory.join("pending-install.json")).unwrap(), b"invalid pending install");
+            assert!(!directory.join("startup-success.json").exists());
+            assert_eq!(fs::read(root.join("rivloom.sqlite")).unwrap(), b"live database");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(all(windows, target_arch = "x86_64"))]
     #[test]
     fn operation_lock_releases_and_disabled_preview_cannot_install() {
         let state = UpdateState::new(&std::env::temp_dir(), true);
@@ -531,6 +560,7 @@ mod tests {
         assert!(state.acquire().is_ok());
         assert!(UpdateState::new(&std::env::temp_dir(), false).acquire().is_err());
     }
+    #[cfg(all(windows, target_arch = "x86_64"))]
     #[test]
     fn background_installation_keeps_its_lock_after_request_returns() {
         let state = Arc::new(UpdateState::new(&std::env::temp_dir(), true));
