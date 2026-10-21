@@ -9,9 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { listenHttp } from '../server/http-ports.ts';
 import { testEnvironment } from './ci-workspace.ts';
-import type { ModelSettings, NodeExecutionPolicy, Project, RivloomNode } from '../shared/types.ts';
+import type { ModelSettings, NodeExecutionPolicy, NodeNetwork, Project, RivloomNode } from '../shared/types.ts';
 
-type Status = { online: boolean; node: RivloomNode; engine: { ready: boolean; version: string }; executionPolicy: NodeExecutionPolicy; queue: { paused: boolean } };
+type Status = { online: boolean; node: RivloomNode | null; network: Pick<NodeNetwork, 'status' | 'error'>; engine: { ready: boolean; version: string }; executionPolicy: NodeExecutionPolicy; queue: { paused: boolean } };
 
 export async function checkHeadlessService(root = resolve(import.meta.dirname, '..')) {
   const base = join(root, 'test-results', 'headless-service');
@@ -78,6 +78,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
   try {
     await run(['init', '--name', 'CLI integration node']);
     const first = await start();
+    assert(first.node, `Headless node identity unavailable: network=${['starting', 'online', 'degraded', 'disabled'].includes(first.network.status) ? first.network.status : 'invalid'}, error=${first.network.error ? 'reported' : 'none'}`);
     assert(first.online && first.engine.ready && first.node.id);
     assert.equal(first.engine.version, readEngineSource(root).version);
     assert.equal(first.node.name, 'CLI integration node');
@@ -85,7 +86,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
     pass('CLI init/serve/status starts an isolated node with execution disabled');
 
     await run(['name', 'CLI renamed']);
-    assert.equal((await run<Status>(['status'])).node.name, 'CLI renamed');
+    assert.equal((await run<Status>(['status'])).node?.name, 'CLI renamed');
     const pairings = await run<{ pairings: unknown[] }>(['pair', 'list']);
     assert.deepEqual(pairings.pairings, []);
     pass('CLI node rename and pair list use the live API');
@@ -116,6 +117,7 @@ export async function checkHeadlessService(root = resolve(import.meta.dirname, '
 
     await stop();
     const second = await start();
+    assert(second.node, `Restarted headless node identity unavailable: network=${['starting', 'online', 'degraded', 'disabled'].includes(second.network.status) ? second.network.status : 'invalid'}, error=${second.network.error ? 'reported' : 'none'}`);
     assert.equal(second.engine.version, readEngineSource(root).version);
     assert.equal(second.node.id, first.node.id);
     assert.equal(second.node.name, 'CLI renamed');

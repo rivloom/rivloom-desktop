@@ -70,6 +70,7 @@ export async function checkHeadlessTask(root = resolve(import.meta.dirname, '..'
         await this.call('/auth/headless', {}, 200, { 'X-Rivloom-Headless-Token': control.token });
       } else await this.authenticate();
       const state = await this.bootstrap();
+      assert(state.network.local, `${this.headless ? 'Headless' : 'Desktop'} node identity unavailable: network=${['starting', 'online', 'degraded', 'disabled'].includes(state.network.status) ? state.network.status : 'invalid'}, error=${state.network.error ? 'reported' : 'none'}`);
       assert.equal(state.engine.version, readEngineSource(root).version);
       assert.deepEqual(state.engine.models.map(model => model.id), ['fixture/m34']);
     }

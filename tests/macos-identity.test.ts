@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, randomUUID, verify } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 import { loadMacosNodeIdentity } from '../server/node-identity.ts';
-import { MacosKeychainError, parseMacosKeychainResponse, type MacosKeychainStore } from '../server/macos-keychain.ts';
+import { MacosKeychainError, macosKeychainEnvironment, parseMacosKeychainResponse, type MacosKeychainStore } from '../server/macos-keychain.ts';
+
+test('Keychain helper uses the OS account while leaving the isolated application home unchanged', () => {
+  const previous = process.env;
+  const account = userInfo();
+  try {
+    process.env = { HOME: '/fixture-home', USER: 'fixture-user', LOGNAME: 'fixture-login', LANG: 'C',
+      NODE_OPTIONS: '--require=secret', DYLD_INSERT_LIBRARIES: 'secret', OPENAI_API_KEY: 'secret', GITHUB_TOKEN: 'secret' };
+    assert.deepEqual(macosKeychainEnvironment(), { HOME: account.homedir, USER: account.username, LOGNAME: account.username, LANG: 'C' });
+    assert.equal(process.env.HOME, '/fixture-home');
+    assert.equal(process.env.USER, 'fixture-user');
+  } finally { process.env = previous; }
+});
 
 function memoryStore() {
   const items = new Map<string, Buffer>();

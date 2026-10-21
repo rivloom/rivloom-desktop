@@ -1,5 +1,6 @@
 import { existsSync, lstatSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { userInfo } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 export const macosKeychainReferencePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -69,6 +70,21 @@ export function resolveMacosKeychainHelper(): string {
   throw new MacosKeychainError('unavailable');
 }
 
+/** Keychain preferences belong to the effective OS user, not an overridable process HOME. */
+export function macosKeychainEnvironment(): NodeJS.ProcessEnv {
+  let account: { uid: number; homedir: string; username: string };
+  try { account = userInfo(); } catch { throw new MacosKeychainError('unavailable'); }
+  if ((process.getuid && account.uid !== process.getuid()) || (process.geteuid && account.uid !== process.geteuid())
+    || !account.homedir || !isAbsolute(account.homedir)
+    || account.homedir.includes('\0') || !account.username || account.username.includes('\0'))
+    throw new MacosKeychainError('unavailable');
+  return {
+    ...Object.fromEntries(['TMPDIR', 'LANG', 'LC_ALL', '__CF_USER_TEXT_ENCODING']
+      .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]])),
+    HOME: account.homedir, USER: account.username, LOGNAME: account.username,
+  };
+}
+
 /** The product always uses its bundled helper and the OS default keychain. */
 export function createMacosKeychainStore(): MacosKeychainStore {
   if (process.platform !== 'darwin') throw new MacosKeychainError('unavailable');
@@ -77,13 +93,11 @@ export function createMacosKeychainStore(): MacosKeychainStore {
     checkReference(reference);
     if (secret) assertMacosPrivateKey(secret);
     const input = JSON.stringify({ version: 1, operation, reference, ...(secret ? { secret: secret.toString('base64') } : {}) });
-    const env = Object.fromEntries(['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', '__CF_USER_TEXT_ENCODING']
-      .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
     const result = spawnSync(helper, [], {
       input, encoding: 'utf8', timeout: 15_000, maxBuffer: 8192,
       // No data is passed as an argument, environment override or diagnostic.
       stdio: ['pipe', 'pipe', 'pipe'],
-      env,
+      env: macosKeychainEnvironment(),
     });
     if (result.error || result.signal || result.status === null) throw new MacosKeychainError('unavailable');
     const value = parseMacosKeychainResponse(result.stdout, operation);
