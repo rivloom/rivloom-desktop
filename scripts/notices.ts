@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -116,21 +116,62 @@ function fallback(
     };
 }
 function sourceUrl(file: UpstreamFile) {
-  return `https://api.github.com/repos/${file.repository}/contents/${file.file}?ref=${encodeURIComponent(file.revision)}`;
+  return `https://raw.githubusercontent.com/${file.repository}/${encodeURIComponent(file.revision)}/${file.file}`;
 }
-async function upstream(file: UpstreamFile) {
-  const response = await fetch(sourceUrl(file), {
-    signal: AbortSignal.timeout(30_000),
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Rivloom-license-notices' },
-  });
-  assert(response.ok, `Official license fetch failed (${response.status}): ${sourceUrl(file)}`);
-  const result = (await response.json()) as { content?: string; encoding?: string; sha?: string };
-  assert.equal(result.encoding, 'base64', 'Unexpected GitHub license response encoding');
-  const bytes = Buffer.from(result.content ?? '', 'base64');
-  assert(bytes.length > 100, 'Missing/truncated official license original');
-  const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-  assert.equal(blob, file.gitBlobSha1, 'Official license differs from reviewed release blob');
-  assert.equal(result.sha, blob, 'GitHub license content differs from its blob identity');
+type ReviewedOriginal = { path: string; source: NoticeSource };
+async function reviewedOriginals(root: string): Promise<ReviewedOriginal[]> {
+  let bytes: string;
+  try { bytes = await readFile(join(root, 'docs/dependency-licenses.json'), 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+  const rows = JSON.parse(bytes) as DependencyNotice[];
+  assert(Array.isArray(rows), 'Invalid reviewed dependency license inventory');
+  return rows.flatMap(row => Array.isArray(row.licenseFiles) && Array.isArray(row.licenseSources)
+    ? row.licenseSources.map((source, index) => ({ path: row.licenseFiles[index], source })) : []);
+}
+const gitBlob = (bytes: Buffer) => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+async function reviewedBytes(root: string, originals: ReviewedOriginal[], matches: (source: NoticeSource) => boolean) {
+  for (const item of originals.filter(item => matches(item.source))) {
+    assert(typeof item.path === 'string' && item.path.startsWith('licenses/npm/') && !/[\\:\u0000-\u001f]/.test(item.path)
+      && item.path.split('/').every(part => part && part !== '.' && part !== '..'), 'Unsafe reviewed license path');
+    let path = join(root, 'docs');
+    for (const part of item.path.split('/')) {
+      path = join(path, part);
+      assert(!(await lstat(path)).isSymbolicLink(), 'Reviewed license originals must not follow links');
+    }
+    assert((await lstat(path)).isFile(), 'Reviewed license original must be a file');
+    const bytes = await readFile(path);
+    assert.equal(sha(bytes), item.source.sha256, 'Reviewed license original SHA256 mismatch');
+    return bytes;
+  }
+}
+async function upstream(file: UpstreamFile, root: string, originals: ReviewedOriginal[]) {
+  const url = sourceUrl(file);
+  const legacyUrl = `https://api.github.com/repos/${file.repository}/contents/${file.file}?ref=${encodeURIComponent(file.revision)}`;
+  // Platform packages can share an upstream original only when its exact reviewed
+  // repository, path, revision and Git blob match. Recheck the original bytes too.
+  let bytes = await reviewedBytes(root, originals, source => source.kind === 'upstream'
+    && [url, legacyUrl].includes(source.url) && source.revision === file.revision && source.gitBlobSha1 === file.gitBlobSha1);
+  if (!bytes && file.repository === engineLicense.repository && file.gitBlobSha1 === engineLicense.gitBlobSha1) {
+    try {
+      const path = join(root, 'docs/licenses/OpenCode-MIT.txt');
+      const stat = await lstat(path);
+      assert(stat.isFile() && !stat.isSymbolicLink(), 'Reviewed engine license must be a regular file');
+      bytes = await readFile(path);
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+  if (!bytes) {
+    // Raw content avoids the shared runner's anonymous GitHub API quota. The
+    // reviewed Git blob remains the immutable content pin, including for release tags.
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(30_000),
+      redirect: 'error',
+      headers: { 'User-Agent': 'Rivloom-license-notices' },
+    });
+    assert(response.ok, `Official license fetch failed (${response.status}): ${url}`);
+    bytes = Buffer.from(await response.arrayBuffer());
+  }
+  assert(bytes.length > 100 && bytes.length < 1_000_000, 'Missing/truncated official license original');
+  assert.equal(gitBlob(bytes), file.gitBlobSha1, 'Official license differs from reviewed release blob');
   return bytes;
 }
 function component(value: string) {
@@ -143,6 +184,7 @@ export async function collectDependencyNotices(root: string, outputRoot = root):
   const entries = new Map<string, DependencyNotice>();
   const outputs = new Map<string, Buffer>();
   const fetched = new Map<string, Promise<Buffer>>();
+  const reviewed = await reviewedOriginals(root);
   for (const [path, info] of Object.entries(lock.packages) as [
     string,
     { version: string; license?: string; dev?: boolean; integrity?: string },
@@ -192,8 +234,13 @@ export async function collectDependencyNotices(root: string, outputRoot = root):
       // Original repositories are unavailable; Debian retains these exact-version
       // copyright notices and records the upstream source/declaration.
       const url = `https://sources.debian.org/data/main/n/node-${name}/${distribution.revision}/debian/copyright`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) }); assert(response.ok);
-      const bytes = Buffer.from(await response.arrayBuffer()); assert.equal(sha(bytes), distribution.sha256);
+      let bytes = await reviewedBytes(root, reviewed, source => source.kind === 'distribution' && source.url === url
+        && source.revision === distribution.revision && source.sha256 === distribution.sha256);
+      if (!bytes) {
+        const response = await fetch(url, { signal: AbortSignal.timeout(30_000) }); assert(response.ok);
+        bytes = Buffer.from(await response.arrayBuffer());
+      }
+      assert.equal(sha(bytes), distribution.sha256);
       originals.push({ file: 'COPYRIGHT.debian', bytes, source: { kind: 'distribution', url,
         revision: distribution.revision, packageVersionSource: `https://registry.npmjs.org/${name}/${info.version}`, sha256: sha(bytes) } });
     }
@@ -210,7 +257,7 @@ export async function collectDependencyNotices(root: string, outputRoot = root):
       }
       for (const file of known.files) {
         const url = sourceUrl(file);
-        if (!fetched.has(url)) fetched.set(url, upstream(file));
+        if (!fetched.has(url)) fetched.set(url, upstream(file, root, reviewed));
         const bytes = await fetched.get(url)!;
         originals.push({
           file: file.file,
@@ -278,7 +325,7 @@ export async function collectDependencyNotices(root: string, outputRoot = root):
 
 export async function generateNotices(root = resolve(import.meta.dirname, '..'), outputRoot = root) {
   const entries = await collectDependencyNotices(root, outputRoot);
-  const license = await upstream(engineLicense);
+  const license = await upstream(engineLicense, root, await reviewedOriginals(root));
   await writeFile(join(outputRoot, 'docs/licenses/OpenCode-MIT.txt'), license);
   await writeFile(
     join(outputRoot, 'docs/dependency-licenses.json'),

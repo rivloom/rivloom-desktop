@@ -26,6 +26,21 @@ const fixture = await modelFixture(600_000, async (input) => {
 fixture.release();
 const clients = [new ServiceClient(join(root, 'sender')), new ServiceClient(join(root, 'receiver'))];
 const [sender, receiver] = clients;
+const connectionFlags = (node: NodeNetwork['local']) => node && ({
+  online: node.online, trusted: node.trusted, channelReady: node.channelReady,
+});
+const connectionSnapshot = (network: NodeNetwork, peerID: string | null) => {
+  const peer = network.nearby.find((node) => node.id === peerID);
+  return {
+    status: network.status, local: connectionFlags(network.local), peer: connectionFlags(peer || null),
+    brains: network.brains.slice(0, 8).map((brain) => ({
+      state: brain.state, online: brain.online, sharedWithPeer: !!peer?.brains.some((entry) => entry.id === brain.id),
+    })),
+    omittedBrains: Math.max(0, network.brains.length - 8),
+  };
+};
+let senderID: string | null = null, receiverID: string | null = null;
+let failureNetwork: Record<string, ReturnType<typeof connectionSnapshot> | { readFailed: true }> | null = null;
 const socket = createSocket('udp4'); await new Promise<void>((ok) => socket.bind(0, '127.0.0.1', ok));
 const discovery = { port: socket.address().port, mdns: false }; await new Promise<void>((ok) => socket.close(() => ok()));
 let status = 'failed', failure = '';
@@ -47,11 +62,13 @@ try {
   const project = await receiver.call('/projects', { name: 'Shared fixture directory', directory, trusted: true }, 201);
   await receiver.call('/network/execution-policy', { enabled: true, projectID: project.id, model: 'fixture/m34', approvalMode: 'ask', confirmed: true });
   await pairServices(sender, receiver);
-  const receiverID = (await receiver.network()).local!.id;
-  await until(() => sender.network(), (network) => {
+  senderID = (await sender.network()).local!.id;
+  receiverID = (await receiver.network()).local!.id;
+  const waitReceiverReady = (label: string) => until(() => sender.network(), (network) => {
     const peer = network.nearby.find((n) => n.id === receiverID);
-    return !!peer?.channelReady && network.brains.some((b) => b.state === 'established' && b.online && peer.brains.some((p) => p.id === b.id));
-  }, 'established shared Brain directory');
+    return !!peer?.online && peer.trusted && peer.channelReady && network.brains.some((b) => b.state === 'established' && b.online && peer.brains.some((p) => p.id === b.id));
+  }, `${label}: receiver ready with established shared Brain directory`, 45_000);
+  await waitReceiverReady('initial pairing');
   const operator = initial.user.id;
   const local = (n: number) => receiver.call<Task>('/tasks', {
     requestID: randomUUID(), runRequested: true, queueConfirmedFor: receiverID, projectID: project.id,
@@ -59,8 +76,10 @@ try {
     assigneeID: operator, approverID: operator, reviewerID: operator, model: 'fixture/m34', approvalMode: 'ask',
   }, 201);
   const remote = async (n: number) => {
+    const requestID = randomUUID();
+    await waitReceiverReady(`CONCURRENCY_REMOTE_${n}`);
     const response = await sender.call<NodeNetwork & { createdTaskID: string }>(`/network/nodes/${receiverID}/tasks`, {
-      requestID: randomUUID(), queueConfirmedFor: receiverID, title: `CONCURRENCY_REMOTE_${n}`,
+      requestID, queueConfirmedFor: receiverID, title: `CONCURRENCY_REMOTE_${n}`,
       description: `CONCURRENCY_REMOTE_${n} Reply briefly. Do not use tools.`, criteria: 'Return a short answer.', requirements: {}, confirmed: true,
     }, 201);
     return response.createdTaskID;
@@ -118,9 +137,14 @@ try {
   status = 'passed';
 } catch (error) {
   failure = error instanceof Error ? error.stack || error.message : String(error); console.error(failure); process.exitCode = 1;
+  const snapshots = await Promise.allSettled(clients.map((client) => client.network()));
+  failureNetwork = Object.fromEntries(snapshots.map((snapshot, index) => [index === 0 ? 'sender' : 'receiver',
+    snapshot.status === 'fulfilled' ? connectionSnapshot(snapshot.value, index === 0 ? receiverID : senderID) : { readFailed: true as const },
+  ]));
+  console.error('Connection status at failure:', JSON.stringify(failureNetwork));
 } finally {
   for (const resolve of release.values()) resolve();
   await Promise.all(clients.map((client) => client.stop())); await fixture.close();
-  writeFileSync(join(root, 'report.json'), JSON.stringify({ status, failure, assertions, root, intervals: [...entered] }, null, 2));
+  writeFileSync(join(root, 'report.json'), JSON.stringify({ status, failure, failureNetwork, assertions, root, intervals: [...entered] }, null, 2));
   console.log('Report:', join(root, 'report.json'));
 }

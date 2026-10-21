@@ -35,12 +35,14 @@ export async function prepareMacosKeychainHelper(root: string, destination: stri
   const source = join(absoluteRoot, 'native/macos-keychain.swift');
   assert(lstatSync(source).isFile() && !lstatSync(source).isSymbolicLink(), 'Keychain helper source must be a regular file');
   const sourceSHA256 = digest(readFileSync(source));
+  const buildScriptSHA256 = digest(readFileSync(fileURLToPath(import.meta.url)));
   const compiler = execFileSync('/usr/bin/xcrun', ['swiftc', '--version'], { encoding: 'utf8', timeout: 30_000 }).trim();
+  const sdk = execFileSync('/usr/bin/xcrun', ['--show-sdk-version'], { encoding: 'utf8', timeout: 30_000 }).trim();
   const testing = options.testing === true;
   const name = testing ? 'rivloom-keychain-testing' : 'rivloom-keychain';
   const path = join(directory, name);
   const recordPath = `${path}.build.json`;
-  const inputs = { schemaVersion: 1, sourceSHA256, compiler, target: 'arm64-apple-macosx14.0', testing };
+  const inputs = { schemaVersion: 1, sourceSHA256, buildScriptSHA256, compiler, sdk, target: 'arm64-apple-macosx14.0', testing };
   if (existsSync(path) && existsSync(recordPath)) {
     const record = JSON.parse(readFileSync(recordPath, 'utf8'));
     const sha256 = verifyMacosKeychainExecutable(path);

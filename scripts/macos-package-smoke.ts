@@ -26,7 +26,7 @@ async function digest(path: string) {
 }
 
 function run(command: string, args: string[], timeout = 30_000) {
-  return execFileSync(command, args, { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync(command, args, { cwd: checkout, encoding: 'utf8', timeout, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 function within(parent: string, path: string) {
@@ -160,6 +160,9 @@ async function stop(app: LaunchedApp, data: string) {
 export async function smokeMacosPackage(dmgArgument?: string) {
   assert(process.platform === 'darwin' && process.arch === 'arm64', 'Package verification requires native macOS ARM64');
   requireIsolatedMacosKeychain();
+  const source = { commit: run('git', ['rev-parse', 'HEAD']), tree: run('git', ['rev-parse', 'HEAD^{tree}']) };
+  assert(/^[a-f0-9]{40}$/.test(source.commit) && /^[a-f0-9]{40}$/.test(source.tree), 'Package source revision is unavailable');
+  assert.equal(run('git', ['status', '--porcelain', '--untracked-files=no']), '', 'Package verification requires unchanged tracked source inputs');
   const bundleRoot = join(checkout, 'src-tauri/target/release/bundle/dmg');
   const candidates = (await readdir(bundleRoot)).filter(name => name.endsWith('.dmg'));
   if (!dmgArgument) assert.equal(candidates.length, 1, 'Expected exactly one current macOS DMG');
@@ -173,7 +176,7 @@ export async function smokeMacosPackage(dmgArgument?: string) {
   const mount = join(working, 'mount'), installed = join(working, `${productName}.app`), data = join(working, 'data');
   await mkdir(mount); await mkdir(data, { mode: 0o700 });
   const report: Record<string, unknown> = {
-    schemaVersion: 1, status: 'failed', artifact, checkedAt: new Date().toISOString(),
+    schemaVersion: 1, status: 'failed', artifact, source, checkedAt: new Date().toISOString(),
     environment: { platform: process.platform, arch: process.arch, node: process.versions.node, image: process.env.ImageOS, imageVersion: process.env.ImageVersion },
     checks: {}, nativeInterface: { status: 'not-interactively-verified', scope: 'Native app launch and normal quit are exercised. Tray menus, close/reopen, dialogs, clipboard, notifications, file pickers and physical LAN still require interactive acceptance.' },
     distribution: { signing: 'ad-hoc', notarized: false, scope: 'CI-copied application from a read-only DMG; browser quarantine and Gatekeeper approval are not tested.' },

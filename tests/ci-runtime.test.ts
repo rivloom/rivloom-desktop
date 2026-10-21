@@ -12,7 +12,7 @@ import {
   type CargoPackage,
   type RuntimeProfile,
 } from '../scripts/ci-verify-runtime.ts';
-import { collectDependencyNotices } from '../scripts/notices.ts';
+import { collectDependencyNotices, type DependencyNotice } from '../scripts/notices.ts';
 import { engineSourceInventoryDigest } from '../server/engine-artifact.ts';
 
 const sha = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -751,4 +751,90 @@ test('notice generation cannot invent an upstream license for an unreviewed vers
     collectDependencyNotices(f.root),
     /Missing license original without a reviewed version source/,
   );
+});
+
+async function reviewedNoticeFixture(t: TestContext, sourceName = '@msgpackr-extract/msgpackr-extract-win32-x64') {
+  const f = await fixture(t);
+  const repository = resolve(import.meta.dirname, '..');
+  const inventory = JSON.parse(await readFile(join(repository, 'docs/dependency-licenses.json'), 'utf8')) as DependencyNotice[];
+  const reviewed = inventory.find(row => row.name === sourceName)!;
+  assert(reviewed, 'Expected checked-in original notice');
+  const original = await readFile(join(repository, 'docs', reviewed.licenseFiles[0]));
+  const name = sourceName === 'buffers' ? sourceName : '@msgpackr-extract/msgpackr-extract-darwin-arm64';
+  const path = `node_modules/${name}`;
+  await f.source('package-lock.json', encode({ packages: {
+    [path]: { version: reviewed.version, license: 'MIT', integrity: 'sha512-FIXTURE-NOT-A-RELEASE' },
+  } }));
+  await f.source(`${path}/package.json`, encode({ name, version: reviewed.version, license: 'MIT' }));
+  await f.source('docs/dependency-licenses.json', encode([reviewed]));
+  await f.source(`docs/${reviewed.licenseFiles[0]}`, original);
+  return { ...f, reviewed, original, name };
+}
+
+test('notice generation reuses exact reviewed upstream originals across platform packages without network', async (t) => {
+  const f = await reviewedNoticeFixture(t);
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network must not be used'); });
+  const notices = await collectDependencyNotices(f.root);
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].name, f.name);
+  assert.equal(notices[0].licenseSources[0].kind, 'upstream');
+  const source = notices[0].licenseSources[0];
+  assert(source.kind === 'upstream');
+  assert.equal(source.url, 'https://raw.githubusercontent.com/kriszyp/msgpackr-extract/v3.0.4/LICENSE');
+  assert.equal(source.packageVersionSource, `https://registry.npmjs.org/${f.name}/3.0.4`);
+  assert.deepEqual(await readFile(join(f.root, 'docs', notices[0].licenseFile)), f.original);
+});
+
+test('notice generation rejects tampered reviewed originals instead of silently downloading replacements', async (t) => {
+  const f = await reviewedNoticeFixture(t);
+  await f.source(`docs/${f.reviewed.licenseFiles[0]}`, Buffer.concat([f.original, Buffer.from('\nChanged') ]));
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network must not be used'); });
+  await assert.rejects(collectDependencyNotices(f.root), /Reviewed license original SHA256 mismatch/);
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('notice generation rechecks reviewed upstream Git blobs even when cache SHA256 metadata matches', async (t) => {
+  const f = await reviewedNoticeFixture(t);
+  const changed = Buffer.concat([f.original, Buffer.from('\nChanged')]);
+  f.reviewed.licenseSources[0].sha256 = sha(changed);
+  await f.source(`docs/${f.reviewed.licenseFiles[0]}`, changed);
+  await f.source('docs/dependency-licenses.json', encode([f.reviewed]));
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network must not be used'); });
+  await assert.rejects(collectDependencyNotices(f.root), /Official license differs from reviewed release blob/);
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('notice generation does not reuse originals from a different upstream revision', async (t) => {
+  const f = await reviewedNoticeFixture(t);
+  const source = f.reviewed.licenseSources[0];
+  assert(source.kind === 'upstream');
+  source.revision = 'v9.9.9';
+  await f.source('docs/dependency-licenses.json', encode([f.reviewed]));
+  const fetch = t.mock.method(globalThis, 'fetch', async (url: string | URL | Request, init?: RequestInit) => {
+    assert.equal(url, 'https://raw.githubusercontent.com/kriszyp/msgpackr-extract/v3.0.4/LICENSE');
+    assert.equal(init?.redirect, 'error');
+    assert(!new Headers(init?.headers).has('Authorization'));
+    return new Response(f.original.toString('utf8'));
+  });
+  const notices = await collectDependencyNotices(f.root);
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.deepEqual(await readFile(join(f.root, 'docs', notices[0].licenseFile)), f.original);
+});
+
+test('notice generation rejects raw upstream bytes that do not match the reviewed Git blob', async (t) => {
+  const f = await reviewedNoticeFixture(t);
+  await f.source('docs/dependency-licenses.json', '[]');
+  const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(f.original.toString('utf8') + '\nChanged'));
+  await assert.rejects(collectDependencyNotices(f.root), /Official license differs from reviewed release blob/);
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('notice generation reuses exact reviewed Debian originals without network', async (t) => {
+  const f = await reviewedNoticeFixture(t, 'buffers');
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Network must not be used'); });
+  const notices = await collectDependencyNotices(f.root);
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.deepEqual(notices[0].licenseSources, f.reviewed.licenseSources);
+  assert.deepEqual(await readFile(join(f.root, 'docs', notices[0].licenseFile)), f.original);
 });
