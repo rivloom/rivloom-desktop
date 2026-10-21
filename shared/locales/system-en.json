@@ -636,5 +636,8 @@
   "消息提交在确认前中断。请检查执行记录，此请求不会自动再次发送。": "Message submission was interrupted before acknowledgement. Check execution records; this request will not be sent again automatically.",
   "消息提交失败。": "Message submission failed.",
   "已保存的会话上下文过大，无法在不丢失历史的情况下切换账号。请继续使用当前账号，或新建会话。": "Saved conversation context is too large to switch accounts without losing history. Continue with the current account or start a new conversation.",
-  "所选思考等级当前不可用，请重新选择思考等级或使用自动。": "The selected thinking level is unavailable. Choose another level or Auto."
+  "所选思考等级当前不可用，请重新选择思考等级或使用自动。": "The selected thinking level is unavailable. Choose another level or Auto.",
+  "macOS 钥匙串无法读取或保护节点身份；请解锁钥匙串并重新启动，现有身份不会被替换。": "macOS Keychain could not read or protect the node identity. Unlock Keychain and restart; the existing identity will not be replaced.",
+  "节点身份未替换，但临时钥匙串条目无法清理；请检查钥匙串访问。": "The node identity was not replaced, but a temporary Keychain item could not be removed. Check Keychain Access.",
+  "macOS 无法保护节点私钥；节点网络保持关闭。": "macOS could not protect the node private key. Node networking remains disabled."
 }

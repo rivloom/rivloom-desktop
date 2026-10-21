@@ -1,11 +1,16 @@
-import { cp, mkdir, readFile, writeFile, rm, access, readdir, lstat } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, rm, access, readdir, lstat, chmod } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve, join, relative, isAbsolute } from 'node:path';
 import { prepareEngine } from './engine-prepare.ts';
+import { prepareDesktopNode } from './desktop-node.ts';
+import { desktopPlatform, desktopPlatforms, mergeDesktopConfig } from './desktop-platform.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const destination = join(root, 'src-tauri', 'resources', 'runtime');
-const cache = join(root, '.data', 'desktop-downloads');
+const target = desktopPlatform();
+const platform = desktopPlatforms[target];
+// The independent Windows package consumer reads these literal pins. Preparation
+// also checks them against the platform table, so the two cannot silently drift.
 const nodeVersion = '24.19.0';
 const nodeHash = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237';
 const args = process.argv.slice(2);
@@ -17,14 +22,17 @@ const profile = args[1] ?? 'desktop';
 if (profile !== 'desktop' && profile !== 'conversation-preview')
   throw new Error('Invalid desktop runtime profile');
 const formalConfig = JSON.parse(await readFile(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
+const platformConfig = target === 'darwin-arm64'
+  ? mergeDesktopConfig(formalConfig, JSON.parse(await readFile(join(root, 'src-tauri/tauri.macos.conf.json'), 'utf8')))
+  : formalConfig;
 const productConfig =
   profile === 'conversation-preview'
-    ? {
-        ...formalConfig,
-        ...JSON.parse(await readFile(join(root, 'src-tauri/tauri.preview.conf.json'), 'utf8')),
-      }
-    : formalConfig;
-const rustInventory = join(root, 'docs', 'desktop-dependency-licenses.json');
+    ? mergeDesktopConfig(platformConfig, JSON.parse(await readFile(join(root, 'src-tauri/tauri.preview.conf.json'), 'utf8')))
+    : platformConfig;
+const macosNotices = target === 'darwin-arm64'
+  ? await (await import('./macos-notices.ts')).prepareMacosNotices(root)
+  : undefined;
+const rustInventory = macosNotices?.inventoryPath ?? join(root, 'docs', 'desktop-dependency-licenses.json');
 // A missing native license inventory is a preparation failure, never an optional omission.
 await access(rustInventory);
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -36,26 +44,9 @@ async function exists(path: string) {
     return false;
   }
 }
-async function download(url: string, target: string) {
-  if (await exists(target)) return;
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-  if (!response.ok) throw new Error(`官方资源下载失败 (${response.status}): ${url}`);
-  await writeFile(target, Buffer.from(await response.arrayBuffer()));
-}
-if (process.platform !== 'win32' || process.arch !== 'x64')
-  throw new Error('当前安装包只支持 Windows x64');
-await mkdir(cache, { recursive: true });
-const cachedNode = join(cache, 'node.exe');
-if (!(await exists(cachedNode)) && sha(await readFile(process.execPath)) === nodeHash) {
-  await cp(process.execPath, cachedNode);
-}
-await download(`https://nodejs.org/dist/v${nodeVersion}/win-x64/node.exe`, cachedNode);
-if (sha(await readFile(cachedNode)) !== nodeHash) throw new Error('Node 官方二进制哈希不匹配');
-const nodeLicense = join(cache, 'Node-LICENSE.txt');
-await download(
-  `https://raw.githubusercontent.com/nodejs/node/v${nodeVersion}/LICENSE`,
-  nodeLicense,
-);
+const node = await prepareDesktopNode(root, target);
+if (node.version !== nodeVersion || (target === 'windows-x64' && node.sha256 !== nodeHash))
+  throw new Error('Desktop Node pins disagree with the independent Windows verifier');
 const engine = await prepareEngine(root);
 
 // This is a disposable, fixed build output. Never clean data directories or user projects.
@@ -84,16 +75,29 @@ await mkdir(destination, { recursive: true });
 for (const directory of ['server', 'shared', 'dist']) {
   await cp(join(root, directory), join(destination, directory), { recursive: true });
 }
-await cp(cachedNode, join(destination, 'node.exe'));
+await cp(node.executable, join(destination, platform.executable));
+if (target === 'darwin-arm64') await chmod(join(destination, platform.executable), 0o755);
 await cp(engine.directory, join(destination, engine.source.artifactPath), { recursive: true });
-await cp(nodeLicense, join(destination, 'Node-LICENSE.txt'));
+await cp(node.license, join(destination, 'Node-LICENSE.txt'));
+const nativeHelpers: { path: string; sha256: string }[] = [];
+if (target === 'darwin-arm64') {
+  const { prepareMacosKeychainHelper } = await import('./macos-keychain-build.ts');
+  const { prepareMacosProcessHelper } = await import('./macos-process-build.ts');
+  await prepareMacosKeychainHelper(root, destination);
+  await prepareMacosProcessHelper(root, destination);
+  for (const path of ['native/rivloom-keychain', 'native/rivloom-process']) {
+    const entry = await lstat(join(destination, path));
+    if (!entry.isFile() || entry.isSymbolicLink() || !(entry.mode & 0o111)) throw new Error('Invalid native macOS helper');
+    nativeHelpers.push({ path, sha256: sha(await readFile(join(destination, path))) });
+  }
+}
 await cp(join(root, 'THIRD_PARTY_NOTICES.md'), join(destination, 'THIRD_PARTY_NOTICES.md'));
 for (const notice of ['LICENSE', 'NOTICE']) {
   await cp(join(root, notice), join(destination, notice));
 }
 const documents: { path: string; sha256: string }[] = [];
 for (const [source, path] of [
-  [join(root, 'DESKTOP-README.md'), 'README.md'],
+  [join(root, target === 'darwin-arm64' ? 'docs/MACOS.md' : 'DESKTOP-README.md'), 'README.md'],
   [join(root, 'SECURITY.md'), 'SECURITY.md'],
 ] as const) {
   const bytes = await readFile(source);
@@ -103,8 +107,9 @@ for (const [source, path] of [
 await cp(join(root, 'docs', 'licenses'), join(destination, 'docs', 'licenses'), {
   recursive: true,
 });
+if (macosNotices) await cp(macosNotices.licenseRoot, join(destination, 'docs', 'licenses'), { recursive: true });
 await cp(
-  join(root, 'docs', 'dependency-licenses.json'),
+  macosNotices?.npmInventoryPath ?? join(root, 'docs', 'dependency-licenses.json'),
   join(destination, 'docs', 'dependency-licenses.json'),
 );
 await cp(rustInventory, join(destination, 'docs', 'desktop-dependency-licenses.json'));
@@ -178,25 +183,27 @@ await writeFile(
         identifier: productConfig.identifier,
         version: productConfig.version,
       },
-      target: { platform: 'win32', arch: 'x64' },
+      target: { platform: platform.platform, arch: platform.arch },
       inputs: {
         packageLockSha256: sha(lockBytes),
         cargoLockSha256: sha(await readFile(join(root, 'src-tauri/Cargo.lock'))),
       },
       node: {
-        version: nodeVersion,
-        sha256: nodeHash,
-        source: `https://nodejs.org/dist/v${nodeVersion}/SHASUMS256.txt`,
+        version: node.version,
+        sha256: node.sha256,
+        source: node.source,
+        ...(target === 'darwin-arm64' ? { archiveSHA256: node.archiveSHA256, archiveURL: node.archiveURL } : {}),
       },
       opencode: { version: engine.source.version, sha256: engine.binarySHA256, source: `${engine.source.repository}#${engine.source.commit}` },
       documents,
       notices,
       packages,
+      ...(target === 'darwin-arm64' ? { nativeHelpers } : {}),
     },
     null,
     2,
   ),
 );
 console.log(
-  `Desktop runtime prepared: Node ${nodeVersion}, Rivloom OpenCode ${engine.source.version}, ${packages.length} runtime packages. No user data or credentials copied.`,
+  `Desktop runtime prepared for ${target}: Node ${node.version}, Rivloom OpenCode ${engine.source.version}, ${packages.length} runtime packages. No user data or credentials copied.`,
 );

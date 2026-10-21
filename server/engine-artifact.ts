@@ -10,27 +10,28 @@ export const engineSourceSchema = z.strictObject({
   schemaVersion: z.literal(1), kind: z.literal('rivloom-source'),
   repository: z.literal('https://github.com/rivloom/rivloom-opencode-runtime.git'),
   commit, tree: commit, version: z.string().regex(/^\d+\.\d+\.\d+-rivloom\.[a-f0-9]{12}$/),
-  packageVersion: z.string().regex(/^\d+\.\d+\.\d+$/), target: z.enum(['windows-x64', 'linux-x64']),
-  artifactPath: z.string().regex(/^vendor\/rivloom-opencode\/(windows|linux)-x64\/[a-f0-9]{12}$/),
+  packageVersion: z.string().regex(/^\d+\.\d+\.\d+$/), target: z.enum(['windows-x64', 'linux-x64', 'darwin-arm64']),
+  artifactPath: z.string().regex(/^vendor\/rivloom-opencode\/(?:windows-x64|linux-x64|darwin-arm64)\/[a-f0-9]{12}$/),
   upstream: z.strictObject({ repository: z.literal('anomalyco/opencode'), tag: z.string(), commit, version: z.string() }),
   toolchain: z.strictObject({ node: z.string(), bun: z.string(), bunArchiveSHA256: digest }),
   inputs: z.record(z.string(), digest),
   producerSchemaVersion: z.union([z.literal(1), z.literal(2)]).optional(),
   sourceInventory: z.strictObject({ files: z.number().int().positive(), sha256: digest }).optional(),
   approvedArtifact: z.strictObject({ binarySHA256: digest, manifestSHA256: digest, smokeSHA256: digest }).optional(),
-  recipe: z.strictObject({ directory: z.literal('scripts/runtime-linux'), files: z.record(z.string(), digest) }).optional(),
+  recipe: z.strictObject({ directory: z.enum(['scripts/runtime-linux', 'scripts/runtime-macos']), files: z.record(z.string(), digest) }).optional(),
   verification: z.strictObject({ files: z.record(z.string(), digest) }).optional(),
 });
 export type EngineSource = z.infer<typeof engineSourceSchema>;
 export const engineDigest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 export type EngineTarget = EngineSource['target'];
 export function engineTarget(platform: NodeJS.Platform = process.platform, arch: string = process.arch): EngineTarget {
-  assert(arch === 'x64' && (platform === 'win32' || platform === 'linux'), `Unsupported Rivloom engine platform: ${platform}/${arch}. ARM64 runtime is not available.`);
+  if (platform === 'darwin' && arch === 'arm64') return 'darwin-arm64';
+  assert(arch === 'x64' && (platform === 'win32' || platform === 'linux'), `Unsupported Rivloom engine platform: ${platform}/${arch}. ARM64 is supported only on macOS.`);
   return platform === 'linux' ? 'linux-x64' : 'windows-x64';
 }
-export const engineSourceFile = (target: EngineTarget = engineTarget()) => target === 'linux-x64' ? 'shared/engine-source-linux.json' : 'shared/engine-source.json';
-export const engineBinaryName = (source: EngineSource) => source.target === 'linux-x64' ? 'opencode' : 'opencode.exe';
-export const engineProducerSchema = (source: EngineSource) => source.producerSchemaVersion ?? (source.target === 'linux-x64' ? 2 : 1);
+export const engineSourceFile = (target: EngineTarget = engineTarget()) => ({ 'windows-x64': 'shared/engine-source.json', 'linux-x64': 'shared/engine-source-linux.json', 'darwin-arm64': 'shared/engine-source-macos.json' })[target];
+export const engineBinaryName = (source: EngineSource) => source.target === 'windows-x64' ? 'opencode.exe' : 'opencode';
+export const engineProducerSchema = (source: EngineSource) => source.producerSchemaVersion ?? (source.target === 'windows-x64' ? 1 : 2);
 export const engineSourceInventoryDigest = (files: { path: string; mode: string; sha256: string }[]) => engineDigest(JSON.stringify(
   [...files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0).map(item => [item.path, item.mode, item.sha256]),
 ));
@@ -60,11 +61,13 @@ export function readEngineSource(root: string, target: EngineTarget = engineTarg
       : ['scripts/runtime-windows/smoke.mjs', 'server/windows-engine-stop.mjs']);
   }
   else {
-    assert.equal(engineProducerSchema(source), 2, 'Linux requires producer schema 2');
-    assert(!source.verification, 'Linux uses its complete pinned recipe');
-    assert(source.recipe, 'Linux source requires an independently pinned build recipe');
+    assert.equal(engineProducerSchema(source), 2, 'POSIX targets require producer schema 2');
+    assert(!source.verification, 'POSIX targets use their complete pinned recipe');
+    assert(source.recipe, 'POSIX source requires an independently pinned build recipe');
+    assert.equal(source.recipe.directory, target === 'darwin-arm64' ? 'scripts/runtime-macos' : 'scripts/runtime-linux', 'Build recipe belongs to another platform');
     assert.deepEqual(Object.keys(source.recipe.files).sort(), ['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs']);
-    assert(source.inputs['packages/opencode/script/build.ts'], 'Linux compiler entrypoint must be pinned');
+    assert(source.inputs['packages/opencode/script/build.ts'], 'POSIX compiler entrypoint must be pinned');
+    if (target === 'darwin-arm64') assert(source.sourceInventory, 'macOS requires the complete reviewed source inventory');
   }
   return source;
 }
@@ -87,12 +90,16 @@ export function engineRegularFile(root: string, path: string) {
 }
 export function verifyEngineProducer(directory: string, source: EngineSource) {
   const bytes = (path: string) => readFileSync(engineRegularFile(directory, path));
-  const binaryName = engineBinaryName(source), linux = source.target === 'linux-x64', schema = engineProducerSchema(source);
+  const binaryName = engineBinaryName(source), linux = source.target === 'linux-x64', macos = source.target === 'darwin-arm64', schema = engineProducerSchema(source);
   const binary = bytes(binaryName);
   if (linux) {
     assert(binary.length > 64 && binary.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && binary[4] === 2 && binary[5] === 1 && binary.readUInt16LE(18) === 62, 'Engine must be Linux x64 ELF64');
     assert([2, 3].includes(binary.readUInt16LE(16)), 'Linux engine must be executable or PIE ELF');
     if (process.platform === 'linux') assert(lstatSync(engineRegularFile(directory, binaryName)).mode & 0o111, 'Linux engine is not executable');
+  } else if (macos) {
+    assert(binary.length >= 32 && binary.readUInt32LE(0) === 0xfeedfacf && binary.readUInt32LE(4) === 0x0100000c && binary.readUInt32LE(8) === 0 && binary.readUInt32LE(12) === 2, 'Engine must be macOS ARM64 Mach-O executable');
+    assert(binary.readUInt32LE(16) > 0 && binary.readUInt32LE(20) >= 8 && binary.readUInt32LE(20) <= binary.length - 32, 'Invalid Mach-O load commands');
+    if (process.platform === 'darwin') assert(lstatSync(engineRegularFile(directory, binaryName)).mode & 0o111, 'macOS engine is not executable');
   } else {
     assert(binary.length > 154 && binary.toString('ascii', 0, 2) === 'MZ', 'Engine is not a PE binary');
     const offset = binary.readUInt32LE(60);
@@ -122,10 +129,15 @@ export function verifyEngineProducer(directory: string, source: EngineSource) {
   const binarySHA256 = engineDigest(binary), manifestSHA256 = engineDigest(manifestBytes);
   assert.equal(manifest.binary.sha256, binarySHA256, 'Engine binary SHA256 mismatch');
   assert.equal(engineDigest(bytes('LICENSE')), source.inputs.LICENSE, 'Engine license differs from pinned source');
-  if (linux) {
-    assert.deepEqual(manifest.inputs.files, source.inputs, 'Linux compiled source inputs differ');
-    assert.deepEqual(manifest.recipe, { files: source.recipe!.files, sha256: engineRecipeDigest(source) }, 'Linux recipe differs from reviewed inputs');
-    assert.equal(manifest.profile.baseline, true); assert.equal(manifest.profile.libc, 'glibc');
+  if (linux || macos) {
+    assert.deepEqual(manifest.inputs.files, source.inputs, 'POSIX compiled source inputs differ');
+    assert.deepEqual(manifest.recipe, { files: source.recipe!.files, sha256: engineRecipeDigest(source) }, 'POSIX recipe differs from reviewed inputs');
+    if (linux) { assert.equal(manifest.profile.baseline, true); assert.equal(manifest.profile.libc, 'glibc'); }
+    else {
+      assert.equal(manifest.profile.baseline, false); assert.equal(manifest.profile.libc, undefined);
+      assert.equal(manifest.profile.signed, true); assert.equal(manifest.profile.signingIdentity, 'ad-hoc');
+      assert.equal(manifest.profile.desktopIntegrated, false);
+    }
   } else if (schema === 2) {
     assert.deepEqual(manifest.inputs.files, Object.fromEntries(windowsProducerInputs.map(path => [path, source.inputs[path]])), 'Windows compiled producer inputs differ');
     assert.equal(manifest.profile.signed, false); assert.equal(manifest.profile.desktopIntegrated, false);
@@ -161,9 +173,9 @@ export function verifyEngineArtifact(directory: string, source: EngineSource, ap
   const bytes = (path: string) => readFileSync(engineRegularFile(directory, path));
   const result = verifyEngineProducer(directory, source);
   const { manifest, binarySHA256, manifestSHA256 } = result;
-  const linux = source.target === 'linux-x64', schema = engineProducerSchema(source);
+  const posix = source.target !== 'windows-x64', schema = engineProducerSchema(source);
   const smokeBytes = bytes('smoke-report.json'), smoke = JSON.parse(smokeBytes.toString('utf8')), smokeSHA256 = engineDigest(smokeBytes);
-  const checksummed = linux ? ['LICENSE', 'README.md', 'opencode', 'runtime-manifest.json', 'smoke-report.json', 'source-files.json']
+  const checksummed = posix ? ['LICENSE', 'README.md', 'opencode', 'runtime-manifest.json', 'smoke-report.json', 'source-files.json']
     : schema === 2 ? ['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json', 'smoke-report.json'] : ['opencode.exe'];
   assert.equal(bytes('SHA256SUMS').toString('utf8'), checksummed.map(file => `${engineDigest(bytes(file))}  ${file}\n`).join(''));
   assert.equal(smoke.schemaVersion, schema);
@@ -171,7 +183,7 @@ export function verifyEngineArtifact(directory: string, source: EngineSource, ap
   assert.equal(smoke.binarySHA256, binarySHA256);
   assert.equal(smoke.passed, true, 'Engine smoke did not pass');
   assert(!smoke.error && !smoke.cleanupError, 'Engine smoke reported a failure');
-  assert(Array.isArray(smoke.checks) && smoke.checks.length === (linux ? 11 : 10) && smoke.checks.every((check: { passed: boolean }) => check.passed === true), 'Incomplete engine smoke');
+  assert(Array.isArray(smoke.checks) && smoke.checks.length === (posix ? 11 : 10) && smoke.checks.every((check: { passed: boolean }) => check.passed === true), 'Incomplete engine smoke');
   if (source.verification) {
     assert.equal(smoke.manifestSHA256, manifestSHA256, 'Windows smoke belongs to a different producer manifest');
     assert.equal(smoke.verificationSHA256, engineVerificationDigest(source), 'Windows verification recipe changed');
@@ -187,7 +199,7 @@ export function verifyEngineArtifact(directory: string, source: EngineSource, ap
     assert.equal(smoke.sourceInventorySHA256, manifest.source.inventory.sha256, 'Smoke source inventory differs');
     assert.equal(smoke.licenseSHA256, source.inputs.LICENSE, 'Smoke license differs');
   }
-  if (linux) {
+  if (posix) {
     assert.equal(smoke.recipeSHA256, engineRecipeDigest(source));
     assert.equal(smoke.harnessSHA256, source.recipe!.files['smoke.mjs']);
   }
@@ -212,7 +224,7 @@ export function verifyPreparedEngine(root: string, target: EngineTarget = engine
   assert.equal(receipt.binarySHA256, result.binarySHA256);
   assert.equal(receipt.manifestSHA256, result.manifestSHA256);
   assert.equal(receipt.smokeSHA256, result.smokeSHA256);
-  if (source.recipe) assert.equal(receipt.recipeSHA256, engineRecipeDigest(source), 'Linux receipt recipe changed');
+  if (source.recipe) assert.equal(receipt.recipeSHA256, engineRecipeDigest(source), 'POSIX receipt recipe changed');
   if (source.verification) assert.equal(receipt.verificationSHA256, engineVerificationDigest(source), 'Windows receipt verification changed');
   if (receipt.mode === 'pinned-artifact') verifyEngineArtifact(directory, source, true);
   else {

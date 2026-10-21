@@ -2,15 +2,37 @@ import { t } from '../shared/i18n.ts';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { DesktopUpdateSnapshot } from '../shared/desktop-update.ts';
 import type { LanFirewallReport } from '../shared/lan-firewall.ts';
+import { useEffect, useState } from 'react';
 
 export const desktop = isTauri();
+export type DesktopCapabilities = {
+  notifications: boolean;
+  nativeSound: boolean;
+  lanFirewallRepair: boolean;
+  chooseFileApplication: boolean;
+};
+const noCapabilities: DesktopCapabilities = { notifications: false, nativeSound: false, lanFirewallRepair: false, chooseFileApplication: false };
 export type DesktopInfo = {
   version: string;
   dataDirectory: string;
   desktopToken: string;
   locale: 'zh-CN' | 'en';
+  capabilities: DesktopCapabilities;
 };
 export const desktopInfo = () => invoke<DesktopInfo>('desktop_info');
+let capabilityRequest: Promise<DesktopCapabilities> | undefined;
+export function desktopCapabilities(): Promise<DesktopCapabilities> {
+  if (!desktop) return Promise.resolve(noCapabilities);
+  return capabilityRequest ??= desktopInfo().then(info => info.capabilities ?? noCapabilities).catch(() => {
+    capabilityRequest = undefined;
+    return noCapabilities;
+  });
+}
+export function useDesktopCapabilities() {
+  const [capabilities, setCapabilities] = useState({ ...noCapabilities, ready: !desktop });
+  useEffect(() => { let active = true; void desktopCapabilities().then(value => { if (active) setCapabilities({ ...value, ready: true }); }); return () => { active = false; }; }, []);
+  return capabilities;
+}
 export const inspectLanFirewall = (port: number) => invoke<LanFirewallReport>('inspect_lan_firewall', { port });
 export const repairLanFirewall = (allowPublic: boolean) => invoke<void>('repair_lan_firewall', { allowPublic });
 export async function authenticateDesktop() {

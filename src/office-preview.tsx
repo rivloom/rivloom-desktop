@@ -8,7 +8,7 @@ import { officeKind, type OfficeDocument } from '../shared/office-files.ts';
 import type { TaskFileDescriptor } from '../shared/task-files.ts';
 import { MessageMarkdown } from './message-markdown';
 import { api } from './api';
-import { desktop, chooseTaskFileDestination, openTaskFile, revealTaskFile, openTaskFileWith, fileApplications } from './desktop';
+import { desktop, chooseTaskFileDestination, openTaskFile, revealTaskFile, openTaskFileWith, fileApplications, useDesktopCapabilities } from './desktop';
 import { officeMessage } from './office-messages';
 import { localActivity } from './local-activity';
 import { officePreviewHasParts, officeSearchOffsets } from './office-preview-state';
@@ -23,6 +23,7 @@ export function FilePreviewButton({ file, path, iconOnly = false, source }: { fi
 export function FilePreview({ file: initialFile, path: initialPath, source, close }: { file: Pick<TaskFileDescriptor, 'name' | 'bytes'>; path: string; source?: string; close: () => void }) {
   const [file, setFile] = useState(initialFile), [path, setPath] = useState(initialPath);
   const [applications, setApplications] = useState<string[]>([]);
+  const capabilities = useDesktopCapabilities();
   useEffect(() => { if (desktop) void fileApplications().then(setApplications).catch(() => {}); }, []);
   const [document, setDocument] = useState<OfficeDocument | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [documentError, setDocumentError] = useState('');
@@ -139,7 +140,7 @@ export function FilePreview({ file: initialFile, path: initialPath, source, clos
         <label className="office-open-with"><ExternalLink size={15} /><select aria-label={t('打开方式')} value="" disabled={busy} onChange={event => void external(event.target.value)}>
           <option value="" disabled>{t('打开方式')}</option><option value="default">{t('默认应用')}</option>
           {/\.(pdf|txt|md|csv|tsv|json|log|png|jpe?g|gif|webp)$/i.test(file.name) && applications.map(app => <option value={app} key={app}>{app === 'chrome' ? 'Chrome' : 'Microsoft Edge'}</option>)}
-          <option value="choose">{t('选择其他应用')}</option></select></label>
+          {capabilities.chooseFileApplication && <option value="choose">{t('选择其他应用')}</option>}</select></label>
         <button disabled={busy} onClick={() => void external('copy')}><Copy size={15} />{t('复制路径')}</button></>}
       <button disabled={busy || editing || !(selectedText || selectedCell)} onMouseDown={event => event.preventDefault()} onClick={quote}><Quote size={15} />{t('引用到聊天')}</button>
       {document?.editable && !editing && <button disabled={busy} onClick={() => void edit()}><Pencil size={15} />{t('编辑')}</button>}

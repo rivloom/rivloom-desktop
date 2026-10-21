@@ -5,6 +5,10 @@ import { auditServiceMatrix } from './ci-services.ts';
 
 // File membership is explicit: adding a test file requires assigning its CI lane.
 export const logicFiles = [
+  'tests/macos-identity.test.ts',
+  'tests/macos-process.test.ts',
+  'tests/macos-process-native.test.ts',
+  'tests/macos-runtime.test.ts',
   'tests/node-model-activity.test.ts',
   'tests/operation-activity.test.ts',
   'tests/node-activity-api.test.ts',

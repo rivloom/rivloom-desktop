@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   lstatSync,
+  linkSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -20,18 +21,21 @@ import {
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { privateDirectory, readPrivateFile } from './private-storage.ts';
+import { assertMacosPrivateKey, createMacosKeychainStore, macosKeychainReferencePattern, type MacosKeychainStore } from './macos-keychain.ts';
 
 export const nodeProtocolVersion = 1;
 
-type StoredIdentity = {
+type IdentityMetadata = {
   version: 1;
   nodeID: string;
   brainID: string;
   createdAt: string;
   publicKey: string;
-  protectedPrivateKey: string;
-  protection: 'windows-dpapi-current-user' | 'linux-user-file';
 };
+type StoredIdentity = IdentityMetadata & (
+  | { protection: 'windows-dpapi-current-user' | 'linux-user-file'; protectedPrivateKey: string }
+  | { protection: 'macos-keychain'; keychainReference: string }
+);
 
 export type NodeIdentity = {
   nodeID: string;
@@ -114,28 +118,36 @@ function validateStored(value: unknown): StoredIdentity {
     typeof item.createdAt !== 'string' ||
     !Number.isFinite(Date.parse(item.createdAt)) ||
     typeof item.publicKey !== 'string' ||
-    typeof item.protectedPrivateKey !== 'string' ||
-    !['windows-dpapi-current-user', 'linux-user-file'].includes(String(item.protection))
+    (item.protection === 'macos-keychain'
+      ? typeof item.keychainReference !== 'string' || !macosKeychainReferencePattern.test(item.keychainReference) || 'protectedPrivateKey' in item
+      : typeof item.protectedPrivateKey !== 'string' || !['windows-dpapi-current-user', 'linux-user-file'].includes(String(item.protection)))
   )
     throw new Error('节点身份文件字段无效。');
   return item as StoredIdentity;
 }
 
-function materialize(stored: StoredIdentity): NodeIdentity {
-  const expected = process.platform === 'win32' ? 'windows-dpapi-current-user' : process.platform === 'linux' ? 'linux-user-file' : null;
+function materialize(stored: StoredIdentity, platform: NodeJS.Platform = process.platform, keychain?: MacosKeychainStore): NodeIdentity {
+  const expected = platform === 'win32' ? 'windows-dpapi-current-user' : platform === 'linux' ? 'linux-user-file' : platform === 'darwin' ? 'macos-keychain' : null;
   if (!expected || stored.protection !== expected)
     throw new Error('节点身份保护方式与当前平台不匹配；不会自动替换设备身份。');
   let secret: KeyObject;
   let publicBytes: Buffer;
+  let secretBytes: Buffer | undefined;
   try {
+    secretBytes = stored.protection === 'macos-keychain'
+      ? keychain!.read(stored.keychainReference)
+      : stored.protection === 'linux-user-file' ? Buffer.from(stored.protectedPrivateKey, 'base64') : privateKey(stored.protectedPrivateKey);
+    if (stored.protection === 'macos-keychain') assertMacosPrivateKey(secretBytes);
     secret = createPrivateKey({
-      key: stored.protection === 'linux-user-file' ? Buffer.from(stored.protectedPrivateKey, 'base64') : privateKey(stored.protectedPrivateKey),
+      key: secretBytes,
       format: 'der',
       type: 'pkcs8',
     });
     publicBytes = publicKeyBytes(createPublicKey(secret));
   } catch {
     throw new Error('节点私钥无法由当前系统用户读取；不会自动替换设备身份。');
+  } finally {
+    secretBytes?.fill(0);
   }
   if (
     stored.publicKey !== publicBytes.toString('base64') ||
@@ -152,7 +164,67 @@ function materialize(stored: StoredIdentity): NodeIdentity {
   };
 }
 
+/** A narrow injected store keeps creation/race/failure behavior testable without changing the OS. */
+export function loadMacosNodeIdentity(root: string, keychain: MacosKeychainStore = createMacosKeychainStore()): NodeIdentity {
+  privateDirectory(root);
+  const path = join(root, 'node-identity.json');
+  function loadExisting() {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 16_384)
+      throw new Error('Node identity must be a bounded regular file, not a symbolic link.');
+    return materialize(validateStored(JSON.parse(readPrivateFile(path))), 'darwin', keychain);
+  }
+  let present = false;
+  try { lstatSync(path); present = true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (present) return loadExisting();
+
+  const pair = generateKeyPairSync('ed25519');
+  const publicBytes = publicKeyBytes(pair.publicKey);
+  const secretBytes = pair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+  const reference = randomUUID();
+  const stored: StoredIdentity = {
+    version: 1, nodeID: nodeIDForPublicKey(publicBytes), brainID: randomUUID(),
+    createdAt: new Date().toISOString(), publicKey: publicBytes.toString('base64'),
+    protection: 'macos-keychain', keychainReference: reference,
+  };
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let keyCreated = false;
+  let published = false;
+  function discardOwnKey() {
+    try { keychain.remove(reference); }
+    catch { throw new Error('节点身份未替换，但临时钥匙串条目无法清理；请检查钥匙串访问。'); }
+    keyCreated = false;
+  }
+  try {
+    try { keychain.create(reference, secretBytes); keyCreated = true; }
+    catch { throw new Error('macOS 无法保护节点私钥；节点网络保持关闭。'); }
+    writeFileSync(temporary, JSON.stringify(stored, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    try {
+      // Atomic create-only publication. A racing process cannot replace a persisted identity.
+      linkSync(temporary, path);
+      published = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  } catch (error) {
+    if (keyCreated && !published) discardOwnKey();
+    throw error;
+  } finally {
+    secretBytes.fill(0);
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+  if (!published) {
+    discardOwnKey();
+    return loadExisting();
+  }
+  return materialize(stored, 'darwin', keychain);
+}
+
 export function loadNodeIdentity(root: string): NodeIdentity {
+  if (process.platform === 'darwin') return loadMacosNodeIdentity(root);
   if (!['win32', 'linux'].includes(process.platform)) throw new Error('节点身份只支持 Windows 与 Linux。');
   if (process.platform === 'linux') privateDirectory(root);
   else mkdirSync(root, { recursive: true });

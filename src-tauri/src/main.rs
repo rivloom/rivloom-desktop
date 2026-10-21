@@ -1,8 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::Serialize;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
@@ -19,6 +17,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
 mod native_async;
+mod runtime_platform;
 mod lan_firewall;
 mod task_file_location;
 mod desktop_update;
@@ -49,21 +48,7 @@ impl RuntimeProcess {
             }
             thread::sleep(Duration::from_millis(100));
         }
-        // Only kill the process tree still owned by this live Child handle.
-        #[cfg(windows)]
-        {
-            let _ = Command::new("taskkill.exe")
-                .args(["/PID", &self.child.id().to_string(), "/T", "/F"])
-                .creation_flags(0x08000000)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
+        runtime_platform::force_stop(&mut self.child);
     }
     fn wait_for_update_exit(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -100,6 +85,16 @@ struct DesktopInfo {
     data_directory: String,
     desktop_token: String,
     locale: String,
+    capabilities: DesktopCapabilities,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopCapabilities {
+    notifications: bool,
+    native_sound: bool,
+    lan_firewall_repair: bool,
+    choose_file_application: bool,
 }
 
 fn read_locale(data_dir: &Path) -> &'static str {
@@ -133,7 +128,7 @@ fn save_locale(data_dir: &Path, locale: &str) -> Result<(), String> {
 fn set_desktop_language(window: WebviewWindow, state: tauri::State<DesktopState>, locale: String) -> Result<(), String> {
     authorize(&window, &state)?;
     save_locale(&state.data_dir, &locale)?;
-    let _ = window.set_title("Rivloom");
+    let _ = window.set_title(window.app_handle().config().product_name.as_deref().unwrap_or("Rivloom"));
     desktop_tray::update_language(window.app_handle())
         .map_err(|_| native_text(&state.data_dir, "无法更新托盘菜单，请重试。"))?;
     Ok(())
@@ -156,6 +151,10 @@ fn desktop_info(
     Ok(DesktopInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         locale: read_locale(&state.data_dir).into(),
+        capabilities: DesktopCapabilities {
+            notifications: cfg!(windows), native_sound: cfg!(windows),
+            lan_firewall_repair: cfg!(windows), choose_file_application: cfg!(windows),
+        },
         data_directory: state.data_dir.display().to_string(),
         desktop_token: fs::read_to_string(state.data_dir.join("desktop-auth-token.txt"))
             .map_err(|_| native_text(&state.data_dir, "桌面认证信息不可用，请重启客户端"))?
@@ -325,54 +324,18 @@ fn start_runtime(
     preview: bool,
 ) -> Result<(RuntimeProcess, String), Box<dyn std::error::Error>> {
     fs::create_dir_all(data_dir)?;
-    let mut command = Command::new(root.join("node.exe"));
+    let mut command = Command::new(runtime_platform::node_program(root));
     command
         .arg("server/desktop-entry.mjs")
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_clear();
-    for key in [
-        "SystemRoot",
-        "WINDIR",
-        "COMSPEC",
-        "PATHEXT",
-        "PSModulePath",
-        "USERPROFILE",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "PROGRAMDATA",
-        "PROGRAMFILES",
-        "PROGRAMFILES(X86)",
-        "SYSTEMDRIVE",
-        "TEMP",
-        "TMP",
-        "HTTP_PROXY",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-    ] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
-        }
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    // Only the separately identified preview may join an isolated test discovery domain.
-    // The installed product keeps its existing restricted runtime environment.
-    if preview {
-        for key in ["RIVLOOM_DISCOVERY_PORT", "RIVLOOM_MDNS_NETWORK", "RIVLOOM_DISCOVERY_FALLBACK"] {
-            if let Some(value) = std::env::var_os(key) { command.env(key, value); }
-        }
-    }
-    let mut paths = vec![root.clone()];
-    paths.extend(std::env::split_paths(&path));
+        .stderr(Stdio::piped());
+    runtime_platform::configure(&mut command, root, preview)?;
     command
-        .env("PATH", std::env::join_paths(paths)?)
         .env("PORT", "0")
         .env("RIVLOOM_DESKTOP", "1")
         .env("RIVLOOM_DATA_DIR", data_dir);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
     let mut runtime = RuntimeProcess {
         child: command.spawn()?,
     };
@@ -432,7 +395,7 @@ fn main() {
             };
             if !data_dir.is_absolute() { return Err("RIVLOOM_DATA_DIR 必须是绝对路径".into()); }
             let root = app.path().resource_dir()?.join("runtime");
-            let preview = app.config().identifier == "com.rivloom.conversationpreview";
+            let preview = matches!(app.config().identifier.as_str(), "com.rivloom.conversationpreview" | "com.rivloom.macospreview");
             let (runtime, url) = match start_runtime(&root, &data_dir, preview) {
                 Ok(result) => result,
                 Err(error) => {
@@ -455,18 +418,20 @@ fn main() {
                     })
                 } else { Err("Notification activation is not registered for this installed executable".into()) }
             };
-            app.manage(DesktopState { runtime: Mutex::new(runtime), runtime_program: root.join("node.exe"), origin: url.clone(), data_dir: data_dir.clone(), closing: AtomicBool::new(false), notification_target, last_notification: Mutex::new(None), #[cfg(windows)] notifications });
+            app.manage(DesktopState { runtime: Mutex::new(runtime), runtime_program: runtime_platform::node_program(&root), origin: url.clone(), data_dir: data_dir.clone(), closing: AtomicBool::new(false), notification_target, last_notification: Mutex::new(None), #[cfg(windows)] notifications });
             app.manage(lan_firewall::FirewallState::default());
             app.manage(desktop_update::UpdateState::new(&data_dir, !preview));
             desktop_update::start_background(app.handle().clone());
             let allowed_origin = url.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
-                .title("Rivloom").inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
+                .title(app.config().product_name.as_deref().unwrap_or("Rivloom")).inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
                 .visible(false)
                 // Let WebView2 deliver FileList drops to the existing attachment uploader.
                 // Tauri's native handler otherwise intercepts HTML5 file drops on Windows.
-                .disable_drag_drop_handler()
-                .data_directory(data_dir.join("webview"))
+                .disable_drag_drop_handler();
+            #[cfg(not(target_os = "macos"))]
+            let window = window.data_directory(data_dir.join("webview"));
+            let window = window
                 .on_navigation(move |target| target.origin().ascii_serialization() == allowed_origin)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .build()?;
@@ -486,6 +451,15 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("Rivloom 桌面初始化失败");
     app.run(|handle, event| {
+        #[cfg(target_os = "macos")]
+        match &event {
+            tauri::RunEvent::Reopen { .. } => desktop_tray::show_workspace(handle),
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => {
+                api.prevent_exit();
+                desktop_tray::request_quit(handle);
+            }
+            _ => {}
+        }
         if matches!(event, tauri::RunEvent::Exit) {
             if let Some(state) = handle.try_state::<DesktopState>() {
                 #[cfg(windows)]

@@ -56,7 +56,7 @@ async function realDirectory(root: string, relative: string) {
 export function verifyEngineRecipe(root: string, source: EngineSource) {
   if (!source.recipe) return;
   const files = Object.fromEntries(Object.keys(source.recipe.files).map(file => [file, engineDigest(readFileSync(engineRegularFile(root, `${source.recipe!.directory}/${file}`)))]));
-  assert.deepEqual(files, source.recipe.files, 'Linux build recipe differs from the pinned snapshot');
+  assert.deepEqual(files, source.recipe.files, 'Platform build recipe differs from the pinned snapshot');
 }
 export function verifyEngineVerification(root: string, source: EngineSource) {
   if (!source.verification) return;
@@ -92,15 +92,15 @@ async function prepareWindowsBun(checkout: string, source: EngineSource) {
   assert.equal(execFileSync(executable, ['--version'], { encoding: 'utf8', windowsHide: true }).trim(), source.toolchain.bun);
 }
 async function build(root: string, checkout: string, source: EngineSource, artifact: string, proof: ReturnType<typeof sourceSnapshot>) {
-  const linux = source.target === 'linux-x64';
+  const posix = source.target !== 'windows-x64';
   verifyEngineRecipe(root, source);
   verifyEngineVerification(root, source);
   if (source.verification) await prepareWindowsBun(checkout, source);
-  const publication = !linux && source.verification && engineProducerSchema(source) === 2
+  const publication = !posix && source.verification && engineProducerSchema(source) === 2
     ? capturePublicationWorkspace(root, checkout, source, proof) : null;
   const producer = await new Promise<ProducerFailure>((accept, reject) => {
-    const command = linux ? process.execPath : 'pwsh.exe';
-    const args = linux ? [join(root, source.recipe!.directory, 'build.mjs'), '--source', checkout, '--output', artifact]
+    const command = posix ? process.execPath : 'pwsh.exe';
+    const args = posix ? [join(root, source.recipe!.directory, 'build.mjs'), '--source', checkout, '--output', artifact]
       : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(checkout, 'rivloom/build.ps1'), '-RequireClean', ...(source.verification ? ['-SkipSmoke'] : [])];
     const child = spawn(command, args, {
       cwd: checkout, windowsHide: true, stdio: ['ignore', 'inherit', 'pipe'], env: { ...process.env, CI: 'true' },
@@ -157,7 +157,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
     // No branch/latest lookup. A local repository is only an object source; dirty working files are not copied.
     cloneEngineSource(checkout, source, options.path || source.repository);
     proof = sourceSnapshot(checkout, source);
-    artifact = target === 'linux-x64' ? join(run, 'artifact') : join(checkout, 'rivloom/dist/windows-x64');
+    artifact = target !== 'windows-x64' ? join(run, 'artifact') : join(checkout, 'rivloom/dist/windows-x64');
     await build(root, checkout, source, artifact, proof);
     assert.deepEqual(sourceSnapshot(checkout, source), proof, 'Runtime source changed while building');
   }
@@ -165,7 +165,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
   const result = verifyEngineArtifact(artifact, source, options.mode === 'artifact');
   for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(engineProducerSchema(source) === 2 ? ['source-files.json'] : [])])
     await copyFile(engineRegularFile(artifact, name), join(staging, name));
-  if (target === 'linux-x64') await chmod(join(staging, 'opencode'), 0o755);
+  if (target !== 'windows-x64') await chmod(join(staging, 'opencode'), 0o755);
   let sourceProofSHA256: string | undefined;
   if (proof) {
     const bytes = JSON.stringify(proof, null, 2) + '\n';

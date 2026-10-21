@@ -74,7 +74,7 @@ function fallback(
     };
   const tauriApi = name === '@tauri-apps/api' && version === '2.11.1';
   const tauriCli =
-    (name === '@tauri-apps/cli' || name === '@tauri-apps/cli-win32-x64-msvc') &&
+    ['@tauri-apps/cli', '@tauri-apps/cli-win32-x64-msvc', '@tauri-apps/cli-darwin-arm64'].includes(name) &&
     version === '2.11.4';
   if (tauriApi || tauriCli) {
     // API revision comes from its npm SLSA provenance; CLI revision is npm gitHead.
@@ -101,7 +101,7 @@ function fallback(
         : `https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`,
     };
   }
-  if (name === '@rolldown/binding-win32-x64-msvc' && version === '1.2.6')
+  if (['@rolldown/binding-win32-x64-msvc', '@rolldown/binding-darwin-arm64'].includes(name) && version === '1.2.6')
     return {
       files: [
         {
@@ -137,7 +137,7 @@ function component(value: string) {
   return encodeURIComponent(value);
 }
 
-export async function collectDependencyNotices(root: string): Promise<DependencyNotice[]> {
+export async function collectDependencyNotices(root: string, outputRoot = root): Promise<DependencyNotice[]> {
   root = resolve(root);
   const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
   const entries = new Map<string, DependencyNotice>();
@@ -267,7 +267,7 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
   assert(entries.size > 0, 'No installed dependency license inventory was collected');
   // Gather and reject conflicts before writing. Old filenames remain for prior references.
   for (const [path, bytes] of outputs) {
-    const target = join(root, 'docs', path);
+    const target = join(outputRoot, 'docs', path);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, bytes);
   }
@@ -276,12 +276,12 @@ export async function collectDependencyNotices(root: string): Promise<Dependency
   );
 }
 
-export async function generateNotices(root = resolve(import.meta.dirname, '..')) {
-  const entries = await collectDependencyNotices(root);
+export async function generateNotices(root = resolve(import.meta.dirname, '..'), outputRoot = root) {
+  const entries = await collectDependencyNotices(root, outputRoot);
   const license = await upstream(engineLicense);
-  await writeFile(join(root, 'docs/licenses/OpenCode-MIT.txt'), license);
+  await writeFile(join(outputRoot, 'docs/licenses/OpenCode-MIT.txt'), license);
   await writeFile(
-    join(root, 'docs/dependency-licenses.json'),
+    join(outputRoot, 'docs/dependency-licenses.json'),
     JSON.stringify(entries, null, 2) + '\n',
   );
   // Engine source and accepted artifacts are reviewed separately in shared/engine-source.json.

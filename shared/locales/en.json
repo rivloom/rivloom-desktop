@@ -2108,5 +2108,8 @@
   "规划状态": "Planning status",
   "继续处理": "Continue",
   "暂时无法准备此前会话记录，请重试。": "Earlier conversation records could not be prepared. Please retry.",
-  "这次未收到有效结果。可以继续发送新消息。": "No valid result was received this time. You can continue with a new message."
+  "这次未收到有效结果。可以继续发送新消息。": "No valid result was received this time. You can continue with a new message.",
+  "关闭窗口后，Rivloom 会留在菜单栏，任务继续在后台运行。点击菜单栏图标或程序坞图标可重新打开；如需退出，请在菜单中选择“退出 Rivloom”。点击“知道了”后不再提示。": "Closing the window keeps Rivloom in the menu bar, with tasks running in the background. Click its menu bar or Dock icon to reopen the workspace. To quit, choose Quit Rivloom from the menu. This notice will not appear again after you choose Got it.",
+  "后台程序搜索路径无效。": "The background program search path is invalid.",
+  "此平台暂未提供系统通知和提示音。": "System notifications and notification sounds are not yet available on this platform."
 }

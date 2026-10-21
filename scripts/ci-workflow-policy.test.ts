@@ -114,7 +114,7 @@ function audit(name: string, workflow: any) {
     );
   } else {
     assert(
-      ['ci.yml', 'windows-services.yml', 'lan-regression.yml', 'linux-ci.yml'].includes(name),
+      ['ci.yml', 'windows-services.yml', 'lan-regression.yml', 'linux-ci.yml', 'macos-preview.yml'].includes(name),
       'Unreviewed workflow',
     );
     assert.deepEqual(Object.keys(workflow.on).sort(), [
@@ -153,6 +153,19 @@ function audit(name: string, workflow: any) {
       const build = runs.indexOf('npm run linux:build');
       assert(prepare >= 0 && officeTests > prepare && officeService > officeTests && build > officeService,
         'Linux office parser and service checks must pass after engine preparation and before packaging');
+    } else if (name === 'macos-preview.yml') {
+      assert.equal(job['runs-on'], 'macos-15', 'Mac preview requires native hosted Apple Silicon');
+      assert.deepEqual(Object.keys(workflow.jobs), ['preview']);
+      const commands = job.steps.map((step: any) => step.run).filter(Boolean);
+      for (const required of ['node scripts/macos-keychain-ci.ts setup', 'node scripts/macos-identity-smoke.ts', 'npm run engine:prepare', 'npm run desktop:build -- --config src-tauri/tauri.macos.conf.json', 'node scripts/headless-service-check.ts', 'node scripts/headless-task-check.ts', 'node scripts/macos-package-smoke.ts']) {
+        const step = job.steps.find((step: any) => step.run === required);
+        assert(step && !step.if && !step['continue-on-error'], `Mac preview must require ${required}`);
+      }
+      assert(commands.indexOf('npm run engine:prepare') < commands.indexOf('npm run desktop:build -- --config src-tauri/tauri.macos.conf.json'));
+      assert.equal(job.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup')?.if, 'always()');
+      const packages = job.steps.filter((step: any) => step.uses?.startsWith('actions/upload-artifact@') && step.with?.path?.includes('bundle/dmg'));
+      assert.equal(packages.length, 1);
+      assert(!packages[0].if && !packages[0]['continue-on-error'], 'Mac package upload must require all acceptance checks');
     } else assert.equal(job['runs-on'], linuxRelease ? 'ubuntu-22.04' : 'windows-2022', 'Use disposable hosted runners');
     for (const step of job.steps ?? []) {
       if (!step.uses) continue;
@@ -190,6 +203,18 @@ function audit(name: string, workflow: any) {
 
 test('public workflows preserve PR isolation, release provenance and action pins', () => {
   for (const name of readdirSync(join(ciRoot, '.github/workflows'))) audit(name, load(name));
+});
+
+test('Mac preview cannot skip installation verification or gain publication credentials', () => {
+  for (const mutate of [
+    (workflow: any) => { workflow.jobs.preview.steps = workflow.jobs.preview.steps.filter((step: any) => step.run !== 'node scripts/macos-package-smoke.ts'); },
+    (workflow: any) => { workflow.jobs.preview.permissions = { contents: 'write' }; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.run === 'node scripts/macos-keychain-ci.ts cleanup').if = 'success()'; },
+    (workflow: any) => { workflow.jobs.preview.steps.find((step: any) => step.with?.path?.includes('bundle/dmg')).if = 'always()'; },
+  ]) {
+    const workflow = load('macos-preview.yml'); mutate(workflow);
+    assert.throws(() => audit('macos-preview.yml', workflow));
+  }
 });
 
 test('workflow policy rejects privileged PRs, leaked secrets and unpinned actions', () => {

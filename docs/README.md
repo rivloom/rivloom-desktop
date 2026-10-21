@@ -6,6 +6,8 @@
 
 ## 使用与功能
 
+- [macOS Apple Silicon 测试版](MACOS.md)：安装范围、钥匙串身份、原生构建与验收限制。
+
 - [0.1.31 更新版本提示与自动发布门槛](releases/0.1.31.md)、[发行验收](releases/0.1.31-verification.md)
 
 - [0.1.30 固定核心与可靠性修复](releases/0.1.30.md)、[发行验收](releases/0.1.30-verification.md)

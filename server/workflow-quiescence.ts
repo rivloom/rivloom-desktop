@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { macosMediaProcessCount } from './macos-process.mjs';
 
 export type WorkflowToolRecord = { tool: string; state: { status: string; input?: Record<string, unknown> } };
 export type QuiescenceEvidence = { confirmed: boolean; reason: string };
@@ -46,6 +47,7 @@ export async function linuxMediaProcessCount(): Promise<number> {
 }
 async function mediaProcessCount(): Promise<number> {
   if (process.platform === 'linux') return linuxMediaProcessCount();
+  if (process.platform === 'darwin') return macosMediaProcessCount();
   if (process.platform !== 'win32') throw new Error('workflow_process_audit_unavailable');
   const system = process.env.SystemRoot || 'C:\\Windows';
   const program = resolve(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
