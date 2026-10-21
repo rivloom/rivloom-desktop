@@ -12,7 +12,8 @@ import { macosProcessHelper, parseMacosEngineStopDiagnostic, readMacosProcesses 
 const expectedChecks = ["git-path-and-discovery", "shell-and-exit-status", "stdio-extra-fd-and-environment",
   "concurrent-force-kill-isolation", "scope-finalizer-descendant-cleanup", "operation-timeout-descendant-cleanup", "abort-descendant-cleanup"]
 const phases = ["configuration", "imports", "git-path", "shell-status", "stdio", "concurrent-cancel", "operation-timeout", "abort", "complete"]
-const stages = ["begin", "handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed"]
+const stdioIterations = 8
+const stdioStages = ["iteration-begin", "handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed", "iteration-complete"]
 const stdioEvents = ["started", "fd3-closed", "stdin-data", "stdin-end", "stdout-written", "stderr-written"]
 const recipeRoot = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(recipeRoot, "../..")
@@ -75,6 +76,7 @@ const environment = { PATH: process.env.PATH || "/usr/bin:/bin", HOME: directory
   XDG_CACHE_HOME: path.join(directory, "cache"), XDG_STATE_HOME: path.join(directory, "state"),
   LANG: "en_US.UTF-8", CI: "true" }
 const report = { schemaVersion: 1, passed: false, target: "darwin-arm64", checks: [], nativeHelper,
+  stdioIterations: { planned: stdioIterations, started: 0, completed: 0, activeIteration: null },
   inputs: { coreSHA256: patch.files[0].afterSHA256, adapterSHA256: patch.additions[0].sha256,
     integrationSources: config.integrationSources,
     bunVersion: config.bun.version, bunSHA256: digest(bun), helperSHA256: digest(helper),
@@ -83,15 +85,19 @@ const report = { schemaVersion: 1, passed: false, target: "darwin-arm64", checks
 let child, output = "", errors = "", overflow = false, complete, fixtureFailure, failurePhase, frozen, closed = false
 const events = []
 const stageTrace = []
+let currentPhase
+const iterationStages = new Set()
 const startedAt = performance.now()
-const stdioEvidence = () => {
+const stdioEvidence = iteration => {
   const result = { status: "unavailable", events: [] }
   let descriptor
   try {
+    assert.ok(Number.isSafeInteger(iteration) && iteration >= 1 && iteration <= stdioIterations)
+    result.iteration = iteration
     const folder = path.join(directory, "stdio-evidence")
     const parent = lstatSync(folder)
     assert.ok(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid())
-    const file = path.join(folder, "stdio-progress.jsonl"), before = lstatSync(file)
+    const file = path.join(folder, `iteration-${String(iteration).padStart(2, "0")}.jsonl`), before = lstatSync(file)
     assert.ok(before.isFile() && !before.isSymbolicLink() && before.nlink === 1 && before.uid === process.getuid() && before.size <= 8192)
     descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     const opened = fstatSync(descriptor)
@@ -167,16 +173,52 @@ try {
         frozen = { session: event.ownerPID, identities }
         await writeFile(path.join(directory, "start"), "go", { flag: "wx", mode: 0o600 })
       } else if (event.event === "stage") {
-        assert.deepEqual(Object.keys(event).sort(), ["event", "phase", "stage"])
-        assert.ok(phases.includes(event.phase) && stages.includes(event.stage) && stageTrace.length < 32)
-        assert.ok(event.stage === "begin" || event.phase === "stdio")
-        stageTrace.push({ phase: event.phase, stage: event.stage, elapsedMs: Math.round(performance.now() - startedAt) })
+        assert.ok(phases.includes(event.phase) && stageTrace.length < 96)
+        if (event.stage === "begin") {
+          assert.deepEqual(Object.keys(event).sort(), ["event", "phase", "stage"])
+          assert.equal(report.stdioIterations.activeIteration, null)
+          currentPhase = event.phase
+        } else {
+          assert.deepEqual(Object.keys(event).sort(), ["event", "iteration", "phase", "stage"])
+          assert.equal(event.phase, "stdio")
+          assert.equal(currentPhase, "stdio")
+          assert.ok(stdioStages.includes(event.stage))
+          assert.ok(Number.isSafeInteger(event.iteration) && event.iteration >= 1 && event.iteration <= stdioIterations)
+          if (event.stage === "iteration-begin") {
+            assert.equal(report.stdioIterations.activeIteration, null)
+            assert.equal(report.stdioIterations.started, report.stdioIterations.completed)
+            assert.equal(event.iteration, report.stdioIterations.started + 1)
+            report.stdioIterations.started++
+            report.stdioIterations.activeIteration = event.iteration
+            iterationStages.clear()
+          } else {
+            assert.equal(event.iteration, report.stdioIterations.activeIteration)
+            assert.equal(iterationStages.has(event.stage), false)
+            if (event.stage === "handle-acquired") assert.equal(iterationStages.size, 0)
+            else assert.ok(iterationStages.has("handle-acquired"))
+            if (event.stage === "exit-code-observed" || event.stage === "iteration-complete") {
+              for (const stage of ["stdout-complete", "stderr-complete", "fd3-complete"]) assert.ok(iterationStages.has(stage))
+            }
+            if (event.stage === "iteration-complete") {
+              assert.ok(iterationStages.has("exit-code-observed"))
+              report.stdioIterations.completed++
+              report.stdioIterations.activeIteration = null
+            }
+            iterationStages.add(event.stage)
+          }
+        }
+        stageTrace.push({ phase: event.phase, stage: event.stage,
+          ...(event.stage === "begin" ? {} : { iteration: event.iteration }), elapsedMs: Math.round(performance.now() - startedAt) })
       } else if (event.event === "check") {
         assert.equal(event.name, expectedChecks[report.checks.length])
+        if (event.name === "stdio-extra-fd-and-environment") {
+          assert.deepEqual(report.stdioIterations, { planned: stdioIterations, started: stdioIterations, completed: stdioIterations, activeIteration: null })
+        }
         report.checks.push(event.name)
       } else if (event.event === "complete") {
         assert.equal(event.passed, true)
         assert.deepEqual(event.checks, expectedChecks)
+        assert.deepEqual(report.stdioIterations, { planned: stdioIterations, started: stdioIterations, completed: stdioIterations, activeIteration: null })
         complete = true
       } else if (event.event === "failed") {
         fixtureFailure = "core-fixture"
@@ -203,7 +245,7 @@ try {
 } finally {
   report.stageTrace = stageTrace
   if (!report.passed) {
-    report.stdioProgressBeforeStop = stdioEvidence()
+    report.stdioProgressBeforeStop = stdioEvidence(report.stdioIterations.activeIteration ?? report.stdioIterations.started)
     if (frozen) {
       try {
         const rows = await readMacosProcesses()

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 
 const checks = []
+const stdioIterations = 8
 let phase = "configuration"
 const emit = value => writeSync(1, `RIVLOOM_MACOS_GUARD_FIXTURE ${JSON.stringify(value)}\n`)
 const phases = new Set(["configuration", "imports", "git-path", "shell-status", "stdio", "concurrent-cancel", "operation-timeout", "abort", "complete"])
@@ -15,9 +16,10 @@ const beginPhase = value => {
   phase = value
   emit({ event: "stage", phase, stage: "begin" })
 }
-const stdioStage = stage => {
-  assert.ok(["handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed"].includes(stage))
-  emit({ event: "stage", phase: "stdio", stage })
+const stdioStage = (iteration, stage) => {
+  assert.ok(Number.isSafeInteger(iteration) && iteration >= 1 && iteration <= stdioIterations)
+  assert.ok(["iteration-begin", "handle-acquired", "stdout-complete", "stderr-complete", "fd3-complete", "exit-code-observed", "iteration-complete"].includes(stage))
+  emit({ event: "stage", phase: "stdio", stage, iteration })
 }
 
 async function main() {
@@ -74,45 +76,53 @@ async function main() {
   beginPhase("stdio")
   const stdioDirectory = path.join(directory, "stdio-evidence")
   await mkdir(stdioDirectory, { mode: 0o700 })
-  const stdioProgress = path.join(stdioDirectory, "stdio-progress.jsonl")
-  await writeFile(stdioProgress, "", { mode: 0o600, flag: "wx" })
-  await run(Effect.gen(function* () {
-    const code = `
-      const fs = require('node:fs'); let input = '';
-      const progress = (event, bytes) => fs.appendFileSync(${JSON.stringify(stdioProgress)},
-        JSON.stringify(bytes === undefined ? {event} : {event,bytes}) + '\\n');
-      progress('started');
-      fs.writeSync(3, 'additional-output\\n'); fs.closeSync(3);
-      progress('fd3-closed');
-      process.stdin.setEncoding('utf8');
-      process.stdin.on('data', value => { input += value; progress('stdin-data', Buffer.byteLength(value, 'utf8')); });
-      process.stdin.on('end', () => {
-        progress('stdin-end');
-        process.stdout.write(JSON.stringify({input,ordinary:process.env.ONLY_FIXTURE_VALUE,
-          privateAbsent:!('RIVLOOM_MACOS_PROCESS_HELPER' in process.env) && !('RIVLOOM_MACOS_PROCESS_SOCKET' in process.env),
-          inheritedHome:'HOME' in process.env}));
-        progress('stdout-written');
-        process.stderr.write('stderr-output\\n');
-        progress('stderr-written');
-      });
-    `
-    const handle = yield* ChildProcess.make(node, ["-e", code], {
-      stdin: Stream.make(Buffer.from("input-through-effect\n")),
-      env: { ONLY_FIXTURE_VALUE: "kept" }, extendEnv: false,
-      additionalFds: { fd3: { type: "output" } },
-    })
-    stdioStage("handle-acquired")
-    const complete = (stream, stage) => text(stream).pipe(Effect.tap(() => Effect.sync(() => stdioStage(stage))))
-    const [out, error, extra] = yield* Effect.all([
-      complete(handle.stdout, "stdout-complete"), complete(handle.stderr, "stderr-complete"), complete(handle.getOutputFd(3), "fd3-complete"),
-    ], { concurrency: 3 })
-    assert.deepEqual(JSON.parse(out), { input: "input-through-effect\n", ordinary: "kept", privateAbsent: true, inheritedHome: false })
-    assert.equal(error, "stderr-output\n")
-    assert.equal(extra, "additional-output\n")
-    const exitCode = yield* handle.exitCode
-    stdioStage("exit-code-observed")
-    assert.equal(exitCode, 0)
-  }))
+  let stdioCompleted = 0
+  for (let iteration = 1; iteration <= stdioIterations; iteration++) {
+    stdioStage(iteration, "iteration-begin")
+    const stdioProgress = path.join(stdioDirectory, `iteration-${String(iteration).padStart(2, "0")}.jsonl`)
+    await writeFile(stdioProgress, "", { mode: 0o600, flag: "wx" })
+    await run(Effect.gen(function* () {
+      const code = `
+        const fs = require('node:fs'); let input = '';
+        const progress = (event, bytes) => fs.appendFileSync(${JSON.stringify(stdioProgress)},
+          JSON.stringify(bytes === undefined ? {event} : {event,bytes}) + '\\n');
+        progress('started');
+        fs.writeSync(3, 'additional-output\\n'); fs.closeSync(3);
+        progress('fd3-closed');
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', value => { input += value; progress('stdin-data', Buffer.byteLength(value, 'utf8')); });
+        process.stdin.on('end', () => {
+          progress('stdin-end');
+          process.stdout.write(JSON.stringify({input,ordinary:process.env.ONLY_FIXTURE_VALUE,
+            privateAbsent:!('RIVLOOM_MACOS_PROCESS_HELPER' in process.env) && !('RIVLOOM_MACOS_PROCESS_SOCKET' in process.env),
+            inheritedHome:'HOME' in process.env}));
+          progress('stdout-written');
+          process.stderr.write('stderr-output\\n');
+          progress('stderr-written');
+        });
+      `
+      const handle = yield* ChildProcess.make(node, ["-e", code], {
+        stdin: Stream.make(Buffer.from("input-through-effect\n")),
+        env: { ONLY_FIXTURE_VALUE: "kept" }, extendEnv: false,
+        additionalFds: { fd3: { type: "output" } },
+      })
+      stdioStage(iteration, "handle-acquired")
+      const complete = (stream, stage) => text(stream).pipe(Effect.tap(() => Effect.sync(() => stdioStage(iteration, stage))))
+      const [out, error, extra] = yield* Effect.all([
+        complete(handle.stdout, "stdout-complete"), complete(handle.stderr, "stderr-complete"), complete(handle.getOutputFd(3), "fd3-complete"),
+      ], { concurrency: 3 })
+      assert.deepEqual(JSON.parse(out), { input: "input-through-effect\n", ordinary: "kept", privateAbsent: true, inheritedHome: false })
+      assert.equal(error, "stderr-output\n")
+      assert.equal(extra, "additional-output\n")
+      const exitCode = yield* handle.exitCode
+      stdioStage(iteration, "exit-code-observed")
+      assert.equal(exitCode, 0)
+    }))
+    // Returning from run also proves this iteration's scoped finalizers finished.
+    stdioCompleted++
+    stdioStage(iteration, "iteration-complete")
+  }
+  assert.equal(stdioCompleted, stdioIterations)
   pass("stdio-extra-fd-and-environment")
 
   let fixtureIndex = 0
