@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +24,7 @@ const fixturePhases = ['configuration', 'spawn-options', 'spawn', 'attach-stream
 // These fixtures exercise the shipped host/helper protocol. Their independent
 // 20-second lifetimes are only a failed-test containment measure; every product
 // cleanup assertion has a shorter deadline and cannot pass by waiting them out.
-function fixtureSource(actionPath: string, mode: string) {
+function fixtureSource(actionPath: string, mode: string, shimPath?: string) {
   const resistant = `
     const {spawn} = require('node:child_process');
     const grandchild = spawn(process.execPath, ['-e',
@@ -55,6 +55,7 @@ function fixtureSource(actionPath: string, mode: string) {
     const fs = require('node:fs');
     const helper = process.env.RIVLOOM_MACOS_PROCESS_HELPER;
     const socket = process.env.RIVLOOM_MACOS_PROCESS_SOCKET;
+    const shim = ${JSON.stringify(shimPath ?? '')};
     const send = value => {
       try { fs.writeSync(1, 'GUARD_FIXTURE ' + JSON.stringify(value) + '\\n'); }
       catch { process.exit(76); }
@@ -72,13 +73,14 @@ function fixtureSource(actionPath: string, mode: string) {
     send({kind:'root',root:process.pid,owner});
     function start(label, targetCode, wide = false) {
       phase = 'spawn-options';
-      const controlFD = wide ? 64 : 3;
-      const channels = Array(controlFD + 1).fill('ignore');
-      channels[0] = 'pipe'; channels[1] = 'pipe'; channels[2] = 'pipe'; channels[controlFD] = 'pipe';
+      const controlFD = wide ? 64 : 3, transportFD = wide ? 4 : 3;
+      const channels = Array(transportFD + 1).fill('ignore');
+      channels[0] = 'pipe'; channels[1] = 'pipe'; channels[2] = 'pipe'; channels[transportFD] = 'pipe';
       if (wide) channels[3] = 'pipe';
+      const targetArgs = ['guard','--control-fd',String(controlFD),'--','/bin/sh','-c',
+        'exec "$FIXTURE_NODE" -e "$FIXTURE_CODE"'];
       phase = 'spawn';
-      const child = spawn(helper, ['guard','--control-fd',String(controlFD),'--','/bin/sh','-c',
-        'exec "$FIXTURE_NODE" -e "$FIXTURE_CODE"'], {
+      const child = spawn(wide ? shim : helper, wide ? [helper, ...targetArgs] : targetArgs, {
         detached:false, shell:false, stdio:channels,
         env:{...process.env,FIXTURE_NODE:process.execPath,FIXTURE_CODE:targetCode,FIXTURE_LABEL:label,
           FIXTURE_ORDINARY_VALUE:'ordinary-value-survives'}
@@ -98,7 +100,7 @@ function fixtureSource(actionPath: string, mode: string) {
       });
       child.stderr.resume();
       child.once('close', (code,signal) => send({kind:'exit',label,code,signal}));
-      child.stdio[controlFD].on('error', () => {});
+      child.stdio[transportFD].on('error', () => {});
       phase = 'stdin';
       if (wide) {
         let extra = '';
@@ -153,9 +155,38 @@ function fixtureSource(actionPath: string, mode: string) {
 }
 
 async function start(mode: string) {
+  const startupDeadline = performance.now() + 6000;
   const directory = await mkdtemp(join(tmpdir(), 'rivloom-command-guard-'));
   const actionPath = join(directory, 'action.json');
-  const child = spawn(process.execPath, [hostPath, process.execPath, '-e', fixtureSource(actionPath, mode)],
+  let shimPath: string | undefined;
+  if (mode === 'stdio') {
+    // Node 24.19.0's Darwin libuv mutates the parent's pipe bookkeeping when a
+    // sparse high stdio slot needs remapping, and can abort before spawn returns:
+    // https://github.com/nodejs/node/blob/v24.19.0/deps/uv/src/unix/process.c#L537
+    // https://github.com/libuv/libuv/pull/5284
+    // Transport through fd4, then exec the real guard at the same PID/parent.
+    // The helper still receives fd64; all protocol and target assertions remain.
+    const shimSource = join(directory, 'stdio-fd64-shim.c');
+    shimPath = join(directory, 'stdio-fd64-shim');
+    try {
+      await writeFile(shimSource, `#include <fcntl.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  if (argc < 2 || argv[1][0] != '/') return 64;
+  if (fcntl(4, F_GETFD) < 0 || dup2(4, 64) != 64 || close(4) < 0) return 70;
+  if (fcntl(64, F_GETFD) != 0) return 70;
+  execv(argv[1], argv + 1);
+  return 127;
+}
+`, { flag: 'wx', mode: 0o600 });
+      assert(performance.now() < startupDeadline, 'Compile the fd64 transport within the existing startup deadline');
+      execFileSync('/usr/bin/xcrun', ['clang', '-std=c11', '-Wall', '-Wextra', '-Werror', '-arch', 'arm64',
+        '-mmacosx-version-min=14.0', shimSource, '-o', shimPath], {
+        timeout: Math.max(1, Math.floor(startupDeadline - performance.now())), stdio: ['ignore', 'ignore', 'pipe'],
+      });
+    } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
+  }
+  const child = spawn(process.execPath, [hostPath, process.execPath, '-e', fixtureSource(actionPath, mode, shimPath)],
     { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const events: Event[] = [];
   let buffer = '', errors = '', sequence = 0;
@@ -195,7 +226,7 @@ async function start(mode: string) {
     await rm(directory, { recursive: true, force: true });
   };
   try {
-    const root = await wait('root');
+    const root = await wait('root', undefined, Math.max(1, Math.floor(startupDeadline - performance.now())));
     return { child, root, wait, errors: () => errors, seen: (kind: string) => events.some(value => value.kind === kind), cleanup,
       action: async (kind: string, label?: string) => writeFile(actionPath, JSON.stringify({ sequence: ++sequence, kind, label }), { mode: 0o600 }) };
   } catch (error) { await cleanup(); throw error; }
