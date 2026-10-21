@@ -8,6 +8,8 @@ export const logicFiles = [
   'tests/macos-identity.test.ts',
   'tests/macos-process.test.ts',
   'tests/macos-runtime.test.ts',
+  'tests/macos-spawn-guard.test.ts',
+  'tests/macos-source-overlay.test.ts',
   'tests/node-model-activity.test.ts',
   'tests/operation-activity.test.ts',
   'tests/node-activity-api.test.ts',
@@ -101,7 +103,7 @@ export const logicFiles = [
 ] as const;
 export const engineFiles = ['tests/engine-ports.test.ts', 'tests/provider-oauth-engine.test.ts'] as const;
 // Native tests have an explicit Mac lane; Windows keeps rejecting skipped tests.
-export const macosNativeFiles = ['tests/macos-process-native.test.ts'] as const;
+export const macosNativeFiles = ['tests/macos-process-native.test.ts', 'tests/macos-command-guard-native.test.ts'] as const;
 export const networkFile = 'tests/node-network.test.ts';
 
 // Exact names, not broad exclusions: the audit fails on unclassified/new/renamed tests.

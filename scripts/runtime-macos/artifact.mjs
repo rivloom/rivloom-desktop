@@ -7,7 +7,8 @@ import path from "node:path"
 export const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex")
 export const json = (value) => JSON.stringify(value, null, 2) + "\n"
 export const sourceGit = (root, ...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true, maxBuffer: 32 * 1024 * 1024 })
-export const recipeFiles = ["artifact.mjs", "build.mjs", "runtime.json", "smoke.mjs"]
+export const recipeFiles = ["artifact.d.mts", "artifact.mjs", "build.mjs", "core-spawn.patch.json", "guard-fixture.mjs", "guard-integration.mjs", "runtime.json", "smoke.mjs", "source-overlay.d.mts", "source-overlay.mjs", "spawn-guard.ts"]
+export const macosOverlayArtifacts = ["compiled-source-files.json", "macos-core-spawn.patch.json", "macos-cross-spawn-spawner.ts", "macos-guard-integration-report.json", "macos-runtime-recipe.json", "macos-source-overlay.json", "macos-spawn-guard.ts"]
 
 export function isolatedSmokeEnvironment(input) {
   const result = Object.fromEntries(Object.entries(input).filter(([key, value]) => typeof value === "string" && (
@@ -108,7 +109,7 @@ export function publishDirectory(root, stage, target) {
 }
 
 export function writeChecksums(out) {
-  const files = ["LICENSE", "README.md", "opencode", "runtime-manifest.json", "smoke-report.json", "source-files.json"]
+  const files = ["LICENSE", "README.md", "opencode", "runtime-manifest.json", "smoke-report.json", "source-files.json", ...macosOverlayArtifacts]
     .filter((file) => existsSync(path.join(out, file)))
   writeFileSync(path.join(out, "SHA256SUMS"), files.map((file) => `${sha256(path.join(out, file))}  ${file}\n`).join(""))
 }
@@ -121,7 +122,7 @@ export function verifyArtifact(out, manifest) {
   assert.equal(manifest.profile.signed, true)
   assert.equal(manifest.profile.signingIdentity, "ad-hoc")
   assert.equal(manifest.binary.file, "opencode")
-  assert.deepEqual(manifest.artifacts.map((file) => file.file).sort(), ["LICENSE", "README.md", "source-files.json"])
+  assert.deepEqual(manifest.artifacts.map((file) => file.file).sort(), ["LICENSE", "README.md", ...macosOverlayArtifacts, "source-files.json"].sort())
   for (const artifact of [manifest.binary, ...manifest.artifacts]) {
     assert.equal(path.basename(artifact.file), artifact.file, "Artifact path must be a filename")
     const file = path.join(out, artifact.file)
@@ -141,6 +142,60 @@ export function verifyArtifact(out, manifest) {
   assert.equal(sourceFiles.get("rivloom/models.json"), manifest.inputs.modelsSHA256)
   assert.equal(sourceFiles.get("LICENSE"), manifest.artifacts.find((file) => file.file === "LICENSE").sha256)
   assert.equal(sourceFiles.get("rivloom/README.md"), manifest.artifacts.find((file) => file.file === "README.md").sha256)
+  const patch = JSON.parse(readFileSync(path.join(out, "macos-core-spawn.patch.json"), "utf8"))
+  const compiled = JSON.parse(readFileSync(path.join(out, "compiled-source-files.json"), "utf8"))
+  const overlay = JSON.parse(readFileSync(path.join(out, "macos-source-overlay.json"), "utf8"))
+  assert.equal(sha256(path.join(out, "macos-core-spawn.patch.json")), manifest.recipe.files["core-spawn.patch.json"])
+  assert.equal(sha256(path.join(out, "macos-spawn-guard.ts")), manifest.recipe.files["spawn-guard.ts"])
+  assert.equal(patch.baseCommit, inventory.commit); assert.equal(patch.target, "darwin-arm64")
+  assert.deepEqual(patch.files.map(file => file.path), ["packages/core/src/cross-spawn-spawner.ts"])
+  assert.deepEqual(patch.additions.map(file => [file.path, file.source]), [["packages/core/src/rivloom-macos-guard.ts", "spawn-guard.ts"]])
+  assert.equal(sourceFiles.get(patch.files[0].path), patch.files[0].beforeSHA256)
+  assert.equal(sha256(path.join(out, "macos-cross-spawn-spawner.ts")), patch.files[0].afterSHA256)
+  assert.equal(sha256(path.join(out, "macos-spawn-guard.ts")), patch.additions[0].sha256)
+  const expected = inventory.files.map(file => file.path === patch.files[0].path ? { ...file, sha256: patch.files[0].afterSHA256, bytes: readFileSync(path.join(out, "macos-cross-spawn-spawner.ts")).length } : file)
+  expected.push({ path: patch.additions[0].path, mode: "100644", tracked: false, type: "file", bytes: readFileSync(path.join(out, "macos-spawn-guard.ts")).length, sha256: patch.additions[0].sha256 })
+  expected.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  assert.deepEqual(compiled, { ...inventory, dirty: true, status: [` M ${patch.files[0].path}`, `?? ${patch.additions[0].path}`], files: expected })
+  const inventoryDigest = files => createHash("sha256").update(JSON.stringify([...files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0).map(file => [file.path, file.mode, file.sha256]))).digest("hex")
+  assert.deepEqual(overlay, { schemaVersion: 1, kind: "rivloom-macos-source-overlay", baseCommit: inventory.commit, baseTree: inventory.tree,
+    baseInventorySHA256: inventoryDigest(inventory.files), compiledInventorySHA256: inventoryDigest(compiled.files),
+    patch: { file: "macos-core-spawn.patch.json", sha256: manifest.recipe.files["core-spawn.patch.json"] },
+    files: [{ path: patch.files[0].path, beforeSHA256: patch.files[0].beforeSHA256, afterSHA256: patch.files[0].afterSHA256, artifact: "macos-cross-spawn-spawner.ts" }],
+    additions: [{ path: patch.additions[0].path, sha256: patch.additions[0].sha256, artifact: "macos-spawn-guard.ts" }] })
+  const config = JSON.parse(readFileSync(path.join(out, "macos-runtime-recipe.json"), "utf8"))
+  assert.equal(sha256(path.join(out, "macos-runtime-recipe.json")), manifest.recipe.files["runtime.json"])
+  assert.deepEqual(config.sourceOverlay, { patch: { file: "core-spawn.patch.json", sha256: manifest.recipe.files["core-spawn.patch.json"] },
+    module: { file: "spawn-guard.ts", sha256: patch.additions[0].sha256 } })
+  assert.deepEqual(Object.keys(config.integrationSources).sort(), ["native/macos-process.c", "scripts/macos-process-build.ts", "server/engine-host.mjs", "server/macos-process.mjs"])
+  for (const hash of Object.values(config.integrationSources)) assert.match(hash, /^[a-f0-9]{64}$/)
+  const integration = JSON.parse(readFileSync(path.join(out, "macos-guard-integration-report.json"), "utf8"))
+  assert.equal(integration.schemaVersion, 1); assert.equal(integration.target, "darwin-arm64"); assert.equal(integration.passed, true)
+  assert.ok(!integration.failure && !integration.cleanupUnproven && !integration.retainedFixture, "Mac core guard integration did not finish cleanly")
+  assert.deepEqual(integration.checks, ["git-path-and-discovery", "shell-and-exit-status", "stdio-extra-fd-and-environment", "concurrent-force-kill-isolation", "scope-finalizer-descendant-cleanup", "operation-timeout-descendant-cleanup", "abort-descendant-cleanup"])
+  const helper = integration.nativeHelper
+  assert.deepEqual(integration.inputs, { coreSHA256: patch.files[0].afterSHA256, adapterSHA256: patch.additions[0].sha256,
+    integrationSources: config.integrationSources,
+    bunVersion: manifest.toolchain.bun, bunSHA256: manifest.toolchain.bunExecutableSHA256, helperSHA256: helper?.binarySHA256,
+    hostSHA256: config.integrationSources["server/engine-host.mjs"], processModuleSHA256: config.integrationSources["server/macos-process.mjs"],
+    fixtureSHA256: manifest.recipe.files["guard-fixture.mjs"], harnessSHA256: manifest.recipe.files["guard-integration.mjs"] })
+  assert.deepEqual(Object.keys(helper).sort(), ["arch", "binarySHA256", "inputs", "platform", "schemaVersion"])
+  assert.deepEqual(Object.keys(helper.inputs).sort(), ["buildScriptSHA256", "compiler", "sdk", "sourceSHA256"])
+  assert.equal(helper.schemaVersion, 1); assert.equal(helper.platform, "darwin"); assert.equal(helper.arch, "arm64")
+  assert.match(helper.binarySHA256, /^[a-f0-9]{64}$/)
+  assert.ok(typeof helper.inputs.compiler === "string" && helper.inputs.compiler.length > 0 && helper.inputs.compiler.length <= 8192)
+  assert.match(helper.inputs.sdk, /^\d+(?:\.\d+){0,3}$/)
+  assert.equal(helper.inputs.sourceSHA256, config.integrationSources["native/macos-process.c"])
+  assert.equal(helper.inputs.buildScriptSHA256, config.integrationSources["scripts/macos-process-build.ts"])
+  const stop = integration.shutdown
+  assert.ok(stop && stop.phase === "result" && stop.outcome === "ok" && stop.proof === "observed-exit" && stop.failure === "none" &&
+    Number.isSafeInteger(stop.recorded) && stop.recorded > 0 && Number.isSafeInteger(stop.durationMs) && stop.durationMs >= 0 && !stop.inventoryFailure && !stop.ownershipFailure,
+  "Mac native integration lacks proven owned-process shutdown")
+  assert.deepEqual(manifest.source.compilation, { kind: "macos-source-overlay",
+    inventory: { file: "compiled-source-files.json", sha256: sha256(path.join(out, "compiled-source-files.json")), files: compiled.files.length },
+    overlay: { file: "macos-source-overlay.json", sha256: sha256(path.join(out, "macos-source-overlay.json")) },
+    integration: { file: "macos-guard-integration-report.json", sha256: sha256(path.join(out, "macos-guard-integration-report.json")) },
+    recipe: { file: "macos-runtime-recipe.json", sha256: sha256(path.join(out, "macos-runtime-recipe.json")) } })
   verifyMacosBinary(path.join(out, "opencode"))
   return manifest
 }

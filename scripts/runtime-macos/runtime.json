@@ -12,6 +12,16 @@
     "version": "1.18.33"
   },
   "nodeVersion": "24.19.0",
+  "sourceOverlay": {
+    "patch": {
+      "file": "core-spawn.patch.json",
+      "sha256": "d5dddd57806f0a76a864c6b72d44866e278ecedb96772dd6f461ec25658f720b"
+    },
+    "module": {
+      "file": "spawn-guard.ts",
+      "sha256": "fbaf3804acabded7e6dd4db353bfa163cd25ab0833f63afefed6517ff25d6ed3"
+    }
+  },
   "bun": {
     "version": "1.3.14",
     "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-darwin-aarch64.zip",
@@ -35,5 +45,11 @@
     "signed": true,
     "signingIdentity": "ad-hoc",
     "desktopIntegrated": false
+  },
+  "integrationSources": {
+    "native/macos-process.c": "3023c5c36d68bdc03fd12930836e2dd8152b37b34426edb60fec9aed2d41e1ca",
+    "scripts/macos-process-build.ts": "46ca8f9b2fc1aa81667cf9ff515a0aca49fd26b4f1d5e32b072c61ba632925e2",
+    "server/engine-host.mjs": "a870a68fb18debca34b74bf1e8b573b6073212cb855c655254b746e18e132dc8",
+    "server/macos-process.mjs": "be0b886cf57b770969cb74e5eb05d6a1a12de77dfdefee92b63ad6edb2951fb6"
   }
 }

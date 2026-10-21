@@ -5,7 +5,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { engineBinaryName, engineDigest, engineProducerSchema, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
+import { engineBinaryName, engineDigest, engineProducerSchema, engineRecipeDigest, engineVerificationDigest, engineSourceInventoryDigest, engineRegularFile, engineRelativePath, engineSourceFile, engineTarget, macosOverlayArtifacts, readEngineSource, verifyEngineArtifact, verifyPreparedEngine, type EngineSource } from '../server/engine-artifact.ts';
 import { capturePublicationWorkspace, recoverPublication, type ProducerFailure } from './engine-publication.ts';
 
 export function parseEngineArguments(args: string[]) {
@@ -163,7 +163,7 @@ export async function prepareEngine(root: string, options = parseEngineArguments
   }
   assert(artifact);
   const result = verifyEngineArtifact(artifact, source, options.mode === 'artifact');
-  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(engineProducerSchema(source) === 2 ? ['source-files.json'] : [])])
+  for (const name of [engineBinaryName(source), 'runtime-manifest.json', 'smoke-report.json', 'SHA256SUMS', 'LICENSE', 'README.md', ...(engineProducerSchema(source) === 2 ? ['source-files.json'] : []), ...(target === 'darwin-arm64' ? macosOverlayArtifacts : [])])
     await copyFile(engineRegularFile(artifact, name), join(staging, name));
   if (target !== 'windows-x64') await chmod(join(staging, 'opencode'), 0o755);
   let sourceProofSHA256: string | undefined;

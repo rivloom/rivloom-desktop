@@ -77,6 +77,8 @@ jobs:
             test-results/macos/package-service.log
             test-results/headless-service/*/report.json
             test-results/headless-task/*/report.json
+            .data/engine-builds/*/source/rivloom/.tools/guard-integration-report.json
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
       - name: Preserve the verified Mac preview package

@@ -4,7 +4,8 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { json, publishDirectory, recipeInventory, safeDirectory, sha256, sourceGit, sourceInventory, verifyArtifact, verifyNativeSignature, writeChecksums } from "./artifact.mjs"
+import { json, macosOverlayArtifacts, publishDirectory, recipeInventory, safeDirectory, sha256, sourceGit, sourceInventory, verifyArtifact, verifyNativeSignature, writeChecksums } from "./artifact.mjs"
+import { applyMacosSourceOverlay } from "./source-overlay.mjs"
 
 const recipeRoot = path.dirname(fileURLToPath(import.meta.url))
 const config = JSON.parse(readFileSync(path.join(recipeRoot, "runtime.json"), "utf8"))
@@ -31,6 +32,10 @@ assert.equal(source.commit, config.source.commit, "Compile the exact reviewed so
 assert.equal(source.tree, config.source.tree)
 sourceGit(root, "merge-base", "--is-ancestor", config.upstream.commit, "HEAD")
 const recipe = recipeInventory(recipeRoot)
+assert.deepEqual(config.sourceOverlay, {
+  patch: { file: "core-spawn.patch.json", sha256: recipe.files["core-spawn.patch.json"] },
+  module: { file: "spawn-guard.ts", sha256: recipe.files["spawn-guard.ts"] },
+}, "Mac source overlay must be explicitly hash-bound by its recipe configuration")
 for (const [file, hash] of Object.entries(config.inputs)) assert.equal(sha256(path.join(root, file)), hash, `Pinned source input differs: ${file}`)
 const packageVersions = Object.fromEntries([["opencode", "packages/opencode/package.json"], ["sdk", "packages/sdk/js/package.json"], ["plugin", "packages/plugin/package.json"]]
   .map(([name, file]) => [name, JSON.parse(readFileSync(path.join(root, file), "utf8")).version]))
@@ -83,12 +88,23 @@ const run = (file, arguments_) => {
 if (!args.has("--skip-install")) run(bun, ["install", "--frozen-lockfile", "--linker", "hoisted", "--filter", "opencode"])
 assert.deepEqual(sourceInventory(root, true), source, "Installing dependencies modified pinned source")
 safeDirectory(path.join(root, "packages/opencode"), path.join(root, "packages/opencode/dist"))
-run(bun, ["run", "packages/opencode/script/build.ts", "--single", "--skip-install", "--skip-embed-web-ui"])
-assert.deepEqual(sourceInventory(root, true), source, "Source changed during compilation")
-assert.deepEqual(recipeInventory(recipeRoot), recipe, "Recipe changed during compilation")
 const stage = safeDirectory(path.dirname(output), `${output}.stage-${randomUUID()}`)
 mkdirSync(stage, { recursive: true })
-copyFileSync(path.join(root, "packages/opencode/dist/opencode-darwin-arm64/bin/opencode"), path.join(stage, "opencode"))
+const overlay = applyMacosSourceOverlay(root, recipeRoot, source)
+try {
+  run(process.execPath, [path.join(recipeRoot, "guard-integration.mjs"), "--source", root, "--bun", bun])
+  overlay.verify()
+  run(bun, ["run", "packages/opencode/script/build.ts", "--single", "--skip-install", "--skip-embed-web-ui"])
+  overlay.verify()
+  assert.deepEqual(recipeInventory(recipeRoot), recipe, "Recipe changed during compilation")
+  overlay.package(stage)
+  copyFileSync(path.join(recipeRoot, "runtime.json"), path.join(stage, "macos-runtime-recipe.json"))
+  const guardReport = path.join(root, "rivloom/.tools/guard-integration-report.json")
+  assert.ok(lstatSync(guardReport).isFile() && !lstatSync(guardReport).isSymbolicLink(), "Native core guard report must be an ordinary file")
+  copyFileSync(guardReport, path.join(stage, "macos-guard-integration-report.json"))
+  copyFileSync(path.join(root, "packages/opencode/dist/opencode-darwin-arm64/bin/opencode"), path.join(stage, "opencode"))
+} finally { overlay.restore() }
+assert.deepEqual(sourceInventory(root, true), source, "Source restoration after compilation differs")
 chmodSync(path.join(stage, "opencode"), 0o755)
 // Sign before recording hashes. Tauri copies this executable as a resource and
 // must not re-sign it later; the package consumer verifies these exact bytes.
@@ -101,12 +117,16 @@ const record = (file) => ({ file, bytes: readFileSync(path.join(stage, file)).le
 const manifest = {
   schemaVersion: 2, version, channel: config.channel, target: config.target, builtAt: new Date().toISOString(),
   source: { repository: config.source.repository.replace(/\.git$/, ""), commit: source.commit, tree: source.tree, dirty: false,
-    inventory: { file: "source-files.json", sha256: sha256(path.join(stage, "source-files.json")), files: source.files.length } },
+    inventory: { file: "source-files.json", sha256: sha256(path.join(stage, "source-files.json")), files: source.files.length },
+    compilation: { kind: "macos-source-overlay", inventory: { file: "compiled-source-files.json", sha256: sha256(path.join(stage, "compiled-source-files.json")), files: overlay.compiled.files.length },
+      overlay: { file: "macos-source-overlay.json", sha256: sha256(path.join(stage, "macos-source-overlay.json")) },
+      integration: { file: "macos-guard-integration-report.json", sha256: sha256(path.join(stage, "macos-guard-integration-report.json")) },
+      recipe: { file: "macos-runtime-recipe.json", sha256: sha256(path.join(stage, "macos-runtime-recipe.json")) } } },
   recipe, upstream: config.upstream, packageVersions,
   toolchain: { node: process.versions.node, bun: config.bun.version, bunArchiveSHA256: config.bun.sha256,
     bunExecutableSHA256: sha256(bun), nodeExecutableSHA256: sha256(process.execPath) },
   inputs: { bunLockSHA256: config.inputs["bun.lock"], modelsSHA256: config.inputs["rivloom/models.json"], files: config.inputs },
-  profile: config.profile, binary: record("opencode"), artifacts: ["LICENSE", "README.md", "source-files.json"].map(record),
+  profile: config.profile, binary: record("opencode"), artifacts: ["LICENSE", "README.md", "source-files.json", ...macosOverlayArtifacts].map(record),
 }
 writeFileSync(path.join(stage, "runtime-manifest.json"), json(manifest))
 verifyArtifact(stage, manifest)

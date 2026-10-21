@@ -32,10 +32,17 @@
   "recipe": {
     "directory": "scripts/runtime-macos",
     "files": {
-      "artifact.mjs": "ff830869bb376e327033e793af6656d93e32d658fdd59ba8e13511b74aea1acd",
-      "build.mjs": "99f15df9e848d005e4540e1c595bca0ffec14c57e28246c436dd448db153356d",
-      "runtime.json": "3c3a9447f40708c10831bbcca52cb9a2e2e5bc3df5b7141cd06345d796e30fd3",
-      "smoke.mjs": "13603c24e97616e39866cb00176c9ab86d0d60d8b8b0b3c5185f114ab873bc39"
+      "artifact.d.mts": "1988100d5483ad0c43b39a5eea4276d1acf7627763fae022d3bdcd721aff7a36",
+      "artifact.mjs": "d82301d30c5dabdcbe7038b187c0a53f5c2509794a0b22ea37a0714b211a32f5",
+      "build.mjs": "91d1a5ffaf135acb7d2af1eab7556592074104d84de64af147fb7204983718b2",
+      "core-spawn.patch.json": "d5dddd57806f0a76a864c6b72d44866e278ecedb96772dd6f461ec25658f720b",
+      "guard-fixture.mjs": "f7db2cdbae0f742d225663bd18ac870c54e538ada315b8fadbe189c9eff53896",
+      "guard-integration.mjs": "a9719bdf19b8034a79a43ea8f3cc759e52f5907f7721069702fc6c3f6af21b60",
+      "runtime.json": "737a9ff448f848a10c7eb6c0a81f430f327851b207f102a7932250262bf58f6f",
+      "smoke.mjs": "13603c24e97616e39866cb00176c9ab86d0d60d8b8b0b3c5185f114ab873bc39",
+      "source-overlay.d.mts": "8d884231f83a6d5b54b6ef8a376c5cff3cd95220d5d23f2d34feaa4b296b6766",
+      "source-overlay.mjs": "89e609df57a18437afcd957d575b0727db31ab08294153d5210b62f0f261a605",
+      "spawn-guard.ts": "fbaf3804acabded7e6dd4db353bfa163cd25ab0833f63afefed6517ff25d6ed3"
     }
   },
   "producerSchemaVersion": 2,

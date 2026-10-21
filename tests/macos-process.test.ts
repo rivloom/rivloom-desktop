@@ -31,8 +31,11 @@ test('macOS host diagnostics reconstruct safe fields and reject unbounded or unk
   const line = (diagnostic: unknown) => `RIVLOOM_ENGINE_STOP ${JSON.stringify(diagnostic)}`;
   assert.deepEqual(parseMacosEngineStopDiagnostic(line({ ...value, command: 'secret command', environment: { token: 'private' } })), value);
   for (const change of [{ phase: 'private' }, { outcome: 'skipped' }, { durationMs: -1 }, { durationMs: 1.5 },
-    { recorded: 65537 }, { proof: 'private/path' }, { outcome: 'ok' }, { failure: 'secret' }, { inventoryFailure: 'Bearer secret' }])
+    { recorded: 65537 }, { proof: 'private/path' }, { outcome: 'ok' }, { failure: 'secret' }, { inventoryFailure: 'Bearer secret' },
+    { ownershipFailure: 'private command' }])
     assert.equal(parseMacosEngineStopDiagnostic(line({ ...value, ...change })), undefined);
+  const ownership = { ...value, failure: 'ownership-uncertain', ownershipFailure: 'session-changed' };
+  assert.deepEqual(parseMacosEngineStopDiagnostic(line({ ...ownership, childPID: 123, command: 'private' })), ownership);
   assert.equal(parseMacosEngineStopDiagnostic(line({ ...value, extra: 'x'.repeat(769) })), undefined);
   assert.equal(parseMacosEngineStopDiagnostic(`private prefix ${line(value)}`), undefined);
 });
@@ -83,6 +86,23 @@ test('macOS ownership fails closed on group escape, privilege change and backwar
     const remaining = changed.pid === root.pid ? [leader, changed, unrelated] : [leader, root, changed, unrelated];
     assert.equal(ownership.observe(remaining).uncertain, true);
     assert.equal(ownership.observe([unrelated]).uncertain, true, 'A later empty group does not erase the earlier ownership gap');
+  }
+});
+
+test('macOS ownership distinguishes a changed group from a new session without forgetting either gap', async () => {
+  for (const [changed, reason] of [[{ ...child, group: 102 }, 'group-changed'],
+    [{ ...child, group: 102, session: 102 }, 'session-changed']] as const) {
+    const ownership = owner();
+    const state = ownership.observe([leader, root, changed, unrelated]);
+    assert.equal(state.recorded, 3);
+    assert.equal(state.uncertain, true);
+    assert.equal(state.ownershipFailure, reason);
+    assert.equal(ownership.observe([unrelated]).ownershipFailure, reason);
+    const result = await waitForMacosExit(ownership, { ...clock(), status: exited, quit: () => assert.fail('Uncertain ownership cannot request success'),
+      snapshot: async () => [unrelated] });
+    assert.equal(result.stopped, false);
+    assert.equal(result.failure, 'ownership-uncertain');
+    assert.equal(result.ownershipFailure, reason);
   }
 });
 
@@ -165,4 +185,141 @@ test('macOS lifecycle receipts are bound to the helper PID and permit no free-fo
   assert.deepEqual(parseMacosLifecycle({ ...ready, secret: 'private' }, 100), { event: 'ready', rootPID: 101, code: 0 });
   for (const change of [{ schemaVersion: 2 }, { event: 'private' }, { groupPID: 999 }, { rootPID: 100 }, { rootPID: -1 }, { code: 1 }])
     assert.throws(() => parseMacosLifecycle({ ...ready, ...change }, 100), /receipt/);
+});
+
+const guard = row(200, root.pid), target = row(201, guard.pid, 201, 200, 200), watcher = row(202, guard.pid, 202, 200, 200);
+const isolatedGuard = { ...guard, group: guard.pid, session: guard.pid };
+const registration = { event: 'guard-register', rootPID: root.pid, code: 0, id: 1, guardPID: guard.pid, created: guard.created! };
+const guardReady = { event: 'guard-ready', rootPID: root.pid, code: 0, id: 1, guardPID: guard.pid,
+  guardRootPID: target.pid, watchdogPID: watcher.pid };
+function guarded() {
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+  ownership.authorizeGuard(registration.id);
+  ownership.activateGuard(guardReady, [leader, root, isolatedGuard, target, watcher, unrelated]);
+  return ownership;
+}
+
+test('macOS guard registration binds the live engine parent, immutable birth and sequential identity', () => {
+  for (const [receipt, changed] of [
+    [{ ...registration, id: 2 }, guard], [{ ...registration, created: root.created! }, guard],
+    [registration, { ...guard, parentPid: leader.pid }], [registration, { ...guard, uid: 0 }],
+    [registration, isolatedGuard], [registration, { ...guard, zombie: true }],
+  ] as const) assert.throws(() => owner().registerGuard(receipt, [leader, root, changed, unrelated]), /identity/);
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+  assert.throws(() => ownership.registerGuard(registration, [leader, root, guard, unrelated]), /identity/);
+  assert.throws(() => owner().registerGuard(registration, [leader, { ...root, created: guard.created }, guard, unrelated]), /identity/);
+});
+
+test('macOS only a registered guard can establish an independently controlled session', () => {
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+  ownership.authorizeGuard(registration.id);
+  assert.equal(ownership.observe([leader, root, isolatedGuard, target, watcher, unrelated]).uncertain, false);
+  ownership.activateGuard(guardReady, [leader, root, isolatedGuard, target, watcher, unrelated]);
+  const escape = row(203, target.pid, 203, 203, 203);
+  assert.equal(ownership.observe([leader, root, isolatedGuard, target, watcher, escape, unrelated]).uncertain, true);
+  assert.equal(ownership.observe([unrelated]).uncertain, true);
+  assert.equal(owner().observe([leader, root, isolatedGuard, unrelated]).uncertain, true);
+});
+
+test('macOS guarded target execution requires its own live target and watchdog identities', () => {
+  for (const changed of [{ ...target, parentPid: root.pid }, { ...target, group: 100 }, { ...target, uid: 0 },
+    { ...target, zombie: true }]) {
+    const ownership = owner();
+    ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+    ownership.authorizeGuard(registration.id);
+    assert.throws(() => ownership.activateGuard(guardReady, [leader, root, isolatedGuard, changed, watcher, unrelated]), /identity/);
+  }
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+  ownership.authorizeGuard(registration.id);
+  assert.throws(() => ownership.activateGuard({ ...guardReady, watchdogPID: target.pid },
+    [leader, root, isolatedGuard, target, watcher, unrelated]), /identity/);
+  assert.throws(() => guarded().activateGuard(guardReady, [leader, root, isolatedGuard, target, watcher, unrelated]), /transition/);
+});
+
+test('macOS per-command completion waits for the real descendants and ignores only its authenticated control members', () => {
+  const ownership = guarded(), grandchild = row(203, target.pid, 203, 200, 200);
+  ownership.guardEvent({ ...guardReady, event: 'guard-engine-exit', code: 37 });
+  ownership.guardEvent({ ...guardReady, event: 'guard-stopping' });
+  ownership.observe([leader, root, isolatedGuard, watcher, { ...grandchild, parentPid: 1 }, unrelated]);
+  assert.deepEqual(ownership.guardQuits(), []);
+  ownership.observe([leader, root, isolatedGuard, watcher, unrelated]);
+  assert.deepEqual(ownership.guardQuits(), [1]);
+  assert.deepEqual(ownership.guardQuits(), [], 'A completion request is single-use');
+  assert.throws(() => ownership.guardEvent({ ...guardReady, event: 'guard-engine-exit' }), /ordering/);
+});
+
+test('macOS closed guard groups retain surviving orphan identities then retire before PID reuse', () => {
+  const ownership = guarded(), grandchild = row(203, target.pid, 203, 200, 200);
+  ownership.observe([leader, root, isolatedGuard, target, watcher, grandchild, unrelated]);
+  ownership.guardEvent({ ...guardReady, event: 'guard-stopping' });
+  ownership.guardEvent({ ...guardReady, event: 'guard-closed' });
+  assert.equal(ownership.observe([leader, root, { ...grandchild, parentPid: 1 }, unrelated]).childrenRunning, 2);
+  assert.equal(ownership.observe([leader, root, unrelated]).uncertain, false);
+  const reused = row(guard.pid, 1, 2000, guard.pid, guard.pid);
+  assert.equal(ownership.observe([leader, root, reused, unrelated]).uncertain, false);
+});
+
+test('macOS the native owner watchdog is excluded from work counts but required for final disappearance', async () => {
+  const watchdog = row(104, leader.pid), ownership = new MacosProcessOwnership([leader, root, watchdog, unrelated], 100, 50, 101, 104);
+  const state = ownership.observe([leader, watchdog, unrelated]);
+  assert.equal(state.childrenRunning, 0);
+  assert.equal(state.running, 2);
+  assert.equal(ownership.observe([leader, unrelated]).ownershipFailure, 'watchdog-identity');
+  const stable = new MacosProcessOwnership([leader, root, watchdog, unrelated], 100, 50, 101, 104);
+  let quit = false;
+  const result = await waitForMacosExit(stable, { ...clock(),
+    observe: async () => stable.observe(quit ? [unrelated] : [leader, watchdog, unrelated]),
+    status: () => ({ exited: quit, expected: quit, engineExited: true }),
+    quit: () => { stable.ownerQuit = true; quit = true; } });
+  assert.equal(result.stopped, true);
+});
+
+test('macOS guard receipts validate distinct target and watchdog identities without forwarding arbitrary fields', () => {
+  const raw = { schemaVersion: 1, groupPID: leader.pid, ...guardReady, secret: 'private' };
+  assert.deepEqual(parseMacosLifecycle(raw, leader.pid), guardReady);
+  for (const change of [{ id: 0 }, { id: 1000001 }, { guardPID: leader.pid }, { guardRootPID: 0 },
+    { watchdogPID: 0 }, { watchdogPID: target.pid }, { guardRootPID: root.pid }, { watchdogPID: guard.pid }])
+    assert.throws(() => parseMacosLifecycle({ ...raw, ...change }, leader.pid), /receipt/);
+  assert.deepEqual(parseMacosLifecycle({ schemaVersion: 1, groupPID: leader.pid, ...registration }, leader.pid), registration);
+  assert.throws(() => parseMacosLifecycle({ schemaVersion: 1, groupPID: leader.pid, ...registration, created: '' }, leader.pid), /receipt/);
+});
+
+test('macOS cancellation before the first gate may reconcile a vanished peer but never authorizes an escaped session', () => {
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, unrelated], true);
+  ownership.guardEvent({ ...guardReady, event: 'guard-stopping', guardRootPID: 0, watchdogPID: 0 });
+  ownership.guardEvent({ ...guardReady, event: 'guard-closed', guardRootPID: 0, watchdogPID: 0 });
+  assert.equal(ownership.observe([leader, root, unrelated]).uncertain, false);
+  const escaped = owner();
+  assert.throws(() => escaped.registerGuard(registration, [leader, root, isolatedGuard, unrelated], true), /identity/);
+  const reused = owner(), foreign = row(guard.pid, unrelated.pid, 2000, unrelated.pid, unrelated.pid);
+  reused.registerGuard(registration, [leader, root, foreign, unrelated], true);
+  reused.guardEvent({ ...guardReady, event: 'guard-stopping', guardRootPID: 0, watchdogPID: 0 });
+  reused.guardEvent({ ...guardReady, event: 'guard-closed', guardRootPID: 0, watchdogPID: 0 });
+  assert.equal(reused.observe([leader, root, foreign, unrelated]).uncertain, false);
+});
+
+test('macOS cancellation before target execution tracks the registered session even after the blocked target disappears', () => {
+  const ownership = owner();
+  ownership.registerGuard(registration, [leader, root, guard, unrelated]);
+  ownership.authorizeGuard(1);
+  ownership.activateGuard(guardReady, [leader, root, isolatedGuard, watcher, unrelated], true);
+  ownership.guardEvent({ ...guardReady, event: 'guard-stopping' });
+  ownership.guardEvent({ ...guardReady, event: 'guard-engine-exit', code: 143 });
+  assert.deepEqual(ownership.guardQuits(), [1]);
+  ownership.guardEvent({ ...guardReady, event: 'guard-closed' });
+  assert.equal(ownership.observe([leader, root, unrelated]).uncertain, false);
+  assert.throws(() => guarded().activateGuard(guardReady, [leader, root, unrelated], true), /transition/,
+    'An executed target cannot be reclassified as an unexecuted cancellation');
+});
+
+test('macOS an unexpected registered guard disconnect remains a failure after watchdog cleanup', () => {
+  const ownership = guarded();
+  ownership.guardEvent({ ...guardReady, event: 'guard-closed' });
+  assert.equal(ownership.observe([unrelated]).uncertain, true);
+  assert.equal(ownership.ownershipFailure, 'guard-identity');
 });

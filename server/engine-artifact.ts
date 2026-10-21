@@ -36,6 +36,8 @@ export const engineSourceInventoryDigest = (files: { path: string; mode: string;
   [...files].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0).map(item => [item.path, item.mode, item.sha256]),
 ));
 const windowsProducerInputs = ['rivloom/runtime.json', 'rivloom/build.ps1', 'rivloom/build.mjs', 'rivloom/artifact.mjs', 'rivloom/smoke.mjs', 'packages/opencode/script/build.ts'];
+export const macosOverlayArtifacts = ['compiled-source-files.json', 'macos-core-spawn.patch.json', 'macos-cross-spawn-spawner.ts', 'macos-guard-integration-report.json', 'macos-runtime-recipe.json', 'macos-source-overlay.json', 'macos-spawn-guard.ts'];
+const macosRecipeFiles = ['artifact.d.mts', 'artifact.mjs', 'build.mjs', 'core-spawn.patch.json', 'guard-fixture.mjs', 'guard-integration.mjs', 'runtime.json', 'smoke.mjs', 'source-overlay.d.mts', 'source-overlay.mjs', 'spawn-guard.ts'];
 export const engineRecipeDigest = (source: EngineSource) => source.recipe ? engineDigest(JSON.stringify(Object.entries(source.recipe.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) : undefined;
 export const engineVerificationDigest = (source: EngineSource) => source.verification ? engineDigest(JSON.stringify(Object.entries(source.verification.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))) : undefined;
 export function readEngineSource(root: string, target: EngineTarget = engineTarget()) {
@@ -65,7 +67,7 @@ export function readEngineSource(root: string, target: EngineTarget = engineTarg
     assert(!source.verification, 'POSIX targets use their complete pinned recipe');
     assert(source.recipe, 'POSIX source requires an independently pinned build recipe');
     assert.equal(source.recipe.directory, target === 'darwin-arm64' ? 'scripts/runtime-macos' : 'scripts/runtime-linux', 'Build recipe belongs to another platform');
-    assert.deepEqual(Object.keys(source.recipe.files).sort(), ['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs']);
+    assert.deepEqual(Object.keys(source.recipe.files).sort(), target === 'darwin-arm64' ? macosRecipeFiles : ['artifact.mjs', 'build.mjs', 'runtime.json', 'smoke.mjs']);
     assert(source.inputs['packages/opencode/script/build.ts'], 'POSIX compiler entrypoint must be pinned');
     if (target === 'darwin-arm64') assert(source.sourceInventory, 'macOS requires the complete reviewed source inventory');
   }
@@ -87,6 +89,63 @@ export function engineRegularFile(root: string, path: string) {
   const suffix = relative(realpathSync(root), realpathSync(cursor));
   assert(suffix && !isAbsolute(suffix) && !suffix.startsWith('..'), 'Engine artifact escapes its root');
   return cursor;
+}
+function verifyMacosSourceOverlay(directory: string, source: EngineSource, base: any, manifest: any) {
+  const bytes = (file: string) => readFileSync(engineRegularFile(directory, file));
+  const patch = JSON.parse(bytes('macos-core-spawn.patch.json').toString('utf8'));
+  assert.equal(engineDigest(bytes('macos-core-spawn.patch.json')), source.recipe!.files['core-spawn.patch.json'], 'Mac source patch differs from reviewed recipe');
+  assert.equal(patch.schemaVersion, 1); assert.equal(patch.target, source.target); assert.equal(patch.baseCommit, source.commit);
+  assert.deepEqual(patch.files.map((item: any) => item.path), ['packages/core/src/cross-spawn-spawner.ts']);
+  assert.deepEqual(patch.additions.map((item: any) => [item.path, item.source]), [['packages/core/src/rivloom-macos-guard.ts', 'spawn-guard.ts']]);
+  const changed = patch.files[0], added = patch.additions[0];
+  assert.equal(base.files.find((item: any) => item.path === changed.path)?.sha256, changed.beforeSHA256, 'Mac overlay base differs from pinned source');
+  assert.equal(base.files.some((item: any) => item.path === added.path), false, 'Mac overlay unexpectedly replaces an existing module');
+  assert.equal(engineDigest(bytes('macos-cross-spawn-spawner.ts')), changed.afterSHA256, 'Mac compiled spawn source differs from reviewed patch');
+  assert.equal(engineDigest(bytes('macos-spawn-guard.ts')), added.sha256);
+  assert.equal(added.sha256, source.recipe!.files['spawn-guard.ts'], 'Mac compiled guard differs from reviewed recipe');
+  const compiledBytes = bytes('compiled-source-files.json'), compiled = JSON.parse(compiledBytes.toString('utf8'));
+  const expected = base.files.map((item: any) => item.path === changed.path
+    ? { ...item, bytes: bytes('macos-cross-spawn-spawner.ts').length, sha256: changed.afterSHA256 } : item);
+  expected.push({ path: added.path, mode: '100644', tracked: false, type: 'file', bytes: bytes('macos-spawn-guard.ts').length, sha256: added.sha256 });
+  expected.sort((a: any, b: any) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  assert.deepEqual(compiled, { ...base, dirty: true, status: [` M ${changed.path}`, `?? ${added.path}`], files: expected }, 'Mac compiled inventory contains an unreviewed source change');
+  const receiptBytes = bytes('macos-source-overlay.json'), receipt = JSON.parse(receiptBytes.toString('utf8'));
+  assert.deepEqual(receipt, { schemaVersion: 1, kind: 'rivloom-macos-source-overlay', baseCommit: source.commit, baseTree: source.tree,
+    baseInventorySHA256: engineSourceInventoryDigest(base.files), compiledInventorySHA256: engineSourceInventoryDigest(compiled.files),
+    patch: { file: 'macos-core-spawn.patch.json', sha256: source.recipe!.files['core-spawn.patch.json'] },
+    files: [{ path: changed.path, beforeSHA256: changed.beforeSHA256, afterSHA256: changed.afterSHA256, artifact: 'macos-cross-spawn-spawner.ts' }],
+    additions: [{ path: added.path, sha256: added.sha256, artifact: 'macos-spawn-guard.ts' }] }, 'Mac source overlay receipt differs');
+  const configBytes = bytes('macos-runtime-recipe.json'), config = JSON.parse(configBytes.toString('utf8'));
+  assert.equal(engineDigest(configBytes), source.recipe!.files['runtime.json'], 'Mac redistributed recipe differs from reviewed input');
+  assert.deepEqual(config.sourceOverlay, { patch: { file: 'core-spawn.patch.json', sha256: source.recipe!.files['core-spawn.patch.json'] }, module: { file: 'spawn-guard.ts', sha256: added.sha256 } });
+  assert.deepEqual(Object.keys(config.integrationSources).sort(), ['native/macos-process.c', 'scripts/macos-process-build.ts', 'server/engine-host.mjs', 'server/macos-process.mjs']);
+  for (const hash of Object.values(config.integrationSources)) assert(digest.safeParse(hash).success, 'Mac native integration source pin missing');
+  const integrationBytes = bytes('macos-guard-integration-report.json'), integration = JSON.parse(integrationBytes.toString('utf8'));
+  assert.equal(integration.schemaVersion, 1); assert.equal(integration.target, source.target); assert.equal(integration.passed, true);
+  assert(!integration.failure && !integration.cleanupUnproven && !integration.retainedFixture, 'Mac core guard integration did not finish cleanly');
+  assert.deepEqual(integration.checks, ['git-path-and-discovery', 'shell-and-exit-status', 'stdio-extra-fd-and-environment', 'concurrent-force-kill-isolation', 'scope-finalizer-descendant-cleanup', 'operation-timeout-descendant-cleanup', 'abort-descendant-cleanup']);
+  assert.deepEqual(integration.inputs, { coreSHA256: changed.afterSHA256, adapterSHA256: added.sha256,
+    integrationSources: config.integrationSources,
+    bunVersion: source.toolchain.bun, bunSHA256: manifest.toolchain.bunExecutableSHA256, helperSHA256: integration.nativeHelper?.binarySHA256,
+    hostSHA256: config.integrationSources['server/engine-host.mjs'], processModuleSHA256: config.integrationSources['server/macos-process.mjs'],
+    fixtureSHA256: source.recipe!.files['guard-fixture.mjs'], harnessSHA256: source.recipe!.files['guard-integration.mjs'] }, 'Mac native integration used different inputs');
+  const helper = integration.nativeHelper;
+  assert.deepEqual(Object.keys(helper).sort(), ['arch', 'binarySHA256', 'inputs', 'platform', 'schemaVersion']);
+  assert.deepEqual(Object.keys(helper.inputs).sort(), ['buildScriptSHA256', 'compiler', 'sdk', 'sourceSHA256']);
+  assert.equal(helper.schemaVersion, 1); assert.equal(helper.platform, 'darwin'); assert.equal(helper.arch, 'arm64');
+  assert(digest.safeParse(helper.binarySHA256).success && typeof helper.inputs.compiler === 'string' && helper.inputs.compiler.length > 0 && helper.inputs.compiler.length <= 8192 &&
+    typeof helper.inputs.sdk === 'string' && /^\d+(?:\.\d+){0,3}$/.test(helper.inputs.sdk));
+  assert.equal(helper.inputs.sourceSHA256, config.integrationSources['native/macos-process.c']);
+  assert.equal(helper.inputs.buildScriptSHA256, config.integrationSources['scripts/macos-process-build.ts']);
+  const stop = integration.shutdown;
+  assert(stop && stop.phase === 'result' && stop.outcome === 'ok' && stop.proof === 'observed-exit' && stop.failure === 'none' &&
+    Number.isSafeInteger(stop.recorded) && stop.recorded > 0 && Number.isSafeInteger(stop.durationMs) && stop.durationMs >= 0 && !stop.inventoryFailure && !stop.ownershipFailure,
+  'Mac native integration lacks proven owned-process shutdown');
+  assert.deepEqual(manifest.source.compilation, { kind: 'macos-source-overlay',
+    inventory: { file: 'compiled-source-files.json', sha256: engineDigest(compiledBytes), files: compiled.files.length },
+    overlay: { file: 'macos-source-overlay.json', sha256: engineDigest(receiptBytes) },
+    integration: { file: 'macos-guard-integration-report.json', sha256: engineDigest(integrationBytes) },
+    recipe: { file: 'macos-runtime-recipe.json', sha256: engineDigest(configBytes) } }, 'Mac producer omits exact compiled source evidence');
 }
 export function verifyEngineProducer(directory: string, source: EngineSource) {
   const bytes = (path: string) => readFileSync(engineRegularFile(directory, path));
@@ -143,7 +202,7 @@ export function verifyEngineProducer(directory: string, source: EngineSource) {
     assert.equal(manifest.profile.signed, false); assert.equal(manifest.profile.desktopIntegrated, false);
   }
   if (schema === 2) {
-    assert.deepEqual(manifest.artifacts.map((item: { file: string }) => item.file).sort(), ['LICENSE', 'README.md', 'source-files.json']);
+    assert.deepEqual(manifest.artifacts.map((item: { file: string }) => item.file).sort(), ['LICENSE', 'README.md', ...(macos ? macosOverlayArtifacts : []), 'source-files.json'].sort());
     for (const item of manifest.artifacts) {
       assert.equal(bytes(item.file).length, item.bytes);
       assert.equal(engineDigest(bytes(item.file)), item.sha256);
@@ -166,6 +225,7 @@ export function verifyEngineProducer(directory: string, source: EngineSource) {
     const sourceFiles = new Map<string, string>(inventory.files.map((item: { path: string; sha256: string }) => [item.path, item.sha256]));
     for (const [file, sha256] of Object.entries(source.inputs)) assert.equal(sourceFiles.get(file), sha256, `Source inventory disagrees with pin: ${file}`);
     assert.equal(sourceFiles.get('rivloom/README.md'), engineDigest(bytes('README.md')), 'Engine README differs from its source inventory');
+    if (macos) verifyMacosSourceOverlay(directory, source, inventory, manifest);
   }
   return { manifest, binarySHA256, manifestSHA256, bytes: binary.length };
 }
@@ -175,7 +235,7 @@ export function verifyEngineArtifact(directory: string, source: EngineSource, ap
   const { manifest, binarySHA256, manifestSHA256 } = result;
   const posix = source.target !== 'windows-x64', schema = engineProducerSchema(source);
   const smokeBytes = bytes('smoke-report.json'), smoke = JSON.parse(smokeBytes.toString('utf8')), smokeSHA256 = engineDigest(smokeBytes);
-  const checksummed = posix ? ['LICENSE', 'README.md', 'opencode', 'runtime-manifest.json', 'smoke-report.json', 'source-files.json']
+  const checksummed = posix ? ['LICENSE', 'README.md', 'opencode', 'runtime-manifest.json', 'smoke-report.json', 'source-files.json', ...(source.target === 'darwin-arm64' ? macosOverlayArtifacts : [])]
     : schema === 2 ? ['LICENSE', 'README.md', 'opencode.exe', 'runtime-manifest.json', 'source-files.json', 'smoke-report.json'] : ['opencode.exe'];
   assert.equal(bytes('SHA256SUMS').toString('utf8'), checksummed.map(file => `${engineDigest(bytes(file))}  ${file}\n`).join(''));
   assert.equal(smoke.schemaVersion, schema);

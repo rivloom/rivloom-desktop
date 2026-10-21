@@ -153,6 +153,9 @@ test('macOS native changed session fails closed instead of claiming escaped work
   // boundary. The synthetic escaped child has its own six-second lifetime.
   assert.equal(await exited(fixture.child), 1, fixture.errors());
   assert.doesNotMatch(fixture.errors(), /"proof":"observed-exit"/);
+  const diagnostic = fixture.errors().split('\n').map(parseMacosEngineStopDiagnostic).find(Boolean);
+  assert.equal(diagnostic?.failure, 'ownership-uncertain');
+  assert.equal(diagnostic?.ownershipFailure, 'session-changed');
   await proveGone(before, fixture.fixture.leader);
 });
 

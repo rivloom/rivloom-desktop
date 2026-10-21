@@ -33,7 +33,7 @@
   "verification": {
     "files": {
       "scripts/runtime-windows/smoke.mjs": "edb8132db46b656f7760173a221562fce3a6ee01a31d7c05334da417b720b0ae",
-      "server/engine-artifact.ts": "9e84de2380b8f6ce481c074a7308ada866e2e7e546d1ac2fae628e3e542baed9",
+      "server/engine-artifact.ts": "4916d591376897767193ca490bb11c7a99a09904716c40857c68cdb983c8d5d0",
       "server/windows-engine-stop.mjs": "ff3d72bcb796a301c16a66cc2ee855a932d8a163ea03180a798b43b2edf15900"
     }
   },

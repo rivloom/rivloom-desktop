@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "target": "darwin-arm64",
+  "baseCommit": "655285f835f8560dcf3b6c484d0e2f1faba9e67d",
+  "files": [
+    {
+      "path": "packages/core/src/cross-spawn-spawner.ts",
+      "beforeSHA256": "83276c7b6389edb5881fb257754ffa89bfda7ee31fb952a7028e3c8da8fa3e2b",
+      "afterSHA256": "1d120ff0cf8c541bd0e904b72bd046eaac9441b2ed1549e9fa5ac4f94f684650",
+      "edits": [
+        {
+          "before": "import launch from \"cross-spawn\"",
+          "after": "import launch from \"cross-spawn\"\nimport { spawnWithRivloomGuard, signalRivloomGuard } from \"./rivloom-macos-guard\""
+        },
+        {
+          "before": "const proc = launch(command.command, command.args, opts)",
+          "after": "const proc = spawnWithRivloomGuard(command.command, command.args, opts, launch)"
+        },
+        {
+          "before": "        proc.kill(\"SIGTERM\")",
+          "after": "        if (!signalRivloomGuard(proc, \"SIGTERM\")) proc.kill(\"SIGTERM\")"
+        },
+        {
+          "before": "        globalThis.process.kill(-proc.pid!, signal)",
+          "after": "        if (!signalRivloomGuard(proc, signal)) globalThis.process.kill(-proc.pid!, signal)"
+        },
+        {
+          "before": "      if (proc.kill(signal)) return Effect.void",
+          "after": "      if (signalRivloomGuard(proc, signal) || proc.kill(signal)) return Effect.void"
+        }
+      ]
+    }
+  ],
+  "additions": [
+    {
+      "path": "packages/core/src/rivloom-macos-guard.ts",
+      "source": "spawn-guard.ts",
+      "sha256": "fbaf3804acabded7e6dd4db353bfa163cd25ab0833f63afefed6517ff25d6ed3"
+    }
+  ]
+}
