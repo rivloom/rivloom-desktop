@@ -8,6 +8,7 @@ let keyPrefix = Data([0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b
 #if RIVLOOM_KEYCHAIN_TESTING
 var controlPhase: String?
 var controlStatus: OSStatus?
+var controlLockSettings: [String: Any]?
 #endif
 
 func reply(_ value: [String: Any], _ status: Int32 = 0) -> Never {
@@ -22,6 +23,7 @@ func fail(_ code: String) -> Never {
     if let controlPhase {
         var response: [String: Any] = ["version": 1, "ok": false, "error": code, "phase": controlPhase]
         if let controlStatus { response["nativeStatus"] = controlStatus }
+        if let controlLockSettings { response["lockSettings"] = controlLockSettings }
         reply(response, 1)
     }
 #endif
@@ -139,12 +141,31 @@ func controlTestKeychain(_ request: [String: Any], _ operation: String) -> Never
             SecKeychainUnlock(created, UInt32(passwordData.count), pointer.baseAddress, true)
         }
         if unlocked != errSecSuccess { abortCreated(unlocked, "unlock-created") }
-        controlPhase = "configure-created"
-        var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: UInt32.max)
-        let configured = SecKeychainSetSettings(created, &settings)
-        if configured != errSecSuccess { abortCreated(configured, "configure-created") }
+        // SecurityTool's no-timeout sentinel is INT_MAX, not UINT32_MAX.
+        // New keychains may already have this policy, so first read it without
+        // requesting an unnecessary settings authorization on an unattended runner.
+        let noTimeout = UInt32(Int32.max)
+        func readSettings() -> SecKeychainSettings {
+            controlPhase = "read-created-settings"
+            var settings = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: 0)
+            requireSuccess(SecKeychainCopySettings(created, &settings))
+            controlLockSettings = ["lockOnSleep": settings.lockOnSleep.boolValue, "lockInterval": settings.lockInterval,
+                "idleTimeoutDisabled": settings.lockInterval == noTimeout]
+            return settings
+        }
+        var settings = readSettings()
+        let settingsChanged = settings.lockOnSleep.boolValue || settings.lockInterval != noTimeout
+        if settingsChanged {
+            controlPhase = "configure-created"
+            var desired = SecKeychainSettings(version: UInt32(SEC_KEYCHAIN_SETTINGS_VERS1), lockOnSleep: false, useLockInterval: false, lockInterval: noTimeout)
+            let configured = SecKeychainSetSettings(created, &desired)
+            if configured != errSecSuccess { abortCreated(configured, "configure-created") }
+            settings = readSettings()
+        }
+        controlPhase = "verify-created-settings"
+        guard !settings.lockOnSleep.boolValue, settings.lockInterval == noTimeout else { fail("unavailable") }
         controlPhase = "created-path"
-        reply(["version": 1, "ok": true, "keychainPath": keychainPath(created)])
+        reply(["version": 1, "ok": true, "keychainPath": keychainPath(created), "lockSettings": controlLockSettings!, "settingsChanged": settingsChanged])
     }
     if operation == "test-activate" {
         guard Set(request.keys) == Set(["version", "operation", "keychainPath"]) else { fail("invalid-request") }

@@ -15,7 +15,19 @@ type KeychainState = {
   previousDefault: string;
   previousSearchList: string[];
   helperSHA256: string;
+  lockSettings?: { lockOnSleep: boolean; lockInterval: number; idleTimeoutDisabled: boolean };
+  settingsChanged?: boolean;
 };
+
+function checkedLockSettings(value: unknown): NonNullable<KeychainState['lockSettings']> {
+  assert(value && typeof value === 'object' && !Array.isArray(value), 'Missing CI keychain lock settings');
+  const settings = value as NonNullable<KeychainState['lockSettings']>;
+  assert(Object.keys(settings).sort().join(',') === 'idleTimeoutDisabled,lockInterval,lockOnSleep'
+    && typeof settings.lockOnSleep === 'boolean' && typeof settings.idleTimeoutDisabled === 'boolean'
+    && Number.isInteger(settings.lockInterval) && settings.lockInterval >= 0 && settings.lockInterval <= 4294967295
+    && settings.idleTimeoutDisabled === (settings.lockInterval === 2147483647), 'Invalid CI keychain lock settings');
+  return settings;
+}
 
 function requireRunner() {
   assert(process.platform === 'darwin' && process.arch === 'arm64', 'Keychain CI setup requires native macOS ARM64');
@@ -46,6 +58,7 @@ function validateState(value: unknown): KeychainState {
   assert(typeof state.previousDefault === 'string' && state.previousDefault.startsWith('/') && state.previousDefault.length <= 4096, 'Invalid prior default keychain');
   assert(Array.isArray(state.previousSearchList) && state.previousSearchList.length <= 32 && state.previousSearchList.every(path => typeof path === 'string' && path.startsWith('/') && path.length <= 4096), 'Invalid prior keychain list');
   assert(/^[0-9a-f]{64}$/.test(state.helperSHA256), 'Invalid CI helper digest');
+  if (state.lockSettings !== undefined) checkedLockSettings(state.lockSettings);
   const parent = lstatSync(dirname(state.keychainPath));
   assert(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid?.(), 'CI keychain directory has changed');
   return state;
@@ -70,10 +83,11 @@ function control(helper: string, request: Record<string, unknown>): Record<strin
   assert(response && typeof response === 'object' && !Array.isArray(response), 'Invalid isolated CI keychain response');
   const value = response as Record<string, unknown>;
   if (value.version === 1 && value.ok === false) {
-    const phases = ['disable-interaction', 'snapshot-default', 'snapshot-search-list', 'verify-default', 'verify-search-list', 'create', 'create-restore-search-list', 'create-cleanup-delete', 'unlock-created', 'configure-created', 'created-path', 'activate-open', 'activate-default', 'activate-search-list', 'restore-current-default', 'restore-default', 'restore-search-list', 'restore-delete'];
+    const phases = ['disable-interaction', 'snapshot-default', 'snapshot-search-list', 'verify-default', 'verify-search-list', 'create', 'create-restore-search-list', 'create-cleanup-delete', 'unlock-created', 'read-created-settings', 'configure-created', 'verify-created-settings', 'created-path', 'activate-open', 'activate-default', 'activate-search-list', 'restore-current-default', 'restore-default', 'restore-search-list', 'restore-delete'];
     const codes = ['not-found', 'duplicate', 'access-denied', 'unavailable', 'invalid-request', 'invalid-data', 'internal-error'];
-    assert(Object.keys(value).every(key => ['version', 'ok', 'error', 'phase', 'nativeStatus'].includes(key)) && phases.includes(String(value.phase)) && codes.includes(String(value.error)) && (value.nativeStatus === undefined || Number.isInteger(value.nativeStatus) && Number(value.nativeStatus) >= -2147483648 && Number(value.nativeStatus) <= 2147483647), 'Invalid isolated CI keychain failure response');
-    throw new Error(`Isolated CI keychain operation failed: stage=${operation}/${value.phase}, code=${value.error}${value.nativeStatus === undefined ? '' : `, OSStatus=${value.nativeStatus}`}`);
+    assert(Object.keys(value).every(key => ['version', 'ok', 'error', 'phase', 'nativeStatus', 'lockSettings'].includes(key)) && phases.includes(String(value.phase)) && codes.includes(String(value.error)) && (value.nativeStatus === undefined || Number.isInteger(value.nativeStatus) && Number(value.nativeStatus) >= -2147483648 && Number(value.nativeStatus) <= 2147483647), 'Invalid isolated CI keychain failure response');
+    const settings = value.lockSettings === undefined ? undefined : checkedLockSettings(value.lockSettings);
+    throw new Error(`Isolated CI keychain operation failed: stage=${operation}/${value.phase}, code=${value.error}${value.nativeStatus === undefined ? '' : `, OSStatus=${value.nativeStatus}`}${settings ? `, lockOnSleep=${settings.lockOnSleep}, lockInterval=${settings.lockInterval}` : ''}`);
   }
   assert(result.status === 0 && value.version === 1 && value.ok === true, 'Isolated CI keychain operation failed');
   return value;
@@ -104,6 +118,11 @@ export async function setupMacosTestKeychain() {
     const result = control(built.path, { operation: 'test-create', keychainPath, password: randomBytes(32).toString('hex'),
       previousDefault: state.previousDefault, previousSearchList: state.previousSearchList });
     assert.equal(result.keychainPath, keychainPath, 'The system created an unexpected keychain location');
+    state.lockSettings = checkedLockSettings(result.lockSettings);
+    assert(!state.lockSettings.lockOnSleep && state.lockSettings.idleTimeoutDisabled, 'The isolated keychain must remain available for the CI job');
+    assert.equal(typeof result.settingsChanged, 'boolean', 'Missing CI keychain settings result');
+    state.settingsChanged = result.settingsChanged as boolean;
+    writeState(state);
     control(built.path, { operation: 'test-activate', keychainPath });
     state.status = 'active';
     writeState(state);
@@ -113,6 +132,7 @@ export async function setupMacosTestKeychain() {
     throw error;
   }
   console.log('Isolated macOS CI keychain is active; the original default and search list are recorded for cleanup.');
+  console.log(`CI keychain verified settings: lockOnSleep=${state.lockSettings!.lockOnSleep}, lockInterval=${state.lockSettings!.lockInterval}, idleTimeoutDisabled=${state.lockSettings!.idleTimeoutDisabled}, settingsChanged=${state.settingsChanged}`);
 }
 
 export function requireIsolatedMacosKeychain() {
