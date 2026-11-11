@@ -44,6 +44,7 @@ test('engine completion persists results and releases capacity automatically whi
     questions: unknown[] = [];
   let statuses: Record<string, { type: string }> = {};
   let diffCalls = 0, abortCalls = 0;
+  let beforeDiff: (() => void) | undefined;
   let createCalls = 0, failPrompt = false, failCreate = false;
   let currentAccount = () => '';
   const prompts: Array<{ account: string; input: { sessionID: string; model: { providerID: string; modelID: string }; system: string; parts: Array<{ text: string }> } }> = [];
@@ -62,6 +63,7 @@ test('engine completion persists results and releases capacity automatically whi
         status: async () => ({ data: statuses }),
         diff: async () => {
           diffCalls++;
+          beforeDiff?.();
           return {
             data: [{ file: 'RESULT.md', before: '', after: 'Done', additions: 1, deletions: 0 }],
           };
@@ -545,6 +547,32 @@ test('engine completion persists results and releases capacity automatically whi
     store.db.prepare('DELETE FROM tasks WHERE id=?').run(conversation.id);
     assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM task_message_requests WHERE task_id=?').get(conversation.id)!.n, 0,
       'Permanent task deletion cascades its idempotency journal');
+
+    await t.test('a completion poll in flight cannot overwrite engine-exit recovery', async () => {
+      statuses = {}; questions = []; permissions = []; messages = assistant();
+      for (const exited of ['account', 'primary'] as const) {
+        const task = make('running');
+        task.messages = [{ id: 'prior', role: 'assistant', text: 'Last saved result', tools: [] }];
+        store.saveTask(task);
+        if (exited === 'account') store.db.prepare('INSERT INTO task_engine_routes VALUES(?,?)').run(task.id, account.id);
+        const entry = queue.enqueue({ kind: 'local', taskID: task.id });
+        queue.admit(entry.id, entry.version, task.id);
+        queue.markStarting(entry.id);
+        queue.markStarted(entry.id);
+        beforeDiff = () => {
+          if (exited === 'account') accountEngines.onExit(account.id);
+          else engine.child.emit('exit', 1);
+          assert.equal(store.task(task.id).state, 'interrupted', exited);
+        };
+        try { await service.sync(task.id); }
+        finally { beforeDiff = undefined; }
+        const result = store.task(task.id);
+        assert.equal(result.state, 'interrupted', exited);
+        assert.deepEqual(result.messages, task.messages, exited);
+        assert.equal(nodeQueueRecoveryDecision(queue.get(entry.id)!, { source: 'live', task: result }).action,
+          'retain_execution', exited);
+      }
+    });
   } finally {
     await service.shutdownEngine();
     store.db.close();

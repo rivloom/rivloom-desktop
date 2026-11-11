@@ -11,6 +11,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { TaskFileStore, TaskFileError } from '../server/task-files.ts';
 import {
   taskFileNameError,
@@ -307,6 +308,58 @@ test('empty files finalize and a file cannot be rebound to another upload owner 
   store.bindUploaded(r, 'u', [f.id]);
   assert(store.complete(r, [f]));
   store.close();
+});
+test('a peer cannot reserve a case variant of an existing file UUID', () => {
+  const store = new TaskFileStore(root());
+  try {
+    const original = { ...file('original'), id: 'abcdefab-cdef-4abc-8def-abcdefabcdef' };
+    store.beginUpload('u', original);
+    store.uploadChunk('u', original.id, 0, Buffer.from('original').toString('base64'));
+    const alias = { ...file('replaced'), id: original.id.toUpperCase() };
+    const incoming = route();
+    assert.throws(() => store.expectIncoming(incoming, [alias], 'peer'), fail(409));
+    assert.deepEqual(store.manifest(incoming), []);
+    assert.equal(store.content(original.id).toString(), 'original');
+
+    const unique = { ...file('upper'), id: 'ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDE0' };
+    store.beginUpload('u', unique);
+    store.uploadChunk('u', unique.id, 0, Buffer.from('up').toString('base64'));
+    assert.equal(store.beginUpload('u', unique).receivedBytes, 2);
+    store.uploadChunk('u', unique.id, 2, Buffer.from('per').toString('base64'));
+    assert.equal(store.content(unique.id).toString(), 'upper');
+    store.discardUpload('u', unique.id);
+    assert.throws(() => store.descriptorFor(unique.id), fail(404));
+  } finally {
+    store.close();
+  }
+});
+test('history cleanup preserves blobs when an older database has a case collision', () => {
+  const directory = root();
+  const store = new TaskFileStore(directory);
+  try {
+    const original = { ...file('original'), id: 'abcdefab-cdef-4abc-8def-abcdefabcdef' };
+    store.beginUpload('u', original);
+    store.uploadChunk('u', original.id, 0, Buffer.from('original').toString('base64'));
+    store.close();
+
+    const target = route();
+    const alias = original.id.toUpperCase();
+    const db = new DatabaseSync(join(directory, 'task-files', 'files.sqlite'));
+    try {
+      db.prepare("INSERT INTO files SELECT ?, json_set(body, '$.id', ?, '$.origin', 'peer:peer'), bytes FROM files WHERE id=?")
+        .run(alias, alias, original.id);
+      db.prepare('INSERT INTO bindings VALUES (?,?,?,?)').run(target.scope, target.taskID, target.purpose, alias);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(() => store.content(alias), fail(409));
+    store.purgeHistory({ local: [], remote: [target.taskID], brain: [] }, [alias], new Set());
+    const blob = join(directory, 'task-files', 'blobs', `${original.id}.blob`);
+    assert.equal(readFileSync(blob, 'utf8'), 'original');
+  } finally {
+    store.close();
+  }
 });
 test('incoming batches reserve quota atomically and descriptor property order does not change identity', () => {
   const store = new TaskFileStore(root(), 9);

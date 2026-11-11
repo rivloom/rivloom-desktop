@@ -113,6 +113,48 @@ test('explicit historical retrievals stay observable across panel removal and re
   assert.equal(store.snapshot(route()).value, null);
 });
 
+test('a recovery POST still settles after the conversation is closed', async t => {
+  const query = route('closed-conversation');
+  const response = deferred();
+  let state = result('failed');
+  let posts = 0;
+  const store = createTaskFileState({ load: async () => state });
+  const failure = () => ({ message: 'request failed', definitive: true });
+  t.after(() => store.dispose());
+  const release = store.subscribe(query, () => {});
+  await tick();
+  const send = () => { posts++; return response.promise; };
+  const retrieval = store.retrieve(query, 'file', send, failure);
+  assert.equal(await store.retrieve(query, 'file', send, failure), true);
+  assert.equal(posts, 1, 'two controls for one file share the in-flight request');
+  release();
+  assert.equal(store.stats().pending, 1);
+
+  state = result('complete', 20);
+  response.resolve(empty());
+  assert.equal(await retrieval, true);
+  await tick();
+  assert.equal(store.stats().pending, 0, 'closing a conversation cannot leak a retrieval slot');
+  assert.deepEqual(store.requested(), []);
+  assert.equal(store.snapshot(query).value?.results[0].state, 'complete');
+});
+
+test('a late retrieval rejection cannot change the new identity’s state', async t => {
+  const query = route('shared-route');
+  const response = deferred();
+  const store = createTaskFileState({ load: async () => result('remote') });
+  t.after(() => store.dispose());
+  store.setVisible(false);
+  const retrieval = store.retrieve(query, 'file', () => response.promise,
+    () => ({ message: 'old identity rejected', definitive: true }));
+  store.reset();
+  assert.equal(store.request(query, 'file'), true);
+  response.reject(new Error('old request'));
+  await assert.rejects(retrieval, /old request/);
+  assert.equal(store.stats().pending, 1);
+  assert.equal(store.snapshot(query).error, null);
+});
+
 test('an unconfirmed retrieval remains visibly uncertain despite a successful metadata read', async t => {
   const responses: ReturnType<typeof deferred>[] = [];
   const store = createTaskFileState({ load: () => { const response = deferred(); responses.push(response); return response.promise; } });

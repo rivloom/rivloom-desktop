@@ -1,11 +1,11 @@
 import { t, systemText } from '../shared/i18n.ts';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Paperclip, Download, RotateCw, X, FileText, Upload, FolderOpen, Copy, MoreHorizontal, ExternalLink } from 'lucide-react';
-import { api, ApiError } from './api';
+import { api } from './api';
 import { desktop, chooseTaskFileDestination, revealTaskFile, openTaskFile } from './desktop';
 import { ContextMenu, useContextMenu } from './context-menu';
 import { FilePreview, FilePreviewButton } from './file-preview';
-import { refreshTaskFileState, taskFileStates, useTaskFileState, type TaskFileState, type TaskFileQuery } from './use-task-file-state';
+import { refreshTaskFileState, requestRemoteTaskFile, taskFileStates, useTaskFileState, type TaskFileState, type TaskFileQuery } from './use-task-file-state';
 import { taskFileQueryKey } from './task-file-state';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
 import { composerFileSelectionError, containsDroppedDirectory, isFileTransfer } from './composer-files';
@@ -331,21 +331,14 @@ export function TaskFileRecovery({ states }: { states: readonly TaskFileState[] 
     try {
       for (const route of sendRoutes.values()) {
         if (!current()) break;
-        try { await api(`/task-files/${route.scope}/${route.taskID}/retry`, {}); }
+        try { await api(`/task-files/${route.scope}/${route.taskID}/retry`, {}, { timeoutMilliseconds: 15_000 }); }
         catch (cause) { errors.push(cause instanceof Error ? cause.message : t('传输未能重试。')); }
         if (current()) refreshTaskFileState(route);
       }
       for (const { route, fileID } of receiveFiles.values()) {
         if (!current()) break;
-        try {
-          if (!taskFileStates.request(route, fileID)) throw new Error(t('正在取回的文件较多，请等待完成后再试。'));
-          await api(`/task-files/${route.scope}/${route.taskID}/fetch`, { fileID });
-          if (current()) taskFileStates.requestAccepted(route, fileID);
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : t('文件取回未确认，请重试。');
-          errors.push(message); if (current()) taskFileStates.requestFailed(route, fileID, message, cause instanceof ApiError && [403, 404].includes(cause.status));
-        }
-        if (current()) refreshTaskFileState(route);
+        try { await requestRemoteTaskFile(route, fileID); }
+        catch (cause) { errors.push(cause instanceof Error ? cause.message : t('文件取回未确认，请重试。')); }
       }
     } finally {
       if (current()) { operating.current = false; setBusy(false); setError([...new Set(errors)].join(' · ')); }
@@ -459,7 +452,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, inputsOnly 
     setBusy(true);
     setError('');
     try {
-      await api(`${path}/retry`, {});
+      await api(`${path}/retry`, {}, { timeoutMilliseconds: 15_000 });
       refreshTaskFileState({ scope, taskID });
     } catch (e) {
       setError(e instanceof Error ? e.message : t('传输未能重试。'));
@@ -471,16 +464,15 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, inputsOnly 
     if (operating.current) return;
     operating.current = true; setBusy(true); setError('');
     const epoch = taskFileStates.epoch();
-    openAfterReceive.current = { path, fileID: file.id, fetchRequested: true };
+    const previewRequest = { path, fileID: file.id, fetchRequested: true };
+    openAfterReceive.current = previewRequest;
     try {
-      if (!taskFileStates.request({ scope, taskID }, file.id)) throw new Error(t('正在取回的文件较多，请等待完成后再试。'));
-      await api(`${path}/fetch`, { fileID: file.id });
-      if (taskFileStates.epoch() === epoch) taskFileStates.requestAccepted({ scope, taskID }, file.id);
-      if (taskFileStates.epoch() === epoch) refreshTaskFileState({ scope, taskID });
+      await requestRemoteTaskFile({ scope, taskID }, file.id);
     } catch (e) {
-      openAfterReceive.current = null;
-      const message = e instanceof Error ? e.message : t('文件取回未确认，请重试。');
-      if (taskFileStates.epoch() === epoch) { taskFileStates.requestFailed({ scope, taskID }, file.id, message, e instanceof ApiError && [403, 404].includes(e.status)); setError(message); }
+      if (taskFileStates.epoch() === epoch && openAfterReceive.current === previewRequest) {
+        openAfterReceive.current = null;
+        setError(e instanceof Error ? e.message : t('文件取回未确认，请重试。'));
+      }
     }
     finally { operating.current = false; setBusy(false); }
   }

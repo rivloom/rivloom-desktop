@@ -114,6 +114,7 @@ export class TaskFileStore {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY,body TEXT NOT NULL,bytes INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS files_id_case ON files(id COLLATE NOCASE);
       CREATE TABLE IF NOT EXISTS bindings (scope TEXT NOT NULL,task_id TEXT NOT NULL,purpose TEXT NOT NULL,file_id TEXT NOT NULL,
         PRIMARY KEY(scope,task_id,purpose,file_id));
       CREATE TABLE IF NOT EXISTS file_locations (file_id TEXT PRIMARY KEY,path TEXT NOT NULL);
@@ -151,6 +152,9 @@ export class TaskFileStore {
       if (protectedIDs.has(id) || db.prepare('SELECT 1 FROM bindings WHERE file_id=? LIMIT 1').get(id)) continue;
       const record = this.record(id);
       if (!record) continue;
+      // An older database can contain two records that share a Windows filename.
+      // Preserve the stored files when their ownership is ambiguous.
+      if (this.fileIDCollision(id)) continue;
       const received = join(this.root, 'received', id, record.name);
       within(this.root, received);
       if (existsSync(received)) {
@@ -169,8 +173,14 @@ export class TaskFileStore {
       db.prepare('DELETE FROM files WHERE id=?').run(id);
     }
   }
+  private fileIDCollision(id: string) {
+    return this.database()
+      .prepare('SELECT 1 FROM files WHERE id COLLATE NOCASE = ? AND id <> ? LIMIT 1')
+      .get(id, id) !== undefined;
+  }
   private path(id: string) {
     check(taskFileIDPattern.test(id), 400, '文件 ID 无效。');
+    check(!this.fileIDCollision(id), 409, '文件 ID 已绑定其他来源或内容。');
     const path = join(this.root, 'blobs', `${id}.blob`);
     within(this.root, path);
     return path;
@@ -201,6 +211,7 @@ export class TaskFileStore {
       400,
       taskFileNameError(file.name) || '文件大小、类型或校验信息无效。',
     );
+    check(!this.fileIDCollision(file.id), 409, '文件 ID 已绑定其他来源或内容。');
     const previous = this.record(file.id);
     if (previous) {
       check(
@@ -244,6 +255,17 @@ export class TaskFileStore {
     }
     const stat = lstatSync(path);
     check(stat.isFile() && stat.nlink === 1, 409, '文件存储类型异常，已停止读取。');
+    return path;
+  }
+  private resumeBlob(record: FileRecord) {
+    const path = this.ensureBlob(record);
+    // Earlier releases could persist the final offset before verifying the blob.
+    if (
+      record.state !== 'complete' &&
+      (record.bytes === 0 || (record.state === 'receiving' && record.receivedBytes === record.bytes))
+    ) {
+      this.finish(record);
+    }
     return path;
   }
   private finish(record: FileRecord) {
@@ -291,8 +313,7 @@ export class TaskFileStore {
   }
   beginUpload(userID: string, file: TaskFileDescriptor) {
     const value = this.reserve(file, `user:${userID}`);
-    this.ensureBlob(value);
-    if (value.bytes === 0 && value.state !== 'complete') this.finish(value);
+    this.resumeBlob(value);
     return this.view(value.id);
   }
   private writeChunk(id: string, offset: number, data: string) {
@@ -308,7 +329,7 @@ export class TaskFileStore {
     );
     check(offset + chunk.length <= value.bytes, 400, '文件块超过声明长度。');
     check(offset <= value.receivedBytes, 409, '文件块尚未按顺序到达。');
-    const path = this.ensureBlob(value);
+    const path = this.resumeBlob(value);
     const fd = openSync(path, 'r+');
     try {
       check(fstatSync(fd).isFile() && fstatSync(fd).nlink === 1, 409, '文件存储类型异常。');
@@ -332,11 +353,12 @@ export class TaskFileStore {
     } finally {
       closeSync(fd);
     }
-    // Bytes are durable before progress acknowledgement; a crash here safely replays the same block.
+    // Keep the prior offset until final verification can save a terminal state.
+    // A crash after fsync can safely replay the same block from that offset.
     value.receivedBytes = offset + chunk.length;
     value.updatedAt = new Date().toISOString();
-    this.save(value);
     if (value.receivedBytes === value.bytes) this.finish(value);
+    else this.save(value);
     return this.view(id);
   }
   uploadChunk(userID: string, id: string, offset: number, data: string) {
@@ -429,9 +451,8 @@ export class TaskFileStore {
     const value = this.record(file.id);
     check(value?.origin === `peer:${peerNodeID}`, 403, '文件来源与任务绑定不一致。');
     check(value.state !== 'failed', 409, value.error || '文件接收已失败。');
-    this.ensureBlob(value);
-    if (value.bytes === 0 && value.state !== 'complete') this.finish(value);
     if (data !== undefined && offset !== undefined) return this.writeChunk(file.id, offset, data);
+    this.resumeBlob(value);
     return this.view(file.id);
   }
   manifest(route: TaskFileRoute): TaskFileDescriptor[] {
@@ -694,6 +715,7 @@ export class TaskFileStore {
     for (const candidate of known)
       if (await matches(candidate.root, candidate.path)) return { path: candidate.path };
     // A received file gets its real filename, isolated by ID so equal names never overwrite each other.
+    check(!this.fileIDCollision(id), 409, '文件 ID 已绑定其他来源或内容。');
     const destination = join(this.root, 'received', id, value.name);
     within(this.root, destination);
     if (!existsSync(destination)) {

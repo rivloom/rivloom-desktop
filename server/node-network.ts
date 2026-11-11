@@ -2055,13 +2055,19 @@ export class NodeNetwork extends EventEmitter {
             error instanceof NodeNetworkError &&
             error.status === 403 &&
             !this.isTrustedNode(peerID);
+          // An unreadable source file cannot recover by reconnecting to the peer.
+          const localFileFailure = error instanceof TaskFileError && error.status < 500;
           this.files.deliveryState(
             route,
             fileID,
             peerID,
-            forbidden ? 'failed' : 'waiting',
+            forbidden || localFileFailure ? 'failed' : 'waiting',
             offset,
-            forbidden ? '设备已撤信，传输已停止。' : '等待连接或认证文件回执；连接恢复后续传。',
+            forbidden
+              ? '设备已撤信，传输已停止。'
+              : localFileFailure
+                ? error.message
+                : '等待连接或认证文件回执；连接恢复后续传。',
           );
           break;
         }
