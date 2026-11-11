@@ -543,8 +543,7 @@ export function verifyUiAssets(root: string, runtime: string) {
   const directory = regularPath(dist, join(dist, 'assets'), 'directory');
   const files = readdirSync(directory);
   assert(files.length <= 2000, 'Too many UI assets');
-  // The current UI crops the original wordmark and uses its derived favicon.
-  // The two unused symbol images are correctly omitted by Vite.
+  // Require the original wordmark and its derived favicon in the installed UI.
   const brands = ['rivloom-wordmark', 'rivloom-favicon'].map((name) => {
     const source = regularPath(root, join(root, 'src', 'assets', 'brand', `${name}.png`), 'file');
     const matches = files.filter((file) => file.startsWith(`${name}-`) && file.endsWith('.png'));
@@ -580,23 +579,25 @@ export function verifyUiAssets(root: string, runtime: string) {
       linkedContent.includes(asset.path),
       `UI does not reference its brand image: ${asset.path}`,
     );
-  const expectedAccent = readFileSync(join(root, 'src', 'styles.css'), 'utf8')
-    .match(/--accent\s*:\s*(#[\da-f]{6})\s*;/i)?.[1]
-    .toLowerCase();
-  assert(expectedAccent, 'Source brand accent is missing');
+  const themeSource = regularPath(root, join(root, 'src', 'theme.css'), 'file');
+  const accents = [...readFileSync(themeSource, 'utf8').matchAll(/--accent\s*:\s*(#[\da-f]{6})\s*;/gi)]
+    .map((match) => match[1].toLowerCase());
+  assert.equal(new Set(accents).size, 2, 'Source light and dark brand accents are required');
   const css = entryAssets
     .filter((item) => item.path.endsWith('.css'))
     .map((item) => readFileSync(join(dist, item.path.slice(1)), 'utf8'))
     .join('\n');
-  assert(
-    new RegExp(`--accent\\s*:\\s*${expectedAccent}(?:;|})`, 'i').test(css),
-    'Installed UI does not contain the source brand accent',
-  );
+  for (const accent of accents) {
+    assert(
+      new RegExp(`--accent\\s*:\\s*${accent}(?:;|})`, 'i').test(css),
+      `Installed UI does not contain the source brand accent ${accent}`,
+    );
+  }
   return {
     indexSha256: digest(index),
     assets: [...entryAssets, ...brands],
     brands: brands.length,
-    accent: expectedAccent,
+    accent: accents[0],
   };
 }
 

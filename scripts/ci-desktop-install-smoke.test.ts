@@ -430,7 +430,7 @@ test('installed runtime evidence matches build evidence and binds file names and
   assert.notEqual(measureInstalledTree(runtime).sha256, before.sha256);
 });
 
-test('UI assets verify the referenced wordmark and favicon and reject missing or altered bytes', () => {
+test('UI assets require the original brand images and both appearance accents', () => {
   const root = fixture();
   const assets = join(root, 'dist', 'assets');
   const sources = join(root, 'src', 'assets', 'brand');
@@ -444,8 +444,9 @@ test('UI assets verify the referenced wordmark and favicon and reject missing or
   }
   const script = `const wordmark = "/assets/${wordmark}";`;
   writeFileSync(join(assets, 'index-fixture.js'), script);
-  writeFileSync(join(assets, 'index-fixture.css'), ':root{--accent:#245eea;}');
-  writeFileSync(join(root, 'src', 'styles.css'), ':root { --accent: #245eea; }');
+  const theme = ':root{--accent:#245eea;}:root[data-theme=dark]{--accent:#aba4ff;}';
+  writeFileSync(join(assets, 'index-fixture.css'), theme);
+  writeFileSync(join(root, 'src', 'theme.css'), theme);
   writeFileSync(
     join(root, 'dist', 'index.html'),
     `<link rel="icon" href="/assets/${favicon}"><script src="/assets/index-fixture.js"></script><link href="/assets/index-fixture.css">`,
@@ -467,7 +468,9 @@ test('UI assets verify the referenced wordmark and favicon and reject missing or
   writeFileSync(join(assets, 'index-fixture.js'), 'const removedWordmark = true;');
   assert.throws(() => verifyUiAssets(root, root), /does not reference its brand image/);
   writeFileSync(join(assets, 'index-fixture.js'), script);
-  writeFileSync(join(assets, 'index-fixture.css'), ':root{--accent:#ffffff;}');
+  writeFileSync(join(assets, 'index-fixture.css'), ':root{--accent:#245eea;}');
+  assert.throws(() => verifyUiAssets(root, root), /does not contain the source brand accent #aba4ff/);
+  writeFileSync(join(assets, 'index-fixture.css'), theme.replace('#245eea', '#ffffff'));
   assert.throws(() => verifyUiAssets(root, root), /does not contain the source brand accent/);
 });
 
