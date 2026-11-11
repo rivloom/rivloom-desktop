@@ -20,8 +20,8 @@
   cursor: default;
   opacity: 0.5;
 }
-.model-picker-trigger.needs-setup .model-picker-warning { color: #a46a11; flex-shrink: 0; }
-.model-picker-notice { flex-shrink: 0; margin: 2px 2px 6px; padding: 11px; border: 1px solid #ecd6aa; border-radius: 8px; background: #fff8e9; color: #694816; font-size: 12px; }
+.model-picker-trigger.needs-setup .model-picker-warning { color: var(--warning); flex-shrink: 0; }
+.model-picker-notice { flex-shrink: 0; margin: 2px 2px 6px; padding: 11px; border: 1px solid var(--warning-line); border-radius: 8px; background: var(--surface-soft); color: var(--warning); font-size: 12px; }
 .model-picker-notice strong { font-size: 13px; }
 .model-picker-notice p { margin: 6px 0 10px; line-height: 1.6; }
 .model-picker-notice .button { min-height: 32px; padding: 5px 10px; }
@@ -32,12 +32,12 @@
   flex-direction: column;
   width: min(380px, calc(100vw - 16px));
   box-sizing: border-box;
-  padding: 6px;
+  padding: var(--panel-gap);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--panel-radius);
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 8px 28px #17233320;
+  box-shadow: var(--shadow-float);
   overflow: hidden;
 }
 .model-picker-search {
@@ -47,14 +47,17 @@
   gap: 8px;
   margin-bottom: 6px;
   padding: 0 10px;
-  min-height: 37px;
+  min-height: var(--ui-control-height);
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--muted);
+  background: var(--surface-soft);
 }
 .model-picker-search:focus-within {
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
 }
+.model-picker-search > svg { flex-shrink: 0; stroke-width: var(--ui-icon-stroke); }
 .model-picker-search input {
   width: 100%;
   min-width: 0;
@@ -66,7 +69,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 .model-picker-search input:focus {
   outline: none;
@@ -213,5 +216,5 @@
   text-align: center;
   font-size: 12px;
 }
-.model-picker-manage { width: 100%; border: 0; border-top: 1px solid #e1e7f0; padding: 11px 14px; background: #f6f8fc; color: #3e5f8a; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
-.model-picker-manage:focus-visible { outline: 2px solid #557cae; outline-offset: -3px; }
+.model-picker-manage { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 11px 14px; background: var(--surface); color: var(--text); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.model-picker-manage:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; }

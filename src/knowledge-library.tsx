@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, FolderOpen, Plus, RefreshCw, Share2, Pencil, Trash2, FileText, LoaderCircle, CircleAlert } from 'lucide-react';
+import { BookMarked, BookOpen, CircleAlert, CodeXml, FileText, FolderOpen, Layers3, LibraryBig, LoaderCircle, Pencil, Plus, RefreshCw, ScrollText, Search, Share2, Trash2 } from 'lucide-react';
 import { t, systemText } from '../shared/i18n.ts';
 import { knowledgeError } from '../shared/knowledge-errors.ts';
 import type { LocalKnowledgeEntry, KnowledgeManifest, KnowledgeSearch, MemoryInput, MemoryOrganization } from '../shared/knowledge.ts';
@@ -81,38 +81,40 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
     </select></Field>;
   }
   return <section className="knowledge-library" aria-label={t('技能与记忆')}>
-    <div className="knowledge-heading"><div><h1><BookOpen size={22} />{t('技能与记忆')}</h1>
-      <p>{t('本机保存，按需分享；先发现用途，再加载内容。')}</p></div>
+    <div className="knowledge-heading"><div className="knowledge-heading-copy">
+      <span className="utility-page-icon"><LibraryBig size={22} aria-hidden="true" /></span>
+      <div><h1>{t('技能与记忆')}</h1><p>{t('本机保存，按需分享；先发现用途，再加载内容。')}</p></div>
+    </div>
       <Button disabled={busy || loading} onClick={() => void perform(async () => { await api('/knowledge/refresh', {}); await refresh(); setRefreshKey((v) => v + 1); setNotice('refreshed'); })}>
         <RefreshCw size={15} className={busy || loading ? 'spin' : ''} />{t('刷新')}</Button></div>
-    <nav className="device-settings-tabs" aria-label={t('知识库分类')}>
-      <button disabled={busy} aria-current={tab === 'skill' ? 'page' : undefined} onClick={() => switchTab('skill')}>{t('Skills')}</button>
-      <button disabled={busy} aria-current={tab === 'memory' ? 'page' : undefined} onClick={() => switchTab('memory')}>{t('Wiki 记忆')}</button>
-      <button disabled={busy} aria-current={tab === 'rules' ? 'page' : undefined} onClick={() => switchTab('rules')}>{t('本机与目录说明')}</button>
+    <nav className="knowledge-tabs" aria-label={t('知识库分类')}>
+      <button type="button" disabled={busy} aria-current={tab === 'skill' ? 'page' : undefined} onClick={() => switchTab('skill')}><CodeXml size={16} aria-hidden="true" />{t('Skills')}</button>
+      <button type="button" disabled={busy} aria-current={tab === 'memory' ? 'page' : undefined} onClick={() => switchTab('memory')}><BookMarked size={16} aria-hidden="true" />{t('Wiki 记忆')}</button>
+      <button type="button" disabled={busy} aria-current={tab === 'rules' ? 'page' : undefined} onClick={() => switchTab('rules')}><ScrollText size={16} aria-hidden="true" />{t('本机与目录说明')}</button>
     </nav>
     <p className="knowledge-section-description">{tab === 'skill' ? t('把常用工作方法添加为技能，任务需要时即可使用。') : tab === 'memory' ? t('保存可复用的信息，让后续任务了解你的偏好与项目背景。') : t('为本机或指定文件夹设置长期遵循的工作说明。')}</p>
     {error && <p className="knowledge-error" role="alert">{knowledgeError(error) || systemText(error)}</p>}
     {notice && <p className="knowledge-notice" role="status">{notices[notice]}</p>}
     {tab === 'rules' ? <div className="knowledge-rules-list"><p>{t('本机说明适用于本机发起的任务；工作目录说明随对应目录加载。Wiki 正文只在需要时读取。')}</p>
       {[{ id: null, name: t('本机主说明'), directory: 'AGENTS.md' }, ...projects].map((p) => <article key={p.id || 'node'}>
-        <FileText size={18} /><div><strong>{p.name}</strong><small>{p.directory}</small></div>
+        <span className="knowledge-row-icon"><FileText size={17} aria-hidden="true" /></span><div><strong>{p.name}</strong><small>{p.directory}</small></div>
         <Button disabled={busy} onClick={() => void readDialog('rules', async () => {
           const result = await api<{ body: string; revision: string; path: string }>('/knowledge/rules/read', { projectID: p.id }); setRules({ ...result, projectID: p.id });
         })}>{t('编辑说明')}</Button></article>)}
     </div> : <>
-      <div className="knowledge-toolbar"><label><select aria-label={t('知识库来源')} disabled={busy} value={scope} onChange={(e) => { setScope(e.target.value); setCategory(''); }}>
+      <div className="knowledge-toolbar"><select aria-label={t('知识库来源')} disabled={busy} value={scope} onChange={(e) => { setScope(e.target.value); setCategory(''); }}>
         <option value="local">{t('本机')}</option>{library.brains.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-      </select></label><input aria-label={t('搜索技能与记忆')} placeholder={t('搜索名称、用途或分类')} value={query} onChange={(e) => setQuery(e.target.value)} />
+      </select><label className="knowledge-search"><Search size={16} aria-hidden="true" /><input aria-label={t('搜索技能与记忆')} placeholder={t('搜索名称、用途或分类')} value={query} onChange={(e) => setQuery(e.target.value)} /></label>
       {(query || category) && <Button onClick={() => { setQuery(''); setCategory(''); }}>{t('清除筛选')}</Button>}
-      {scope === 'local' && <Button disabled={busy} onClick={() => tab === 'skill' ? setRegister({ directory: '', projectID: null }) :
+      {scope === 'local' && <Button variant="primary" disabled={busy} onClick={() => tab === 'skill' ? setRegister({ directory: '', projectID: null }) :
         setEditor({ name: '', description: '', category: category || '', body: '', projectID: null })}><Plus size={15} />{tab === 'skill' ? t('添加 Skill') : t('新建记忆')}</Button>}
     </div>
     {scope !== 'local' && <p className="knowledge-explainer">{t('这里只显示向此 Brain 分享的目录。打开内容时会向来源 Node 核对最新版。')}</p>}
     {!!shared.unavailable.length && scope !== 'local' && <p role="status" className="knowledge-notice">{t('部分来源暂时不可用，当前目录可能不完整。')}</p>}
     <div className="knowledge-layout">
       {tab === 'memory' && <aside className="knowledge-tree" aria-label={t('记忆分类')}>
-        <button aria-current={!category ? 'page' : undefined} onClick={() => setCategory('')}>{t('全部分类')}</button>
-        {categories.map((path) => <button key={path} title={path} aria-current={category === path ? 'page' : undefined}
+        <button type="button" aria-current={!category ? 'page' : undefined} onClick={() => setCategory('')}><Layers3 size={15} aria-hidden="true" />{t('全部分类')}</button>
+        {categories.map((path) => <button type="button" key={path} title={path} aria-current={category === path ? 'page' : undefined}
           style={{ paddingLeft: 12 + Math.min(path.split('/').length - 1, 6) * 12 }} onClick={() => setCategory(path)}><FolderOpen size={14} />{path.split('/').at(-1)}</button>)}
         {scope === 'local' && <Button disabled={busy} onClick={() => void perform(async () => { await api('/knowledge/organize', {}); await refresh(); setNotice('organized'); })}>{t('整理记忆')}</Button>}
         {library.organization && scope === 'local' && <small>{t('上次整理')}<br />{new Date(library.organization.at).toLocaleString()}</small>}
@@ -123,6 +125,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
         {rows.map((row) => {
           const local = scope === 'local' ? own(row.id) : null;
           return <article className="knowledge-entry" key={`${row.brainID}:${row.nodeID}:${row.id}`}>
+            <span className="knowledge-row-icon">{tab === 'skill' ? <CodeXml size={17} aria-hidden="true" /> : <BookMarked size={17} aria-hidden="true" />}</span>
             <div className="knowledge-entry-main"><button className="knowledge-title" disabled={busy} onClick={() => void readDialog('reading', () => read(row))}>{row.name}</button>
               <p>{row.description || t('暂无用途说明')}</p>
               <div className="knowledge-entry-meta"><span>{row.category}</span><span>{row.nodeName}</span><code title={row.revision}>{row.revision.slice(0, 10)}</code></div>
@@ -136,12 +139,14 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
                 const v = await api<LocalKnowledgeEntry & { body: string }>(`/knowledge/memory/${row.id}`);
                 setEditor({ id: v.id, expectedRevision: v.revision, name: v.name, description: v.description, category: v.category, body: v.body, projectID: v.projectID });
               })}><Pencil size={16} /></button>}
-              <button disabled={busy} aria-label={t('移除条目')} title={t('移除条目')} onClick={() => setRemoving(local)}><Trash2 size={16} /></button>
+              <button className="knowledge-remove" disabled={busy} aria-label={t('移除条目')} title={t('移除条目')} onClick={() => setRemoving(local)}><Trash2 size={16} /></button>
             </div>}
           </article>;
         })}
         {!rows.length && <div className="knowledge-empty" role="status">
-          {loading || searching ? <LoaderCircle size={30} className="spin" /> : directoryUnavailable ? <CircleAlert size={30} /> : <BookOpen size={30} />}
+          <span className="utility-page-icon" data-error={directoryUnavailable && !loading && !searching}>
+            {loading || searching ? <LoaderCircle size={22} className="spin" /> : directoryUnavailable ? <CircleAlert size={22} /> : <BookOpen size={22} />}
+          </span>
           <p>{loading || searching ? t('正在读取目录…') : directoryUnavailable ? t('暂时无法读取目录，请刷新重试。') : query || category ? t('没有找到匹配的内容') : tab === 'skill' ? t('还没有添加技能') : t('还没有保存记忆')}</p>
           {!loading && !searching && !directoryUnavailable && (query || category ? <small>{t('换一个关键词，或清除筛选查看全部内容。')}</small> : scope === 'local' && <small>{tab === 'skill' ? t('添加含 SKILL.md 的文件夹，再选择要分享的 Brain。') : t('按人物、工作、项目等分类保存记忆，正文按需读取。')}</small>)}</div>}
         {shared.next !== null && scope !== 'local' && <Button disabled={busy} onClick={() => void perform(async () => {
@@ -158,7 +163,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
         <Field label={t('Skill 文件夹')} hint={t('选择直接包含 SKILL.md 的目录，脚本和参考文件会按需取用。')}><input required disabled={busy} value={register.directory} onChange={(e) => setRegister({ ...register, directory: e.target.value })} /></Field>
         {desktop && <Button disabled={busy} onClick={() => void perform(async () => { const directory = await chooseProjectDirectory(); if (directory) setRegister({ ...register, directory }); })}><FolderOpen size={15} />{t('选择文件夹')}</Button>}
         {projectField(register.projectID, (projectID) => setRegister({ ...register, projectID }))}
-        <div className="modal-actions"><Button disabled={busy} onClick={() => setRegister(null)}>{t('取消')}</Button><Button type="submit" disabled={busy || !register.directory.trim()}>{t('添加')}</Button></div>
+        <div className="modal-actions"><Button disabled={busy} onClick={() => setRegister(null)}>{t('取消')}</Button><Button type="submit" variant="primary" disabled={busy || !register.directory.trim()}>{t('添加')}</Button></div>
       </form>
     </Modal>}
     {editor && <Modal title={editor.id ? t('编辑记忆') : t('新建记忆')} close={() => close(() => setEditor(null))} className="knowledge-editor" returnFocus={editor.id ? dialogTriggers.current.editor : undefined}>
@@ -171,7 +176,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
         <Field label={t('记忆正文')}><textarea required disabled={busy} rows={10} maxLength={32_000} value={editor.body} onChange={(e) => setEditor({ ...editor, body: e.target.value })} /></Field>
         <div className="modal-actions">{editor.id && <Button disabled={busy} onClick={() => void readDialog('history', async () => {
           const revisions = await api<NonNullable<typeof history>['revisions']>(`/knowledge/history/${editor.id}`); setHistory({ name: editor.name, revisions });
-        })}>{t('历史版本')}</Button>}<Button disabled={busy} onClick={() => setEditor(null)}>{t('取消')}</Button><Button type="submit" disabled={busy}>{t('保存')}</Button></div>
+        })}>{t('历史版本')}</Button>}<Button disabled={busy} onClick={() => setEditor(null)}>{t('取消')}</Button><Button type="submit" variant="primary" disabled={busy}>{t('保存')}</Button></div>
       </form>
     </Modal>}
     {sharing && <Modal title={t('管理分享')} subtitle={sharing.entries.length === 1 ? sharing.entries[0].name : t('为此分类当前显示的条目统一设置分享范围。')} close={() => close(() => setSharing(null))}>
@@ -180,7 +185,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
       <div className="knowledge-share-options">{library.brains.map((brain) => <label key={brain.id}><input type="checkbox" disabled={busy} checked={sharing.brains.includes(brain.id)} onChange={(e) => setSharing({ ...sharing,
         brains: e.target.checked ? [...sharing.brains, brain.id] : sharing.brains.filter((id) => id !== brain.id) })} /><span>{brain.name}</span><small>{brain.online ? t('在线') : t('离线')}</small></label>)}</div>
       {!library.brains.length && <p>{t('尚无可分享的 Brain，请先完成节点连接。')}</p>}
-      <div className="modal-actions"><Button disabled={busy} onClick={() => setSharing(null)}>{t('取消')}</Button><Button disabled={busy} onClick={() => void perform(async () => {
+      <div className="modal-actions"><Button disabled={busy} onClick={() => setSharing(null)}>{t('取消')}</Button><Button variant="primary" disabled={busy} onClick={() => void perform(async () => {
         await api('/knowledge/share-many', { entries: sharing.entries.map((v) => ({ id: v.id, revision: v.revision, updatedAt: v.updatedAt })), brains: sharing.brains });
         await refresh(); setSharing(null); setNotice('shared');
       })}>{t('保存分享范围')}</Button></div>
@@ -188,7 +193,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
     {removing && <Modal title={t('移除条目')} subtitle={removing.name} close={() => close(() => setRemoving(null))}>
       {error && <p className="knowledge-error" role="alert">{knowledgeError(error) || systemText(error)}</p>}
       <p>{removing.kind === 'skill' ? t('移除登记并取消分享，原 Skill 文件夹保留。') : t('移除此记忆及其历史版本，同时取消分享。')}</p>
-      <div className="modal-actions"><Button disabled={busy} onClick={() => setRemoving(null)}>{t('取消')}</Button><Button disabled={busy} onClick={() => void perform(async () => {
+      <div className="modal-actions"><Button disabled={busy} onClick={() => setRemoving(null)}>{t('取消')}</Button><Button variant="danger" disabled={busy} onClick={() => void perform(async () => {
         await api('/knowledge/remove', { id: removing.id, revision: removing.revision }); await refresh(); setRemoving(null);
       })}>{t('确认移除')}</Button></div>
     </Modal>}
@@ -200,7 +205,7 @@ export function KnowledgeLibrary({ projects }: { projects: Project[] }) {
       {error && <p className="knowledge-error" role="alert">{knowledgeError(error) || systemText(error)}</p>}
       <form onSubmit={(event) => { event.preventDefault(); void perform(async () => { await api('/knowledge/rules/save', { projectID: rules.projectID, body: rules.body, revision: rules.revision }); setRules(null); setNotice('rules'); }); }}>
         <Field label={t('说明内容')}><textarea disabled={busy} rows={15} maxLength={24_000} value={rules.body} onChange={(e) => setRules({ ...rules, body: e.target.value })} /></Field>
-        <div className="modal-actions"><Button disabled={busy} onClick={() => setRules(null)}>{t('取消')}</Button><Button type="submit" disabled={busy}>{t('保存')}</Button></div>
+        <div className="modal-actions"><Button disabled={busy} onClick={() => setRules(null)}>{t('取消')}</Button><Button type="submit" variant="primary" disabled={busy}>{t('保存')}</Button></div>
       </form>
     </Modal>}
     {history && <Modal title={t('历史版本')} subtitle={history.name} close={() => setHistory(null)} className="knowledge-editor" returnFocus={dialogTriggers.current.history}>

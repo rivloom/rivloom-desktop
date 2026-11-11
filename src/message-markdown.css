@@ -5,30 +5,30 @@
 .message-markdown ul, .message-markdown ol { padding-left: 1.5em; }
 .message-markdown h1, .message-markdown h2, .message-markdown h3 { line-height: 1.4; margin: 1.1em 0 .5em; font-size: 1.15em; }
 .message-markdown h1 { font-size: 1.4em; }
-.message-markdown a { color: #356394; text-decoration: underline; text-underline-offset: 3px; }
-.message-markdown blockquote { border-left: 3px solid #bdc6d1; margin: .8em 0; padding-left: 1em; color: #5b6370; }
-.message-markdown code { font-family: Consolas, monospace; font-size: .9em; background: #eef0f3; border-radius: 4px; padding: .1em .3em; }
-.markdown-code { margin: .9em 0; border: 1px solid #dfe3e9; border-radius: 9px; overflow: hidden; background: #f7f8fa; }
-.markdown-code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; border-bottom: 1px solid #e4e7eb; font-size: 12px; color: #687180; user-select: none; }
+.message-markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.message-markdown blockquote { border-left: 3px solid var(--line); margin: .8em 0; padding-left: 1em; color: var(--text); }
+.message-markdown code { font-family: Consolas, monospace; font-size: .9em; background: var(--surface-soft); border-radius: 4px; padding: .1em .3em; }
+.markdown-code { margin: .9em 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--surface); }
+.markdown-code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text); user-select: none; }
 .markdown-code pre { margin: 0; padding: 14px; white-space: pre; overflow-x: auto; }
 .message-markdown > pre { max-width: 100%; overflow-x: auto; }
 .message-markdown pre:focus-visible, .markdown-table:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .markdown-code code { background: transparent; padding: 0; border-radius: 0; }
-.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #944275; }
-.hljs-string, .hljs-regexp, .hljs-template-tag { color: #397457; }
-.hljs-number, .hljs-attr, .hljs-symbol { color: #a36528; }
-.hljs-title, .hljs-built_in, .hljs-type { color: #286ea4; }
-.hljs-comment, .hljs-quote { color: #7b8490; font-style: italic; }
-.hljs-addition { color: #287044; background: #e6f4e9; }
-.hljs-deletion { color: #a94343; background: #f9e9e9; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: var(--accent); }
+.hljs-string, .hljs-regexp, .hljs-template-tag { color: var(--success); }
+.hljs-number, .hljs-attr, .hljs-symbol { color: var(--warning); }
+.hljs-title, .hljs-built_in, .hljs-type { color: var(--accent); }
+.hljs-comment, .hljs-quote { color: var(--text); font-style: italic; }
+.hljs-addition { color: var(--success); background: var(--surface-soft); }
+.hljs-deletion { color: var(--danger); background: var(--surface-soft); }
 .markdown-table { overflow-x: auto; margin: .9em 0; }
 .markdown-table table { border-collapse: collapse; width: 100%; font-size: .95em; }
-.markdown-table th, .markdown-table td { border: 1px solid #dfe3e9; padding: 7px 11px; text-align: left; min-width: 80px; }
-.markdown-table th { background: #f2f4f6; font-weight: 600; }
-.markdown-image-label { color: #717985; font-size: .9em; }
+.markdown-table th, .markdown-table td { border: 1px solid var(--line); padding: 7px 11px; text-align: left; min-width: 80px; }
+.markdown-table th { background: var(--surface-soft); font-weight: 600; }
+.markdown-image-label { color: var(--text); font-size: .9em; }
 .workflow-round { margin-bottom: 32px; }
 .workflow-round-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; margin: 24px 0 20px; }
 .workflow-round-divider::after { content: ''; flex: 1; border-top: 1px solid var(--line); }
 .workflow-message-queue { margin-top: 14px; }
 .workflow-queue-message { margin-bottom: 14px; }
-.workflow-queue-message footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: #747e8c; font-size: 12px; }
+.workflow-queue-message footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: var(--text); font-size: 12px; }

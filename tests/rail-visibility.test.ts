@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { activeQueueCount, railExpanded, toggledRailPreference } from '../src/rail-visibility.ts';
 
-test('idle rail stays collapsed until the queue has live work', () => {
+test('automatic rail remains unobtrusive even when work becomes active', () => {
   assert.equal(activeQueueCount(null), 0);
   assert.equal(activeQueueCount([{ state: 'ended' }, { state: 'ended' }]), 0);
   assert.equal(activeQueueCount([{ state: 'waiting' }, { state: 'admitted' }, { state: 'ended' }, { state: 'held' }]), 3);
   assert.equal(railExpanded(true, 'auto', 0), false);
-  assert.equal(railExpanded(true, 'auto', 2), true);
+  assert.equal(railExpanded(true, 'auto', 2), false);
 });
 
 test('explicit choices win over the automatic state', () => {

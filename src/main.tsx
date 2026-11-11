@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { I18nextProvider, useTranslation } from 'react-i18next';
 import { i18n } from '../shared/i18n';
 import { initializeLanguage } from './i18n';
+import { initializeTheme } from './theme';
 import { LanguageSwitcher } from './language-switcher';
 import { DesktopUpdateProvider } from './desktop-update';
 import { useDesktopStartup } from './desktop-startup';
@@ -16,6 +17,7 @@ import { Wordmark, Button, Field } from './ui';
 import { ConversationWorkspace } from './conversation-workspace';
 import type { Bootstrap, NodeNetwork } from '../shared/types';
 import './styles.css';
+import './theme.css';
 import './conversation-workspace.css';
 import './workspace-settings.css';
 import './chat-refinement.css';
@@ -273,7 +275,7 @@ function App() {
   );
 }
 
-await initializeLanguage();
+await Promise.all([initializeTheme(), initializeLanguage()]);
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <I18nextProvider i18n={i18n}>

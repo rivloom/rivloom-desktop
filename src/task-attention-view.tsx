@@ -1,6 +1,6 @@
 import { t, systemText, language } from '../shared/i18n.ts';
 import { useEffect, useRef, useState } from 'react';
-import { Bell, BellOff, CheckCheck, ChevronRight, CircleAlert, Inbox, Play, RefreshCw, Volume2 } from 'lucide-react';
+import { Bell, BellOff, CheckCheck, ChevronRight, CircleAlert, CirclePause, ClipboardCheck, ListChecks, MessageCircleQuestion, Play, RefreshCw, ShieldCheck, Volume2 } from 'lucide-react';
 import { api } from './api';
 import { desktop, notifyAttention, takeNotificationTarget } from './desktop';
 import { reuseJson } from './desktop-refresh';
@@ -10,9 +10,19 @@ import {
   attentionLabels,
   completionSoundFor,
   type CompletionSound,
+  type AttentionKind,
   type AttentionSnapshot,
   type NotificationPreferences,
 } from '../shared/task-attention';
+
+const attentionIcons = {
+  approval: ShieldCheck,
+  input: MessageCircleQuestion,
+  review: ClipboardCheck,
+  interrupted: CirclePause,
+  failed: CircleAlert,
+  completed: CheckCheck,
+} satisfies Record<AttentionKind, typeof Bell>;
 
 export function useTaskAttention(identity: string, open: (key: string) => void) {
   const [snapshot, setSnapshot] = useState<Pick<AttentionSnapshot, 'items' | 'preferences'> | null>(
@@ -150,13 +160,12 @@ export function TaskAttentionView({
   return (
     <section className="attention-page" aria-label={t('待办中心')}>
       <div className="attention-heading">
-        <div>
-          <span className="eyebrow">{t('需要你的处理')}</span>
-          <h1>
-            {t('待办')}
-            <span>{snapshot ? items.length : '—'}</span>
-          </h1>
-          <p>{t('审批和回答都从这里回到原会话。')}</p>
+        <div className="attention-heading-copy">
+          <span className="utility-page-icon"><ListChecks size={22} aria-hidden="true" /></span>
+          <div>
+            <h1>{t('待办')}<span className="attention-total">{snapshot ? items.length : '—'}</span></h1>
+            <p>{t('审批和回答都从这里回到原会话。')}</p>
+          </div>
         </div>
         <button className="button" disabled={refreshing} onClick={refresh}>
           <RefreshCw size={16} className={refreshing ? 'spin' : ''} />
@@ -164,7 +173,9 @@ export function TaskAttentionView({
         </button>
       </div>
       <details className="notification-settings">
-      <summary><Bell size={16} /><strong>{t('通知与声音')}</strong><span>{!prefs ? t('状态待确认') : quiet ? t('免打扰中') : prefs.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span><ChevronRight size={16} /></summary>
+      <summary><Bell size={17} aria-hidden="true" /><strong>{t('通知与声音')}</strong>
+        <span data-status={!prefs ? 'unknown' : quiet ? 'quiet' : prefs.enabled ? 'on' : 'off'}>{!prefs ? t('状态待确认') : quiet ? t('免打扰中') : prefs.enabled ? t('桌面通知已开启') : t('桌面通知已关闭')}</span>
+        <ChevronRight size={16} aria-hidden="true" /></summary>
       <div className="attention-preferences">
         <Bell size={18} />
         <label>
@@ -251,11 +262,13 @@ export function TaskAttentionView({
         ))}
       </div>
       {!snapshot ? (
-        error ? <div className="attention-empty" role="status"><CircleAlert size={32} /><strong>{t('待办暂时不可用')}</strong><span>{t('请刷新重试，确认待办状态后再继续处理。')}</span></div>
+        error ? <div className="attention-empty" role="status"><span className="utility-page-icon" data-error="true"><CircleAlert size={22} aria-hidden="true" /></span><strong>{t('待办暂时不可用')}</strong><span>{t('请刷新重试，确认待办状态后再继续处理。')}</span></div>
           : <p className="attention-empty" role="status">{t('正在读取待办…')}</p>
       ) : filtered.length ? (
         <div className="attention-list">
-          {filtered.map((item) => (
+          {filtered.map((item) => {
+            const Icon = attentionIcons[item.kind];
+            return (
             <button
               className="attention-card"
               key={item.key}
@@ -263,7 +276,7 @@ export function TaskAttentionView({
               onClick={() => open(item.conversationKey, item.key)}
             >
               <span className={`attention-kind ${item.kind}`}>
-                <Inbox size={16} />
+                <Icon size={16} aria-hidden="true" />
                 {attentionLabels[item.kind]}
               </span>
               <span className="attention-card-copy">
@@ -273,13 +286,14 @@ export function TaskAttentionView({
                   {new Date(item.updatedAt).toLocaleString(language())}
                 </time>
               </span>
-              <ChevronRight size={18} />
+              <ChevronRight size={17} aria-hidden="true" />
             </button>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="attention-empty">
-          <CheckCheck size={32} />
+          <span className="utility-page-icon"><CheckCheck size={22} aria-hidden="true" /></span>
           <strong>
             {items.length ? t('这个分类暂时没有待办') : t('当前没有需要你处理的任务')}
           </strong>

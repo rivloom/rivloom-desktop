@@ -1923,10 +1923,29 @@ export class NodeNetwork extends EventEmitter {
     }
   }
 
+  private taskFilePeers() {
+    const peers = new Set(this.nodes.keys());
+    // A clean goodbye can remove a Node before the next file timer runs. Also
+    // revisit persisted sends once after restart, before that peer is discovered.
+    if (this.files.active) for (const delivery of this.files.deliveries())
+      if (delivery.state === 'sending') peers.add(delivery.peerNodeID);
+    return peers;
+  }
+
   private async flushTaskFiles(peerID: string) {
     if (this.updateMaintenance() || !this.files.active || this.transferringFiles.has(peerID)) return;
     const peer = this.nodes.get(peerID);
-    if (!peer?.online || !peer.trusted || !peer.channelReady) return;
+    if (!peer?.online || !peer.trusted || !peer.channelReady) {
+      // Discovery/clean shutdown can invalidate the peer before the next send.
+      // Keep the last authenticated offset, but do not report continued sending
+      // while no usable channel exists. Revocation keeps its existing failed path.
+      if (this.isTrustedNode(peerID)) for (const delivery of this.files.deliveries()) {
+        if (delivery.peerNodeID === peerID && delivery.state === 'sending')
+          this.files.deliveryState(delivery.route, delivery.fileID, peerID, 'waiting', delivery.bytes,
+            '等待连接或认证文件回执；连接恢复后续传。');
+      }
+      return;
+    }
     const deliveries = this.files.deliveries().filter((delivery) => {
       if (delivery.peerNodeID !== peerID) return false;
       if (delivery.route.purpose !== 'input') return true;
@@ -2066,7 +2085,7 @@ export class NodeNetwork extends EventEmitter {
             delivery.bytes,
             '设备已撤信，传输已停止。',
           );
-    for (const peer of this.nodes.values()) void this.flushTaskFiles(peer.id);
+    for (const peerID of this.taskFilePeers()) void this.flushTaskFiles(peerID);
   }
 
   private async sendChannelEvent(
@@ -3734,7 +3753,7 @@ export class NodeNetwork extends EventEmitter {
       this.timer.unref();
       this.fileTimer = setInterval(() => {
         if (this.files.active)
-          for (const peer of this.nodes.values()) void this.flushTaskFiles(peer.id);
+          for (const peerID of this.taskFilePeers()) void this.flushTaskFiles(peerID);
       }, 200);
       this.fileTimer.unref();
       this.refreshTaskFiles();

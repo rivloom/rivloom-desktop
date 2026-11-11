@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Check } from 'lucide-react';
 import './context-menu.css';
 
-export type MenuAction = { id: string; label: string; icon?: ReactNode; disabled?: boolean; hint?: string; danger?: boolean; select: () => void };
+export type MenuAction = { id: string; label: string; icon?: ReactNode; disabled?: boolean; checked?: boolean; hint?: string; danger?: boolean; select: () => void };
 type Anchor = { x: number; y: number; target: HTMLElement };
 
 export function useContextMenu() {
@@ -39,10 +40,9 @@ export function ContextMenu({ menu, label, actions }: { menu: ReturnType<typeof 
   useLayoutEffect(() => {
     const element = ref.current;
     if (!anchor || !element) return;
-    const rect = element.getBoundingClientRect();
-    element.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - rect.width - 8))}px`;
-    element.style.top = `${Math.max(8, Math.min(anchor.y, window.innerHeight - rect.height - 8))}px`;
-    (element.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])') || element).focus({ preventScroll: true });
+    element.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - element.offsetWidth - 8))}px`;
+    element.style.top = `${Math.max(8, Math.min(anchor.y, window.innerHeight - element.offsetHeight - 8))}px`;
+    (element.querySelector<HTMLElement>('[aria-checked="true"]') || element.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"])') || element).focus({ preventScroll: true });
   }, [anchor]);
   useEffect(() => {
     if (!anchor) return;
@@ -65,7 +65,7 @@ export function ContextMenu({ menu, label, actions }: { menu: ReturnType<typeof 
     className={`context-menu${anchor.target.closest('.history-graphite') ? ' history-graphite' : ''}`}
     style={{ left: anchor.x, top: anchor.y }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
     onKeyDown={(event) => {
-      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([aria-disabled="true"])') || [])];
+      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]:not([aria-disabled="true"])') || [])];
       const current = items.indexOf(document.activeElement as HTMLButtonElement);
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
         event.preventDefault();
@@ -74,10 +74,11 @@ export function ContextMenu({ menu, label, actions }: { menu: ReturnType<typeof 
       } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
       else if (event.key === 'Tab') close(true);
     }}>
-    {actions.map((action) => <button key={action.id} type="button" role="menuitem" tabIndex={-1} aria-disabled={!!action.disabled}
+    {actions.map((action) => <button key={action.id} type="button" role={action.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={action.checked} tabIndex={-1} aria-disabled={!!action.disabled}
       className={action.danger ? 'danger' : undefined} title={action.hint}
       onClick={() => { if (action.disabled) return; close(true); action.select(); }}>
       {action.icon}<span>{action.label}{action.hint && <small>{action.hint}</small>}</span>
+      {action.checked && <Check className="context-menu-check" size={15} aria-hidden="true" />}
     </button>)}
   </div>, document.body);
 }

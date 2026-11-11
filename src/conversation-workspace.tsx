@@ -23,6 +23,10 @@ import { TaskTelemetryView } from './task-telemetry-view';
 import { MessageQuoteCard, UserMessageText } from './message-quote-view';
 import { quotedMessageText } from './message-quote';
 import { MessageTrace, MessageSpeed } from './message-trace';
+import { LegacyConversationActivity, legacyFileRevision } from './legacy-conversation-activity';
+import { conversationIdentityIndex } from './conversation-journey';
+import { resetTaskFileState } from './use-task-file-state';
+import { ThemeMenu } from './theme-menu';
 import { ProjectChangesView } from './project-changes-view';
 import { ProjectFilesView } from './project-files-view';
 import { ConnectionSettings } from './connection-settings';
@@ -80,6 +84,7 @@ import {
   ArrowDown,
   ArrowLeft,
   Plus,
+  Command,
   Search,
   Settings2,
   BookOpen,
@@ -95,12 +100,16 @@ import {
   RefreshCw,
   ListOrdered,
   PanelLeft,
-  PanelRight,
+  PanelRightClose,
+  PanelRightOpen,
   FileCode2,
   Bot,
+  Cpu,
+  FolderCog,
+  LibraryBig,
+  ListChecks,
+  MonitorCog,
   ShieldCheck,
-  ShieldAlert,
-  MessageCircleQuestion,
   ChevronRight,
   AtSign,
   Pause,
@@ -433,7 +442,7 @@ const HistoryRow = memo(function HistoryRow({
   const label = [selected ? t('当前') : '', item.title, originLabel, source, state, item.pinned ? t('已置顶') : '', hasDraft ? t('草稿') : ''].filter(Boolean).join(' · ');
   const excerpt = matches && contentSearchMatch(matches);
   return (
-    <div className={`history-row ${excerpt ? 'has-search-result' : ''}`} data-conversation-key={item.key} onContextMenu={menu.context} onKeyDown={menu.keyboard}>
+    <div className={`history-row ${excerpt ? 'has-search-result' : ''}`} data-conversation-key={item.key} data-activity-identity={conversationIdentityIndex(item.key)} onContextMenu={menu.context} onKeyDown={menu.keyboard}>
     <button
       aria-current={selected ? 'page' : undefined}
       aria-label={label}
@@ -484,6 +493,9 @@ const Transcript = memo(function Transcript({
   draft,
   reuse,
   reuseDisabled,
+  nodeName,
+  connected,
+  localNodeID,
 }: {
   item: Conversation;
   source: string;
@@ -492,6 +504,9 @@ const Transcript = memo(function Transcript({
   draft: ConversationDraft;
   reuse: (intent: MessageReuseIntent) => boolean;
   reuseDisabled: boolean;
+  nodeName: (id: string | null) => string;
+  connected: boolean;
+  localNodeID: string | null;
 }) {
   const task = item.localTask;
   const messages = task?.messages || [];
@@ -512,23 +527,27 @@ const Transcript = memo(function Transcript({
     item.brainTask?.executionSummary || item.remote?.executionSummary,
     item.brainTask?.status || item.remote?.executionState,
   );
+  const visible = displayed.filter(message => message.role === 'user' || message.text.trim()
+    || message.parts?.some(part => part.type === 'text' && part.text.trim()) || searchQuery && (message.tools.length || message.parts?.length));
+  const split = Math.max(0, visible.findLastIndex(message => message.role === 'user') + 1);
+  const renderMessages = (items: Message[]) => items.map((message) => {
+    const text = message.id === firstUser?.id ? item.description : message.text;
+    return <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
+      tabIndex={-1} data-search-target={searchTargetID(message.id === firstUser?.id || message.id === 'requirement'
+        ? { kind: 'requirement' } : { kind: 'message', messageID: message.id })}>
+      {message.role === 'user' ? text && <UserMessageText text={text} searchQuery={searchQuery} /> :
+        <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'}
+          completed={!!task && ['review', 'accepted'].includes(task.state)} showProcess={!!searchQuery} searchQuery={searchQuery} />}
+      {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse}
+        disabled={reuseDisabled} allowReuse={message.role === 'user'} iconOnly />
+        {message.role === 'assistant' && <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />}</div>}
+    </article>;
+  });
   return (
     <>
-      {displayed.map((message) => {
-        const text =
-          message.id === firstUser?.id ? item.description : message.text;
-        return (
-          <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
-            tabIndex={-1} data-search-target={searchTargetID(message.id === firstUser?.id || message.id === 'requirement'
-              ? { kind: 'requirement' } : { kind: 'message', messageID: message.id })}>
-            {message.role === 'user' ? text && <UserMessageText text={text} searchQuery={searchQuery} /> :
-              <MessageTrace message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'}
-                completed={!!task && ['review', 'accepted'].includes(task.state)} searchQuery={searchQuery} />}
-            {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={message.role === 'user'} iconOnly />
-              {message.role === 'assistant' && <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />}</div>}
-          </article>
-        );
-      })}
+      <>{renderMessages(visible.slice(0, split))}</>
+      <LegacyConversationActivity key={item.key} item={item} nodeName={nodeName} connected={connected} localNodeID={localNodeID} />
+      <>{renderMessages(visible.slice(split))}</>
       {!task && summary && (
         <article className="chat-message assistant" tabIndex={-1} data-search-target={searchTargetID({ kind: 'summary' })}>
           <div className="chat-message-byline">
@@ -537,15 +556,6 @@ const Transcript = memo(function Transcript({
           <MessageMarkdown text={summary} searchQuery={searchQuery} />
           <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} iconOnly /></div>
         </article>
-      )}
-      {task && task.state !== 'running' && activeStates.includes(task.state) && (
-        // Waiting for the user is not progress: only work in flight spins.
-        <div className={`chat-progress${['waiting_approval', 'waiting_input'].includes(task.state) ? ' awaiting-user' : ''}`} role="status">
-          {task.state === 'waiting_approval' ? <ShieldAlert size={15} aria-hidden="true" />
-            : task.state === 'waiting_input' ? <MessageCircleQuestion size={15} aria-hidden="true" />
-              : <LoaderCircle size={15} className="spin" />}
-          {conversationState(item)}
-        </div>
       )}
     </>
   );
@@ -563,9 +573,15 @@ export function ConversationWorkspace({
   connectionError: string;
 }) {
   const rivloomVersion = useRivloomVersion();
+  const fileIdentity = `${data.user.id}:${data.network.local?.id || ''}`;
+  useLayoutEffect(() => { resetTaskFileState(); }, [fileIdentity]);
   const [view, setView] = useState<'chat' | 'network' | 'models' | 'execution' | 'attention' | 'diagnostics' | 'trash' | 'knowledge'>(
     'chat',
   );
+  const pageTitle = view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站')
+    : view === 'attention' ? t('待办中心') : view === 'diagnostics' ? t('连接诊断') : t('设备与模型');
+  const PageIcon = view === 'knowledge' ? LibraryBig : view === 'trash' ? Trash2
+    : view === 'attention' ? ListChecks : view === 'diagnostics' ? DiagnosticIcon : MonitorCog;
   const [diagnosticTarget, setDiagnosticTarget] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [attentionReturnKey, setAttentionReturnKey] = useState<string | null>(null);
@@ -574,6 +590,7 @@ export function ConversationWorkspace({
   const pendingHistoryReveal = useRef<string | null>(null);
   const historyListRef = useRef<HTMLDivElement>(null);
   const settingsPageRef = useRef<HTMLDivElement>(null);
+  const settingsViewRef = useRef<HTMLDivElement>(null);
   const attentionBackRef = useRef<HTMLButtonElement>(null);
   const selectedRef = useRef(selected);
   const seenSelected = useRef<string | null>(null);
@@ -723,8 +740,10 @@ export function ConversationWorkspace({
   const [remarkNodeID, setRemarkNodeID] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const scrollPinned = useRef(true);
+  const explicitlyFollowingProcess = useRef(false);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerToolbarRef = useRef<HTMLDivElement>(null);
   const settingsTrigger = useRef<HTMLButtonElement | null>(null);
   const composing = useRef(false);
   const all = useMemo(
@@ -784,7 +803,18 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     if (view === 'chat' && attentionReturnKey === selected) attentionBackRef.current?.focus({ preventScroll: true });
   }, [view, selected, attentionReturnKey]);
+  useLayoutEffect(() => {
+    const content = settingsViewRef.current;
+    if (!content || prefersReducedMotion() || document.documentElement.dataset.viewTransition ||
+        typeof content.animate !== 'function') return;
+    const arrival = content.animate([{ opacity: .52, translate: '0 4px' }, { opacity: 1, translate: '0 0' }], {
+      id: 'settings-view-switch', duration: 170, easing: 'cubic-bezier(.22, 1, .36, 1)',
+    });
+    return () => arrival.cancel();
+  }, [view]);
   const current = all.find((item) => item.key === selected);
+  const previousTranscriptKey = useRef<string | null>(null);
+  const transcriptKey = view === 'chat' ? current?.key ?? null : null;
   useEffect(() => {
     const available = new Set(['new', ...all.map((item) => item.key), ...(data.conversationTrash || []).map((item) => item.key)]);
     setDrafts((previous) => Object.keys(previous).every((key) => available.has(key)) ? previous :
@@ -917,10 +947,10 @@ export function ConversationWorkspace({
     if (target.top < bounds.top || target.bottom > bounds.bottom)
       list.scrollTo({ top: list.scrollTop + target.top - bounds.top - (bounds.height - target.height) / 2, behavior: reduced ? 'instant' : 'smooth' });
     const button = row.querySelector<HTMLButtonElement>('.conversation-item');
-    if (button && !reduced) button.animate([
-      { backgroundColor: '#dbe7ff', boxShadow: 'inset 3px 0 #376ae5' },
-      { backgroundColor: getComputedStyle(button).backgroundColor, boxShadow: 'inset 0 0 transparent' },
-    ], { duration: 1000, easing: 'ease-out' });
+    if (button && !reduced && typeof button.animate === 'function') button.animate([
+      { backgroundColor: 'color-mix(in srgb, var(--history-identity) 23%, var(--sidebar))' },
+      { backgroundColor: 'var(--history-selection)' },
+    ], { duration: 620, easing: 'ease-out' });
     if (mobileSidebar) button?.focus({ preventScroll: true });
     pendingHistoryReveal.current = null;
   }, [view, selected, mobileSidebar, historyGroups]);
@@ -989,6 +1019,21 @@ export function ConversationWorkspace({
   const stopWaiting = stopConfirming || stopState === 'waiting';
   const stopLabel = stopState === 'waiting' ? t('等待远端确认') : stopConfirming ? t('正在确认停止') : stopState === 'retry' ? t('重试停止') : t('停止');
   const sendInterruptsRun = running && !current?.workflow && !isPendingLocalTaskMessage(draftState);
+  const composerSessionKey = view === 'chat' ? selected : null;
+  const hasStopControl = Boolean(stopTarget);
+  const previousComposerControl = useRef({ key: composerSessionKey, hasStopControl });
+  useLayoutEffect(() => {
+    const previous = previousComposerControl.current;
+    previousComposerControl.current = { key: composerSessionKey, hasStopControl };
+    if (!composerSessionKey || previous.key !== composerSessionKey || previous.hasStopControl === hasStopControl ||
+        prefersReducedMotion()) return;
+    const icon = composerToolbarRef.current?.querySelector(hasStopControl ? '.stop-message > svg' : '.send-message[type="submit"] > svg');
+    if (!icon || typeof icon.animate !== 'function') return;
+    const change = icon.animate([{ opacity: 0.4, scale: 0.76 }, { opacity: 1, scale: 1 }], {
+      id: 'composer-action-switch', duration: 160, easing: 'cubic-bezier(.22, 1, .36, 1)',
+    });
+    return () => change.cancel();
+  }, [composerSessionKey, hasStopControl]);
   // Keep the acknowledgement visible until the refreshed execution confirms it.
   // A lost/stale response must not leave the composer permanently disabled.
   useEffect(() => {
@@ -1061,42 +1106,99 @@ export function ConversationWorkspace({
     };
   }, [task?.id, task?.version]);
   useLayoutEffect(() => {
+    explicitlyFollowingProcess.current = false;
+    if (transcript.current) delete transcript.current.dataset.activityFollow;
     scrollPinned.current = !currentMatch;
     setAwayFromLatest(false);
   }, [selected, view]);
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
-    if (transcript.current && scrollPinned.current && !currentMatch)
-      transcript.current.scrollTop = current?.workflow && !workflowStreamRevision && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
+    if (transcript.current && scrollPinned.current && !currentMatch && !protectTranscriptReading(transcript.current))
+      transcript.current.scrollTop = !explicitlyFollowingProcess.current && current?.workflow && !workflowStreamRevision && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
     selected,
     view,
     task?.messages,
     workflowStreamRevision,
+    current?.workflow?.version,
     current?.brainTask?.executionSummary,
     remote?.executionSummary,
     task?.state,
     current?.workflow?.roundRequestID,
     current?.workflow?.messages?.length,
   ]);
+  useLayoutEffect(() => {
+    const previous = previousTranscriptKey.current;
+    previousTranscriptKey.current = transcriptKey;
+    const content = transcript.current?.firstElementChild;
+    if (!previous || !transcriptKey || previous === transcriptKey || prefersReducedMotion() ||
+        document.documentElement.dataset.viewTransition || !content?.matches('.transcript-content') ||
+        typeof content.animate !== 'function') return;
+    // Reuse the live transcript and its scroll position. A quick second selection cancels the prior fade.
+    const arrival = content.animate([{ opacity: 0.45 }, { opacity: 1 }], {
+      id: 'conversation-switch', duration: 180, easing: 'cubic-bezier(.22, 1, .36, 1)',
+    });
+    return () => arrival.cancel();
+  }, [transcriptKey]);
   useEffect(() => {
     const element = transcript.current;
     if (!element) return;
     const observer = new ResizeObserver(() => {
-      if (scrollPinned.current && !current?.workflow) element.scrollTop = element.scrollHeight;
+      if (scrollPinned.current && !current?.workflow && !protectTranscriptReading(element)) element.scrollTop = element.scrollHeight;
       updateScrollPosition();
     });
     observer.observe(element);
     // Details and asynchronous file results change content height without resizing the viewport.
     // Update the button/follow state without pulling a reader away from the expanded content.
-    const contentObserver = new ResizeObserver(updateScrollPosition);
+    const contentObserver = new ResizeObserver(() => {
+      if (explicitlyFollowingProcess.current && scrollPinned.current && !protectTranscriptReading(element)) element.scrollTop = element.scrollHeight;
+      updateScrollPosition();
+    });
     if (element.firstElementChild) contentObserver.observe(element.firstElementChild);
-    element.addEventListener('toggle', updateScrollPosition, true);
+    let readingFrame = 0;
+    const readingInteraction = () => {
+      explicitlyFollowingProcess.current = false;
+      delete element.dataset.activityFollow;
+      cancelAnimationFrame(readingFrame);
+      readingFrame = requestAnimationFrame(updateScrollPosition);
+    };
+    const processClick = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('.conversation-activity-toggle, .conversation-activity-detail')) readingInteraction();
+    };
+    const selectionChanged = () => {
+      const selection = window.getSelection();
+      if (selection?.rangeCount && !selection.isCollapsed && element.contains(selection.getRangeAt(0).commonAncestorContainer)) readingInteraction();
+    };
+    const wheelReading = (event: WheelEvent) => { if (event.deltaY < 0) readingInteraction(); };
+    const keyboardReading = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest('input, textarea, [contenteditable="true"]')) return;
+      if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || event.key === ' ' && event.shiftKey) readingInteraction();
+    };
+    const scrollbarReading = (event: PointerEvent) => { if (event.target === element) readingInteraction(); };
+    let touchY = 0;
+    const touchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY || 0; };
+    const touchReading = (event: TouchEvent) => { if ((event.touches[0]?.clientY || 0) > touchY) readingInteraction(); };
+    element.addEventListener('toggle', readingInteraction, true);
+    element.addEventListener('click', processClick);
+    element.addEventListener('wheel', wheelReading, { passive: true });
+    element.addEventListener('keydown', keyboardReading);
+    element.addEventListener('pointerdown', scrollbarReading);
+    element.addEventListener('touchstart', touchStart, { passive: true });
+    element.addEventListener('touchmove', touchReading, { passive: true });
+    document.addEventListener('selectionchange', selectionChanged);
     return () => {
       observer.disconnect();
       contentObserver.disconnect();
-      element.removeEventListener('toggle', updateScrollPosition, true);
+      cancelAnimationFrame(readingFrame);
+      element.removeEventListener('toggle', readingInteraction, true);
+      element.removeEventListener('click', processClick);
+      element.removeEventListener('wheel', wheelReading);
+      element.removeEventListener('keydown', keyboardReading);
+      element.removeEventListener('pointerdown', scrollbarReading);
+      element.removeEventListener('touchstart', touchStart);
+      element.removeEventListener('touchmove', touchReading);
+      document.removeEventListener('selectionchange', selectionChanged);
     };
   }, [selected, view, current?.key]);
   useEffect(() => {
@@ -1119,17 +1221,28 @@ export function ConversationWorkspace({
     return () => { observer.disconnect(); cancelAnimationFrame(resizeFrame); };
   }, [draft, selected]);
 
+  function protectTranscriptReading(element: HTMLElement) {
+    const selection = window.getSelection();
+    if (selection?.rangeCount && !selection.isCollapsed && element.contains(selection.getRangeAt(0).commonAncestorContainer)) return true;
+    return !explicitlyFollowingProcess.current && !!element.querySelector('.conversation-activity-toggle[aria-expanded="true"]');
+  }
   function updateScrollPosition() {
     const element = transcript.current;
     if (!element) return;
     const away = element.scrollHeight - element.scrollTop - element.clientHeight > 100;
-    scrollPinned.current = !away && !currentMatch;
-    setAwayFromLatest(away);
+    const reading = protectTranscriptReading(element);
+    scrollPinned.current = !away && !currentMatch && !reading;
+    setAwayFromLatest(away || reading);
   }
   function scrollToLatest() {
     const element = transcript.current;
     if (!element) return;
     setSearchSelection(null);
+    explicitlyFollowingProcess.current = true;
+    element.dataset.activityFollow = 'true';
+    element.dispatchEvent(new Event('activity-follow-latest'));
+    const selection = window.getSelection();
+    if (selection?.rangeCount && element.contains(selection.getRangeAt(0).commonAncestorContainer)) selection.removeAllRanges();
     scrollPinned.current = true;
     element.scrollTop = element.scrollHeight;
     setAwayFromLatest(false);
@@ -1730,7 +1843,7 @@ export function ConversationWorkspace({
           <kbd aria-hidden="true">{workspaceShortcutLabels['new-conversation']}</kbd>
         </button>
         <button type="button" className="workspace-command-entry" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog">
-          <Search size={15} /><span>{t('快速访问')}</span><kbd>{workspaceShortcutLabels.palette}</kbd>
+          <Command size={15} aria-hidden="true" /><span>{t('快速访问')}</span><kbd>{workspaceShortcutLabels.palette}</kbd>
         </button>
         <div className="conversation-searchbar">
           <label className="conversation-search">
@@ -1814,8 +1927,8 @@ export function ConversationWorkspace({
             openConnections={openConnections} openProjectFiles={() => setProjectFilesOpen(true)}
             openKnowledge={() => { setView('knowledge'); setMobileSidebar(false); }}
             openAttention={() => openAttention('attention')} openDevices={() => { setView('models'); setMobileSidebar(false); }} />
-          <button type="button" className={`utility-nav-entry${view === 'trash' ? ' active' : ''}`} title={t('更多')} aria-label={t('更多')} {...utilitiesMenu.trigger}>
-            <MoreHorizontal size={17} /><span className="nav-label">{t('更多')}</span>
+          <button type="button" className="utility-nav-entry" title={t('更多')} aria-label={t('更多')} aria-current={view === 'trash' ? 'page' : undefined} {...utilitiesMenu.trigger}>
+            <MoreHorizontal size={17} aria-hidden="true" /><span className="nav-label">{t('更多')}</span>
           </button>
           <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
             ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
@@ -1853,18 +1966,12 @@ export function ConversationWorkspace({
               <ArrowLeft size={18} />
             </button>
           )}
-          <div className="conversation-heading" ref={pageHeadingRef} tabIndex={-1}>
+          <div className="conversation-heading" ref={pageHeadingRef} tabIndex={-1} data-activity-identity={view === 'chat' && current ? conversationIdentityIndex(current.key) : undefined}>
             <div className="conversation-title-row">
+            {view === 'chat' && current && <span className="conversation-identity-mark" aria-hidden="true" />}
+            {view !== 'chat' && <PageIcon className="workspace-page-symbol" size={16} aria-hidden="true" />}
             <span title={view === 'chat' ? current?.title : undefined}>
-              {view === 'knowledge' ? t('技能与记忆') : view === 'trash' ? t('回收站') : view === 'network'
-                ? t('设备与模型')
-                : view === 'models' || view === 'execution'
-                  ? t('设备与模型')
-                  : view === 'attention'
-                    ? t('待办中心')
-                    : view === 'diagnostics'
-                      ? t('连接诊断')
-                      : current?.title || t('新会话')}
+              {view === 'chat' ? current?.title || t('新会话') : pageTitle}
             </span>
             {view === 'chat' && current && <small title={conversationState(current)} className={conversationIsFailed(current) ? 'is-failed' : undefined}>{conversationState(current)}</small>}
             </div>
@@ -1888,6 +1995,7 @@ export function ConversationWorkspace({
               ]} />
             </>}
           </div>}
+          <ThemeMenu />
           {view === 'chat' && data.user.owner && !rail && (
             <button
               className="local-queue-entry"
@@ -1903,7 +2011,8 @@ export function ConversationWorkspace({
             aria-label={railToggleLabel} title={railToggleLabel}
             aria-expanded={railVisible} aria-controls={railVisible ? 'conversation-network-sidebar' : undefined}
             onClick={() => animateLayoutChange(() => setRailPreference(toggledRailPreference(railVisible)), 'rail')}>
-            <PanelRight size={17} /><span>{t('队列与设备')}</span>
+            {railVisible ? <PanelRightClose size={17} aria-hidden="true" /> : <PanelRightOpen size={17} aria-hidden="true" />}
+            <span>{t('队列与设备')}</span>
             {!railVisible && railQueueCount > 0 && <b className="network-rail-count" aria-hidden="true">{railQueueCount}</b>}
           </button>}
           <span className="header-status" title={connected ? t('已连接') : t('正在重连')} aria-label={connected ? t('已连接') : t('正在重连')}>
@@ -1944,7 +2053,7 @@ export function ConversationWorkspace({
                 aria-label={t('会话消息')}
                 onScroll={updateScrollPosition}
               >
-                {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName}
+                {current?.workflow ? <div className="transcript-content"><WorkflowView key={current.workflow.id} value={current.workflow} data={data} busy={busy} perform={perform} nodeName={nodeName} connected={connected}
                   stopControl={stopTarget ? { confirming: stopConfirming, stop: () => void stopCurrentConversation() } : undefined}
                   navigateDiagnostics={(target, nodeID) => {
                     if (target === 'queue') setModal('queue');
@@ -1987,7 +2096,7 @@ export function ConversationWorkspace({
                         )}
                       </section>
                     )}
-                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} />
+                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} nodeName={nodeName} connected={connected} localNodeID={data.network.local?.id || null} />
                     {task?.error && <p className="error">{systemText(task.error)}</p>}
                     {approvals.map((approval) => (
                       <section className="chat-approval" key={approval.id}>
@@ -2172,6 +2281,8 @@ export function ConversationWorkspace({
                       key={current.key}
                       scope={current.brainTask ? 'brain' : current.remote ? 'remote' : 'local'}
                       taskID={current.brainTask?.id || current.remote?.id || current.localTask!.id}
+                      revision={legacyFileRevision(current)}
+                      nodeName={nodeName}
                     />
                     </div>
                   </div>
@@ -2419,7 +2530,7 @@ export function ConversationWorkspace({
                     </div>
                   </div>
                 )}
-                <div className="composer-toolbar">{composerToolbar}</div>
+                <div className="composer-toolbar" ref={composerToolbarRef}>{composerToolbar}</div>
                 </div>
               </form>
               {!current && options && (
@@ -2545,12 +2656,13 @@ export function ConversationWorkspace({
             </div>}
             {['models', 'execution', 'network', 'diagnostics'].includes(view) && (
               <nav className="device-settings-tabs" aria-label={t('设备设置分类')}>
-                <button type="button" aria-current={view === 'models' ? 'page' : undefined} onClick={() => setView('models')}><Bot size={16} />{t('模型')}</button>
-                {data.user.owner && <button type="button" aria-current={view === 'execution' ? 'page' : undefined} onClick={() => setView('execution')}><FolderOpen size={16} />{t('执行与文件夹')}</button>}
-                <button type="button" aria-current={view === 'network' ? 'page' : undefined} onClick={() => setView('network')}><Network size={16} />{t('设备连接')}</button>
-                <button type="button" aria-current={view === 'diagnostics' ? 'page' : undefined} onClick={() => setView('diagnostics')}><DiagnosticIcon size={16} />{t('连接诊断')}</button>
+                <button type="button" aria-current={view === 'models' ? 'page' : undefined} onClick={() => setView('models')}><Cpu size={16} aria-hidden="true" />{t('模型')}</button>
+                {data.user.owner && <button type="button" aria-current={view === 'execution' ? 'page' : undefined} onClick={() => setView('execution')}><FolderCog size={16} aria-hidden="true" />{t('执行与文件夹')}</button>}
+                <button type="button" aria-current={view === 'network' ? 'page' : undefined} onClick={() => setView('network')}><Network size={16} aria-hidden="true" />{t('设备连接')}</button>
+                <button type="button" aria-current={view === 'diagnostics' ? 'page' : undefined} onClick={() => setView('diagnostics')}><DiagnosticIcon size={16} aria-hidden="true" />{t('连接诊断')}</button>
               </nav>
             )}
+            <div className="settings-view-content" ref={settingsViewRef}>
             {view === 'knowledge' ? <KnowledgeLibrary projects={data.projects} /> : view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
               restore={(entry) => void perform(async () => { await api('/history/restore', { key: entry.key }); setNotice(t('会话已恢复到历史列表。')); })}
               purge={(entry) => setHistoryAction({ action: 'purge', key: entry.key, title: entry.title })}
@@ -2629,7 +2741,7 @@ export function ConversationWorkspace({
 
               </>
             )}
-          </div></div>
+          </div></div></div>
         )}
       </main>
       {railVisible && (

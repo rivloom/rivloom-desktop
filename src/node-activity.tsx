@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, ArrowDown, ArrowUp, BookOpen, Check, ChevronRight, CircleAlert, FolderOpen, Inbox, LoaderCircle, Monitor, Plug, X } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, Check, ChevronRight, CircleAlert, FolderOpen, LibraryBig, ListChecks, LoaderCircle, MonitorCog, Plug, X } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import { knowledgeError } from '../shared/knowledge-errors.ts';
 import type { NodeActivitySnapshot } from '../shared/node-activity.ts';
@@ -269,13 +269,13 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
     </div>}
     {owner && <div className="sidebar-file-entry"><button type="button" className="activity-office-entry" onClick={openProjectFiles}><FolderOpen size={16} /><span>{t('项目文件')}</span><ChevronRight size={13} /></button>
       <OperationBadge items={fileOperations} label={t('查看文件活动')} paused={!visible} expanded={panel?.kind === 'files'} open={anchor => openPanel('files', anchor)} /></div>}
-    {owner && <div className="sidebar-utility-entry"><button type="button" className={`activity-utility${view === 'knowledge' ? ' active' : ''}`} title={t('技能与记忆')} onClick={openKnowledge}><BookOpen size={16} /><span>{t('知识')}</span></button>
+    {owner && <div className="sidebar-utility-entry"><button type="button" className="activity-utility" title={t('技能与记忆')} aria-current={view === 'knowledge' ? 'page' : undefined} onClick={openKnowledge}><LibraryBig size={17} aria-hidden="true" /><span>{t('知识')}</span></button>
       <OperationBadge items={knowledge} label={t('查看知识活动')} paused={!visible} expanded={panel?.kind === 'knowledge'} open={anchor => openPanel('knowledge', anchor)} /></div>}
-    <button type="button" className="utility-nav-entry" title={t('待办中心')} aria-label={attentionItems ? `${t('待办中心')} · ${attentionItems.length}` : t('待办中心')} data-active={view === 'attention'} onClick={openAttention}>
-      <Inbox size={16} /><span className="nav-label">{t('待办')}</span>{!!attentionItems?.length && <span className={`attention-count${bounce ? ' activity-bounce' : ''}`} aria-hidden="true">{attentionItems.length}</span>}
+    <button type="button" className="utility-nav-entry" title={t('待办中心')} aria-label={attentionItems ? `${t('待办中心')} · ${attentionItems.length}` : t('待办中心')} aria-current={view === 'attention' ? 'page' : undefined} onClick={openAttention}>
+      <ListChecks size={17} aria-hidden="true" /><span className="nav-label">{t('待办')}</span>{!!attentionItems?.length && <span className={`attention-count${bounce ? ' activity-bounce' : ''}`} aria-hidden="true">{attentionItems.length}</span>}
     </button>
-    <button type="button" className={`utility-nav-entry${deviceChange ? ' activity-device-change' : ''}`} title={t('设备与模型')} aria-label={t('设备与模型')} data-active={['network', 'models', 'execution', 'diagnostics'].includes(view)} onClick={openDevices}>
-      <Monitor size={16} /><span className="nav-label">{t('设备')}</span>{executing && <span className="activity-device-running" aria-label={t('设备执行中')} />}
+    <button type="button" className={`utility-nav-entry${deviceChange ? ' activity-device-change' : ''}`} title={t('设备与模型')} aria-label={t('设备与模型')} aria-current={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'page' : undefined} onClick={openDevices}>
+      <MonitorCog size={17} aria-hidden="true" /><span className="nav-label">{t('设备')}</span>{executing && <span className="activity-device-running" aria-label={t('设备执行中')} />}
     </button>
     {owner && visible && panel?.identity === identity && <ActivityPopover anchor={panel.anchor} title={panel.kind === 'models' ? t('此Node的模型活动') : panel.kind === 'knowledge' ? t('知识活动') : t('文件活动')} close={closePanel}>
       {panel.kind === 'models' && <>

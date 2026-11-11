@@ -1,11 +1,12 @@
 import { t, systemText } from '../shared/i18n.ts';
-import { reuseJson } from './desktop-refresh';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Paperclip, Download, RotateCw, X, FileText, Upload, FolderOpen, Copy, MoreHorizontal, ExternalLink } from 'lucide-react';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { desktop, chooseTaskFileDestination, revealTaskFile, openTaskFile } from './desktop';
 import { ContextMenu, useContextMenu } from './context-menu';
-import { FilePreviewButton } from './file-preview';
+import { FilePreview, FilePreviewButton } from './file-preview';
+import { refreshTaskFileState, taskFileStates, useTaskFileState, type TaskFileState, type TaskFileQuery } from './use-task-file-state';
+import { taskFileQueryKey } from './task-file-state';
 import { uploadTaskFile, draftFilesReady, type DraftTaskFile } from './task-file-upload';
 import { composerFileSelectionError, containsDroppedDirectory, isFileTransfer } from './composer-files';
 import {
@@ -13,7 +14,7 @@ import {
   taskFileMaximumBytes,
   taskFileBatchBytes,
   taskFileUploadCount,
-  type TaskFileConversation,
+  type TaskFileDescriptor,
   type TaskFileScope,
   type TaskFileView,
 } from '../shared/task-files';
@@ -293,44 +294,107 @@ function TaskFileRow({ file, ready, busy, action, children }: {
   </li>;
 }
 
-export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = (id: string) => id }: {
-  scope: TaskFileScope; taskID: string; resultsOnly?: boolean; nodeName?: (id: string) => string;
+/** Necessary recovery actions stay outside the optional process disclosure. */
+export function TaskFileRecovery({ states }: { states: readonly TaskFileState[] }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const operation = useRef(0), operating = useRef(false);
+  const identity = states.map(state => taskFileQueryKey(state.route)).sort().join('|');
+  useEffect(() => {
+    operation.current++; operating.current = false; setBusy(false); setError('');
+    return () => { operation.current++; operating.current = false; };
+  }, [identity]);
+  const unavailable = states.some(state => !!state.error || !!state.value && !state.fresh);
+  const sendRoutes = new Map<string, TaskFileQuery>();
+  const receiveFiles = new Map<string, { route: TaskFileQuery; fileID: string }>();
+  let senderRequired = false;
+  for (const state of states) {
+    if (!state.fresh || !state.value?.canRetry) continue;
+    for (const purpose of ['inputs', 'results'] as const) for (const file of state.value[purpose]) {
+      if (file.deliveries.some(delivery => delivery.state === 'failed')) sendRoutes.set(taskFileQueryKey(state.route), state.route);
+      if (file.state !== 'failed') continue;
+      if (purpose === 'results' && state.route.scope === 'remote' && file.sourceNodeID)
+        receiveFiles.set(`${taskFileQueryKey(state.route)}:${file.id}`, { route: state.route, fileID: file.id });
+      else senderRequired = true;
+    }
+  }
+  const canRetry = sendRoutes.size > 0 || receiveFiles.size > 0;
+  useEffect(() => {
+    if (!busy && error && !unavailable && !canRetry && !senderRequired && states.every(state => state.fresh)) setError('');
+  }, [busy, error, unavailable, canRetry, senderRequired, states]);
+  async function recover() {
+    if (operating.current) return;
+    if (unavailable) { states.forEach(state => refreshTaskFileState(state.route)); return; }
+    const token = ++operation.current, epoch = taskFileStates.epoch();
+    operating.current = true; setBusy(true); setError('');
+    const errors: string[] = [];
+    const current = () => operation.current === token && taskFileStates.epoch() === epoch;
+    try {
+      for (const route of sendRoutes.values()) {
+        if (!current()) break;
+        try { await api(`/task-files/${route.scope}/${route.taskID}/retry`, {}); }
+        catch (cause) { errors.push(cause instanceof Error ? cause.message : t('传输未能重试。')); }
+        if (current()) refreshTaskFileState(route);
+      }
+      for (const { route, fileID } of receiveFiles.values()) {
+        if (!current()) break;
+        try {
+          if (!taskFileStates.request(route, fileID)) throw new Error(t('正在取回的文件较多，请等待完成后再试。'));
+          await api(`/task-files/${route.scope}/${route.taskID}/fetch`, { fileID });
+          if (current()) taskFileStates.requestAccepted(route, fileID);
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : t('文件取回未确认，请重试。');
+          errors.push(message); if (current()) taskFileStates.requestFailed(route, fileID, message, cause instanceof ApiError && [403, 404].includes(cause.status));
+        }
+        if (current()) refreshTaskFileState(route);
+      }
+    } finally {
+      if (current()) { operating.current = false; setBusy(false); setError([...new Set(errors)].join(' · ')); }
+    }
+  }
+  if (!unavailable && !canRetry && !senderRequired && !error && !busy) return null;
+  return <div className="task-file-recovery">
+    {(unavailable || canRetry) && <button type="button" className="file-action activity-recovery-action" disabled={busy}
+      onClick={() => void recover()}><RotateCw size={13} />{unavailable ? t('刷新文件状态') : t('重试传输')}</button>}
+    {senderRequired && <span className="file-error">{t('请在发送设备重试失败附件。')}</span>}
+    {error && <p className="file-error" role="alert">{systemText(error)}</p>}
+  </div>;
+}
+
+export function TaskFilesPanel({ scope, taskID, resultsOnly = false, inputsOnly = false, nodeName = (id: string) => id, revision, enabled = true, lazy = false, manifest = [] }: {
+  scope: TaskFileScope; taskID: string; resultsOnly?: boolean; nodeName?: (id: string) => string; revision?: unknown; enabled?: boolean;
+  lazy?: boolean; manifest?: readonly TaskFileDescriptor[]; inputsOnly?: boolean;
 }) {
-  const [value, setValue] = useState<TaskFileConversation | null>(null),
-    [error, setError] = useState(''),
-    [refreshError, setRefreshError] = useState(''),
-    [busy, setBusy] = useState(false);
+  const path = `/task-files/${scope}/${taskID}`;
+  const [activatedPath, setActivatedPath] = useState<string | null>(null);
+  // Historical metadata is immutable; live round revisions must not revive its reads.
+  const snapshot = useTaskFileState(scope, taskID, lazy ? undefined : revision, enabled && (!lazy || activatedPath === path));
+  const value = snapshot.value, refreshError = snapshot.error;
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<DraftTaskFile[]>([]),
     [saved, setSaved] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
+  const [preview, setPreview] = useState<TaskFileView | null>(null);
+  const openAfterReceive = useRef<{ path: string; fileID: string; fetchRequested: boolean } | null>(null);
   const operating = useRef(false);
-  const path = `/task-files/${scope}/${taskID}`;
   useEffect(() => {
-    setValue(null); setError(''); setNotice(''); setSaved({});
-    let alive = true,
-      polling = false;
-    const refresh = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const next = await api<TaskFileConversation>(path);
-        if (alive) {
-          setValue((previous) => reuseJson(previous, next));
-          setRefreshError('');
-        }
-      } catch (e) {
-        if (alive) setRefreshError(e instanceof Error ? e.message : t('文件状态未更新。'));
-      } finally {
-        polling = false;
-      }
-    };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 1500);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
+    setError(''); setNotice(''); setSaved({}); setPreview(null); openAfterReceive.current = null;
   }, [path]);
+  useEffect(() => {
+    const pending = openAfterReceive.current;
+    if (!snapshot.fresh || !pending || pending.path !== path) return;
+    const file = value?.results.find(item => item.id === pending.fileID);
+    if (file?.state === 'complete') { openAfterReceive.current = null; setPreview(file); }
+    else if (file?.sourceNodeID && !pending.fetchRequested && ['remote', 'failed'].includes(file.state)) {
+      pending.fetchRequested = true; void fetchRemote(file);
+    } else if (!file || file.state === 'failed' && !pending.fetchRequested) {
+      openAfterReceive.current = null; setError(file?.error || t('文件当前不可用，请稍后重试。'));
+    }
+  }, [path, snapshot.fresh, snapshot.revision, value]);
+  function inspectResult(fileID: string) {
+    if (!enabled || operating.current) return;
+    setError(''); openAfterReceive.current = { path, fileID, fetchRequested: false };
+    setActivatedPath(path); refreshTaskFileState({ scope, taskID });
+  }
   async function locate(file: TaskFileView, kind: 'open' | 'reveal' | 'copy') {
     if (operating.current) return;
     operating.current = true;
@@ -382,7 +446,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
     try {
       await api(`${path}/results`, { attachmentIDs: files.map((f) => f.id) });
       setFiles([]);
-      setValue(await api(path));
+      refreshTaskFileState({ scope, taskID });
     } catch (e) {
       setError(e instanceof Error ? e.message : t('成果发布未确认，重试会保留原文件。'));
     } finally {
@@ -396,7 +460,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
     setError('');
     try {
       await api(`${path}/retry`, {});
-      setValue(await api(path));
+      refreshTaskFileState({ scope, taskID });
     } catch (e) {
       setError(e instanceof Error ? e.message : t('传输未能重试。'));
     } finally {
@@ -406,8 +470,18 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
   async function fetchRemote(file: TaskFileView) {
     if (operating.current) return;
     operating.current = true; setBusy(true); setError('');
-    try { await api(`${path}/fetch`, { fileID: file.id }); setValue(await api(path)); }
-    catch (e) { setError(e instanceof Error ? e.message : t('文件取回未确认，请重试。')); }
+    const epoch = taskFileStates.epoch();
+    openAfterReceive.current = { path, fileID: file.id, fetchRequested: true };
+    try {
+      if (!taskFileStates.request({ scope, taskID }, file.id)) throw new Error(t('正在取回的文件较多，请等待完成后再试。'));
+      await api(`${path}/fetch`, { fileID: file.id });
+      if (taskFileStates.epoch() === epoch) taskFileStates.requestAccepted({ scope, taskID }, file.id);
+      if (taskFileStates.epoch() === epoch) refreshTaskFileState({ scope, taskID });
+    } catch (e) {
+      openAfterReceive.current = null;
+      const message = e instanceof Error ? e.message : t('文件取回未确认，请重试。');
+      if (taskFileStates.epoch() === epoch) { taskFileStates.requestFailed({ scope, taskID }, file.id, message, e instanceof ApiError && [403, 404].includes(e.status)); setError(message); }
+    }
     finally { operating.current = false; setBusy(false); }
   }
   const list = (items: TaskFileView[]) => (
@@ -418,6 +492,9 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
           <span className="file-details">
             {value?.canSave && file.state === 'complete' ? (
               <FilePreviewButton file={file} path={`${path}/${file.id}`} source={file.sourceNodeID ? nodeName(file.sourceNodeID) : undefined} />
+            ) : file.sourceNodeID && ['remote', 'failed'].includes(file.state) ? (
+              <button type="button" className="file-preview-button" disabled={busy}
+                aria-label={t('取回并预览 {{name}}', { name: file.name })} onClick={() => void fetchRemote(file)}>{file.name}</button>
             ) : (
               <span className="task-file-name">{file.name}</span>
             )}
@@ -454,32 +531,22 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
           {file.sourceNodeID && <small className="task-file-source" title={`${nodeName(file.sourceNodeID)} · ${file.sourcePath || file.name}`}>
             {nodeName(file.sourceNodeID)} · {file.sourcePath || file.name} · {taskFileBytesLabel(file.bytes)}
           </small>}
-          {file.sourceNodeID && file.state !== 'complete' && <button type="button" className="file-action task-file-fetch"
-            disabled={busy} onClick={() => void fetchRemote(file)}>
-            <Download size={14} />{file.state === 'remote' ? t('取回到本机') : t('重试取回')}
-          </button>}
-          {value?.canSave && file.state === 'complete' && desktop && (
-            <button
-              type="button"
-              className="task-file-save"
-              disabled={busy}
-              onClick={() => void save(file)}
-              aria-label={t('保存 {{value1}}', { value1: file.name })}
-              title={t('另存文件')}
-            >
-              <Download size={16} />
-            </button>
-          )}
         </TaskFileRow>
       ))}
     </ul>
   );
   return (
     <section className="task-files-panel" aria-label={t('任务文件')}>
+      {preview && <FilePreview file={preview} path={`${path}/${preview.id}`} source={preview.sourceNodeID ? nodeName(preview.sourceNodeID) : undefined} close={() => setPreview(null)} />}
       {notice && <p className="file-saved" role="status">{notice}</p>}
+      {!inputsOnly && !value && manifest.length > 0 && <ul className="task-file-links">
+        {manifest.map(file => <li key={file.id}><button type="button" className="file-preview-button"
+          disabled={!enabled || busy || snapshot.loading} aria-label={t('查看文件 {{name}}', { name: file.name })}
+          onClick={() => inspectResult(file.id)}>{file.name}</button></li>)}
+      </ul>}
       {value && (
         <>
-          {!!value.results.length && (
+          {!inputsOnly && !!value.results.length && (
             <>
               {list(value.results)}
             </>
@@ -492,7 +559,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
               {list(value.inputs)}
             </details>
           )}
-          {!resultsOnly && value.canPublish && (
+          {!resultsOnly && !inputsOnly && value.canPublish && (
             <details className="task-files-secondary file-publish">
               <summary>{t('添加交付文件')}</summary>
               <TaskFilePicker
@@ -515,7 +582,7 @@ export function TaskFilesPanel({ scope, taskID, resultsOnly = false, nodeName = 
             </details>
           )}
           {value.canRetry &&
-            [...(resultsOnly ? [] : value.inputs), ...value.results].some((f) =>
+            [...(resultsOnly ? [] : value.inputs), ...(inputsOnly ? [] : value.results)].some((f) =>
               f.deliveries.some((d) => d.state === 'failed' || d.state === 'waiting'),
             ) && (
               <button

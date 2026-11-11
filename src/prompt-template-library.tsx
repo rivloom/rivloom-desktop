@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { BookOpen, FileText, Pencil, Plus, RefreshCw, Save, Search, Trash2 } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import { filterPromptTemplates, maximumPromptTemplates, maximumPromptTemplateText, maximumPromptTemplateTitle, validPromptTemplateInput, type PromptTemplate, type PromptTemplateList } from '../shared/prompt-templates';
 import type { ConversationDraft } from './conversation-drafts';
@@ -69,23 +69,27 @@ export function PromptTemplateLibrary({ scopeKey, draft, existingConversation, o
   const full = templates.length >= maximumPromptTemplates;
   return <Modal title={t('提示词模板')} close={() => { if (busy) return; if (editor) editorGuard.requestClose(); else if (removing) setRemoving(null); else close(); }} className="prompt-template-library">
     <p className="muted">{t('仅保存在本机当前账号。插入输入框后仍可编辑，不会自动发送或执行。')}</p>
-    <div className="prompt-template-toolbar"><input aria-label={t('搜索提示词模板')} placeholder={t('搜索名称或正文')} value={query} maxLength={200} onChange={event => setQuery(event.target.value)} />
+    <div className="prompt-template-toolbar"><label className="prompt-template-search"><Search size={16} aria-hidden="true" />
+      <input aria-label={t('搜索提示词模板')} placeholder={t('搜索名称或正文')} value={query} maxLength={200} onChange={event => setQuery(event.target.value)} /></label>
       <Button disabled={busy || loading} onClick={() => void perform(refresh)}><RefreshCw size={14} />{t('刷新')}</Button>
-      <Button disabled={busy || loading || full} onClick={() => create()}><Plus size={14} />{t('新建模板')}</Button></div>
-    <div className="prompt-template-draft-action"><Button disabled={busy || loading || full || !validPromptTemplateInput({ title: 'draft', text: draft.text })} onClick={() => create('', draft.text)}><Save size={14} />{t('将当前草稿存为模板')}</Button></div>
-    <p className="prompt-template-count">{templates.length} / {maximumPromptTemplates}</p>
+      <Button variant="primary" disabled={busy || loading || full} onClick={() => create()}><Plus size={14} />{t('新建模板')}</Button></div>
+    <div className="prompt-template-list-meta">
+      <Button disabled={busy || loading || full || !validPromptTemplateInput({ title: 'draft', text: draft.text })} onClick={() => create('', draft.text)}><Save size={14} />{t('将当前草稿存为模板')}</Button>
+      <span className="prompt-template-count">{templates.length} / {maximumPromptTemplates}</span>
+    </div>
     {error && <p className="error" role="alert">{error}</p>}
     {loading ? <p role="status">{t('正在读取模板…')}</p> : <div className="prompt-template-list">
       {visible.map(template => <article className="prompt-template-card" key={template.id}>
-        <div className="prompt-template-card-heading"><strong>{template.title}</strong><div className="prompt-template-actions">
+        <div className="prompt-template-card-heading"><span className="prompt-template-row-icon"><FileText size={17} aria-hidden="true" /></span>
+          <strong>{template.title}</strong><div className="prompt-template-actions">
           <button className="icon-button" type="button" disabled={busy} aria-label={t('编辑模板：{{title}}', { title: template.title })} title={t('编辑模板')}
             onClick={() => { setError(''); setLatest(null); setEditor({ ...template, initialTitle: template.title, initialText: template.text }); }}><Pencil size={15} /></button>
-          <button className="icon-button" type="button" disabled={busy} aria-label={t('删除模板：{{title}}', { title: template.title })} title={t('删除模板')}
+          <button className="icon-button prompt-template-delete" type="button" disabled={busy} aria-label={t('删除模板：{{title}}', { title: template.title })} title={t('删除模板')}
             onClick={() => { setError(''); setRemoving(template); }}><Trash2 size={15} /></button></div></div>
         <pre>{template.text}</pre><MessageReuseActions text={template.text} draft={draft} existingConversation={existingConversation}
           onApply={insert} disabled={busy} reuseLabel={t('插入草稿')} showQuote={false} iconOnly={false} />
       </article>)}
-      {!visible.length && <p className="prompt-template-empty">{query.trim() ? t('没有匹配的模板。') : t('还没有保存模板。可以新建，或从下面的示例开始编辑。')}</p>}
+      {!visible.length && <div className="prompt-template-empty"><BookOpen size={24} aria-hidden="true" /><p>{query.trim() ? t('没有匹配的模板。') : t('还没有保存模板。可以新建，或从下面的示例开始编辑。')}</p></div>}
     </div>}
     <details className="prompt-template-starters"><summary><BookOpen size={15} />{t('从常用示例开始')}</summary>
       <p className="muted">{t('示例只有在你编辑并保存后才会加入模板库。')}</p>

@@ -1,12 +1,14 @@
-.context-menu { position: fixed; z-index: 500; min-width: 194px; max-width: min(280px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface, #fff); color: var(--ink); box-shadow: 0 7px 28px #18251c24; }
-.context-menu > button { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; padding: 9px 10px; font: inherit; font-size: 12px; }
-.context-menu > button > svg { flex: 0 0 15px; width: 15px; height: 15px; }
+.context-menu { position: fixed; z-index: 500; min-width: 194px; max-width: min(280px, calc(100vw - 16px)); max-height: min(480px, calc(100dvh - 16px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid var(--line); border-radius: var(--panel-radius); background: var(--surface); color: var(--text); box-shadow: var(--shadow-float); }
+.context-menu > button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; padding: 7px 9px; font: inherit; font-size: 13px; cursor: pointer; }
+.context-menu > button > svg { flex: 0 0 15px; width: 15px; height: 15px; stroke-width: var(--ui-icon-stroke); color: var(--muted); }
+.context-menu > button:is([aria-checked="true"], .danger) > svg { color: inherit; }
+.context-menu-check { margin-inline-start: auto; }
 .context-menu > button > span { min-width: 0; overflow-wrap: anywhere; }
-.context-menu small { display: block; max-width: 220px; margin-top: 3px; font-size: 10px; line-height: 1.5; }
+.context-menu small { display: block; max-width: 220px; margin-top: 3px; font-size: 11px; line-height: 1.5; color: var(--muted); }
 .context-menu > button:hover, .context-menu > button:focus-visible { background: var(--surface-soft); }
 .context-menu > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .context-menu > button[aria-disabled="true"] { color: var(--muted); opacity: .65; cursor: default; }
-.context-menu > button.danger { color: #b44338; border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; padding-top: 12px; }
+.context-menu > button.danger { color: var(--danger); border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; padding-top: 12px; }
 .context-more.icon-button { flex: 0 0 26px; width: 26px; height: 28px; color: var(--muted); opacity: 0; pointer-events: none; }
 .history-row { position: relative; }
 .history-row .context-more { position: absolute; top: 6px; right: 30px; z-index: 2; width: 25px; height: 25px; background: var(--surface-soft); }

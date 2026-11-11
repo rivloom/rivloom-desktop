@@ -100,7 +100,7 @@ export function NodeDiagnosticsView({
   }
   return (
     <section className="diagnostics-page" aria-label={t('连接诊断')}>
-      <div className="attention-heading">
+      <div className="page-heading">
         <div>
           <span className="eyebrow">{t('连接与执行条件')}</span>
           <h1>{t('连接诊断')}</h1>

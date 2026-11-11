@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, File, Folder, LoaderCircle, RefreshCw, Search, X } from 'lucide-react';
+import { ArrowUp, FileText, Folder, FolderOpen, LoaderCircle, RefreshCw, Search, X } from 'lucide-react';
 import type { Project } from '../shared/types';
 import type { ProjectFileEntry, ProjectFileListing } from '../shared/office-files';
 import type { TaskFileDescriptor } from '../shared/task-files';
@@ -43,12 +43,13 @@ export function ProjectFilesView({ projects, initialProjectID, close }: { projec
       <button aria-label={t('返回上一级')} disabled={!path} onClick={() => { setPath(path.split('/').slice(0, -1).join('/')); setSearch(''); setQuery(''); }}><ArrowUp size={16} /></button>
       <button aria-label={t('刷新文件列表')} disabled={loading || !projectID} onClick={() => setRevision(value => value + 1)}><RefreshCw size={16} className={loading ? 'spin' : undefined} /></button>
       <form onSubmit={event => { event.preventDefault(); setSearch(query.trim()); }}><input aria-label={t('搜索文件名')} placeholder={t('搜索文件名')} value={query} disabled={!projectID} onChange={event => setQuery(event.target.value)} />{(query || search) && <button type="button" aria-label={t('清空搜索')} onClick={() => { setQuery(''); setSearch(''); }}><X size={15} /></button>}<button aria-label={t('搜索')} disabled={!projectID}><Search size={16} /></button></form>
-    </div><p className="project-files-path">{path || t('项目根目录')}{search && ` · ${search}`}</p>
+    </div><p className="project-files-path"><FolderOpen size={16} aria-hidden="true" /><span>{path || t('项目根目录')}{search && ` · ${search}`}</span></p>
     {loading && !listing && <div className="project-files-state" role="status"><LoaderCircle size={24} className="spin" /><p>{t('正在读取…')}</p></div>}{error && <div className="project-files-error" role="alert"><span>{error}</span><button className="button" disabled={loading} onClick={() => setRevision(value => value + 1)}>{t('重试')}</button></div>}
     {!projects.length && <div className="project-files-state"><Folder size={28} /><p>{t('请先在执行与文件夹中添加工作文件夹。')}</p></div>}
     {listing && !listing.entries.length && <div className="project-files-state" role="status">{search ? <Search size={28} /> : <Folder size={28} />}<p>{search ? t('没有匹配的文件。') : t('没有可显示的文件。')}</p>{search && <button className="button" onClick={() => { setQuery(''); setSearch(''); }}>{t('清空搜索')}</button>}</div>}
-    <ul className="project-file-list" aria-busy={loading || !!opening}>{listing?.entries.map(entry => <li key={entry.path}><button disabled={loading || !!opening} onClick={() => void choose(entry)}>
-      {opening === entry.path ? <LoaderCircle size={18} className="spin" /> : entry.directory ? <Folder size={18} /> : <File size={18} />}<span><strong>{entry.name}</strong>{search && <small>{entry.path}</small>}</span><small>{entry.directory ? t('文件夹') : taskFileBytesLabel(entry.bytes)}</small>
+    <ul className="project-file-list" aria-busy={loading || !!opening}>{listing?.entries.map(entry => <li key={entry.path} data-kind={entry.directory ? 'folder' : 'file'}><button disabled={loading || !!opening} onClick={() => void choose(entry)}>
+      <span className="project-file-icon" aria-hidden="true">{opening === entry.path ? <LoaderCircle size={17} className="spin" /> : entry.directory ? <Folder size={17} /> : <FileText size={17} />}</span>
+      <span><strong>{entry.name}</strong>{search && <small>{entry.path}</small>}</span><small>{entry.directory ? t('文件夹') : taskFileBytesLabel(entry.bytes)}</small>
     </button></li>)}</ul>{listing?.truncated && <p className="muted">{t('列表已限制显示数量，请进入具体文件夹或缩小搜索范围。')}</p>}
   </Modal>{selected && <FilePreview key={selected.path} file={selected.file} path={selected.path} source={project?.name} close={() => { setSelected(null); setRevision(value => value + 1); }} />}</>;
 }
