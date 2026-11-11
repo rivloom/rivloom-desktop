@@ -122,6 +122,29 @@ export function createTaskFileState(options: Options) {
     if (!visible) notify(entry, { fresh: false });
     schedule();
   }
+  function request(route: TaskFileQuery, fileID: string) {
+    if (!entries.get(taskFileQueryKey(route))?.pending.has(fileID) && pendingCount() >= 64) return false;
+    const entry = get(route);
+    entry.requested.add(fileID); entry.pending.add(fileID); entry.requestPhase.set(fileID, 'dispatching'); entry.requestVersion++;
+    entry.requestErrors.delete(fileID); updateRequested(); invalidate(entry);
+    return true;
+  }
+  function requestAccepted(route: TaskFileQuery, fileID: string) {
+    const entry = get(route);
+    if (!entry.pending.has(fileID)) return;
+    entry.requestPhase.set(fileID, 'accepted'); entry.requestVersion++;
+    invalidate(entry);
+  }
+  function requestFailed(route: TaskFileQuery, fileID: string, error: string, definitive = false) {
+    const entry = get(route);
+    if (!entry.requested.has(fileID)) return;
+    if (definitive) { entry.pending.delete(fileID); entry.requestPhase.delete(fileID); }
+    else if (entry.pending.has(fileID)) entry.requestPhase.set(fileID, 'unknown');
+    entry.requestVersion++;
+    entry.requestErrors.set(fileID, error); notify(entry, { fresh: false, error });
+    invalidate(entry);
+    trim();
+  }
   return {
     snapshot: (route: TaskFileQuery) => get(route).state,
     subscribe(route: TaskFileQuery, listener: () => void) {
@@ -145,28 +168,26 @@ export function createTaskFileState(options: Options) {
     },
     requested: () => requestedRoutes,
     subscribeRequested(listener: () => void) { requestListeners.add(listener); return () => { requestListeners.delete(listener); }; },
-    request(route: TaskFileQuery, fileID: string) {
-      if (!entries.get(taskFileQueryKey(route))?.pending.has(fileID) && pendingCount() >= 64) return false;
-      const entry = get(route);
-      entry.requested.add(fileID); entry.pending.add(fileID); entry.requestPhase.set(fileID, 'dispatching'); entry.requestVersion++;
-      entry.requestErrors.delete(fileID); updateRequested(); invalidate(entry);
+    request, requestAccepted, requestFailed,
+    async retrieve(route: TaskFileQuery, fileID: string, send: () => Promise<unknown>,
+      describeFailure: (cause: unknown) => { message: string; definitive: boolean }) {
+      const requestEpoch = epoch;
+      const existing = entries.get(taskFileQueryKey(route));
+      if (existing?.requestPhase.get(fileID) === 'dispatching') return true;
+      if (!request(route, fileID)) return false;
+      // The conversation can unmount while the POST is in flight. The shared
+      // request still needs its acknowledgement, unless the signed-in user changed.
+      try {
+        await send();
+        if (!disposed && requestEpoch === epoch) requestAccepted(route, fileID);
+      } catch (cause) {
+        if (!disposed && requestEpoch === epoch) {
+          const { message, definitive } = describeFailure(cause);
+          requestFailed(route, fileID, message, definitive);
+        }
+        throw cause;
+      }
       return true;
-    },
-    requestAccepted(route: TaskFileQuery, fileID: string) {
-      const entry = get(route);
-      if (!entry.pending.has(fileID)) return;
-      entry.requestPhase.set(fileID, 'accepted'); entry.requestVersion++;
-      invalidate(entry);
-    },
-    requestFailed(route: TaskFileQuery, fileID: string, error: string, definitive = false) {
-      const entry = get(route);
-      if (!entry.requested.has(fileID)) return;
-      if (definitive) { entry.pending.delete(fileID); entry.requestPhase.delete(fileID); }
-      else if (entry.pending.has(fileID)) entry.requestPhase.set(fileID, 'unknown');
-      entry.requestVersion++;
-      entry.requestErrors.set(fileID, error); notify(entry, { fresh: false, error });
-      invalidate(entry);
-      trim();
     },
     forgetRequest(route: TaskFileQuery, fileID: string) {
       const entry = get(route); entry.requested.delete(fileID); entry.pending.delete(fileID); entry.requestPhase.delete(fileID); entry.requestErrors.delete(fileID);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { api } from './api';
+import { t } from '../shared/i18n.ts';
+import { api, ApiError } from './api';
 import { createTaskFileState, taskFileQueryKey, type TaskFileQuery, type TaskFileState } from './task-file-state.ts';
 export type { TaskFileQuery, TaskFileState } from './task-file-state.ts';
 
@@ -12,6 +13,16 @@ if (typeof document !== 'undefined') {
 }
 export const refreshTaskFileState = (route: TaskFileQuery) => taskFileStates.refresh(route);
 export const resetTaskFileState = () => taskFileStates.reset();
+export async function requestRemoteTaskFile(route: TaskFileQuery, fileID: string) {
+  const requested = await taskFileStates.retrieve(route, fileID,
+    () => api(`/task-files/${route.scope}/${route.taskID}/fetch`, { fileID }, { timeoutMilliseconds: 15_000 }),
+    (cause) => ({
+      message: cause instanceof Error ? cause.message : t('文件取回未确认，请重试。'),
+      definitive: cause instanceof ApiError && [403, 404].includes(cause.status),
+    }),
+  );
+  if (!requested) throw new Error(t('正在取回的文件较多，请等待完成后再试。'));
+}
 export function useTaskFileRequests() {
   return useSyncExternalStore(taskFileStates.subscribeRequested, taskFileStates.requested);
 }

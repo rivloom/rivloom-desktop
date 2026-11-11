@@ -329,6 +329,13 @@ async fn local_request(app: &tauri::AppHandle, action: &str, body: serde_json::V
         .map_err(|_| "update_service_unavailable".into())
 }
 
+fn restart_if_runtime_exited(runtime: &Mutex<crate::RuntimeProcess>, restart: impl FnOnce()) {
+    let exited = runtime.lock().is_ok_and(|mut runtime| matches!(runtime.child.try_wait(), Ok(Some(_))));
+    if exited {
+        restart();
+    }
+}
+
 async fn install(app: &tauri::AppHandle, _operation: Operation) -> Result<Snapshot, String> {
     let state = app.state::<UpdateState>();
     let (update, metadata, bytes) = {
@@ -379,9 +386,9 @@ async fn install(app: &tauri::AppHandle, _operation: Operation) -> Result<Snapsh
         failure => {
             let code = failure.ok().and_then(Result::err).unwrap_or_else(|| "update_backup_failed".into());
             state.installation_failure(&code);
-            // Restart the existing binary only after its own backend has exited.
-            let exited = desktop.runtime.lock().is_ok_and(|mut r| matches!(r.child.try_wait(), Ok(Some(_))));
-            if exited && code != "update_shutdown_failed" { app.restart(); }
+            // Shutdown proof is mandatory for installing a new binary. Once the
+            // owned backend has exited, relaunch the existing binary to recover.
+            restart_if_runtime_exited(&desktop.runtime, || { app.restart(); });
             desktop.closing.store(false, Ordering::SeqCst);
             return Ok(state.fail(&code, "ready"));
         }
@@ -464,6 +471,33 @@ pub async fn install_desktop_update(window: WebviewWindow, app: tauri::AppHandle
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn failed_update_shutdown_restarts_the_current_client_only_after_its_backend_exits() {
+        let failed = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "exit /b 1"])
+            .spawn()
+            .unwrap();
+        let runtime = Mutex::new(crate::RuntimeProcess { child: failed });
+        assert_eq!(runtime.lock().unwrap().wait_for_update_exit(), Err("update_shutdown_failed".into()));
+
+        let mut restarted = false;
+        restart_if_runtime_exited(&runtime, || {
+            assert!(runtime.try_lock().is_ok(), "Restart must not hold the backend lock during teardown");
+            restarted = true;
+        });
+        assert!(restarted, "A failed shutdown proof must not strand the client without its backend");
+
+        let live = std::process::Command::new("cmd.exe")
+            .args(["/d", "/q", "/c", "set /p RIVLOOM_UPDATE_TEST="])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let runtime = Mutex::new(crate::RuntimeProcess { child: live });
+        restart_if_runtime_exited(&runtime, || panic!("The client must not restart while its backend is still running"));
+        runtime.lock().unwrap().stop();
+    }
+
     #[test]
     fn restart_preserves_skip_and_keeps_recovery_until_successful_workspace_startup() {
         let root = std::env::temp_dir().join(format!("rivloom-update-recovery-{}-{}", std::process::id(), now()));

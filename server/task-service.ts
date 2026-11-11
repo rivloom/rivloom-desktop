@@ -404,7 +404,9 @@ export async function sync(taskID: string) {
       readTodos: async () => (await client().session.todo({ directory, sessionID: t.sessionID! },
         { signal: AbortSignal.timeout(2500) })).data,
     });
-    if (shuttingDown) return;
+    // An engine exit can interrupt the Task while an older poll is reading results.
+    // Its durable interruption must win over that poll's completion snapshot.
+    if (shuttingDown || !engineStatus.ready || taskQueries.stateForID(t.id) !== t.state) return;
     nodeModelActivity.observe(t.id, () => nodeModelActivity.snapshot(modelActivityTask({ ...t, ...patch }), rawMessages.data));
     if (
       JSON.stringify([t.messages, t.approvals, t.questions, t.state, t.error, t.telemetry]) !==

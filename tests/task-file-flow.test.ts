@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { NodeNetwork } from '../server/node-network.ts';
+import type { BrainTopologyStore } from '../server/brain-topology.ts';
 import { RemoteTaskStore, validRemoteTaskOffer } from '../server/remote-tasks.ts';
 import { BrainTaskStore, validBrainTaskSubmission } from '../server/brain-tasks.ts';
 import {
@@ -42,6 +45,7 @@ type Internals = {
   nodes: Map<string, RivloomNode>;
   channels: Map<string, SecureChannelSession>;
   trustStore: { record: (id: string) => unknown };
+  topology: BrainTopologyStore;
   remoteTasks: RemoteTaskStore;
   brainTasks: BrainTaskStore;
   handleChannelMessage: (
@@ -125,6 +129,7 @@ function harness() {
     networks,
     ids,
     peers,
+    root,
     reconnect,
     close: () => networks.forEach((n) => n.files.close()),
   };
@@ -162,6 +167,86 @@ test('file transfer waits for the authenticated task offer and then completes wi
     await h.a.flushTaskFiles(h.ids[1]);
     assert.deepEqual(h.networks[1].files.content(f.id), bytes);
     assert.equal(h.networks[0].files.views(route)[0].deliveries[0].state, 'complete');
+  } finally {
+    h.close();
+  }
+});
+
+test('file transfer recovers when the receiver persisted the last block but exited before verification', async () => {
+  const h = harness();
+  try {
+    const bytes = Buffer.from('final block survived the restart');
+    const f = file(bytes), brainID = randomUUID();
+    const task = h.a.remoteTasks.create(h.ids[0], brainID, h.ids[1], brainID, {
+      title: 'recover attachment',
+      description: 'selected input',
+      criteria: 'verify',
+      inputFiles: [f],
+    });
+    const route: TaskFileRoute = { scope: 'remote', taskID: task.id, purpose: 'input' };
+    const offer = h.a.remoteTasks.message(task.id);
+    assert(validRemoteTaskOffer(offer));
+    h.b.remoteTasks.receiveOffer(offer);
+    h.a.remoteTasks.markDelivered(task.id, offer, true);
+    const [sender, receiver] = h.networks.map((node) => node.files);
+    sender.beginUpload('sender', f);
+    sender.uploadChunk('sender', f.id, 0, bytes.toString('base64'));
+    sender.bindUploaded(route, 'sender', [f.id]);
+    sender.queueDelivery(route, f.id, h.ids[1]);
+    receiver.expectIncoming(route, [f], h.ids[0]);
+    receiver.close();
+
+    // Recreate the older two-step write immediately before its final verification.
+    const directory = join(h.root, 'b', 'task-files');
+    writeFileSync(join(directory, 'blobs', `${f.id}.blob`), bytes);
+    const db = new DatabaseSync(join(directory, 'files.sqlite'));
+    try {
+      db.prepare("UPDATE files SET body=json_set(body, '$.receivedBytes', ?) WHERE id=?").run(f.bytes, f.id);
+    } finally {
+      db.close();
+    }
+
+    await h.a.flushTaskFiles(h.ids[1]);
+    assert.equal(sender.views(route)[0].deliveries[0].state, 'complete');
+    assert.deepEqual(receiver.content(f.id), bytes);
+  } finally {
+    h.close();
+  }
+});
+
+test('a missing local blob fails its delivery and lets the next file reach the same peer', async () => {
+  const h = harness();
+  try {
+    const bytes = Buffer.from('independent valid attachment');
+    const missing = file(Buffer.from('lost blob')), intact = file(bytes), brainID = randomUUID();
+    const files = [missing, intact];
+    const task = h.a.remoteTasks.create(h.ids[0], brainID, h.ids[1], brainID, {
+      title: 'two attachments',
+      description: 'selected inputs',
+      criteria: 'verify',
+      inputFiles: files,
+    });
+    const route: TaskFileRoute = { scope: 'remote', taskID: task.id, purpose: 'input' };
+    const offer = h.a.remoteTasks.message(task.id);
+    assert(validRemoteTaskOffer(offer));
+    h.b.remoteTasks.receiveOffer(offer);
+    h.a.remoteTasks.markDelivered(task.id, offer, true);
+    const [sender, receiver] = h.networks.map((node) => node.files);
+    for (const [index, file] of files.entries()) {
+      sender.beginUpload('sender', file);
+      const body = index === 0 ? Buffer.from('lost blob') : bytes;
+      sender.uploadChunk('sender', file.id, 0, body.toString('base64'));
+    }
+    sender.bindUploaded(route, 'sender', files.map((file) => file.id));
+    for (const file of files) sender.queueDelivery(route, file.id, h.ids[1]);
+    receiver.expectIncoming(route, files, h.ids[0]);
+    unlinkSync(join(h.root, 'a', 'task-files', 'blobs', `${missing.id}.blob`));
+
+    await h.a.flushTaskFiles(h.ids[1]);
+    assert.equal(sender.view(missing.id, route).deliveries[0].state, 'failed');
+    await h.a.flushTaskFiles(h.ids[1]);
+    assert.equal(sender.view(intact.id, route).deliveries[0].state, 'complete');
+    assert.deepEqual(receiver.content(intact.id), bytes);
   } finally {
     h.close();
   }
@@ -364,6 +449,71 @@ test('file protocol authenticates exact replies and rejects unrelated tasks, cap
       h.a.exchangeTaskFile(h.peers[1], { ...begin, requestID: randomUUID() }),
       /失效/,
     );
+  } finally {
+    h.close();
+  }
+});
+test('lost file acknowledgement, offer replay and revocation preserve the same task and byte offset across reconnections', async () => {
+  const h = harness();
+  try {
+    const bytes = Buffer.from('abcdefghi');
+    const descriptor = file(bytes);
+    const brainID = randomUUID();
+    const brain = { id: brainID, masterNodeID: h.ids[0], name: 'Transfer fixture', state: 'established' as const };
+    h.peers[0].brains = [brain];
+    h.b.topology.reconcile(h.ids[0], [brain]);
+    const task = h.a.remoteTasks.create(h.ids[0], brainID, h.ids[1], brainID, {
+      title: 'Resume the original file', description: 'Retry without changing task identity', criteria: 'Exact bytes', inputFiles: [descriptor],
+    });
+    const offer = h.a.remoteTasks.message(task.id);
+    assert(validRemoteTaskOffer(offer));
+    const offerToReceiver = () => {
+      const channel = h.a.channels.get(h.ids[1])!;
+      h.b.handleChannelMessage(encryptChannelPayload(channel, offer), '127.0.0.1');
+    };
+    const route: TaskFileRoute = { scope: 'remote', taskID: task.id, purpose: 'input' };
+    const receiveOffset = () => h.networks[1].files.views(route)[0].receivedBytes;
+    const chunk = async (offset: number, value: string) => {
+      const request: TaskFileMessage = { type: 'task-file', version: 1, requestID: randomUUID(), route, file: descriptor,
+        offset, data: Buffer.from(value).toString('base64') };
+      const reply = await h.a.exchangeTaskFile(h.peers[1], request);
+      assert(validTaskFileResponse(reply, request));
+      return reply;
+    };
+    offerToReceiver();
+    assert.equal((await chunk(3, 'def')).state, 'failed', 'A gap must not advance the file');
+    assert.equal(receiveOffset(), 0);
+
+    const originalPost = h.a.postToNode;
+    let lostPacket: ChannelEnvelope | undefined;
+    h.a.postToNode = async (peer, path, envelope) => {
+      await originalPost(peer, path, envelope);
+      lostPacket = envelope;
+      return null;
+    };
+    await assert.rejects(chunk(0, 'abc'), /认证文件回执/);
+    assert.equal(receiveOffset(), 3, 'The receiver retained the chunk whose reply was lost');
+    h.a.postToNode = originalPost;
+    h.reconnect();
+    offerToReceiver();
+    assert.deepEqual(h.b.remoteTasks.list().map(record => record.id), [task.id]);
+    const stalePacket = lostPacket;
+    assert(stalePacket);
+    assert.throws(() => h.b.handleChannelMessage(stalePacket, '127.0.0.1', true), /失效/);
+    assert.equal((await chunk(0, 'abc')).receivedBytes, 3, 'Retry under the new channel is idempotent');
+    assert.equal((await chunk(0, 'xyz')).state, 'failed', 'A conflicting retry must not replace the first block');
+    assert.equal(receiveOffset(), 3);
+
+    const trusted = h.b.trustStore.record;
+    h.b.trustStore.record = () => null;
+    await assert.rejects(chunk(3, 'def'), /失效/);
+    assert.equal(receiveOffset(), 3, 'Revocation cannot advance the saved offset');
+    h.b.trustStore.record = trusted;
+    h.reconnect();
+    assert.equal((await chunk(3, 'def')).receivedBytes, 6);
+    assert.equal((await chunk(6, 'ghi')).state, 'complete');
+    assert.equal((await chunk(6, 'ghi')).state, 'complete', 'Retry of the final block keeps the verified file');
+    assert.deepEqual(h.networks[1].files.content(descriptor.id), bytes);
   } finally {
     h.close();
   }
