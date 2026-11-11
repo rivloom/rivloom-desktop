@@ -7,11 +7,13 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   BrainCircuit,
   Check,
+  ChevronDown,
   Clock3,
   Fingerprint,
   FolderOpen,
   Inbox,
   Link2,
+  Monitor,
   Pencil,
   Radio,
   Send,
@@ -663,7 +665,7 @@ export function ExecutionPolicyCard({
     <article className="remote-preparation-form execution-policy-form">
       <div>
         <span className="eyebrow">LOCAL EXECUTION CAPABILITY</span>
-        <strong>{policy.enabled ? t('本机执行能力已开放') : t('本机执行能力已关闭')}</strong>
+        <strong className={`execution-policy-state${policy.enabled ? ' enabled' : ''}`}>{policy.enabled ? t('本机执行能力已开放') : t('本机执行能力已关闭')}</strong>
         <p>{t('开放后，自动调度可把其他设备的任务安排到本机。模型、工作目录和审批方式由你设置。')}</p>
         <p>{t('已保存的审批模式：{{mode}}', { mode: approvalModeLabels[policy.approvalMode] })}</p>
         <details><summary>{t('了解执行规则')}</summary>
@@ -1177,7 +1179,12 @@ export function NodeNetworkView({
         </div>
       </div>
 
-      <details className="network-advanced local-node-details"><summary>{t('本机设备信息')}<span>{network.local?.name}</span></summary>
+      <details className="network-advanced local-node-details">
+        <summary>
+          <Monitor size={16} aria-hidden="true" />
+          <span className="network-disclosure-label">{t('本机设备信息')}{network.local?.name && <small>{network.local.name}</small>}</span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </summary>
       <section className="network-section">
         <div className="section-title">
           <div>
@@ -1199,7 +1206,12 @@ export function NodeNetworkView({
       </section>
       </details>
 
-      <details className="network-advanced"><summary>{t('任务协作与 Brain')}</summary>
+      <details className="network-advanced">
+        <summary>
+          <BrainCircuit size={16} aria-hidden="true" />
+          <span className="network-disclosure-label">{t('任务协作与 Brain')}</span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </summary>
       <section className="network-section">
         <div className="section-title">
           <div>

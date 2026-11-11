@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
+  Layers3,
   LoaderCircle,
   PlugZap,
   RefreshCw,
@@ -146,7 +147,7 @@ export function ModelSettingsView({
     <section className="settings-card default-card">
       <header>
         <span className="settings-icon">
-          <ShieldCheck size={21} />
+          <Layers3 size={18} aria-hidden="true" />
         </span>
         <div>
           <h2>{t('默认执行模型')}</h2>
@@ -264,7 +265,7 @@ export function ModelSettingsView({
         <section className="settings-card connection-test">
           <header>
             <span className="settings-icon">
-              <PlugZap size={21} />
+              <PlugZap size={18} aria-hidden="true" />
             </span>
             <div>
               <h2>{t('连接测试')}</h2>

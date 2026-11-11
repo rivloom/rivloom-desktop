@@ -1,0 +1,95 @@
+/* Shared surface and text roles. Both appearances use the same geometry and DOM. */
+:root {
+  color-scheme: light;
+  --type-body: 15px;
+  --type-meta: 12px;
+  --leading-body: 1.75;
+  --ui-control-height: 38px;
+  --ui-icon-stroke: 1.75;
+  --ink: #252830;
+  --text: #414650;
+  --muted: #69707c;
+  --canvas: #f6f7f9;
+  --app-canvas: var(--canvas);
+  --surface: #ffffff;
+  --surface-soft: #f6f7fa;
+  --sidebar: #f7f8fb;
+  --line: #e6e8ee;
+  --line-strong: #c6cbd5;
+  --hover-wash: #eef0f6;
+  --press-wash: #e4e7f0;
+  --bubble: var(--surface-soft);
+  --accent: #6058d8;
+  --accent-hover: #4d45bf;
+  --accent-ink: #5148bd;
+  --accent-soft: #eeecfd;
+  --on-accent: #ffffff;
+  --deep: #152338;
+  --incoming: #21354e;
+  --incoming-hover: #192c44;
+  --inverse: #f2f5fa;
+  --inverse-muted: #c6cfdd;
+  --success: #29785d;
+  --success-surface: #edf7f1;
+  --success-line: #bcd9cc;
+  --warning: #8b6224;
+  --warning-surface: #fcf5e8;
+  --warning-line: #e5d3b4;
+  --danger: #b34550;
+  --danger-surface: #fceff1;
+  --danger-line: #e8bdc4;
+  --amber: var(--warning);
+  --focus: var(--accent);
+  --focus-ring: color-mix(in srgb, var(--accent) 15%, transparent);
+  --selection: #dedafb;
+  --solid: #30333b;
+  --on-solid: #ffffff;
+  --shadow-color: #283244;
+  --shadow-sm: 0 1px 3px color-mix(in srgb, var(--shadow-color) 7%, transparent);
+  --shadow-md: 0 5px 18px color-mix(in srgb, var(--shadow-color) 10%, transparent);
+  --shadow-float: 0 8px 28px color-mix(in srgb, var(--shadow-color) 17%, transparent);
+  --overlay-scrim: rgb(31 37 52 / 22%);
+  --panel-radius: 12px;
+  --panel-gap: 6px;
+  --panel-shadow: 0 0 0 1px var(--line);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #edf0f5;
+  --text: #d7dce5;
+  --muted: #a5adba;
+  --canvas: #191b20;
+  --surface: #1e2025;
+  --surface-soft: #272a31;
+  --sidebar: #1b1d23;
+  --line: #353a45;
+  --line-strong: #535d6c;
+  --hover-wash: #2c3039;
+  --press-wash: #373d49;
+  --accent: #aba4ff;
+  --accent-hover: #c1bcff;
+  --accent-ink: #c3bdff;
+  --accent-soft: #33304b;
+  --on-accent: #211c3c;
+  --success: #8bcfb4;
+  --success-surface: #233c32;
+  --success-line: #426d5b;
+  --warning: #e1bd83;
+  --warning-surface: #3c3325;
+  --warning-line: #79613b;
+  --danger: #eea2ab;
+  --danger-surface: #402a31;
+  --danger-line: #80505a;
+  --selection: #49416c;
+  --solid: #e8ebf1;
+  --on-solid: #242831;
+  --shadow-color: #000000;
+  --overlay-scrim: rgb(9 11 16 / 58%);
+}
+.theme-control { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
+:root[data-theme-switching] *, :root[data-theme-switching] *::before, :root[data-theme-switching] *::after { transition: none !important; }
+.theme-toggle { gap: 6px; }
+.theme-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.theme-save-error { position: absolute; top: calc(100% + 8px); right: 0; z-index: 70; width: max-content; max-width: min(300px, calc(100vw - 32px)); padding: 9px 12px; border: 1px solid var(--danger-line); border-radius: 8px; color: var(--danger); background: var(--surface); box-shadow: var(--shadow-float); font-size: 12px; }
+.context-menu > button[aria-checked='true'] { background: var(--accent-soft); color: var(--accent-ink); }
+@media (max-width: 740px) { .theme-toggle > span { display: none; } }

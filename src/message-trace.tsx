@@ -25,8 +25,7 @@ export function MessageSpeed({ message, active }: { message: Message; active: bo
 
 function Reasoning({ part, active }: { part: Extract<MessagePart, { type: 'text' | 'reasoning' }>; active: boolean }) {
   const live = active && !part.endedAt;
-  const [choice, setChoice] = useState<boolean | null>(null);
-  const expanded = choice ?? live;
+  const [expanded, setChoice] = useState(false);
   const body = useRef<HTMLDivElement>(null), follow = useRef(true);
   useLayoutEffect(() => { if (body.current && live && follow.current) body.current.scrollTop = body.current.scrollHeight; }, [part.text, expanded, live]);
   if (!part.text.trim() && !live) return null;
@@ -68,13 +67,16 @@ function ToolCall({ part, active }: { part: Extract<MessagePart, { type: 'tool' 
   </details>;
 }
 
-export function MessageTrace({ message, active = false, completed = false, searchQuery = '', showText = true }: {
-  message: Message; active?: boolean; completed?: boolean; searchQuery?: string; showText?: boolean;
+export function MessageTrace({ message, active = false, completed = false, searchQuery = '', showText = true, showProcess = true }: {
+  message: Message; active?: boolean; completed?: boolean; searchQuery?: string; showText?: boolean; showProcess?: boolean;
 }) {
   const parts: MessagePart[] = message.parts || [
     ...(message.text ? [{ id: 'text', type: 'text' as const, text: message.text }] : []),
     ...message.tools.map((tool, index) => ({ ...tool, id: `tool-${index}`, type: 'tool' as const, input: '' })),
   ];
+  if (!showProcess) return <div className="message-trace">{showText && parts.map(part => part.type === 'text' ?
+    <div className="trace-text" key={part.id}><MessageMarkdown text={part.text} searchQuery={searchQuery} />
+      {part.truncated && <small>{t('内容过长，已截断显示。')}</small>}</div> : null)}</div>;
   const renderPart = (part: MessagePart) => part.type === 'tool' ? <ToolCall key={part.id} part={part} active={active && !completed} /> :
     part.type === 'reasoning' ? <Reasoning key={part.id} part={part} active={active && !completed && !message.timing?.completed} /> :
       showText && part.text ? <div className="trace-text" key={part.id}><MessageMarkdown text={part.text} searchQuery={searchQuery} />
@@ -92,13 +94,9 @@ export function MessageTrace({ message, active = false, completed = false, searc
 
 export function TaskTrace({ task, label }: { task: Task; label: string }) {
   const active = activeStates.includes(task.state) && task.state !== 'stopping';
-  const completed = task.state === 'accepted' || task.state === 'review';
   const messages = task.messages.filter(m => m.role === 'assistant');
-  const [choice, setChoice] = useState<boolean | null>(null);
+  const [expanded, setChoice] = useState(false);
   const [count, setCount] = useState(12);
-  // Reset an expansion from the live phase once, while retaining later user choices across polls.
-  useLayoutEffect(() => { if (completed) setChoice(null); }, [completed]);
-  const expanded = choice ?? active;
   if (!messages.some(m => m.parts?.length || m.tools.length || m.text)) return null;
   const latest = messages.at(-1)!;
   return <section className={`task-trace ${active ? 'is-live' : ''}`} aria-label={t('思考与调用过程')}>

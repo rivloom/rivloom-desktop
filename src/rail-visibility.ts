@@ -5,9 +5,9 @@ export function activeQueueCount(entries?: readonly { state: string }[] | null):
   return entries?.filter((entry) => entry.state !== 'ended').length ?? 0;
 }
 
-export function railExpanded(available: boolean, preference: RailPreference, activeCount: number): boolean {
+export function railExpanded(available: boolean, preference: RailPreference, _activeCount: number): boolean {
   if (!available) return false;
-  if (preference === 'auto') return activeCount > 0;
+  if (preference === 'auto') return false;
   return preference === 'open';
 }
 

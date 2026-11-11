@@ -1,33 +1,14 @@
-/* The approved graphite history panel. Tokens stay local, including its portal menus. */
+/* Compact history layout. Colors inherit the selected appearance, including portals. */
 .history-graphite {
-  --ink: #f0f1f4;
-  --text: #e4e5e9;
-  --muted: #a0a3ae;
-  --surface: #272930;
-  --surface-soft: #30333b;
-  --sidebar: #272930;
-  --line: #3a3d46;
-  --line-strong: #555b69;
-  --hover-wash: #2e3038;
-  --press-wash: #3b3f49;
-  --accent: #b3c4e8;
-  --accent-ink: #d0dcf3;
-  --accent-soft: #353840;
-  --focus: #b3c4e8;
-  --focus-ring: #b3c4e824;
-  --success: #9bcab7;
-  --warning: #dfbc85;
-  --danger: #eba6ab;
-  color-scheme: dark;
   font-family: var(--font-ui);
   font-synthesis: none;
   color: var(--text);
 }
 .conversation-sidebar.history-graphite {
   padding: 12px 12px 8px;
-  background: var(--surface);
-  border-radius: 13px;
-  box-shadow: inset 0 0 0 1px #3b3e46, 0 4px 18px #171a2314;
+  background: color-mix(in srgb, var(--sidebar) 78%, var(--canvas));
+  border-radius: 0;
+  box-shadow: none;
 }
 .history-graphite .node-avatar { background: var(--accent-soft); border-color: var(--line); color: var(--accent); }
 .history-graphite .new-conversation {
@@ -36,24 +17,25 @@
   margin-top: 4px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: var(--accent-soft);
-  color: var(--text);
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface));
+  color: var(--ink);
   font-size: 13px;
   font-weight: 500;
   box-shadow: none;
 }
-.history-graphite .new-conversation:hover { background: var(--press-wash); border-color: var(--line-strong); box-shadow: none; transform: none; }
+.conversation-sidebar.history-graphite .new-conversation:hover { background: var(--accent-soft); border-color: var(--line); box-shadow: none; transform: none; }
+.conversation-sidebar.history-graphite .new-conversation:active { background: var(--press-wash); }
 .history-graphite .new-conversation:hover > svg { transform: none; }
 .history-graphite .new-conversation kbd { color: var(--muted); }
 .history-graphite .workspace-command-entry { padding: 6px 10px; font-size: 12px; color: var(--muted); }
 .history-graphite .conversation-searchbar { margin: 6px 0 10px; }
-.history-graphite .conversation-search { height: 30px; background: #22242b; border: 1px solid var(--line); border-radius: 6px; }
-.history-graphite .conversation-search:focus-within { background: #22242b; border-color: var(--focus); box-shadow: 0 0 0 2px var(--focus-ring); }
+.history-graphite .conversation-search { height: 30px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px; }
+.history-graphite .conversation-search:focus-within { background: var(--surface-soft); border-color: var(--focus); box-shadow: 0 0 0 2px var(--focus-ring); }
 .history-graphite .conversation-search input { color: var(--text); }
 .history-graphite .history-filter-toggle { width: 30px; height: 30px; background: transparent; border-radius: 6px; }
 .history-graphite .history-filter-toggle:is(:hover, .active, [aria-expanded='true']) { background: var(--accent-soft); color: var(--ink); border-color: var(--line); }
 .history-graphite .history-filter-count { color: var(--surface); }
-.history-graphite .history-filter-popover { box-shadow: 0 8px 24px #11121855; }
+.history-graphite .history-filter-popover { box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 33%, transparent); }
 .history-graphite .history-draft-tools { gap: 4px; padding: 0 2px 7px; }
 .history-graphite .history-draft-tools button { padding: 3px 7px; }
 .history-graphite .conversation-history { padding-bottom: 8px; scrollbar-gutter: auto; }
@@ -66,7 +48,14 @@
 .history-graphite .history-directory-toggle > svg:nth-child(2) { display: none; }
 .history-graphite .history-directory-heading > .context-more { position: absolute; right: 0; width: 24px; height: 24px; }
 .history-graphite .history-directory-items { margin: 0; padding: 0; border: 0; animation: none; }
-.history-graphite .history-row { display: block; margin-bottom: 1px; border-radius: 5px; animation: none; }
+.history-graphite .history-row {
+  --history-identity: var(--journey-color, var(--accent));
+  --history-selection: color-mix(in srgb, var(--history-identity) 12%, var(--sidebar));
+  display: block;
+  margin-bottom: 1px;
+  border-radius: 5px;
+  animation: none;
+}
 .history-graphite .conversation-item {
   display: flex;
   align-items: center;
@@ -81,8 +70,19 @@
 }
 .history-graphite .conversation-item:hover,
 .history-graphite .conversation-item.incoming:hover:not(.selected) { background: var(--hover-wash); }
-.history-graphite .conversation-item.selected { background: var(--accent-soft); color: var(--ink); box-shadow: none; }
-.history-graphite .conversation-item.selected::before { content: none; }
+.history-graphite .conversation-item.selected { background: var(--history-selection); color: var(--ink); box-shadow: none; }
+.history-graphite .conversation-item.selected::before {
+  background: var(--history-identity);
+  left: 2px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  animation: none;
+}
+.history-graphite .conversation-item:active { background: var(--press-wash); }
+@media (prefers-reduced-motion: no-preference) {
+  .history-graphite .conversation-item.selected::before { animation: rv-bar-in var(--dur-base) var(--ease-out) backwards; }
+}
 /* The metadata column fits its (compact) state so longer states and English labels are not cut off.
    Its 36px floor keeps titles clear of the hover action; the cap keeps titles readable. */
 .history-graphite .history-item-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
@@ -99,12 +99,12 @@
 .history-graphite .conversation-item-state small { display: block; font-size: 11px; }
 .history-graphite .conversation-item-state.is-running { color: var(--accent); }
 .history-graphite .conversation-item-state.is-running::before { content: none; }
-.history-graphite .conversation-item-state.attention { color: #dfc49e; }
+.history-graphite .conversation-item-state.attention { color: var(--warning); }
 .history-graphite .conversation-item-state.is-failed { color: var(--danger); }
 .history-graphite .history-draft-badge { border: 0; padding: 0; color: var(--muted); background: transparent; font-size: 11px; }
 /* The action occupies the metadata column; the title never changes width on hover. */
 .history-graphite .history-row > .context-more { top: 3px; right: 8px; width: 34px; height: 24px; color: var(--text); background: var(--hover-wash); border-radius: 5px; }
-.history-graphite .history-row:has(.selected) > .context-more { background: var(--accent-soft); }
+.history-graphite .history-row:has(.selected) > .context-more { background: var(--history-selection); }
 .history-graphite .history-row > .context-more:hover { background: var(--press-wash); }
 .history-graphite .history-row:is(:hover, :focus-within, :has(.context-more[aria-expanded='true'])) .history-item-meta { visibility: hidden; }
 .history-graphite :is(.history-row, .history-directory-heading):focus-within > .context-more { opacity: 1; pointer-events: auto; }
@@ -113,18 +113,16 @@
 .history-graphite .history-row:has(.context-more[aria-expanded='true']) .history-item-title { padding-right: 0; }
 .history-graphite .history-search-excerpt { padding: 2px 10px 8px; color: var(--muted); }
 .history-graphite .search-highlight,
-.history-graphite .conversation-item.selected .search-highlight { color: #f0debc; background: #675339; }
+.history-graphite .conversation-item.selected .search-highlight { color: var(--warning); background: var(--warning); }
 .history-graphite :is(.conversation-item, .history-directory-toggle, .context-more):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .history-graphite .conversation-settings { border-color: var(--line); }
 .history-graphite .conversation-settings :is(.activity-utility, .utility-nav-entry) { color: var(--muted); }
-.history-graphite .conversation-settings :is(.activity-utility.active, button[data-active='true'], button.active) { background: var(--accent-soft); color: var(--accent); }
+.history-graphite .conversation-settings :is(.activity-utility, .utility-nav-entry):is([aria-current='page'], [aria-expanded='true']) { color: var(--accent-ink); }
 .history-graphite .conversation-settings .attention-count { background: var(--accent-soft); color: var(--text); }
 .history-graphite .sidebar-signature { border-color: var(--line); color: var(--muted); }
-.history-graphite .sidebar-signature .rivloom-wordmark { filter: grayscale(1) brightness(0) invert(1); opacity: .6; }
-.context-menu.history-graphite { background: var(--surface-soft); border-color: var(--line-strong); color: var(--text); box-shadow: 0 8px 24px #11121855; }
-.context-menu.history-graphite > button:is(:hover, :focus-visible) { background: var(--press-wash); }
-.context-menu.history-graphite > button.danger { color: var(--danger); }
-.history-title-hint { position: fixed; z-index: 490; width: max-content; max-width: min(320px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); box-shadow: 0 5px 20px #11121833; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.history-graphite .sidebar-signature .rivloom-wordmark { filter: none; opacity: .6; }
+:root[data-theme='dark'] .sidebar-signature .rivloom-wordmark { filter: grayscale(1) brightness(0) invert(1); }
+.history-title-hint { position: fixed; z-index: 490; width: max-content; max-width: min(320px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-soft); box-shadow: 0 5px 20px color-mix(in srgb, var(--shadow-color) 20%, transparent); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 @container history-sidebar (max-width: 230px) {
   .history-graphite .history-item-content { gap: 5px; }
   .history-graphite .conversation-item { padding-inline: 7px; }

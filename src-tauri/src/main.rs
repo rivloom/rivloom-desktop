@@ -19,6 +19,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
 mod native_async;
+mod ui_theme;
 mod lan_firewall;
 mod task_file_location;
 mod desktop_update;
@@ -100,6 +101,7 @@ struct DesktopInfo {
     data_directory: String,
     desktop_token: String,
     locale: String,
+    theme: String,
 }
 
 fn read_locale(data_dir: &Path) -> &'static str {
@@ -139,6 +141,30 @@ fn set_desktop_language(window: WebviewWindow, state: tauri::State<DesktopState>
     Ok(())
 }
 
+fn window_theme(preference: ui_theme::Preference) -> Option<tauri::Theme> {
+    match preference { ui_theme::Preference::Light => Some(tauri::Theme::Light), ui_theme::Preference::Dark => Some(tauri::Theme::Dark), ui_theme::Preference::System => None }
+}
+
+fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
+    if theme == tauri::Theme::Dark { tauri::window::Color(30, 32, 37, 255) }
+    else { tauri::window::Color(255, 255, 255, 255) }
+}
+
+#[tauri::command]
+fn set_desktop_theme(window: WebviewWindow, state: tauri::State<DesktopState>, theme: String) -> Result<(), String> {
+    authorize(&window, &state)?;
+    let preference = ui_theme::Preference::parse(&theme)
+        .ok_or_else(|| native_text(&state.data_dir, "不支持的外观设置"))?;
+    let previous = ui_theme::read(&state.data_dir);
+    ui_theme::save(&state.data_dir, preference).map_err(|_| native_text(&state.data_dir, "外观设置未能保存，请重试。"))?;
+    if window.set_theme(window_theme(preference)).is_err() {
+        let _ = ui_theme::save(&state.data_dir, previous);
+        return Err(native_text(&state.data_dir, "外观设置未能保存，请重试。"));
+    }
+    if let Ok(resolved) = window.theme() { let _ = window.set_background_color(Some(theme_background(resolved))); }
+    Ok(())
+}
+
 fn authorize(window: &WebviewWindow, state: &DesktopState) -> Result<(), String> {
     let url = window.url().map_err(|_| native_text(&state.data_dir, "无法确认桌面窗口"))?;
     if window.label() != "main" || url.origin().ascii_serialization() != state.origin {
@@ -156,6 +182,7 @@ fn desktop_info(
     Ok(DesktopInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         locale: read_locale(&state.data_dir).into(),
+        theme: ui_theme::read(&state.data_dir).as_str().into(),
         data_directory: state.data_dir.display().to_string(),
         desktop_token: fs::read_to_string(state.data_dir.join("desktop-auth-token.txt"))
             .map_err(|_| native_text(&state.data_dir, "桌面认证信息不可用，请重启客户端"))?
@@ -421,7 +448,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().pubkey(desktop_update::PUBLIC_KEY.trim()).build())
-        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_task_file_with, file_applications, open_project_directory, notify_attention, play_completion_sound, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
+        .invoke_handler(tauri::generate_handler![desktop_info, set_desktop_language, set_desktop_theme, choose_project_directory, choose_task_file_destination, reveal_task_file, open_task_file, open_task_file_with, file_applications, open_project_directory, notify_attention, play_completion_sound, take_notification_target, lan_firewall::inspect_lan_firewall, lan_firewall::repair_lan_firewall,
             desktop_update::desktop_update_snapshot, desktop_update::check_desktop_update, desktop_update::skip_desktop_update,
             desktop_update::download_desktop_update, desktop_update::cancel_desktop_update, desktop_update::install_desktop_update,
             desktop_update::confirm_desktop_startup])
@@ -460,9 +487,13 @@ fn main() {
             app.manage(desktop_update::UpdateState::new(&data_dir, !preview));
             desktop_update::start_background(app.handle().clone());
             let allowed_origin = url.clone();
+            let preference = ui_theme::read(&data_dir);
+            let theme_session = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse()?))
                 .title("Rivloom").inner_size(1280.0, 840.0).min_inner_size(960.0, 640.0)
                 .visible(false)
+                .theme(window_theme(preference))
+                .initialization_script(ui_theme::initialization_script(preference, theme_session))
                 // Let WebView2 deliver FileList drops to the existing attachment uploader.
                 // Tauri's native handler otherwise intercepts HTML5 file drops on Windows.
                 .disable_drag_drop_handler()
@@ -470,6 +501,7 @@ fn main() {
                 .on_navigation(move |target| target.origin().ascii_serialization() == allowed_origin)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .build()?;
+            if let Ok(resolved) = window.theme() { window.set_background_color(Some(theme_background(resolved)))?; }
             #[cfg(windows)]
             windows_taskbar_icon::apply(&window)?;
             desktop_tray::setup(app.handle())?;
@@ -478,6 +510,11 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if window.label() != "main" { return; }
+            if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                if let Some(webview) = window.app_handle().get_webview_window("main") {
+                    let _ = webview.set_background_color(Some(theme_background(*theme)));
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 desktop_tray::request_hide(window.app_handle());

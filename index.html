@@ -3,7 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-    <meta name="theme-color" content="#082657" />
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      // Native initialization supplies the durable preference before this page runs.
+      (() => {
+        let preference = window.__RIVLOOM_THEME__;
+        if (preference === undefined) { try { preference = localStorage.getItem('rivloom.ui.theme'); } catch {} }
+        if (preference !== 'light' && preference !== 'dark') preference = 'system';
+        const theme = preference === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : preference;
+        const root = document.documentElement;
+        root.dataset.theme = theme;
+        root.dataset.themePreference = preference;
+        root.style.colorScheme = theme;
+        root.style.backgroundColor = theme === 'dark' ? '#1e2025' : '#ffffff';
+        document.querySelector('meta[name="theme-color"]').content = root.style.backgroundColor;
+      })();
+    </script>
     <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/brand/rivloom-favicon.png" />
     <title>Rivloom</title>
   </head>

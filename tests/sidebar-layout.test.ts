@@ -15,16 +15,17 @@ import { directoryDisplayName } from '../shared/directory-aliases.ts';
 
 test('sidebar defaults preserve desktop, narrow-window and unpaired layouts', () => {
   for (const [width, paired, history, network] of [
-    [1280, true, 340, 280],
+    [1280, true, 280, 280],
     [960, true, 218, 244],
     [860, true, 200, 205],
-    [1280, false, 340, 0],
+    [1280, false, 280, 0],
     [860, false, 226, 0],
   ] as const) {
     const actual = sidebarLayout(width, paired, defaultSidebarWidths());
     assert.equal(actual.history, history);
     assert.equal(actual.network, network);
   }
+  assert.equal(sidebarLayout(1280, false, { history: 340, network: null }).history, 340, 'keep the user\'s saved width');
 });
 
 test('oversized saved sidebars fit the center at every desktop width without changing preferences', () => {

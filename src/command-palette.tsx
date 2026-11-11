@@ -1,6 +1,6 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, BookOpen, Bot, Download, FilePenLine, GitCompareArrows, Inbox, Keyboard,
+import { Activity, Cpu, Download, FilePenLine, GitCompareArrows, Keyboard, LibraryBig, ListChecks,
   LayoutTemplate, ListOrdered, MessageSquare, Plus, Search, TextCursorInput, TextSearch, Trash2, X, type LucideIcon } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import { executeWorkspaceCommand, searchWorkspaceCommands, workspaceCommandKey, type WorkspaceActionID, type WorkspaceCommand } from './workspace-commands.ts';
@@ -10,9 +10,9 @@ const actionIcons: Record<WorkspaceActionID, LucideIcon> = {
   'new-conversation': Plus,
   'search-conversations': Search,
   'focus-composer': TextCursorInput,
-  attention: Inbox,
-  models: Bot,
-  knowledge: BookOpen,
+  attention: ListChecks,
+  models: Cpu,
+  knowledge: LibraryBig,
   queue: ListOrdered,
   diagnostics: Activity,
   trash: Trash2,
@@ -25,7 +25,7 @@ const actionIcons: Record<WorkspaceActionID, LucideIcon> = {
 
 function CommandIcon({ command }: { command: WorkspaceCommand }) {
   const Icon = command.kind === 'action' ? actionIcons[command.id] : command.kind === 'draft' ? FilePenLine : MessageSquare;
-  return <Icon size={18} aria-hidden="true" />;
+  return <Icon size={17} className="command-palette-icon" aria-hidden="true" />;
 }
 
 /** Mount to open. All commands are supplied by the workspace and only navigate existing UI. */

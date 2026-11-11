@@ -14,6 +14,7 @@ import {
 import {
   taskFileCapability,
   taskFileLargeCapability,
+  taskFileChunkBytes,
   validTaskFileResponse,
   type TaskFileMessage,
   type TaskFileRoute,
@@ -51,6 +52,7 @@ type Internals = {
   postToNode: (peer: RivloomNode, path: string, value: ChannelEnvelope) => Promise<unknown>;
   exchangeTaskFile: (peer: RivloomNode, message: TaskFileMessage) => Promise<unknown>;
   flushTaskFiles: (peerID: string) => Promise<void>;
+  taskFilePeers: () => Set<string>;
   repairFileRoutes: () => void;
   assertFilePeer: (
     route: TaskFileRoute,
@@ -162,6 +164,61 @@ test('file transfer waits for the authenticated task offer and then completes wi
     assert.equal(h.networks[0].files.views(route)[0].deliveries[0].state, 'complete');
   } finally {
     h.close();
+  }
+});
+
+test('an unavailable file peer preserves confirmed bytes, retains terminal deliveries and resumes the encrypted transfer', async () => {
+  for (const unavailable of ['online', 'channelReady', 'missing'] as const) {
+    const h = harness();
+    try {
+      const bytes = Buffer.alloc(taskFileChunkBytes * 6, 71), partial = file(bytes);
+      const completeBytes = Buffer.from('complete'), complete = file(completeBytes), failed = file(Buffer.from('good'));
+      const manifest = [failed, complete, partial], brainID = randomUUID();
+      const task = h.a.remoteTasks.create(h.ids[0], brainID, h.ids[1], brainID, {
+        title: 'real partial delivery', description: 'Keep authenticated file offsets', criteria: 'Resume the original route', inputFiles: manifest,
+      });
+      const route: TaskFileRoute = { scope: 'remote', taskID: task.id, purpose: 'input' };
+      const offer = h.a.remoteTasks.message(task.id); assert(validRemoteTaskOffer(offer));
+      h.b.remoteTasks.receiveOffer(offer); h.a.remoteTasks.markDelivered(task.id, offer, true);
+      h.networks[1].files.expectIncoming(route, manifest, h.ids[0]);
+      for (const [descriptor, content] of [[failed, Buffer.from('good')], [complete, completeBytes], [partial, bytes]] as const) {
+        h.networks[0].files.beginUpload('sender', descriptor);
+        for (let offset = 0; offset < content.length; offset += taskFileChunkBytes)
+          h.networks[0].files.uploadChunk('sender', descriptor.id, offset, content.subarray(offset, offset + taskFileChunkBytes).toString('base64'));
+      }
+      h.networks[0].files.bindUploaded(route, 'sender', manifest.map(item => item.id));
+      for (const descriptor of manifest) h.networks[0].files.queueDelivery(route, descriptor.id, h.ids[1]);
+      const corrupted: TaskFileMessage = { type: 'task-file', version: 1, requestID: randomUUID(), route,
+        file: failed, offset: 0, data: Buffer.from('evil').toString('base64') };
+      const failure = await h.a.exchangeTaskFile(h.peers[1], corrupted);
+      assert(validTaskFileResponse(failure, corrupted)); assert.equal(failure.state, 'failed');
+      await h.a.flushTaskFiles(h.ids[1]); // The authenticated integrity failure is terminal.
+      await h.a.flushTaskFiles(h.ids[1]); // The small file completes over the real encrypted harness.
+      await h.a.flushTaskFiles(h.ids[1]); // Four of six chunks are confirmed.
+      const deliveries = () => h.networks[0].files.views(route);
+      const sent = deliveries().find(item => item.id === partial.id)!.deliveries[0];
+      assert.equal(sent.state, 'sending'); assert.equal(sent.bytes, taskFileChunkBytes * 4);
+      const terminals = deliveries().filter(item => item.id !== partial.id).map(item => ({ id: item.id, deliveries: item.deliveries }));
+      assert.equal(terminals.find(item => item.id === failed.id)!.deliveries[0].state, 'failed');
+      assert.equal(terminals.find(item => item.id === complete.id)!.deliveries[0].state, 'complete');
+      let exchanges = 0; const forward = h.a.postToNode;
+      h.a.postToNode = async (...args) => { exchanges++; return forward(...args); };
+      if (unavailable === 'missing') h.a.nodes.delete(h.ids[1]);
+      else h.a.nodes.set(h.ids[1], { ...h.a.nodes.get(h.ids[1])!, [unavailable]: false });
+      assert(h.a.taskFilePeers().has(h.ids[1]), 'Persisted sending remains observable even if discovery removed its peer');
+      for (const peer of h.a.taskFilePeers()) await h.a.flushTaskFiles(peer);
+      await h.a.flushTaskFiles(h.ids[1]);
+      const waiting = deliveries().find(item => item.id === partial.id)!.deliveries[0];
+      assert.equal(waiting.state, 'waiting', unavailable); assert.equal(waiting.bytes, sent.bytes);
+      assert.match(waiting.error || '', /连接恢复后续传/); assert.equal(exchanges, 0, 'No file request goes to an unavailable peer');
+      if (unavailable === 'missing') assert.equal(h.a.taskFilePeers().has(h.ids[1]), false, 'An already waiting missing peer needs no repeated timer work');
+      assert.deepEqual(deliveries().filter(item => item.id !== partial.id).map(item => ({ id: item.id, deliveries: item.deliveries })), terminals);
+      h.reconnect(); await h.a.flushTaskFiles(h.ids[1]);
+      const resumed = deliveries().find(item => item.id === partial.id)!.deliveries[0];
+      assert.equal(resumed.state, 'complete'); assert.equal(resumed.bytes, bytes.length); assert.equal(resumed.error, null);
+      assert.deepEqual(h.networks[1].files.content(partial.id), bytes);
+      assert.equal(exchanges, 3, 'Resume probes the saved offset and sends only the two remaining chunks');
+    } finally { h.close(); }
   }
 });
 

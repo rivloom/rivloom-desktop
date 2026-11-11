@@ -6,6 +6,7 @@ import {
   KeyRound,
   LoaderCircle,
   LogIn,
+  Plug,
   Plus,
   Search,
   Server,
@@ -374,7 +375,7 @@ export function ProviderSettings({
     <section className="settings-card provider-settings">
       <header>
         <span className="settings-icon">
-          <KeyRound size={21} />
+          <Plug size={18} aria-hidden="true" />
         </span>
         <div>
           <h2>{t('模型接入')}</h2>
