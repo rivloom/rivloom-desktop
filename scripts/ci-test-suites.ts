@@ -29,6 +29,7 @@ export const logicFiles = [
   'tests/workflow-message-edits.test.ts',
   'tests/composer-keyboard.test.ts',
   'tests/composer-files.test.ts',
+  'tests/composer-slash.test.ts',
   'tests/conversation-draft-indicators.test.ts',
   'tests/conversation-export.test.ts',
   'tests/message-reuse.test.ts',

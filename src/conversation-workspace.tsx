@@ -7,12 +7,24 @@ import { TaskFilePicker, TaskFilesPanel } from './task-files';
 import { LanguageSwitcher } from './language-switcher';
 import { draftFilesReady } from './task-file-upload';
 import { CommandPalette } from './command-palette';
-import { useWorkspaceShortcuts } from './use-workspace-shortcuts';
+import { useWorkspaceShortcuts, workspaceKeyboardOverlayOpen } from './use-workspace-shortcuts';
+import rivloomSymbol from './assets/brand/rivloom-symbol-gradient.png';
 import { useSidebarDrawer } from './use-sidebar-drawer';
 import { workspaceShortcutLabels, type WorkspaceCommand } from './workspace-commands';
 import { primaryShortcut } from './keyboard-platform';
 import { ComposerSendPreference } from './composer-send-preference';
-import { ConversationStarters } from './conversation-starters';
+import { MissionCockpit } from './mission-cockpit';
+import { LiveInspector, type LiveInspectorTab } from './live-inspector';
+import {
+  activeSlashCommand,
+  applySlashInsertion,
+  filterSlashItems,
+  templateToSlashItem,
+  type ActiveSlashCommand,
+  type SlashCommandItem,
+} from './composer-slash';
+import { maximumConversationTitleLength, validConversationTitle } from '../shared/conversation-preferences';
+import type { PromptTemplate, PromptTemplateList } from '../shared/prompt-templates';
 import { composerSendHint, shouldSendComposer, type ComposerSendMode } from './composer-keyboard';
 import { conversationStopTarget, conversationStopState, type ConversationStopRequest } from './conversation-stop';
 import { conversationDraftKeys, hasConversationDraft } from './conversation-draft-indicators';
@@ -49,7 +61,6 @@ import { HistoryDirectoryHeading } from './history-directory-heading';
 import { useHistoryTitleHint } from './history-title-hint';
 import { ConversationRenameEditor } from './conversation-rename-editor';
 import { ContextMenu, useContextMenu } from './context-menu';
-import { PairedMachines } from './paired-machines';
 import { WorkflowView } from './workflow-view';
 import { MessageMarkdown } from './message-markdown';
 import { contentSearchMatch, indexConversations, searchConversations, searchExcerpt, searchTargetID, type SearchMatch } from './conversation-search';
@@ -77,6 +88,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from 'react';
 import { reuseJson } from './desktop-refresh';
 import {
@@ -100,6 +112,8 @@ import {
   RefreshCw,
   ListOrdered,
   PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   FileCode2,
@@ -122,6 +136,10 @@ import {
   GitCompareArrows,
   Keyboard,
   Languages,
+  Info,
+  Plug,
+  Sparkles,
+  Terminal,
   Activity as DiagnosticIcon,
 } from 'lucide-react';
 import { api, ApiError } from './api';
@@ -159,7 +177,7 @@ import {
   type ConversationDraft,
   type ConversationRouting,
 } from './conversation-drafts';
-import { Button, Field, Modal, Wordmark } from './ui';
+import { Button, Field, Modal } from './ui';
 import {
   conversations,
   conversationState,
@@ -183,6 +201,7 @@ import {
   type Message,
   type Project,
   type RemoteTaskControlAction,
+  type RivloomNode,
   type Task,
 } from '../shared/types';
 
@@ -650,6 +669,7 @@ export function ConversationWorkspace({
   const utilitiesMenu = useContextMenu();
   const conversationMenu = useContextMenu();
   const [railPreference, setRailPreference] = useState<RailPreference>('auto');
+  const [inspectorTab, setInspectorTab] = useState<LiveInspectorTab>('topology');
   const [modelSetupReturn, setModelSetupReturn] = useState<string | null>(null);
   useEffect(() => { if (view === 'chat') setModelSetupReturn(null); }, [view]);
   const [queueSnapshot, setQueueSnapshot] = useState<NodeQueueSnapshot | null>(null);
@@ -685,6 +705,7 @@ export function ConversationWorkspace({
   }, [storageKey, drafts, projectID, model, reasoningEffort, approvalChoice, criteria, sendMode, connected]);
   const [options, setOptions] = useState(false);
   const [mobileSidebar, setMobileSidebar] = useState(false);
+  const [drawerCollapsed, setDrawerCollapsed] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
   const pageHeadingRef = useRef<HTMLDivElement>(null);
@@ -694,6 +715,13 @@ export function ConversationWorkspace({
   const [mention, setMention] = useState<(ActiveNodeMention & { fromToolbar?: boolean }) | null>(null);
   const dismissedMention = useRef<{ text: string; cursor: number } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [slash, setSlash] = useState<ActiveSlashCommand | null>(null);
+  const dismissedSlash = useRef<{ text: string; cursor: number } | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [savedTemplates, setSavedTemplates] = useState<PromptTemplate[]>([]);
+  const templatesLoadedFor = useRef<string | null>(null);
+  const [inlineRenaming, setInlineRenaming] = useState(false);
+  const [inlineTitle, setInlineTitle] = useState('');
   const [deleteNodeID, setDeleteNodeID] = useState<string | null>(null);
   const [queueConfirmation, setQueueConfirmation] = useState<
     (QueueConfirmation & { title: string }) | null
@@ -871,10 +899,14 @@ export function ConversationWorkspace({
   const remarkNode = peers.find((node) => node.id === remarkNodeID) || null;
   const mentionNodes = mention ? recentNodeMentions(peers, mention.query).slice(0, 8) : [];
   const rail = showNetworkRail(peers);
+  const inspectorAvailable = rail || data.user.owner || !!current;
   const railQueueCount = activeQueueCount(queueSnapshot?.entries);
-  const railVisible = view === 'chat' && railExpanded(rail, railPreference, railQueueCount);
-  const railToggleLabel = railVisible ? t('收起队列与设备')
-    : railQueueCount > 0 ? `${t('展开队列与设备')} · ${t('{{count}} 项待执行', { count: railQueueCount })}` : t('展开队列与设备');
+  const railVisible = view === 'chat' && railExpanded(inspectorAvailable, railPreference, railQueueCount);
+  const railToggleLabel = railVisible
+    ? t('收起工作台检视')
+    : railQueueCount > 0
+      ? `${t('展开工作台检视')} · ${t('{{count}} 项待执行', { count: railQueueCount })}`
+      : t('展开工作台检视');
   const currentQueueEntry = current
     ? queueSnapshot?.entries.find((entry) => queueConversation(entry, all)?.key === current.key)
     : undefined;
@@ -1276,25 +1308,179 @@ export function ConversationWorkspace({
     setAttentionReturnKey(null);
     pendingHistoryReveal.current = null;
     dismissedMention.current = null;
+    dismissedSlash.current = null;
     setSearchSelection(null);
     setFindOpen(false);
     selectedRef.current = item?.key || null;
     setSelected(item?.key || null);
     setMention(null);
+    setSlash(null);
+    setInlineRenaming(false);
     setOptions(false);
     setView('chat');
     setError('');
     setNotice('');
     setMobileSidebar(false);
   }, []);
+  function openInspectorTab(tab: LiveInspectorTab) {
+    setInspectorTab(tab);
+    if (!railVisible) animateLayoutChange(() => setRailPreference('open'), 'rail');
+  }
+  useEffect(() => {
+    setInlineRenaming(false);
+  }, [current?.key, view]);
+  useEffect(() => {
+    if (!slash || templatesLoadedFor.current === storageKey) return;
+    templatesLoadedFor.current = storageKey;
+    let active = true;
+    void api<PromptTemplateList>('/prompt-templates')
+      .then((value) => {
+        if (active) setSavedTemplates(value.templates || []);
+      })
+      .catch(() => {
+        /* Keep built-in slash commands available even if templates cannot be loaded. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [slash, storageKey]);
+  const slashCatalog = useMemo<SlashCommandItem[]>(() => {
+    const builtins: SlashCommandItem[] = [
+      {
+        id: 'plan',
+        command: '/plan',
+        label: t('制定实施计划'),
+        detail: t('结构化拆分目标、约束与验收步骤'),
+        group: 'builtin',
+        keywords: 'plan roadmap steps',
+        insertText: t('请根据当前目标和已有资料制定实施计划，说明需要确认的约束、具体步骤和验收方式。遇到信息缺口时明确列出，不要假设已经完成。'),
+      },
+      {
+        id: 'review',
+        command: '/review',
+        label: t('检查当前改动'),
+        detail: t('审查代码与改动风险并给出验证建议'),
+        group: 'builtin',
+        keywords: 'review code audit',
+        insertText: t('请审查当前改动，优先检查功能错误、回归风险和缺失的验证。说明具体位置、影响及建议；没有发现问题时也请明确说明检查范围。'),
+      },
+      {
+        id: 'doc',
+        command: '/doc',
+        label: t('整理一份文档'),
+        detail: t('将现有材料整理为清晰文档'),
+        group: 'builtin',
+        keywords: 'doc document summary',
+        insertText: t('请根据我提供的材料整理一份简洁清楚的文档，先列出结构，并标注还需要我补充的信息。'),
+      },
+      ...(inspectorAvailable
+        ? [
+            {
+              id: 'topology',
+              command: '/topology',
+              label: t('打开多设备拓扑检视'),
+              detail: t('查看多设备拓扑与轨迹'),
+              group: 'builtin' as const,
+              keywords: 'topology graph mesh trail',
+              action: 'topology' as const,
+            },
+            {
+              id: 'diff',
+              command: '/diff',
+              label: t('打开工作区改动检视'),
+              detail: t('查看项目改动'),
+              group: 'builtin' as const,
+              keywords: 'diff changes git artifacts',
+              action: 'diff' as const,
+            },
+          ]
+        : []),
+      {
+        id: 'templates',
+        command: '/templates',
+        label: t('打开提示词模板库'),
+        detail: t('提示词模板'),
+        group: 'builtin',
+        keywords: 'templates library prompts',
+        action: 'templates',
+      },
+      ...(!current && targetNodeID
+        ? [
+            {
+              id: 'clear-target',
+              command: '/clear',
+              label: t('清空目标设备路由'),
+              detail: t('自动调度'),
+              group: 'builtin' as const,
+              keywords: 'clear reset target route',
+              action: 'clear-target' as const,
+            },
+          ]
+        : []),
+    ];
+    return [...builtins, ...savedTemplates.map(templateToSlashItem)];
+  }, [inspectorAvailable, current, targetNodeID, savedTemplates, locale]);
+  const slashItems = useMemo(
+    () => (slash ? filterSlashItems(slashCatalog, slash.query).slice(0, 8) : []),
+    [slash, slashCatalog],
+  );
+  function closeSlash() {
+    dismissedSlash.current = { text: draft, cursor: inputRef.current?.selectionStart ?? draft.length };
+    setSlash(null);
+    setSlashIndex(0);
+  }
+  function applySlashItem(item: SlashCommandItem) {
+    if (!slash || operation.current) return;
+    const replacement = item.insertText ?? '';
+    const { text: next, cursor } = applySlashInsertion(draft, slash, replacement);
+    dismissedSlash.current = { text: next, cursor };
+    setDraft(next);
+    setSlash(null);
+    setSlashIndex(0);
+    if (item.action === 'diff') openInspectorTab('artifacts');
+    else if (item.action === 'topology') openInspectorTab('topology');
+    else if (item.action === 'templates') setModal('templates');
+    else if (item.action === 'clear-target') routeNodeFromCockpit(null, null);
+    requestAnimationFrame(() => {
+      if (item.action === 'templates') return;
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(cursor, cursor);
+    });
+  }
+  function commitInlineTitle() {
+    if (!inlineRenaming || !current) return;
+    const trimmed = inlineTitle.trim();
+    setInlineRenaming(false);
+    if (!trimmed || trimmed === current.title || !validConversationTitle(trimmed)) return;
+    void perform(() => api('/ui/conversation', { key: current.key, title: trimmed }));
+  }
   function focusComposer() {
     setView('chat'); setMobileSidebar(false);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
   function focusHistorySearch() {
+    setDrawerCollapsed(false);
     setMobileSidebar(true);
     requestAnimationFrame(() => { historySearchRef.current?.focus(); historySearchRef.current?.select(); });
   }
+  useEffect(() => {
+    const onWorkbenchShortcuts = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'b' && !narrowSidebar && !workspaceKeyboardOverlayOpen()) {
+        event.preventDefault();
+        setDrawerCollapsed((previous) => !previous);
+        return;
+      }
+      if (key === 'j' && view === 'chat' && inspectorAvailable && !workspaceKeyboardOverlayOpen()) {
+        event.preventDefault();
+        animateLayoutChange(() => setRailPreference(toggledRailPreference(railVisible)), 'rail');
+      }
+    };
+    document.addEventListener('keydown', onWorkbenchShortcuts);
+    return () => document.removeEventListener('keydown', onWorkbenchShortcuts);
+  }, [narrowSidebar, view, inspectorAvailable, railVisible]);
   function showSettingsPage(next: typeof view) {
     setView(next); setMobileSidebar(false);
     requestAnimationFrame(() => pageHeadingRef.current?.focus({ preventScroll: true }));
@@ -1436,6 +1622,38 @@ export function ConversationWorkspace({
     const name = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
     changeDraft({ text: name ? replaceBoundNodeMention(draft, name, mode) : draft,
       routing: { kind: 'workflow', target: mode && targetNodeID ? { mode, nodeID: targetNodeID } : { mode: 'automatic' }, ...(mode ? { name } : {}) } });
+  }
+  function routeNodeFromCockpit(node: RivloomNode | null, forcedMode?: 'preferred' | 'locked' | null) {
+    if (operation.current || !data.user.owner || current) return;
+    setMention(null);
+    const previousName = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
+    if (!node || forcedMode === null) {
+      changeDraft({
+        text: previousName ? replaceBoundNodeMention(draft, previousName, null) : draft,
+        routing: { kind: 'workflow', target: { mode: 'automatic' } },
+      });
+      return;
+    }
+    const isLocalNode = !!local && node.id === local.id;
+    let nextMode: 'preferred' | 'locked' | null;
+    if (forcedMode) {
+      nextMode = forcedMode;
+    } else if (targetNodeID !== node.id) {
+      nextMode = isLocalNode ? 'locked' : 'preferred';
+    } else if (!isLocalNode && targetMode === 'preferred') {
+      nextMode = 'locked';
+    } else {
+      nextMode = null;
+    }
+    const nextText = previousName
+      ? replaceBoundNodeMention(draft, previousName, nextMode, nextMode ? node.name : undefined)
+      : draft;
+    changeDraft({
+      text: nextText,
+      routing: nextMode
+        ? { kind: 'workflow', target: { mode: nextMode, nodeID: node.id }, name: node.name }
+        : { kind: 'workflow', target: { mode: 'automatic' } },
+    });
   }
   async function refreshQueue() {
     if (!data.user.owner) return;
@@ -1687,33 +1905,35 @@ export function ConversationWorkspace({
       else inputRef.current?.focus();
     });
   }
-  const composerMentionTools = !current && data.user.owner && (
-    <div className="composer-device-ear">
-      {targetNodeID && <span className="composer-target-chip">
-        <button type="button" disabled={busy} aria-haspopup="dialog"
-          title={t('目标 Node：{{value1}}（{{value2}}）', { value1: targetName, value2: targetNodeID })}
-          onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}>
-          <span>{targetMode === 'locked' ? t('锁定') : t('首选')}</span><strong>{targetName}</strong>
-        </button>
-        <button type="button" disabled={busy} aria-label={t('清除设备选择')}
-          onClick={() => { changeTargetMode(null); setMention(null); focusComposer(); }}><X size={13} /></button>
-      </span>}
-      <button type="button" className={`composer-tool composer-mention${mention ? ' active' : ''}${targetNodeID ? ' has-target' : ''}`}
-        disabled={busy || !canWrite} aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
-        aria-haspopup="dialog" aria-expanded={!!mention} aria-controls={mention ? 'node-mention-menu' : undefined}
-        onClick={() => mention ? closeMention() : showMention(targetMode === 'locked' ? 'locked' : 'preferred', true)}>
-        <AtSign size={16} aria-hidden="true" />
+  const composerTargetChip = !current && data.user.owner && targetNodeID ? (
+    <span className="composer-target-chip">
+      <button type="button" disabled={busy} aria-haspopup="dialog"
+        title={t('目标 Node：{{value1}}（{{value2}}）', { value1: targetName, value2: targetNodeID })}
+        onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}>
+        <span>{targetMode === 'locked' ? t('锁定') : t('首选')}</span><strong>{targetName}</strong>
       </button>
-    </div>
-  );
-  const composerToolbar = (
+      <button type="button" disabled={busy} aria-label={t('清除设备选择')}
+        onClick={() => { changeTargetMode(null); setMention(null); focusComposer(); }}><X size={13} /></button>
+    </span>
+  ) : null;
+  const composerMentionButton = !current && data.user.owner ? (
+    <button type="button" className={`composer-tool composer-mention${mention ? ' active' : ''}${targetNodeID ? ' has-target' : ''}`}
+      disabled={busy || !canWrite} aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
+      aria-haspopup="dialog" aria-expanded={!!mention} aria-controls={mention ? 'node-mention-menu' : undefined}
+      onClick={() => mention ? closeMention() : showMention(targetMode === 'locked' ? 'locked' : 'preferred', true)}>
+      <AtSign size={14} aria-hidden="true" />
+    </button>
+  ) : null;
+  const renderComposerToolbar = (attachControl: ReactNode) => (
     <>
       <div className={`composer-choices ${current ? 'continuing' : ''}`}>
+        {attachControl}
+        {composerMentionButton}
         {!current ? (
           <>
-            {!targetNodeID && (
+            {(!targetNodeID || targetNodeID === local?.id) && (
               <label className="composer-select">
-                <FolderOpen size={15} />
+                <FolderOpen size={14} />
                 <select
                   aria-label={t('工作文件夹')}
                   disabled={busy}
@@ -1755,7 +1975,7 @@ export function ConversationWorkspace({
               aria-expanded={options}
               onClick={(event) => { settingsTrigger.current = event.currentTarget; setMention(null); setOptions(true); }}
             >
-              <Settings2 size={16} />
+              <Settings2 size={15} />
               <span>{t('设置')}</span>
             </button>
           </>
@@ -1788,7 +2008,7 @@ export function ConversationWorkspace({
           remote?.controlPending
         }
       >
-        {busy ? <LoaderCircle size={17} className="spin" aria-hidden="true" /> : <ArrowUp size={17} strokeWidth={2} aria-hidden="true" />}
+        {busy ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <ArrowUp size={15} strokeWidth={2} aria-hidden="true" />}
         <span>{t('发送')}</span>
       </button>}
       {stopTarget && <button type="button" className="send-message stop-message"
@@ -1796,14 +2016,16 @@ export function ConversationWorkspace({
         title={stopState === 'waiting' ? t('等待远端确认') : stopConfirming ? t('正在确认停止，草稿会保留。') : t('停止整个任务，保留当前草稿。')}
         disabled={busy || stopWaiting} aria-busy={stopWaiting}
         onClick={() => void stopCurrentConversation()}>
-        {stopWaiting ? <LoaderCircle size={17} className="spin" /> : <Square size={16} fill="currentColor" />}
+        {stopWaiting ? <LoaderCircle size={14} className="spin" /> : <Square size={12} fill="currentColor" />}
         <span>{stopLabel}</span>
       </button>}
     </>
   );
 
+  const quickFilterIndex = sourceFilter !== 'all' ? -1 : statusFilter === 'all' ? 0 : statusFilter === 'active' ? 1 : statusFilter === 'attention' ? 2 : -1;
+
   return (
-    <ResizableWorkspace hasNetwork={railVisible} sidebarOpen={mobileSidebar}>
+    <ResizableWorkspace hasNetwork={railVisible} sidebarOpen={mobileSidebar} drawerCollapsed={!narrowSidebar && (drawerCollapsed || view !== 'chat')}>
       {mobileSidebar && (
         <button
           className="sidebar-scrim"
@@ -1814,40 +2036,81 @@ export function ConversationWorkspace({
       <aside
         ref={sidebarRef}
         id="conversation-history-sidebar"
-        className="conversation-sidebar history-graphite"
+        className="conversation-sidebar history-graphite workbench-sidebar"
         aria-label={t('历史会话')}
         role={narrowSidebar && mobileSidebar ? 'dialog' : undefined}
         aria-modal={narrowSidebar && mobileSidebar ? true : undefined}
         inert={narrowSidebar && !mobileSidebar}
       >
-        <div className="node-identity">
-          <NodeAvatar icon={local?.icon} name={local?.name} />
-          <span className="node-identity-label">
-            <strong title={local?.name || t('本机')}>{local?.name || t('本机')}</strong>
-            {!connected && <small role="status">{t('正在连接')}</small>}
-          </span>
-          {local && data.user.owner && <button
-            type="button"
-            className="node-identity-edit"
-            onClick={() => setModal('profile')}
-            aria-label={t('编辑本机名称与图标')}
-            title={t('编辑本机名称与图标')}
-            aria-haspopup="dialog"
-          >
-            <Pencil size={14} strokeWidth={1.75} aria-hidden="true" />
-          </button>}
+        <nav className="workbench-rail conversation-settings" aria-label={t('设置')}>
+          <SidebarActivityEntries key={storageKey} layout="rail" identity={storageKey} owner={data.user.owner} connected={connected}
+            network={data.network} attentionItems={attention.snapshot?.items} view={view}
+            openConnections={openConnections} openProjectFiles={() => setProjectFilesOpen(true)}
+            openKnowledge={() => { setView('knowledge'); setMobileSidebar(false); }}
+            openAttention={() => openAttention('attention')} openDevices={() => { setView('models'); setMobileSidebar(false); }}
+            topSlot={<>
+              <button type="button" className="workbench-rail-brand" title="Rivloom" aria-label="Rivloom" onClick={() => { setView('chat'); if (!narrowSidebar && drawerCollapsed) setDrawerCollapsed(false); }}>
+                <img src={rivloomSymbol} alt="" aria-hidden="true" />
+              </button>
+              <button type="button" className="workbench-rail-btn" title={`${t('新会话')} · ${workspaceShortcutLabels['new-conversation']}`} aria-label={t('新会话')} onClick={() => { open(null); focusComposer(); }}>
+                <Plus size={16} aria-hidden="true" />
+              </button>
+              <span className="workbench-rail-sep" aria-hidden="true" />
+              <button type="button" className={`workbench-rail-btn${view === 'chat' && !drawerCollapsed ? ' active' : ''}`} title={t('历史会话')} aria-label={t('历史会话')} aria-current={view === 'chat' ? 'page' : undefined}
+                onClick={() => {
+                  if (view !== 'chat') { setView('chat'); setDrawerCollapsed(false); }
+                  else if (!narrowSidebar) setDrawerCollapsed((value) => !value);
+                }}>
+                <MessageSquare size={16} aria-hidden="true" />
+              </button>
+            </>}
+            bottomSlot={<>
+              <button type="button" className="workbench-rail-btn workspace-command-entry" title={`${t('快速访问')} · ${workspaceShortcutLabels.palette}`} aria-label={t('快速访问')} onClick={() => setPaletteOpen(true)} aria-haspopup="dialog">
+                <Command size={15} aria-hidden="true" />
+              </button>
+              <button type="button" className="workbench-rail-btn utility-nav-entry" title={t('更多')} aria-label={t('更多')} aria-current={view === 'trash' ? 'page' : undefined} {...utilitiesMenu.trigger}>
+                <MoreHorizontal size={16} aria-hidden="true" />
+              </button>
+              <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
+                ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
+                  select: () => { setView('trash'); setMobileSidebar(false); setNotice(''); } }] : []),
+                { id: 'diagnostics', label: t('连接诊断'), icon: <DiagnosticIcon size={16} />,
+                  select: () => { setDiagnosticTarget(null); setView('diagnostics'); setMobileSidebar(false); } },
+                { id: 'shortcuts', label: t('键盘与输入'), icon: <Keyboard size={16} />, select: () => setModal('shortcuts') },
+                { id: 'language', label: t('界面语言'), icon: <Languages size={16} />, select: () => setModal('language') },
+              ]} />
+              <div className="workbench-rail-about">
+                <AboutRivloomEntry version={rivloomVersion} onClick={() => setModal('about')} />
+              </div>
+            </>}
+          />
+        </nav>
+        <div className="workbench-drawer-pane">
+        <div className="workbench-drawer-head">
+          <div className="node-identity">
+            <NodeAvatar icon={local?.icon} name={local?.name} />
+            <span className="node-identity-label">
+              <strong title={local?.name || t('本机')}>{local?.name || t('本机')}</strong>
+              {!connected && <small role="status">{t('正在连接')}</small>}
+            </span>
+            {local && data.user.owner && <button
+              type="button"
+              className="node-identity-edit"
+              onClick={() => setModal('profile')}
+              aria-label={t('编辑本机名称与图标')}
+              title={t('编辑本机名称与图标')}
+              aria-haspopup="dialog"
+            >
+              <Pencil size={13} strokeWidth={1.75} aria-hidden="true" />
+            </button>}
+          </div>
+          <button type="button" className="new-conversation workbench-new-compact" title={`${t('新会话')} · ${workspaceShortcutLabels['new-conversation']}`} aria-label={t('新会话')} onClick={() => { open(null); focusComposer(); }}>
+            <Plus size={14} aria-hidden="true" />
+          </button>
         </div>
-        <button className="new-conversation" title={`${t('新会话')} · ${workspaceShortcutLabels['new-conversation']}`} onClick={() => { open(null); focusComposer(); }}>
-          <Plus size={18} />
-          {t('新会话')}
-          <kbd aria-hidden="true">{workspaceShortcutLabels['new-conversation']}</kbd>
-        </button>
-        <button type="button" className="workspace-command-entry" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog">
-          <Command size={15} aria-hidden="true" /><span>{t('快速访问')}</span><kbd>{workspaceShortcutLabels.palette}</kbd>
-        </button>
         <div className="conversation-searchbar">
           <label className="conversation-search">
-            <Search size={15} />
+            <Search size={14} />
             <input
               ref={historySearchRef}
               aria-label={t('搜索会话')}
@@ -1873,6 +2136,12 @@ export function ConversationWorkspace({
             onSourceChange={setSourceFilter}
             onClear={clearFilters}
           />
+        </div>
+        <div className="workbench-filter-seg" role="group" aria-label={t('筛选会话状态')} data-active-index={quickFilterIndex}>
+          <span className="workbench-filter-pill" aria-hidden="true" />
+          <button type="button" aria-pressed={quickFilterIndex === 0} onClick={() => { setStatusFilter('all'); setSourceFilter('all'); }}>{t('全部')}</button>
+          <button type="button" aria-pressed={quickFilterIndex === 1} onClick={() => { setStatusFilter('active'); setSourceFilter('all'); }}>{t('进行中')}</button>
+          <button type="button" aria-pressed={quickFilterIndex === 2} onClick={() => { setStatusFilter('attention'); setSourceFilter('all'); }}>{t('待处理')}</button>
         </div>
         {(draftsOnly || draftKeys.some(key => key !== 'new') || draftKeys.includes('new') && (selected !== null || view !== 'chat')) && <div className="history-draft-tools">
           {(draftsOnly || draftKeys.some(key => key !== 'new')) && <button type="button" aria-pressed={draftsOnly} onClick={() => setDraftsOnly(!draftsOnly)}>{t('草稿')}<span>{draftKeys.filter((key) => key !== 'new').length}</span></button>}
@@ -1921,28 +2190,7 @@ export function ConversationWorkspace({
             </div>
           )}
         </div>
-        <nav className="conversation-settings" aria-label={t('设置')}>
-          <SidebarActivityEntries key={storageKey} identity={storageKey} owner={data.user.owner} connected={connected}
-            network={data.network} attentionItems={attention.snapshot?.items} view={view}
-            openConnections={openConnections} openProjectFiles={() => setProjectFilesOpen(true)}
-            openKnowledge={() => { setView('knowledge'); setMobileSidebar(false); }}
-            openAttention={() => openAttention('attention')} openDevices={() => { setView('models'); setMobileSidebar(false); }} />
-          <button type="button" className="utility-nav-entry" title={t('更多')} aria-label={t('更多')} aria-current={view === 'trash' ? 'page' : undefined} {...utilitiesMenu.trigger}>
-            <MoreHorizontal size={17} aria-hidden="true" /><span className="nav-label">{t('更多')}</span>
-          </button>
-          <ContextMenu menu={utilitiesMenu} label={t('更多')} actions={[
-            ...(data.user.owner ? [{ id: 'trash', label: t('回收站'), icon: <Trash2 size={16} />,
-              select: () => { setView('trash'); setMobileSidebar(false); setNotice(''); } }] : []),
-            { id: 'diagnostics', label: t('连接诊断'), icon: <DiagnosticIcon size={16} />,
-              select: () => { setDiagnosticTarget(null); setView('diagnostics'); setMobileSidebar(false); } },
-            { id: 'shortcuts', label: t('键盘与输入'), icon: <Keyboard size={16} />, select: () => setModal('shortcuts') },
-            { id: 'language', label: t('界面语言'), icon: <Languages size={16} />, select: () => setModal('language') },
-          ]} />
-          <div className="sidebar-signature">
-            <Wordmark />
-            <AboutRivloomEntry version={rivloomVersion} onClick={() => setModal('about')} />
-          </div>
-        </nav>
+        </div>
       </aside>
       <main className="conversation-center" inert={narrowSidebar && mobileSidebar}>
         {contextItem && <ConversationContext item={all.find(item => item.key === contextItem.key) || contextItem} tasks={data.tasks} owner={data.user.owner} close={() => setContextItem(null)} />}
@@ -1955,38 +2203,105 @@ export function ConversationWorkspace({
             aria-controls="conversation-history-sidebar"
             onClick={() => setMobileSidebar(true)}
           >
-            <PanelLeft size={18} />
+            <PanelLeft size={17} />
           </button>
+          {view === 'chat' && (
+          <button
+            type="button"
+            className="icon-button desktop-nav-toggle"
+            aria-label={drawerCollapsed ? t('打开会话栏') : t('收起会话栏')}
+            title={`${drawerCollapsed ? t('打开会话栏') : t('收起会话栏')} · ${primaryShortcut('B')}`}
+            aria-expanded={!drawerCollapsed}
+            aria-controls="conversation-history-sidebar"
+            onClick={() => setDrawerCollapsed((value) => !value)}
+          >
+            {drawerCollapsed ? <PanelLeftOpen size={15} aria-hidden="true" /> : <PanelLeftClose size={15} aria-hidden="true" />}
+          </button>
+          )}
           {view !== 'chat' && (
             <button
               className="icon-button"
               aria-label={t('返回会话')}
               onClick={() => setView('chat')}
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft size={16} />
             </button>
           )}
           <div className="conversation-heading" ref={pageHeadingRef} tabIndex={-1} data-activity-identity={view === 'chat' && current ? conversationIdentityIndex(current.key) : undefined}>
             <div className="conversation-title-row">
             {view === 'chat' && current && <span className="conversation-identity-mark" aria-hidden="true" />}
-            {view !== 'chat' && <PageIcon className="workspace-page-symbol" size={16} aria-hidden="true" />}
-            <span title={view === 'chat' ? current?.title : undefined}>
-              {view === 'chat' ? current?.title || t('新会话') : pageTitle}
-            </span>
-            {view === 'chat' && current && <small title={conversationState(current)} className={conversationIsFailed(current) ? 'is-failed' : undefined}>{conversationState(current)}</small>}
+            {view !== 'chat' && <PageIcon className="workspace-page-symbol" size={15} aria-hidden="true" />}
+            {view === 'chat' && current && currentDirectoryName && <>
+              <span className="workbench-crumb-dir" title={currentDirectory?.label}>{currentDirectoryName}</span>
+              <span className="workbench-crumb-sep" aria-hidden="true">/</span>
+            </>}
+            {view === 'chat' && current && inlineRenaming ? (
+              <input
+                type="text"
+                className="workbench-crumb-input"
+                aria-label={t('会话名称')}
+                autoFocus
+                maxLength={maximumConversationTitleLength}
+                value={inlineTitle}
+                disabled={busy}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) => setInlineTitle(event.target.value)}
+                onBlur={commitInlineTitle}
+                onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitInlineTitle();
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setInlineRenaming(false);
+                  }
+                }}
+              />
+            ) : view === 'chat' && current ? (
+              <button
+                type="button"
+                className="workbench-crumb-title is-editable"
+                title={`${current.title} · ${t('点击原地重命名')}`}
+                disabled={busy}
+                onClick={() => {
+                  setInlineTitle(current.title);
+                  setInlineRenaming(true);
+                }}
+              >
+                {current.title}
+              </button>
+            ) : (
+              <span className="workbench-crumb-title">
+                {view === 'chat' ? t('新会话') : pageTitle}
+              </span>
+            )}
+            {view === 'chat' && current && (
+              inspectorAvailable ? (
+                <button
+                  type="button"
+                  className={`workbench-crumb-status${conversationIsFailed(current) ? ' is-failed' : ''}`}
+                  title={`${conversationState(current)} · ${t('查看多设备拓扑与轨迹')}`}
+                  onClick={() => openInspectorTab('topology')}
+                >
+                  {conversationState(current)}
+                </button>
+              ) : (
+                <small title={conversationState(current)} className={conversationIsFailed(current) ? 'is-failed' : undefined}>{conversationState(current)}</small>
+              )
+            )}
             </div>
             {view === 'chat' && current && <div className="conversation-context-row">
               <span className={`conversation-origin-context ${currentOrigin?.kind || 'unknown'}`} title={currentOrigin?.source}>
-                {currentOrigin?.kind === 'delegated' ? <NodeAvatar small icon={currentOrigin.icon} /> : <MessageSquare size={12} />}
+                {currentOrigin?.kind === 'delegated' ? <NodeAvatar small icon={currentOrigin.icon} /> : <MessageSquare size={11} />}
                 <b>{currentOrigin?.kind === 'delegated' ? t('他人委派') : currentOrigin?.kind === 'own' ? t('自己发起') : t('来源待确认')}{currentOrigin?.source ? ` · ${currentOrigin.source}` : ''}</b>
               </span>
-              {currentDirectoryName && <span title={currentDirectory?.label}><FolderOpen size={12} /><b>{currentDirectoryName}</b></span>}
-              {currentModelName && <span title={`${t('模型')} · ${currentModelID}`}><Bot size={12} /><b>{currentModelName}</b></span>}
+              {currentModelName && <span title={`${t('模型')} · ${currentModelID}`}><Bot size={11} /><b>{currentModelName}</b></span>}
             </div>}
           </div>
           {view === 'chat' && <div className="workspace-header-tools">
             {current && <button type="button" className="workspace-tool" title={t('在当前会话中查找')} aria-label={t('在当前会话中查找')} onClick={openFind}><Search size={16} /><span>{t('查找')}</span></button>}
-            {reviewProject && <button type="button" className="workspace-tool" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => setChangesProject(reviewProject)}><GitCompareArrows size={16} /><span>{t('改动')}</span></button>}
+            {reviewProject && <button type="button" className="workspace-tool" title={t('查看项目改动')} aria-label={t('查看项目改动')} onClick={() => inspectorAvailable ? openInspectorTab('artifacts') : setChangesProject(reviewProject)}><GitCompareArrows size={16} /><span>{t('改动')}</span></button>}
             {current && <>
               <button type="button" className="icon-button" title={t('更多会话操作')} aria-label={t('更多会话操作')} {...conversationMenu.trigger}><MoreHorizontal size={18} /></button>
               <ContextMenu menu={conversationMenu} label={t('更多会话操作')} actions={[
@@ -1996,23 +2311,12 @@ export function ConversationWorkspace({
             </>}
           </div>}
           <ThemeMenu />
-          {view === 'chat' && data.user.owner && !rail && (
-            <button
-              className="local-queue-entry"
-              onClick={() => setModal('queue')}
-              aria-label={t('打开本机执行队列')}
-              aria-haspopup="dialog"
-            >
-              <ListOrdered size={15} />
-              <span>{t('本机队列')}</span>
-            </button>
-          )}
-          {rail && view === 'chat' && <button type="button" className={`network-rail-toggle ${railVisible ? 'active' : ''}`}
-            aria-label={railToggleLabel} title={railToggleLabel}
+          {inspectorAvailable && view === 'chat' && <button type="button" className={`network-rail-toggle ${railVisible ? 'active' : ''}`}
+            aria-label={railToggleLabel} title={`${railToggleLabel} · ${primaryShortcut('J')}`}
             aria-expanded={railVisible} aria-controls={railVisible ? 'conversation-network-sidebar' : undefined}
             onClick={() => animateLayoutChange(() => setRailPreference(toggledRailPreference(railVisible)), 'rail')}>
             {railVisible ? <PanelRightClose size={17} aria-hidden="true" /> : <PanelRightOpen size={17} aria-hidden="true" />}
-            <span>{t('队列与设备')}</span>
+            <span>{t('工作台检视')}</span>
             {!railVisible && railQueueCount > 0 && <b className="network-rail-count" aria-hidden="true">{railQueueCount}</b>}
           </button>}
           <span className="header-status" title={connected ? t('已连接') : t('正在重连')} aria-label={connected ? t('已连接') : t('正在重连')}>
@@ -2287,24 +2591,32 @@ export function ConversationWorkspace({
                     </div>
                   </div>
                 ) : (
-                  <div className="blank-conversation">
-                    <span className="blank-mark">
-                      <Wordmark />
-                    </span>
-                    <h1>
-                      {awaitingCreatedConversation ? t('会话已保存') : t('今天，想完成什么？')}
-                    </h1>
-                    <p>
-                      {awaitingCreatedConversation
-                        ? t('正在等待会话状态更新。')
-                        : t('说说你的目标，Rivloom 帮你一步步完成。')}
-                    </p>
-                    {!awaitingCreatedConversation && <ConversationStarters disabled={busy || !canWrite}
-                      choose={(text) => {
-                        if (!reuseMessage({ text, mode: 'reuse', placement: 'append', expectedDraft: draftState }))
-                          setNotice(t('未能填入示例，请先检查草稿长度后重试。'));
-                      }} />}
-                  </div>
+                  <MissionCockpit
+                    awaitingCreatedConversation={awaitingCreatedConversation}
+                    owner={data.user.owner}
+                    connected={connected && !connectionError}
+                    disabled={busy || !canWrite}
+                    local={local || null}
+                    peers={peers}
+                    projects={data.projects}
+                    projectID={projectID}
+                    modelName={data.engine.models.find((entry) => entry.id === model)?.name || model}
+                    targetNodeID={targetNodeID}
+                    targetMode={targetMode}
+                    onSelectProject={(id) => {
+                      dismissedMention.current = null;
+                      setProjectID(id);
+                      if (targetNodeID && targetNodeID !== local?.id) routeNodeFromCockpit(null, null);
+                      focusComposer();
+                    }}
+                    onAddFolder={() => setModal('folder')}
+                    onChooseStarter={(text) => {
+                      if (!reuseMessage({ text, mode: 'reuse', placement: 'append', expectedDraft: draftState }))
+                        setNotice(t('未能填入示例，请先检查草稿长度后重试。'));
+                    }}
+                    onRouteNode={routeNodeFromCockpit}
+                    onManageDevices={() => showSettingsPage('network')}
+                  />
                 )}
               </div>
               {current && awayFromLatest && (
@@ -2330,6 +2642,7 @@ export function ConversationWorkspace({
                   disabled={busy || !canWrite}
                   unavailableReason={current && !current.workflow ? t('此旧版会话不支持消息附件，请新建会话后添加。') : undefined}
                   composer
+                  composerChips={composerTargetChip}
                   onChange={(update) =>
                     setDrafts((previous) => {
                       const saved = previous[draftKey] || emptyDraft.current;
@@ -2339,7 +2652,7 @@ export function ConversationWorkspace({
                       };
                     })
                   }
-                >{composerMentionTools}</TaskFilePicker>
+                  renderComposerBody={(attachControl) => (
                 <div className="composer-surface">
                 {draftState.quote && <MessageQuoteCard quote={draftState.quote} disabled={busy || !canWrite}
                   remove={() => { changeDraft({ quote: null }); focusComposer(); }} />}
@@ -2348,11 +2661,13 @@ export function ConversationWorkspace({
                   aria-label={t('会话消息')}
                   aria-describedby={canWrite ? 'conversation-input-usage conversation-composer-hint' : undefined}
                   aria-invalid={(canWrite && inputUsage.overLimit) || undefined}
-                  aria-controls={mention ? 'node-mention-options' : undefined}
+                  aria-controls={mention ? 'node-mention-options' : slash ? 'slash-command-options' : undefined}
                   aria-activedescendant={
-                    mentionNodes[mentionIndex]
+                    mention && mentionNodes[mentionIndex]
                       ? `node-mention-${mentionNodes[mentionIndex].id}`
-                      : undefined
+                      : slash && slashItems[slashIndex]
+                        ? `slash-cmd-${slashItems[slashIndex].id}`
+                        : undefined
                   }
                   placeholder={
                     queueRejected
@@ -2374,28 +2689,36 @@ export function ConversationWorkspace({
                   value={draft}
                   onChange={(event) => {
                     const next = event.target.value;
+                    const cursor = event.target.selectionStart;
                     const boundName = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
                     const typedMode = boundName ? boundNodeMentionMode(next, boundName) : null;
                     if (!current && targetNodeID && typedMode && typedMode !== targetMode) changeDraft({ text: next,
                       routing: { kind: 'workflow', target: { mode: typedMode, nodeID: targetNodeID }, name: boundName } });
                     else setDraft(next);
-                    if (!current && data.user.owner) {
-                      setMention(activeNodeMention(next, event.target.selectionStart, peers));
-                      setMentionIndex(0);
-                    } else setMention(null);
+                    const nextMention = !current && data.user.owner ? activeNodeMention(next, cursor, peers) : null;
+                    setMention(nextMention);
+                    setMentionIndex(0);
+                    const nextSlash = !nextMention && canWrite ? activeSlashCommand(next, cursor) : null;
+                    setSlash(nextSlash);
+                    setSlashIndex(0);
                   }}
                   onSelect={(event) => {
-                    if (mention?.fromToolbar || (dismissedMention.current?.text === event.currentTarget.value &&
-                        dismissedMention.current.cursor === event.currentTarget.selectionStart)) return;
-                    if (!current && data.user.owner && !composing.current) {
-                      setMention(
-                        activeNodeMention(
-                          event.currentTarget.value,
-                          event.currentTarget.selectionStart,
-                          peers,
-                        ),
-                      );
+                    const value = event.currentTarget.value;
+                    const cursor = event.currentTarget.selectionStart;
+                    let activeM: (ActiveNodeMention & { fromToolbar?: boolean }) | null = null;
+                    if (mention?.fromToolbar || (dismissedMention.current?.text === value &&
+                        dismissedMention.current.cursor === cursor)) {
+                      activeM = mention;
+                    } else if (!current && data.user.owner && !composing.current) {
+                      activeM = activeNodeMention(value, cursor, peers);
+                      setMention(activeM);
                       setMentionIndex(0);
+                    }
+                    if (dismissedSlash.current?.text === value && dismissedSlash.current.cursor === cursor) return;
+                    if (!composing.current) {
+                      const nextSlash = !activeM && canWrite ? activeSlashCommand(value, cursor) : null;
+                      setSlash(nextSlash);
+                      setSlashIndex(0);
                     }
                   }}
                   onCompositionStart={() => {
@@ -2403,20 +2726,17 @@ export function ConversationWorkspace({
                   }}
                   onCompositionEnd={(event) => {
                     composing.current = false;
-                    if (!current && data.user.owner)
-                      setMention(
-                        activeNodeMention(
-                          event.currentTarget.value,
-                          event.currentTarget.selectionStart,
-                          peers,
-                        ),
-                      );
+                    const value = event.currentTarget.value;
+                    const cursor = event.currentTarget.selectionStart;
+                    const nextMention = !current && data.user.owner ? activeNodeMention(value, cursor, peers) : null;
+                    if (!current && data.user.owner) setMention(nextMention);
+                    setSlash(!nextMention && canWrite ? activeSlashCommand(value, cursor) : null);
                   }}
                   disabled={!canWrite || busy}
                   rows={1}
                   maxLength={inputUsage.limit}
                   onKeyDown={(event) => {
-                    // IME confirmation must precede both mention selection and form submission.
+                    // IME confirmation must precede mention/slash selection and form submission.
                     if (isNodeMentionComposing(event.nativeEvent, composing.current)) return;
                     if (mention && mentionNodes.length) {
                       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -2439,7 +2759,28 @@ export function ConversationWorkspace({
                       closeMention();
                       return;
                     }
-                    if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!mention, disabled: !canWrite || busy })) {
+                    if (slash && slashItems.length) {
+                      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        setSlashIndex((currentIndex) =>
+                          event.key === 'ArrowDown'
+                            ? (currentIndex + 1) % slashItems.length
+                            : (currentIndex - 1 + slashItems.length) % slashItems.length,
+                        );
+                        return;
+                      }
+                      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+                        event.preventDefault();
+                        applySlashItem(slashItems[slashIndex] || slashItems[0]);
+                        return;
+                      }
+                    }
+                    if (event.key === 'Escape' && slash) {
+                      event.preventDefault();
+                      closeSlash();
+                      return;
+                    }
+                    if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!mention || !!slash, disabled: !canWrite || busy })) {
                       event.preventDefault();
                       event.currentTarget.form?.requestSubmit();
                     }
@@ -2530,8 +2871,74 @@ export function ConversationWorkspace({
                     </div>
                   </div>
                 )}
-                <div className="composer-toolbar" ref={composerToolbarRef}>{composerToolbar}</div>
+                {slash && !mention && (
+                  <div
+                    className="slash-command-menu"
+                    id="slash-command-menu"
+                    role="dialog"
+                    aria-label={t('快捷指令')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeSlash();
+                        inputRef.current?.focus();
+                      }
+                    }}
+                  >
+                    <div className="slash-command-heading">
+                      <Terminal size={13} aria-hidden="true" />
+                      <span>{t('快捷指令')}</span>
+                      <button
+                        type="button"
+                        className="node-mention-close"
+                        aria-label={t('关闭')}
+                        onClick={() => {
+                          closeSlash();
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <div role="listbox" id="slash-command-options" aria-label={t('快捷指令')}>
+                      {slashItems.map((item, index) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="option"
+                          id={`slash-cmd-${item.id}`}
+                          aria-selected={index === slashIndex}
+                          className={index === slashIndex ? 'active' : ''}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onMouseEnter={() => setSlashIndex(index)}
+                          onClick={() => applySlashItem(item)}
+                        >
+                          <span className="slash-cmd-icon" aria-hidden="true">
+                            {item.group === 'template' ? <Sparkles size={13} /> : <Terminal size={13} />}
+                          </span>
+                          <span className="slash-cmd-copy">
+                            <strong>
+                              <code>{item.command}</code>
+                              <span>{item.label}</span>
+                            </strong>
+                            <small>{item.detail}</small>
+                          </span>
+                          <span className="slash-cmd-tag">
+                            {item.group === 'template' ? t('我的模板') : t('内置指令')}
+                          </span>
+                        </button>
+                      ))}
+                      {!slashItems.length && (
+                        <p className="slash-command-empty">{t('没有匹配的快捷指令')}</p>
+                      )}
+                    </div>
+                    <div className="slash-command-footer">{t('↑↓ 选择 · Enter 应用 · Esc 关闭')}</div>
+                  </div>
+                )}
+                <div className="composer-toolbar" ref={composerToolbarRef}>{renderComposerToolbar(attachControl)}</div>
                 </div>
+                  )}
+                />
               </form>
               {!current && options && (
                 <Modal title={t('会话设置')} close={closeComposerSettings} className="composer-settings-modal">
@@ -2647,21 +3054,143 @@ export function ConversationWorkspace({
             </div>
           </>
         ) : (
-          <div className="conversation-settings-page" ref={settingsPageRef} onScroll={event => {
-            if (view === 'attention') attentionListPosition.current.top = event.currentTarget.scrollTop;
-          }}><div className="settings-content">
+          <div className="conversation-settings-page workbench-settings-shell">
+            <nav className="workbench-settings-nav" aria-label={t('设备设置分类')}>
+              <button
+                type="button"
+                className="settings-nav-back"
+                onClick={() => setView('chat')}
+              >
+                <ArrowLeft size={14} aria-hidden="true" />
+                <span>{t('返回会话')}</span>
+              </button>
+
+              <div className="settings-nav-group">
+                <span className="settings-nav-group-label">{t('设备与模型')}</span>
+                <button
+                  type="button"
+                  aria-current={view === 'models' ? 'page' : undefined}
+                  onClick={() => setView('models')}
+                >
+                  <Cpu size={14} aria-hidden="true" />
+                  <span>{t('模型')}</span>
+                  {data.engine.models.length > 0 && (
+                    <b className="settings-nav-badge">{data.engine.models.length}</b>
+                  )}
+                </button>
+                {data.user.owner && (
+                  <button
+                    type="button"
+                    aria-current={view === 'execution' ? 'page' : undefined}
+                    onClick={() => setView('execution')}
+                  >
+                    <FolderCog size={14} aria-hidden="true" />
+                    <span>{t('执行与文件夹')}</span>
+                    <i
+                      className={`settings-nav-dot${data.executionPolicy.enabled ? ' online' : ''}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-current={view === 'network' ? 'page' : undefined}
+                  onClick={() => setView('network')}
+                >
+                  <Network size={14} aria-hidden="true" />
+                  <span>{t('设备连接')}</span>
+                  {peers.filter((n) => n.online && n.channelReady).length > 0 && (
+                    <b className="settings-nav-badge">
+                      {peers.filter((n) => n.online && n.channelReady).length}
+                    </b>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-current={view === 'diagnostics' ? 'page' : undefined}
+                  onClick={() => setView('diagnostics')}
+                >
+                  <DiagnosticIcon size={14} aria-hidden="true" />
+                  <span>{t('连接诊断')}</span>
+                </button>
+              </div>
+
+              <div className="settings-nav-group">
+                <span className="settings-nav-group-label">{t('工作区管理')}</span>
+                <button
+                  type="button"
+                  aria-current={view === 'attention' ? 'page' : undefined}
+                  onClick={() => openAttention('attention')}
+                >
+                  <ListChecks size={14} aria-hidden="true" />
+                  <span>{t('待办中心')}</span>
+                  {!!attention.snapshot?.items.length && (
+                    <b className="settings-nav-badge is-accent">{attention.snapshot.items.length}</b>
+                  )}
+                </button>
+                {data.user.owner && (
+                  <button
+                    type="button"
+                    aria-current={view === 'knowledge' ? 'page' : undefined}
+                    onClick={() => setView('knowledge')}
+                  >
+                    <LibraryBig size={14} aria-hidden="true" />
+                    <span>{t('技能与记忆')}</span>
+                  </button>
+                )}
+                {data.user.owner && (
+                  <button
+                    type="button"
+                    aria-current={view === 'trash' ? 'page' : undefined}
+                    onClick={() => {
+                      setView('trash');
+                      setNotice('');
+                    }}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                    <span>{t('回收站')}</span>
+                    {!!data.conversationTrash?.length && (
+                      <b className="settings-nav-badge">{data.conversationTrash.length}</b>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <div className="settings-nav-group settings-nav-prefs">
+                <span className="settings-nav-group-label">{t('常规与偏好')}</span>
+                {data.user.owner && (
+                  <button type="button" onClick={openConnections}>
+                    <Plug size={14} aria-hidden="true" />
+                    <span>{t('模型连接')}</span>
+                  </button>
+                )}
+                <button type="button" onClick={() => setModal('shortcuts')}>
+                  <Keyboard size={14} aria-hidden="true" />
+                  <span>{t('键盘与输入')}</span>
+                </button>
+                <button type="button" onClick={() => setModal('language')}>
+                  <Languages size={14} aria-hidden="true" />
+                  <span>{t('界面语言')}</span>
+                </button>
+                <button type="button" onClick={() => setModal('about')}>
+                  <Info size={14} aria-hidden="true" />
+                  <span>{t('关于 Rivloom')}</span>
+                </button>
+              </div>
+            </nav>
+
+            <div
+              className="settings-viewport"
+              ref={settingsPageRef}
+              onScroll={(event) => {
+                if (view === 'attention') attentionListPosition.current.top = event.currentTarget.scrollTop;
+              }}
+            >
+              <div className="settings-content">
             {modelSetupReturn !== null && ['models', 'execution', 'network', 'diagnostics'].includes(view) && <div className="model-onboarding-return" role="status">
               <span>{t('草稿已保留。完成设置后，返回会话选择模型并发送。')}</span>
               <Button onClick={returnFromModelSetup}>{t('返回会话')}</Button>
             </div>}
-            {['models', 'execution', 'network', 'diagnostics'].includes(view) && (
-              <nav className="device-settings-tabs" aria-label={t('设备设置分类')}>
-                <button type="button" aria-current={view === 'models' ? 'page' : undefined} onClick={() => setView('models')}><Cpu size={16} aria-hidden="true" />{t('模型')}</button>
-                {data.user.owner && <button type="button" aria-current={view === 'execution' ? 'page' : undefined} onClick={() => setView('execution')}><FolderCog size={16} aria-hidden="true" />{t('执行与文件夹')}</button>}
-                <button type="button" aria-current={view === 'network' ? 'page' : undefined} onClick={() => setView('network')}><Network size={16} aria-hidden="true" />{t('设备连接')}</button>
-                <button type="button" aria-current={view === 'diagnostics' ? 'page' : undefined} onClick={() => setView('diagnostics')}><DiagnosticIcon size={16} aria-hidden="true" />{t('连接诊断')}</button>
-              </nav>
-            )}
             <div className="settings-view-content" ref={settingsViewRef}>
             {view === 'knowledge' ? <KnowledgeLibrary projects={data.projects} /> : view === 'trash' ? <ConversationTrash entries={data.conversationTrash || []} busy={busy}
               restore={(entry) => void perform(async () => { await api('/history/restore', { key: entry.key }); setNotice(t('会话已恢复到历史列表。')); })}
@@ -2741,34 +3270,39 @@ export function ConversationWorkspace({
 
               </>
             )}
-          </div></div></div>
+            </div>
+            </div>
+            </div>
+          </div>
         )}
       </main>
       {railVisible && (
-        <aside
-          id="conversation-network-sidebar"
-          className="network-rail"
-          aria-label={t('本机队列和机器状态')}
+        <LiveInspector
+          activeTab={inspectorTab}
+          onTabChange={setInspectorTab}
+          onClose={() => animateLayoutChange(() => setRailPreference('closed'), 'rail')}
+          data={data}
+          current={current}
+          all={all}
+          local={local || null}
+          peers={peers}
+          connected={connected}
+          connectionError={connectionError}
+          queueCount={railQueueCount}
+          queuePanel={queuePanel()}
+          reviewProject={reviewProject}
+          targetNodeID={targetNodeID}
+          targetMode={targetMode}
+          targetName={targetName}
+          disabled={busy || !canWrite}
+          nodeName={nodeName}
+          onRemarkNode={setRemarkNodeID}
+          onRemoveNode={setDeleteNodeID}
+          onRouteNode={(node) => routeNodeFromCockpit(node)}
+          onOpenFullChanges={(project) => setChangesProject(project)}
+          onOpenNetwork={() => showSettingsPage('network')}
           inert={narrowSidebar && mobileSidebar}
-        >
-          {data.user.owner ? (
-            queuePanel()
-          ) : (
-            <p className="muted">{t('本机队列由 Node 所有者管理。')}</p>
-          )}
-          <PairedMachines
-            nodes={peers}
-            items={all}
-            connected={connected && !connectionError}
-            owner={data.user.owner}
-            remark={setRemarkNodeID}
-            remove={setDeleteNodeID}
-          />
-          <div className="rail-footer">
-            <i className={`status-dot ${connected ? 'online' : ''}`} />
-            {connected ? t('状态实时同步') : t('正在恢复状态连接')}
-          </div>
-        </aside>
+        />
       )}
       {renameConversation && <ConversationRenameEditor key={renameConversation.key} title={renameConversation.title} busy={busy} failureMessage={error}
         close={() => setRenameConversation(null)} save={(title) => perform(() => api('/ui/conversation', { key: renameConversation.key, title }))} />}
@@ -2815,6 +3349,8 @@ export function ConversationWorkspace({
           <div><dt>{t('新会话')}</dt><dd><kbd>{workspaceShortcutLabels['new-conversation']}</kbd></dd></div>
           <div><dt>{t('搜索会话')}</dt><dd><kbd>{workspaceShortcutLabels['search-conversations']}</kbd></dd></div>
           <div><dt>{t('聚焦输入框')}</dt><dd><kbd>{workspaceShortcutLabels['focus-composer']}</kbd></dd></div>
+          <div><dt>{t('切换左侧会话栏')}</dt><dd><kbd>{primaryShortcut('B')}</kbd></dd></div>
+          <div><dt>{t('切换右侧工作台检视')}</dt><dd><kbd>{primaryShortcut('J')}</kbd></dd></div>
           <div><dt>{t('在当前会话中查找')}</dt><dd><kbd>{primaryShortcut('F')}</kbd></dd></div>
           <div><dt>{t('下一处匹配')} / {t('上一处匹配')}</dt><dd><kbd>F3 / Shift + F3</kbd></dd></div>
         </dl>

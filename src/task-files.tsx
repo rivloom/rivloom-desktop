@@ -27,6 +27,8 @@ export function TaskFilePicker({
   unavailableReason,
   label = t('添加附件'),
   composer = false,
+  composerChips,
+  renderComposerBody,
   children,
 }: {
   files: DraftTaskFile[];
@@ -35,6 +37,8 @@ export function TaskFilePicker({
   unavailableReason?: string;
   label?: string;
   composer?: boolean;
+  composerChips?: ReactNode;
+  renderComposerBody?: (attachControl: ReactNode) => ReactNode;
   children?: ReactNode;
 }) {
   const input = useRef<HTMLInputElement>(null),
@@ -166,37 +170,54 @@ export function TaskFilePicker({
       setError(e instanceof Error ? e.message : t('文件未能移除。'));
     }
   }
-  const controls = (
+  const attachButton = (
+    <button
+      type="button"
+      className={composer ? `composer-tool composer-attach${files.length ? ' has-files' : ''}` : 'file-action'}
+      data-state={files.some(file => file.state === 'failed') ? 'failed' : files.some(file => ['preparing', 'uploading'].includes(file.state)) ? 'uploading' : 'ready'}
+      aria-label={label}
+      title={unavailableReason || (composer ? `${label} · ${t('也可粘贴或拖入文件')}\n${limits}` : undefined)}
+      aria-describedby={files.length ? `${limitID} ${usageID}` : limitID}
+      disabled={disabled || !!unavailableReason}
+      onClick={() => input.current?.click()}
+    >
+      <Paperclip size={composer ? 14 : 16} aria-hidden="true" />
+      {!composer && <span>{label}</span>}
+      {composer && files.length > 0 && <span className="composer-file-count">{files.length}</span>}
+    </button>
+  );
+  const accessibleNotes = (
     <>
-      <div className={composer ? 'composer-input-tools' : 'task-file-picker-controls'}>
-        <button
-          type="button"
-          className={composer ? `composer-tool composer-attach${files.length ? ' has-files' : ''}` : 'file-action'}
-          data-state={files.some(file => file.state === 'failed') ? 'failed' : files.some(file => ['preparing', 'uploading'].includes(file.state)) ? 'uploading' : 'ready'}
-          aria-label={label}
-          title={unavailableReason || (composer ? `${label} · ${t('也可粘贴或拖入文件')}\n${limits}` : undefined)}
-          aria-describedby={files.length ? `${limitID} ${usageID}` : limitID}
-          disabled={disabled || !!unavailableReason}
-          onClick={() => input.current?.click()}
-        >
-          <Paperclip size={16} aria-hidden="true" />
-          {!composer && <span>{label}</span>}
-          {composer && files.length > 0 && <span className="composer-file-count">{files.length}</span>}
-        </button>
-        <p
-          id={usageID}
-          className={composer ? 'composer-accessible-note' : 'task-file-usage'}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {usage}
-        </p>
-        {children}
-      </div>
+      <p
+        id={usageID}
+        className={composer ? 'composer-accessible-note' : 'task-file-usage'}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {usage}
+      </p>
       <p className={composer ? 'composer-accessible-note' : 'task-file-limits'} id={limitID}>
         {limits}
       </p>
+    </>
+  );
+  const controls = (
+    <>
+      <div className={composer ? 'composer-input-tools' : 'task-file-picker-controls'}>
+        {attachButton}
+        {!composer && (
+          <p id={usageID} className="task-file-usage" role="status" aria-live="polite" aria-atomic="true">
+            {usage}
+          </p>
+        )}
+        {children}
+      </div>
+      {composer ? accessibleNotes : (
+        <p className="task-file-limits" id={limitID}>
+          {limits}
+        </p>
+      )}
     </>
   );
   return (
@@ -214,6 +235,7 @@ export function TaskFilePicker({
       {!composer && controls}
       {composer && <span className="composer-accessible-note" role="status" aria-live="polite">{notice}</span>}
       {composer && dragging && <div className="composer-drop-overlay" role="status"><Paperclip size={22} /><strong>{t('松开以添加附件')}</strong><span>{t('文件会附在这条消息中')}</span></div>}
+      {composer && composerChips && <div className="composer-active-chips">{composerChips}</div>}
       {!!files.length && (
         <ul className="task-file-list" aria-label={t('已选文件')}>
           {files.map((item) => (
@@ -271,7 +293,7 @@ export function TaskFilePicker({
           {systemText(error)}
         </p>
       )}
-      {composer && controls}
+      {composer && (renderComposerBody ? <>{accessibleNotes}{renderComposerBody(attachButton)}</> : controls)}
     </div>
   );
 }

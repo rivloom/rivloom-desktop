@@ -163,17 +163,28 @@ function useCompletionAppearance(journey: ConversationJourney, summary: Conversa
 
 function DeviceChip({ id, nodeName, executing = false }: { id: string | null; nodeName: NodeName; executing?: boolean }) {
   return <span className="journey-device" data-node-id={id || undefined} data-execution-node={executing ? id || undefined : undefined}
-    data-executing={executing} title={nodeName(id)}><span className="journey-device-icon"><Monitor size={14} strokeWidth={1.6} aria-hidden="true" /></span><span>{nodeName(id)}</span></span>;
+    data-executing={executing} title={nodeName(id)}><span className="journey-device-icon"><Monitor size={12.5} strokeWidth={1.65} aria-hidden="true" /></span><span>{nodeName(id)}</span></span>;
 }
 
 function JourneyWire({ pulse }: { pulse?: number }) {
+  const gradientID = `rv-wire-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const route = 'M2 11H54';
   return <span className="journey-wire" aria-hidden="true">
-    <svg viewBox="0 0 56 22" preserveAspectRatio="none"><path className="journey-wire-base" d={route} /><path className="journey-wire-tip" d="m50 7.5 4 3.5-4 3.5" /></svg>
+    <svg viewBox="0 0 56 22" preserveAspectRatio="none">
+      <path className="journey-wire-base" d={route} />
+      <path className="journey-wire-tip" d="m49.5 7.6 4.2 3.4-4.2 3.4" />
+    </svg>
     {pulse && <span className="activity-transfer-motion" data-pulse={pulse} key={pulse}>
       <svg viewBox="0 0 56 22" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id={gradientID} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.08" />
+            <stop offset="68%" stopColor="currentColor" stopOpacity="0.96" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0.92" />
+          </linearGradient>
+        </defs>
         <path className="journey-wire-trail" d={route} />
-        <path className="journey-wire-packet" pathLength="100" d={route} />
+        <path className="journey-wire-packet" pathLength="100" stroke={`url(#${gradientID})`} d={route} />
       </svg>
     </span>}
   </span>;
@@ -227,13 +238,14 @@ export function ConversationActivity({ summary: inputSummary, journey, nodeName,
       aria-controls={processID} onClick={toggle}>
       {appearance.phase !== 'quiet' ? <>
       <span className="conversation-activity-icon" aria-hidden="true">
-        {summary.tone === 'attention' || summary.tone === 'unavailable' ? <CircleAlert size={17} strokeWidth={1.7} /> : journey.canSettle ? <Check size={16} strokeWidth={1.8} /> :
-          summary.tone === 'active' ? <LoaderCircle size={17} strokeWidth={1.7} /> : <Circle size={15} strokeWidth={1.6} />}
+        {summary.tone === 'attention' || summary.tone === 'unavailable' ? <CircleAlert size={14} strokeWidth={1.7} /> : journey.canSettle ? <Check size={13} strokeWidth={2} /> :
+          summary.tone === 'active' ? <LoaderCircle size={14} strokeWidth={1.7} className="activity-orbit-icon" /> : <Circle size={12} strokeWidth={1.65} />}
       </span>
       <span className="conversation-activity-content">
       <span className="conversation-activity-heading">
         <span className="conversation-activity-label" title={summary.label}>{appearance.phase === 'confirming' ? t('已完成') : !live ? t('执行过程') : summary.label}</span>
         {detail && <span className="conversation-activity-meta">{detail}</span>}
+        <ChevronRight className="conversation-activity-chevron" size={13} aria-hidden="true" />
       </span>
       <span className="journey-live-paths">
         {connections.slice(0, 3).map(edge => <Connection key={edge.key} edge={edge} journey={journey} nodeName={nodeName} pulse={pulses[edge.key]} />)}
@@ -244,10 +256,10 @@ export function ConversationActivity({ summary: inputSummary, journey, nodeName,
         {connections.length > 3 && <small className="journey-overflow">{t('另有 {{count}} 条路径', { count: connections.length - 3 })}</small>}
       </span>
       </span>
-      </> : <span className="journey-archive"><History size={13} aria-hidden="true" /><span className="conversation-activity-label">{t('过程记录')}</span>
+      </> : <span className="journey-archive"><History size={12.5} aria-hidden="true" /><span className="conversation-activity-label">{t('过程记录')}</span>
         {(summary.tone === 'attention' || summary.tone === 'unavailable') && <small>{summary.label}</small>}
-        {journey.handoffCount !== undefined && journey.handoffCount > 0 && <small>· {t('{{count}} 次交接', { count: journey.handoffCount })}</small>}</span>}
-      <ChevronRight className="conversation-activity-chevron" size={13} aria-hidden="true" />
+        {journey.handoffCount !== undefined && journey.handoffCount > 0 && <small>· {t('{{count}} 次交接', { count: journey.handoffCount })}</small>}
+        <ChevronRight className="conversation-activity-chevron" size={12.5} aria-hidden="true" /></span>}
     </button>
     {actions}
     </div>
@@ -344,11 +356,11 @@ function TransferGroup({ group, files, nodeName, owner }: {
     open={expanded} onToggle={event => { const open = event.currentTarget.open;
       setDisclosure(before => before.expanded === open && before.attention === needsAttention ? before : { attention: needsAttention, expanded: open }); }}>
     <summary onClick={() => setRevealFiles(!expanded)}>
-      <span className="journey-transfer-icon" aria-hidden="true">{group.direction === 'send' ? <ArrowUp size={14} strokeWidth={1.6} /> : <ArrowDown size={14} strokeWidth={1.6} />}</span>
+      <span className="journey-transfer-icon" aria-hidden="true">{group.direction === 'send' ? <ArrowUp size={13} strokeWidth={1.65} /> : <ArrowDown size={13} strokeWidth={1.65} />}</span>
       <span className="journey-transfer-copy"><span className="journey-transfer-title">{group.direction === 'send' ? t('向 {{node}} 发送', { node: peer }) : t('从 {{node}} 接收', { node: peer })}
         <span className="journey-transfer-count">{t('{{count}} 个文件', { count: files.length })}</span></span>
         {owner && <small>{owner}</small>}</span>
-      <span className="journey-transfer-state">{state}</span><ChevronRight className="journey-transfer-chevron" size={13} aria-hidden="true" />
+      <span className="journey-transfer-state">{state}</span><ChevronRight className="journey-transfer-chevron" size={12.5} aria-hidden="true" />
     </summary>
     <div className="journey-transfer-files" data-reveal={revealFiles} hidden={!expanded}>
     <ul className="activity-transfer-list" aria-label={t('文件传输')}>

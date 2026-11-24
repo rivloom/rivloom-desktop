@@ -32,10 +32,12 @@ type Drag = {
 export function ResizableWorkspace({
   hasNetwork,
   sidebarOpen,
+  drawerCollapsed = false,
   children,
 }: {
   hasNetwork: boolean;
   sidebarOpen: boolean;
+  drawerCollapsed?: boolean;
   children: ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -220,7 +222,7 @@ export function ResizableWorkspace({
   return (
     <div
       ref={container}
-      className={`conversation-shell ${hasNetwork ? 'with-network' : ''} ${sidebarOpen ? 'sidebar-open' : ''} ${resizing ? 'is-resizing' : ''}`}
+      className={`conversation-shell ${hasNetwork ? 'with-network' : ''} ${sidebarOpen ? 'sidebar-open' : ''} ${drawerCollapsed ? 'drawer-collapsed' : ''} ${resizing ? 'is-resizing' : ''}`}
       style={
         {
           '--history-width': `${layout.history}px`,
@@ -230,7 +232,7 @@ export function ResizableWorkspace({
       }
     >
       {children}
-      {handle('history')}
+      {!drawerCollapsed && handle('history')}
       {hasNetwork && handle('network')}
       {saveError && (
         <div className="workspace-layout-error" role="status">

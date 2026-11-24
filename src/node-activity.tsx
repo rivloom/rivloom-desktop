@@ -193,9 +193,10 @@ function fileItems(operations: readonly LocalActivity[]): ActivityItem[] {
     state: item.state, action: item.kind === 'file-read' ? 'read' : 'save', error: item.errorCode ? officeMessage(item.errorCode) : undefined }));
 }
 
-export function SidebarActivityEntries({ identity, owner, connected, network, attentionItems, view, openConnections, openProjectFiles, openKnowledge, openAttention, openDevices }: {
+export function SidebarActivityEntries({ identity, owner, connected, network, attentionItems, view, openConnections, openProjectFiles, openKnowledge, openAttention, openDevices, layout = 'sidebar', topSlot, bottomSlot }: {
   identity: string; owner: boolean; connected: boolean; network: NodeNetwork; attentionItems: AttentionItem[] | undefined; view: string;
   openConnections: () => void; openProjectFiles: () => void; openKnowledge: () => void; openAttention: () => void; openDevices: () => void;
+  layout?: 'sidebar' | 'rail'; topSlot?: ReactNode; bottomSlot?: ReactNode;
 }) {
   const { snapshot, now, visible, loading } = useNodeActivity(identity, owner);
   const files = useSyncExternalStore(localActivity.subscribe, localActivity.getSnapshot);
@@ -256,6 +257,62 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
       if (current() && result.dismissed) setDismissed(previous => [...previous.filter(value => value !== version).slice(-31), version]);
     } catch { if (current()) setDismissError(true); }
   };
+  const popover = owner && visible && panel?.identity === identity ? <ActivityPopover anchor={panel.anchor} title={panel.kind === 'models' ? t('此Node的模型活动') : panel.kind === 'knowledge' ? t('知识活动') : t('文件活动')} close={closePanel}>
+      {panel.kind === 'models' && <>
+        <p className="activity-description">{t('汇总此Node执行的所有会话，包括收到的委派。')}</p>
+        <p className="activity-description">{t('只统计本机执行的模型调用，其他设备的执行不计入。')}</p>
+        <div className="activity-totals"><RateValues rates={rates} /></div>
+        <p className="activity-model-description" role="status">{modelStateDescription(modelState)}</p>
+        {models && <>
+          {!models.limited && models.countsComplete && <Counts counts={models.counts} />}
+          <ul className="activity-connections">{models.connections.map(connection => <li key={connection.id}>
+            <div><Plug size={14} /><strong title={connection.name}>{connection.name}</strong><small>{connection.providerName}</small></div>
+            <div className="activity-connection-rates"><RateValues rates={connection} /></div>{connection.countsComplete && <Counts counts={connection.counts} />}
+          </li>)}</ul>
+        </>}
+        <p className="activity-footnote">{t('输入按近60秒新确认用量统计；输出按近3秒流式增量估算。尚无可靠数值时显示 —。')}</p>
+      </>}
+      {panel.kind === 'knowledge' && <><OperationList items={knowledge} dismiss={id => void dismissKnowledge(id)} />{dismissError && <p role="alert" className="activity-failure">{t('提示未清除，请重试。')}</p>}<p className="activity-footnote">{t('显示实际知识操作，不代表设备间完整同步。')}</p></>}
+      {panel.kind === 'files' && <OperationList items={fileOperations} dismiss={localActivity.dismiss} />}
+    </ActivityPopover> : null;
+  if (layout === 'rail') {
+    const outRate = activityRate(rates.outputTokensPerSecond);
+    return <>
+      {topSlot}
+      <button type="button" className="workbench-rail-btn utility-nav-entry" title={t('待办中心')} aria-label={attentionItems ? `${t('待办中心')} · ${attentionItems.length}` : t('待办中心')} aria-current={view === 'attention' ? 'page' : undefined} onClick={openAttention}>
+        <ListChecks size={16} aria-hidden="true" />
+        {!!attentionItems?.length && <span className={`attention-count${bounce ? ' activity-bounce' : ''}`} aria-hidden="true">{attentionItems.length}</span>}
+      </button>
+      <button type="button" className={`workbench-rail-btn utility-nav-entry${deviceChange ? ' activity-device-change' : ''}`} title={t('设备与模型')} aria-label={t('设备与模型')} aria-current={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'page' : undefined} onClick={openDevices}>
+        <MonitorCog size={16} aria-hidden="true" />
+        {executing && <span className="activity-device-running" aria-label={t('设备执行中')} />}
+      </button>
+      {owner && <div className="sidebar-utility-entry workbench-rail-slot">
+        <button type="button" className="workbench-rail-btn activity-utility" title={t('技能与记忆')} aria-label={t('知识')} aria-current={view === 'knowledge' ? 'page' : undefined} onClick={openKnowledge}>
+          <LibraryBig size={16} aria-hidden="true" />
+        </button>
+        <OperationBadge items={knowledge} label={t('查看知识活动')} paused={!visible} expanded={panel?.kind === 'knowledge'} open={anchor => openPanel('knowledge', anchor)} />
+      </div>}
+      {owner && <div className="sidebar-file-entry workbench-rail-slot">
+        <button type="button" className="workbench-rail-btn" title={t('项目文件')} aria-label={t('项目文件')} onClick={openProjectFiles}>
+          <FolderOpen size={16} aria-hidden="true" />
+        </button>
+        <OperationBadge items={fileOperations} label={t('查看文件活动')} paused={!visible} expanded={panel?.kind === 'files'} open={anchor => openPanel('files', anchor)} />
+      </div>}
+      <div className="workbench-rail-bottom">
+        {owner && <button type="button" className="sidebar-model-metrics workbench-rail-rate" data-state={modelState} title={`${t('此Node的模型活动')} · ${modelStateLabel(modelState)}`} aria-label={t('查看模型活动')} aria-haspopup="dialog" aria-expanded={panel?.kind === 'models'} onClick={event => openPanel('models', event.currentTarget)}>
+          <b>{outRate === null ? '—' : `≈${activityRateText(outRate)}`}</b>
+          <small>t/s</small>
+          {!!models?.counts.failed && <CircleAlert className="activity-failure" size={10} aria-label={t('有任务失败')} />}
+        </button>}
+        {owner && <button type="button" className="workbench-rail-btn" title={t('模型连接')} aria-label={t('模型连接')} onClick={openConnections}>
+          <Plug size={15} aria-hidden="true" />
+        </button>}
+        {bottomSlot}
+      </div>
+      {popover}
+    </>;
+  }
   return <>
     {owner && <div className="sidebar-model-entry">
       <button type="button" className="activity-office-entry" title={t('模型连接')} aria-label={t('模型连接')} onClick={openConnections}><Plug size={16} /><span>{t('模型连接')}</span></button>
@@ -277,23 +334,6 @@ export function SidebarActivityEntries({ identity, owner, connected, network, at
     <button type="button" className={`utility-nav-entry${deviceChange ? ' activity-device-change' : ''}`} title={t('设备与模型')} aria-label={t('设备与模型')} aria-current={['network', 'models', 'execution', 'diagnostics'].includes(view) ? 'page' : undefined} onClick={openDevices}>
       <MonitorCog size={17} aria-hidden="true" /><span className="nav-label">{t('设备')}</span>{executing && <span className="activity-device-running" aria-label={t('设备执行中')} />}
     </button>
-    {owner && visible && panel?.identity === identity && <ActivityPopover anchor={panel.anchor} title={panel.kind === 'models' ? t('此Node的模型活动') : panel.kind === 'knowledge' ? t('知识活动') : t('文件活动')} close={closePanel}>
-      {panel.kind === 'models' && <>
-        <p className="activity-description">{t('汇总此Node执行的所有会话，包括收到的委派。')}</p>
-        <p className="activity-description">{t('只统计本机执行的模型调用，其他设备的执行不计入。')}</p>
-        <div className="activity-totals"><RateValues rates={rates} /></div>
-        <p className="activity-model-description" role="status">{modelStateDescription(modelState)}</p>
-        {models && <>
-          {!models.limited && models.countsComplete && <Counts counts={models.counts} />}
-          <ul className="activity-connections">{models.connections.map(connection => <li key={connection.id}>
-            <div><Plug size={14} /><strong title={connection.name}>{connection.name}</strong><small>{connection.providerName}</small></div>
-            <div className="activity-connection-rates"><RateValues rates={connection} /></div>{connection.countsComplete && <Counts counts={connection.counts} />}
-          </li>)}</ul>
-        </>}
-        <p className="activity-footnote">{t('输入按近60秒新确认用量统计；输出按近3秒流式增量估算。尚无可靠数值时显示 —。')}</p>
-      </>}
-      {panel.kind === 'knowledge' && <><OperationList items={knowledge} dismiss={id => void dismissKnowledge(id)} />{dismissError && <p role="alert" className="activity-failure">{t('提示未清除，请重试。')}</p>}<p className="activity-footnote">{t('显示实际知识操作，不代表设备间完整同步。')}</p></>}
-      {panel.kind === 'files' && <OperationList items={fileOperations} dismiss={localActivity.dismiss} />}
-    </ActivityPopover>}
+    {popover}
   </>;
 }

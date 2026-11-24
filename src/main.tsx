@@ -24,6 +24,8 @@ import './chat-refinement.css';
 import './ui-polish.css';
 import './node-activity.css';
 import './history-sidebar.css';
+import './workbench-v4.css';
+import './settings-v4.css';
 function Auth({ onLogin }: { onLogin: () => void }) {
   const [setup, setSetup] = useState(false);
   const [join, setJoin] = useState(false);
