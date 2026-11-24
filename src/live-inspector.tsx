@@ -107,9 +107,9 @@ function LiveTopologyCanvas({
 
   const peerYPositions =
     remoteIDs.length === 1 ? [68] : remoteIDs.length === 2 ? [38, 98] : [26, 68, 110];
-  const localX = remoteIDs.length ? 46 : 132;
+  const localX = remoteIDs.length ? 42 : 132;
   const localY = 68;
-  const peerX = 216;
+  const peerX = 222;
 
   const edges = useMemo<TopologyEdge[]>(() => {
     const list: TopologyEdge[] = [];
@@ -132,7 +132,7 @@ function LiveTopologyCanvas({
           list.push({
             key: `send:${peerID}`,
             peerID,
-            d: bezierPath(localX + 24, localY, peerX - 24, py, dual ? -14 : 0),
+            d: bezierPath(localX + 34, localY, peerX - 34, py, dual ? -14 : 0),
             state: sendEdge.state === 'failed' ? 'failed' : active ? 'active' : sendEdge.state === 'complete' ? 'complete' : 'waiting',
             pulse: active,
           });
@@ -142,7 +142,7 @@ function LiveTopologyCanvas({
           list.push({
             key: `recv:${peerID}`,
             peerID,
-            d: bezierPath(peerX - 24, py, localX + 24, localY, dual ? 14 : 0),
+            d: bezierPath(peerX - 34, py, localX + 34, localY, dual ? 14 : 0),
             state: recvEdge.state === 'failed' ? 'failed' : active ? 'active' : recvEdge.state === 'complete' ? 'complete' : 'waiting',
             pulse: active,
           });
@@ -160,7 +160,7 @@ function LiveTopologyCanvas({
         list.push({
           key: `stage:${peerID}`,
           peerID,
-          d: bezierPath(localX + 24, localY, peerX - 24, py, 0),
+          d: bezierPath(localX + 34, localY, peerX - 34, py, 0),
           state: stage.state === 'failed' ? 'failed' : active ? 'active' : stage.state === 'complete' ? 'complete' : 'waiting',
           pulse: active,
         });
@@ -173,7 +173,7 @@ function LiveTopologyCanvas({
       list.push({
         key: `mesh:${peerID}`,
         peerID,
-        d: bezierPath(localX + 24, localY, peerX - 24, py, 0),
+        d: bezierPath(localX + 34, localY, peerX - 34, py, 0),
         state: targeted ? 'target' : 'idle',
         pulse: false,
         dashed: targeted ? targetMode === 'preferred' : !online,
@@ -245,26 +245,26 @@ function LiveTopologyCanvas({
               }
             }}
           >
-            {localExecuting && <circle className="topology-node-halo" r="24" />}
-            <rect x="-24" y="-15" width="48" height="30" rx="8" className="topology-node-box" />
+            {localExecuting && <circle className="topology-node-halo" r="26" />}
+            <rect x="-34" y="-16" width="68" height="32" rx="8" className="topology-node-box" />
             <circle
-              cx="-15"
-              cy={localLabel === t('本机') ? 0 : -5}
+              cx={localLabel === t('本机') ? -22 : -25}
+              cy={localLabel === t('本机') ? 0 : -5.5}
               r="2.5"
               className={`topology-node-dot${connected ? ' is-online' : ''}`}
             />
             {localLabel !== t('本机') && (
-              <text x="3" y="-2" textAnchor="middle" className="topology-node-role">
+              <text x="-19" y="-2.5" textAnchor="start" className="topology-node-role">
                 {t('本机')}
               </text>
             )}
             <text
-              x={localLabel === t('本机') ? 3 : 0}
-              y={localLabel === t('本机') ? 3.5 : 9}
+              x={localLabel === t('本机') ? 4 : 0}
+              y={localLabel === t('本机') ? 3.5 : 9.5}
               textAnchor="middle"
               className="topology-node-name"
             >
-              {shortLabel(localLabel, 8)}
+              {shortLabel(localLabel, 11)}
             </text>
           </g>
 
@@ -306,16 +306,16 @@ function LiveTopologyCanvas({
                   }
                 }}
               >
-                {executing && <circle className="topology-node-halo" r="22" />}
-                <rect x="-26" y="-14" width="52" height="28" rx="8" className="topology-node-box" />
+                {executing && <circle className="topology-node-halo" r="24" />}
+                <rect x="-34" y="-14" width="68" height="28" rx="8" className="topology-node-box" />
                 <circle
-                  cx="-17"
+                  cx="-25"
                   cy="0"
                   r="2.5"
                   className={`topology-node-dot${online ? ' is-online' : ''}`}
                 />
-                <text x="3" y="3.5" textAnchor="middle" className="topology-node-name">
-                  {shortLabel(name, 8)}
+                <text x="-19" y="3.5" textAnchor="start" className="topology-node-name">
+                  {shortLabel(name, 10)}
                 </text>
               </g>
             );
