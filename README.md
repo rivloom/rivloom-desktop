@@ -8,9 +8,11 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows x64 正式版为 **0.1.32**，Linux x64 正式版为 **0.1.30**。Windows 新版加入会话进展与设备接力反馈，完成后可查阅过程记录，并更新设置和常用工具界面。固定核心为 `1.18.33-rivloom.655285f835f8`，SDK/plugin 为 1.18.33，Node.js 为 24.19.0，继续使用原应用内更新公钥。 [Windows 版本说明](docs/releases/0.1.32.md) · [发行验收](docs/releases/0.1.32-verification.md) · [Linux 0.1.30 说明](docs/releases/linux-0.1.30.md)
+当前 Windows x64 正式版为 **0.1.34**，Linux x64 正式版为 **0.1.30**。Windows 新版重构 44px 活动栏与可折叠会话抽屉、任务驾驶舱、`/` 斜杠指令、三页实时检查器（拓扑 / 产物 / 集群）与分组双栏设置工作台。固定核心为 `1.18.33-rivloom.655285f835f8`，SDK/plugin 为 1.18.33，Node.js 为 24.19.0，继续使用原应用内更新公钥。 [Windows 版本说明](docs/releases/0.1.34.md) · [发行验收](docs/releases/0.1.34-verification.md) · [Linux 0.1.30 说明](docs/releases/linux-0.1.30.md)
 
-Windows 同源 27 项检查、隔离安装、公开完整下载和应用内更新验签通过。中英文官网已部署，下载入口已复核。R2 保留检查已完成，50 个符合清理条件的旧文件仍待处理，实际删除 0 个。 [官网下载](https://rivloom.com/download/) · [R2 保留检查](docs/releases/0.1.32-r2-retention.md)
+Windows 同源 27 项检查、隔离安装、匿名公开完整下载与应用内更新原公钥验签均已通过；中英文下载页已更新至 0.1.34，官网同步提交 `47e3b58` 待 Pages 部署复核。本轮 R2 只读对象清单检查暂未运行，实际删除 0 个，现有 CI 尚未启用自动清理。 [官网下载](https://rivloom.com/download/) · [R2 保留规则](docs/R2-RETENTION.md)
+
+**历史 0.1.33 / 0.1.32 发行：** 0.1.33 修复设备间文件传输恢复、完整性校验与引擎退出状态保护；0.1.32 加入会话进展与设备接力反馈。 [0.1.33 说明](docs/releases/0.1.33.md) · [0.1.32 说明](docs/releases/0.1.32.md) · [0.1.32 验收](docs/releases/0.1.32-verification.md)
 
 **历史 0.1.31 发行** 在“已是最新版本”提示中显示实际安装版本，并整合自动候选就绪与已发布版本保护。 [版本说明](docs/releases/0.1.31.md) · [发行验收](docs/releases/0.1.31-verification.md)
 
