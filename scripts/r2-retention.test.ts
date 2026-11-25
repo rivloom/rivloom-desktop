@@ -12,6 +12,7 @@ import {
   compareSemver,
   computeRetentionManifestSha256,
   extractDownloadKeysFromText,
+  parseUtcTimestamp,
   planR2Retention,
   renderRetentionAuditMarkdown,
   RETENTION_WINDOW_MS,
@@ -705,7 +706,7 @@ test('controlled apply enforces explicit approval, digest, expiry, idempotency, 
         headers: {
           'content-length': String(item.body.length),
           etag: item.etag,
-          'last-modified': item.lastModified,
+          'last-modified': new Date(item.lastModified).toUTCString(),
         },
       });
     }
@@ -945,4 +946,15 @@ test('CLI defaults to read-only plan mode and generates verified manifest.json +
   assert.equal(manifest.counts.deleteCandidate, 0);
   assert.equal(manifest.manifestSha256, computeRetentionManifestSha256(manifest));
   assert.match(auditMd, /检查完成，删除 0 个/);
+});
+
+test('parseUtcTimestamp accepts ISO-8601 and RFC-7231 GMT Last-Modified headers while rejecting invalid dates', () => {
+  assert.equal(parseUtcTimestamp('2026-09-21T17:30:51.238Z'), Date.parse('2026-09-21T17:30:51.238Z'));
+  assert.equal(parseUtcTimestamp('2026-09-21T17:30:51.238000+00:00'), Date.parse('2026-09-21T17:30:51.238Z'));
+  // Cloudflare R2 S3 HEAD returns RFC-7231 GMT headers containing "T" in "GMT".
+  assert.equal(parseUtcTimestamp('Mon, 21 Sep 2026 17:30:51 GMT'), Date.parse('2026-09-21T17:30:51Z'));
+  assert.equal(parseUtcTimestamp('Fri, 18 Sep 2026 14:49:13 GMT'), Date.parse('2026-09-18T14:49:13Z'));
+  assert.equal(parseUtcTimestamp('2026-02-30T00:00:00Z'), null);
+  assert.equal(parseUtcTimestamp('Mon, 31 Feb 2026 17:30:51 GMT'), null);
+  assert.equal(parseUtcTimestamp('Tue, 21 Sep 2026 17:30:51 GMT'), null);
 });

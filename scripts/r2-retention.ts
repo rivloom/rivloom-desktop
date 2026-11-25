@@ -245,18 +245,19 @@ export function compareSemver(left: string, right: string): number {
 export function parseUtcTimestamp(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|\+00:00)$/.test(trimmed) &&
-    !/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(trimmed)
-  ) {
+  const isIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|\+00:00)$/.test(trimmed);
+  const isHttpDate = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(trimmed);
+  if (!isIso && !isHttpDate) {
     return null;
   }
   const ms = Date.parse(trimmed);
   if (!Number.isFinite(ms)) return null;
-  if (trimmed.includes('T')) {
-    const check = new Date(ms);
+  const check = new Date(ms);
+  if (isIso) {
     const isoDate = trimmed.slice(0, 10);
     if (check.toISOString().slice(0, 10) !== isoDate) return null;
+  } else if (check.toUTCString() !== trimmed) {
+    return null;
   }
   return ms;
 }
