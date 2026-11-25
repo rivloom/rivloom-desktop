@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { BookMarked, CodeXml, FileText } from 'lucide-react';
 import { t } from '../shared/i18n';
 import { SearchText } from './conversation-search-view';
-import { splitQuotedMessage, type MessageQuote } from './message-quote';
+import { splitContextMessage } from './composer-context';
+import { type MessageQuote } from './message-quote';
 import { MessageMarkdown } from './message-markdown';
 
 export function MessageQuoteCard({ quote, remove, disabled = false, searchQuery = '' }: {
@@ -20,7 +22,19 @@ export function MessageQuoteCard({ quote, remove, disabled = false, searchQuery 
 }
 
 export function UserMessageText({ text, searchQuery = '' }: { text: string; searchQuery?: string }) {
-  const value = splitQuotedMessage(text);
-  return <div className="user-message-body">{value.quote && <MessageQuoteCard quote={value.quote} searchQuery={searchQuery} />}
-    <div className="chat-message-text"><SearchText text={value.text} query={searchQuery} /></div></div>;
+  const value = splitContextMessage(text);
+  return <div className="user-message-body">
+    {value.quote && <MessageQuoteCard quote={value.quote} searchQuery={searchQuery} />}
+    {value.badges.length > 0 && (
+      <div className="message-context-badges" aria-label={t('关联上下文')}>
+        {value.badges.map((badge, index) => (
+          <span key={`${badge.kind}:${badge.label}:${index}`} className={`message-context-badge is-${badge.kind}`} title={badge.detail}>
+            {badge.kind === 'file' ? <FileText size={11} aria-hidden="true" /> : badge.kind === 'skill' ? <CodeXml size={11} aria-hidden="true" /> : <BookMarked size={11} aria-hidden="true" />}
+            <span>{badge.label}</span>
+          </span>
+        ))}
+      </div>
+    )}
+    <div className="chat-message-text"><SearchText text={value.text} query={searchQuery} /></div>
+  </div>;
 }

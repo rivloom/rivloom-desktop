@@ -14,7 +14,14 @@ import { officeMessage } from './office-messages';
 import { machineStatus } from './machine-status';
 import { activityFresh, activityRate, activityRateText, attentionAdded, knowledgeActivityVersion, modelActivityState, visibleModelRates, type ModelActivityState } from './sidebar-activity';
 
-function useNodeActivity(identity: string, owner: boolean) {
+export type NodeActivityState = {
+  snapshot: NodeActivitySnapshot | null;
+  now: number;
+  visible: boolean;
+  loading: boolean;
+};
+
+export function useNodeActivity(identity: string, owner: boolean): NodeActivityState {
   const [visible, setVisible] = useState(() => !document.hidden);
   const [now, setNow] = useState(Date.now);
   const [received, setReceived] = useState<{ data: NodeActivitySnapshot; at: number; identity: string } | null>(null);
@@ -193,12 +200,13 @@ function fileItems(operations: readonly LocalActivity[]): ActivityItem[] {
     state: item.state, action: item.kind === 'file-read' ? 'read' : 'save', error: item.errorCode ? officeMessage(item.errorCode) : undefined }));
 }
 
-export function SidebarActivityEntries({ identity, owner, connected, network, attentionItems, view, openConnections, openProjectFiles, openKnowledge, openAttention, openDevices, layout = 'sidebar', topSlot, bottomSlot }: {
+export function SidebarActivityEntries({ identity, owner, connected, network, attentionItems, view, openConnections, openProjectFiles, openKnowledge, openAttention, openDevices, layout = 'sidebar', topSlot, bottomSlot, activity }: {
   identity: string; owner: boolean; connected: boolean; network: NodeNetwork; attentionItems: AttentionItem[] | undefined; view: string;
   openConnections: () => void; openProjectFiles: () => void; openKnowledge: () => void; openAttention: () => void; openDevices: () => void;
-  layout?: 'sidebar' | 'rail'; topSlot?: ReactNode; bottomSlot?: ReactNode;
+  layout?: 'sidebar' | 'rail'; topSlot?: ReactNode; bottomSlot?: ReactNode; activity?: NodeActivityState;
 }) {
-  const { snapshot, now, visible, loading } = useNodeActivity(identity, owner);
+  const fallbackActivity = useNodeActivity(identity, activity ? false : owner);
+  const { snapshot, now, visible, loading } = activity || fallbackActivity;
   const files = useSyncExternalStore(localActivity.subscribe, localActivity.getSnapshot);
   const [panel, setPanel] = useState<{ kind: 'models' | 'knowledge' | 'files'; anchor: HTMLElement; identity: string } | null>(null);
   const [dismissError, setDismissError] = useState(false);

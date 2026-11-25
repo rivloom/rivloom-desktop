@@ -1,19 +1,32 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  Activity,
+  AtSign,
   Check,
+  Eye,
   File,
   FileCode2,
   FileDiff,
+  Filter,
+  FolderOpen,
   GitBranch,
+  Layers,
   ListOrdered,
   LoaderCircle,
+  Lock,
   Maximize2,
   Network,
+  Pause,
+  Play,
+  Quote,
   RefreshCw,
+  Stethoscope,
   X,
 } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
+import type { NodeQueueSnapshot } from '../shared/node-queue.ts';
 import type { ProjectChanges, ProjectDiff } from '../shared/project-changes.ts';
+import type { TaskFileDescriptor } from '../shared/task-files.ts';
 import type { Bootstrap, Project, RivloomNode } from '../shared/types';
 import { api } from './api';
 import {
@@ -24,12 +37,27 @@ import {
 import { ConversationJourneyTrail } from './conversation-activity-view';
 import { conversationJourney, type ConversationJourney, type JourneyConnection } from './conversation-journey';
 import { conversationIsFailed, conversationIsRunning, conversationState, type Conversation } from './conversations';
+import { desktop, revealTaskFile } from './desktop';
+import { FilePreview } from './file-preview';
+import {
+  buildDiffQuoteText,
+  canInspectChangedFile,
+  changeFileStatusBadge,
+  collectWorkflowDeliverableRounds,
+  defaultDiffAreaForFile,
+  parseDiffHunks,
+  partitionProjectChanges,
+  type ChangeScopeFilter,
+} from './inspector-review';
 import { primaryShortcut } from './keyboard-platform';
 import { legacyFileRevision } from './legacy-conversation-activity';
+import { NodeAvatar } from './node-avatar';
+import type { NodeActivityState } from './node-activity';
 import { nodeDisplayName } from './node-mentions';
 import { PairedMachines } from './paired-machines';
 import { TaskFileRecovery, TaskFilesPanel } from './task-files';
 import { TaskKnowledgeUsageSection } from './task-knowledge-usage';
+import { buildTopologyNodeTelemetry, type TopologyNodeTelemetry } from './topology-telemetry';
 import { useTaskFileRequests, useTaskFileStates, type TaskFileQuery } from './use-task-file-state';
 import { workflowAllSteps } from '../shared/workflows';
 import { workflowLatestExecutions } from './workflow-recent';
@@ -56,39 +84,278 @@ function bezierPath(x1: number, y1: number, x2: number, y2: number, bow = 0) {
   return `M ${x1} ${y1} C ${mx} ${cy1}, ${mx} ${cy2}, ${x2} ${y2}`;
 }
 
-function LiveTopologyCanvas({
-  local,
-  peers,
-  journey,
-  connected,
+function TopologyNodeControlCard({
+  node,
+  telemetry,
+  nodeLabel,
   hasConversation,
   owner,
   disabled,
   targetNodeID,
   targetMode,
   filterNodeID,
-  nodeName,
+  queueSnapshot,
+  queueBusy,
+  queueError,
+  onClose,
   onRouteNode,
   onFilterNode,
+  onInspectCluster,
+  onPauseQueue,
+  onOpenDiagnostics,
 }: {
-  local: RivloomNode | null;
-  peers: readonly RivloomNode[];
-  journey: ConversationJourney | null;
-  connected: boolean;
+  node: RivloomNode | null;
+  telemetry: TopologyNodeTelemetry;
+  nodeLabel: string;
   hasConversation: boolean;
   owner: boolean;
   disabled: boolean;
   targetNodeID: string | null;
   targetMode: 'preferred' | 'locked';
   filterNodeID: string | null;
-  nodeName: (id: string | null) => string;
-  onRouteNode: (node: RivloomNode) => void;
+  queueSnapshot: NodeQueueSnapshot | null;
+  queueBusy: boolean;
+  queueError: string;
+  onClose: () => void;
+  onRouteNode: (node: RivloomNode | null, forcedMode?: 'preferred' | 'locked' | null) => void;
   onFilterNode: (nodeID: string) => void;
+  onInspectCluster: () => void;
+  onPauseQueue: (paused: boolean) => void;
+  onOpenDiagnostics: (nodeID: string) => void;
+}) {
+  const isTargeted = !hasConversation && targetNodeID === telemetry.id;
+  const isFiltered = hasConversation && filterNodeID === telemetry.id;
+  const canRoute = !hasConversation && owner && !disabled && !!node;
+  const canPauseLocal = telemetry.isLocal && owner && !!queueSnapshot && !queueError && !queueBusy;
+
+  return (
+    <section
+      className="topology-control-card"
+      data-selected-node={telemetry.id}
+      aria-label={t('节点控制面：{{node}}', { node: nodeLabel })}
+    >
+      <header className="topology-control-head">
+        <div className="topology-control-identity">
+          <NodeAvatar small icon={node?.icon} name={node?.name || nodeLabel} />
+          <div className="topology-control-title">
+            <strong title={nodeLabel}>{nodeLabel}</strong>
+            <span className={`topology-health-pill is-${telemetry.tone}`}>
+              <i aria-hidden="true" />
+              {telemetry.statusLabel}
+              {telemetry.healthLabel !== '—' && telemetry.healthLabel !== telemetry.statusLabel
+                ? ` · ${telemetry.healthLabel}`
+                : ''}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="inspector-icon-btn"
+          aria-label={t('收起节点详情')}
+          title={t('收起节点详情')}
+          onClick={onClose}
+        >
+          <X size={13} aria-hidden="true" />
+        </button>
+      </header>
+
+      <dl className="topology-metrics-grid">
+        <div>
+          <dt>CPU</dt>
+          <dd>
+            <strong>{telemetry.cpuText}</strong>
+            <small>{telemetry.coresText}</small>
+          </dd>
+        </div>
+        <div>
+          <dt>{t('内存')}</dt>
+          <dd>
+            <strong>{telemetry.memoryText}</strong>
+            <small>{telemetry.memoryTotalText}</small>
+          </dd>
+        </div>
+        <div>
+          <dt>{t('执行槽位')}</dt>
+          <dd>
+            <strong>{telemetry.slotsText}</strong>
+            {telemetry.waitingCount !== null && (
+              <small>{t('等待 {{count}}', { count: telemetry.waitingText })}</small>
+            )}
+          </dd>
+        </div>
+        {telemetry.localActivity ? (
+          <div>
+            <dt>{t('实时流速')}</dt>
+            <dd>
+              <strong>{telemetry.localActivity.outputText}</strong>
+              <small>
+                {t('入均 {{rate}}', { rate: telemetry.localActivity.inputText })}
+              </small>
+            </dd>
+          </div>
+        ) : (
+          <div>
+            <dt>{t('队列等待')}</dt>
+            <dd>
+              <strong>{telemetry.waitingText}</strong>
+              <small>{telemetry.healthLabel}</small>
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      {telemetry.healthCode !== 'normal' && telemetry.healthCode !== 'unknown' && (
+        <p className="topology-control-alert" role="status">
+          {telemetry.healthCode === 'congested'
+            ? t('队列拥堵提醒')
+            : telemetry.healthCode === 'resource_anomaly'
+              ? t('持续资源异常提醒')
+              : t('等待队列可能停滞')}
+        </p>
+      )}
+
+      <div className="topology-control-actions">
+        {canRoute && !telemetry.isLocal && (
+          <>
+            <button
+              type="button"
+              className={`topology-ctrl-btn${isTargeted && targetMode === 'preferred' ? ' is-active' : ''}`}
+              aria-pressed={isTargeted && targetMode === 'preferred'}
+              onClick={() =>
+                onRouteNode(
+                  isTargeted && targetMode === 'preferred' ? null : node,
+                  isTargeted && targetMode === 'preferred' ? null : 'preferred',
+                )
+              }
+            >
+              <AtSign size={12} aria-hidden="true" />
+              <span>{t('设为首选')}</span>
+            </button>
+            <button
+              type="button"
+              className={`topology-ctrl-btn${isTargeted && targetMode === 'locked' ? ' is-active' : ''}`}
+              aria-pressed={isTargeted && targetMode === 'locked'}
+              onClick={() =>
+                onRouteNode(
+                  isTargeted && targetMode === 'locked' ? null : node,
+                  isTargeted && targetMode === 'locked' ? null : 'locked',
+                )
+              }
+            >
+              <Lock size={12} aria-hidden="true" />
+              <span>{t('锁定路由')}</span>
+            </button>
+          </>
+        )}
+        {canRoute && telemetry.isLocal && (
+          <button
+            type="button"
+            className={`topology-ctrl-btn${isTargeted ? ' is-active' : ''}`}
+            aria-pressed={isTargeted}
+            onClick={() => onRouteNode(isTargeted ? null : node, isTargeted ? null : 'locked')}
+          >
+            <Lock size={12} aria-hidden="true" />
+            <span>{isTargeted ? t('恢复自动调度') : t('锁定本机')}</span>
+          </button>
+        )}
+        {hasConversation && (
+          <button
+            type="button"
+            className={`topology-ctrl-btn${isFiltered ? ' is-active' : ''}`}
+            aria-pressed={isFiltered}
+            onClick={() => onFilterNode(telemetry.id)}
+          >
+            <Filter size={12} aria-hidden="true" />
+            <span>{isFiltered ? t('取消轨迹筛选') : t('按节点筛选轨迹')}</span>
+          </button>
+        )}
+        {owner && (
+          <button
+            type="button"
+            className="topology-ctrl-btn"
+            onClick={onInspectCluster}
+          >
+            <ListOrdered size={12} aria-hidden="true" />
+            <span>{t('查看队列')}</span>
+          </button>
+        )}
+        {telemetry.isLocal && owner && (
+          <button
+            type="button"
+            className={`topology-ctrl-btn${telemetry.paused ? ' is-active' : ''}`}
+            disabled={!canPauseLocal}
+            title={queueError ? t('正在确认队列状态') : undefined}
+            onClick={() => queueSnapshot && onPauseQueue(!queueSnapshot.paused)}
+          >
+            {telemetry.paused ? <Play size={12} aria-hidden="true" /> : <Pause size={12} aria-hidden="true" />}
+            <span>{telemetry.paused ? t('恢复队列') : t('暂停队列')}</span>
+          </button>
+        )}
+        {!telemetry.isLocal && owner && node && (
+          <button
+            type="button"
+            className="topology-ctrl-btn"
+            onClick={() => onOpenDiagnostics(node.id)}
+          >
+            <Stethoscope size={12} aria-hidden="true" />
+            <span>{t('连接诊断')}</span>
+          </button>
+        )}
+      </div>
+
+      <footer className="topology-control-foot">
+        <span>
+          {telemetry.sampleAgeSeconds !== null
+            ? t('{{value1}} 秒前更新', { value1: telemetry.sampleAgeSeconds })
+            : telemetry.online
+              ? t('负载报告缺失或已过期')
+              : t('离线')}
+        </span>
+        {telemetry.isLocal && (
+          <span title={t('只统计本机执行的模型调用，其他设备的执行不计入。')}>
+            <Activity size={10} aria-hidden="true" />
+            {t('仅本机速率')}
+          </span>
+        )}
+      </footer>
+    </section>
+  );
+}
+
+function LiveTopologyCanvas({
+  local,
+  peers,
+  journey,
+  connected,
+  hasConversation,
+  targetNodeID,
+  targetMode,
+  filterNodeID,
+  selectedNodeID,
+  telemetryMap,
+  nodeName,
+  onSelectNode,
+}: {
+  local: RivloomNode | null;
+  peers: readonly RivloomNode[];
+  journey: ConversationJourney | null;
+  connected: boolean;
+  hasConversation: boolean;
+  targetNodeID: string | null;
+  targetMode: 'preferred' | 'locked';
+  filterNodeID: string | null;
+  selectedNodeID: string | null;
+  telemetryMap: ReadonlyMap<string, TopologyNodeTelemetry>;
+  nodeName: (id: string | null) => string;
+  onSelectNode: (nodeID: string) => void;
 }) {
   const gradientPrefix = `rv-topo-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const localID = local?.id || 'local';
   const localLabel = local ? nodeDisplayName(local) : t('本机');
-  const localExecuting = !!journey?.devices.some((d) => d.id === localID && d.executing);
+  const localTelemetry = telemetryMap.get(localID);
+  const localExecuting =
+    !!journey?.devices.some((d) => d.id === localID && d.executing) ||
+    localTelemetry?.tone === 'active';
 
   const remoteIDs = useMemo(() => {
     const ids: string[] = [];
@@ -108,9 +375,9 @@ function LiveTopologyCanvas({
   }, [journey, localID, hasConversation, targetNodeID, peers]);
 
   const peerYPositions =
-    remoteIDs.length === 1 ? [68] : remoteIDs.length === 2 ? [38, 98] : [26, 68, 110];
-  const localX = remoteIDs.length ? 42 : 132;
-  const localY = 68;
+    remoteIDs.length === 1 ? [78] : remoteIDs.length === 2 ? [44, 112] : [28, 78, 128];
+  const localX = remoteIDs.length ? 46 : 134;
+  const localY = 78;
   const peerX = 222;
 
   const edges = useMemo<TopologyEdge[]>(() => {
@@ -134,7 +401,7 @@ function LiveTopologyCanvas({
           list.push({
             key: `send:${peerID}`,
             peerID,
-            d: bezierPath(localX + 34, localY, peerX - 34, py, dual ? -14 : 0),
+            d: bezierPath(localX + 39, localY, peerX - 39, py, dual ? -14 : 0),
             state: sendEdge.state === 'failed' ? 'failed' : active ? 'active' : sendEdge.state === 'complete' ? 'complete' : 'waiting',
             pulse: active,
           });
@@ -144,7 +411,7 @@ function LiveTopologyCanvas({
           list.push({
             key: `recv:${peerID}`,
             peerID,
-            d: bezierPath(peerX - 34, py, localX + 34, localY, dual ? 14 : 0),
+            d: bezierPath(peerX - 39, py, localX + 39, localY, dual ? 14 : 0),
             state: recvEdge.state === 'failed' ? 'failed' : active ? 'active' : recvEdge.state === 'complete' ? 'complete' : 'waiting',
             pulse: active,
           });
@@ -162,7 +429,7 @@ function LiveTopologyCanvas({
         list.push({
           key: `stage:${peerID}`,
           peerID,
-          d: bezierPath(localX + 34, localY, peerX - 34, py, 0),
+          d: bezierPath(localX + 39, localY, peerX - 39, py, 0),
           state: stage.state === 'failed' ? 'failed' : active ? 'active' : stage.state === 'complete' ? 'complete' : 'waiting',
           pulse: active,
         });
@@ -175,7 +442,7 @@ function LiveTopologyCanvas({
       list.push({
         key: `mesh:${peerID}`,
         peerID,
-        d: bezierPath(localX + 34, localY, peerX - 34, py, 0),
+        d: bezierPath(localX + 39, localY, peerX - 39, py, 0),
         state: targeted ? 'target' : 'idle',
         pulse: false,
         dashed: targeted ? targetMode === 'preferred' : !online,
@@ -187,19 +454,24 @@ function LiveTopologyCanvas({
 
   const activeRouteCount = edges.filter((edge) => edge.pulse || edge.state === 'active').length;
   const onlinePeerCount = peers.filter((node) => node.online && node.channelReady).length;
+  const localRateBadge =
+    localTelemetry?.localActivity && localTelemetry.localActivity.outputRate !== null
+      ? localTelemetry.localActivity.outputText
+      : null;
 
   return (
     <div className="live-topology-card">
       <div className="live-topology-head">
         <span>{t('多设备实时拓扑')}</span>
         <small>
+          {localRateBadge && <b className="topology-head-rate">{localRateBadge}</b>}
           {activeRouteCount > 0
             ? t('{{count}} 项传输', { count: journey?.connections.length || activeRouteCount })
             : t('{{count}} 台在线', { count: (connected ? 1 : 0) + onlinePeerCount })}
         </small>
       </div>
       <div className="live-topology-stage">
-        <svg viewBox="0 0 264 136" className="live-topology-svg" role="img" aria-label={t('多设备实时拓扑')}>
+        <svg viewBox="0 0 268 156" className="live-topology-svg" role="img" aria-label={t('多设备实时拓扑')}>
           <defs>
             <linearGradient id={`${gradientPrefix}-pulse`} x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.1" />
@@ -209,7 +481,8 @@ function LiveTopologyCanvas({
           </defs>
 
           {edges.map((edge) => {
-            const dimmed = !!filterNodeID && filterNodeID !== localID && filterNodeID !== edge.peerID;
+            const focusID = filterNodeID || selectedNodeID;
+            const dimmed = !!focusID && focusID !== localID && focusID !== edge.peerID;
             return (
               <g key={edge.key} className={`topology-edge is-${edge.state}${dimmed ? ' is-dimmed' : ''}`}>
                 <path
@@ -230,102 +503,115 @@ function LiveTopologyCanvas({
 
           <g
             data-topology-node={localID}
-            className={`topology-node is-local${localExecuting ? ' is-executing' : ''}${!hasConversation && targetNodeID === localID ? ' is-targeted' : ''}${hasConversation && filterNodeID === localID ? ' is-filtered' : ''}${hasConversation ? ' is-clickable' : ''}`}
+            className={`topology-node is-local is-clickable is-tone-${localTelemetry?.tone || 'unknown'}${localExecuting ? ' is-executing' : ''}${!hasConversation && targetNodeID === localID ? ' is-targeted' : ''}${selectedNodeID === localID ? ' is-selected' : ''}${hasConversation && filterNodeID === localID ? ' is-filtered' : ''}`}
             transform={`translate(${localX}, ${localY})`}
-            role={hasConversation ? 'button' : undefined}
-            tabIndex={hasConversation ? 0 : undefined}
-            aria-pressed={hasConversation ? filterNodeID === localID : undefined}
-            aria-label={hasConversation ? `${localLabel} · ${t('点击按此设备筛选轨迹')}` : localLabel}
-            onClick={() => {
-              if (hasConversation) onFilterNode(localID);
-            }}
+            role="button"
+            tabIndex={0}
+            aria-pressed={selectedNodeID === localID}
+            aria-label={`${localLabel} · ${localTelemetry?.statusLabel || t('本机')} · ${t('点击查看节点状态与控制')}`}
+            onClick={() => onSelectNode(localID)}
             onKeyDown={(event) => {
-              if (!hasConversation) return;
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
-                onFilterNode(localID);
+                onSelectNode(localID);
               }
             }}
           >
-            {localExecuting && <circle className="topology-node-halo" r="26" />}
-            <rect x="-34" y="-16" width="68" height="32" rx="8" className="topology-node-box" />
+            {localExecuting && <circle className="topology-node-halo" r="27" />}
+            <rect x="-39" y="-19" width="78" height="38" rx="8" className="topology-node-box" />
             <circle
-              cx={localLabel === t('本机') ? -22 : -25}
-              cy={localLabel === t('本机') ? 0 : -5.5}
-              r="2.5"
-              className={`topology-node-dot${connected ? ' is-online' : ''}`}
+              cx="-30"
+              cy="-6.5"
+              r="2.6"
+              className={`topology-node-dot is-${localTelemetry?.tone || 'unknown'}`}
             />
-            {localLabel !== t('本机') && (
-              <text x="-19" y="-2.5" textAnchor="start" className="topology-node-role">
-                {t('本机')}
-              </text>
-            )}
-            <text
-              x={localLabel === t('本机') ? 4 : 0}
-              y={localLabel === t('本机') ? 3.5 : 9.5}
-              textAnchor="middle"
-              className="topology-node-name"
-            >
-              {shortLabel(localLabel, 11)}
+            <text x="-23.5" y="-3.5" textAnchor="start" className="topology-node-name">
+              {shortLabel(localLabel, 9)}
             </text>
+            <text x="0" y="9.5" textAnchor="middle" className="topology-node-metric">
+              {shortLabel(localTelemetry?.svgMetricText || '—', 14)}
+            </text>
+            {localTelemetry && localTelemetry.svgLoadPercent !== null && (
+              <>
+                <rect x="-33" y="14.5" width="66" height="2" rx="1" className="topology-node-meter-track" />
+                <rect
+                  x="-33"
+                  y="14.5"
+                  width={Math.max(2, Math.round((66 * Math.min(100, Math.max(0, localTelemetry.svgLoadPercent))) / 100))}
+                  height="2"
+                  rx="1"
+                  className={`topology-node-meter-fill${localTelemetry.svgLoadPercent >= 85 ? ' is-high' : ''}`}
+                />
+              </>
+            )}
           </g>
 
           {remoteIDs.map((peerID, index) => {
             const py = peerYPositions[index];
             const peer = peers.find((node) => node.id === peerID) || null;
-            const online = !!peer && peer.online && peer.channelReady && connected;
-            const executing = !!journey?.devices.some((d) => d.id === peerID && d.executing);
+            const telemetry = telemetryMap.get(peerID);
+            const online = telemetry?.online ?? false;
+            const executing =
+              !!journey?.devices.some((d) => d.id === peerID && d.executing) ||
+              telemetry?.tone === 'active';
             const targeted = !hasConversation && targetNodeID === peerID;
             const filtered = hasConversation && filterNodeID === peerID;
-            const interactive = hasConversation || (owner && !disabled && !!peer);
+            const selected = selectedNodeID === peerID;
             const name = peer ? nodeDisplayName(peer) : nodeName(peerID);
             return (
               <g
                 key={peerID}
                 data-topology-node={peerID}
-                className={`topology-node is-peer${executing ? ' is-executing' : ''}${targeted ? ' is-targeted' : ''}${filtered ? ' is-filtered' : ''}${!online ? ' is-offline' : ''}${interactive ? ' is-clickable' : ''}`}
+                className={`topology-node is-peer is-clickable is-tone-${telemetry?.tone || 'unknown'}${executing ? ' is-executing' : ''}${targeted ? ' is-targeted' : ''}${selected ? ' is-selected' : ''}${filtered ? ' is-filtered' : ''}${!online ? ' is-offline' : ''}`}
                 transform={`translate(${peerX}, ${py})`}
-                role={interactive ? 'button' : undefined}
-                tabIndex={interactive ? 0 : undefined}
-                aria-pressed={hasConversation ? filtered : undefined}
-                aria-label={
-                  hasConversation
-                    ? `${name} · ${t('点击按此设备筛选轨迹')}`
-                    : interactive
-                      ? `${name} · ${t('点击设为目标')}`
-                      : name
-                }
-                onClick={() => {
-                  if (hasConversation) onFilterNode(peerID);
-                  else if (interactive && peer) onRouteNode(peer);
-                }}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected}
+                aria-label={`${name} · ${telemetry?.statusLabel || t('离线')} · ${t('点击查看节点状态与控制')}`}
+                onClick={() => onSelectNode(peerID)}
                 onKeyDown={(event) => {
-                  if (!interactive) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    if (hasConversation) onFilterNode(peerID);
-                    else if (peer) onRouteNode(peer);
+                    onSelectNode(peerID);
                   }
                 }}
               >
-                {executing && <circle className="topology-node-halo" r="24" />}
-                <rect x="-34" y="-14" width="68" height="28" rx="8" className="topology-node-box" />
+                {executing && <circle className="topology-node-halo" r="25" />}
+                <rect x="-39" y="-17" width="78" height="34" rx="8" className="topology-node-box" />
                 <circle
-                  cx="-25"
-                  cy="0"
-                  r="2.5"
-                  className={`topology-node-dot${online ? ' is-online' : ''}`}
+                  cx="-30"
+                  cy="-5.5"
+                  r="2.6"
+                  className={`topology-node-dot is-${telemetry?.tone || 'unknown'}`}
                 />
-                <text x="-19" y="3.5" textAnchor="start" className="topology-node-name">
-                  {shortLabel(name, 10)}
+                <text x="-23.5" y="-2.5" textAnchor="start" className="topology-node-name">
+                  {shortLabel(name, 9)}
                 </text>
+                <text x="0" y="9" textAnchor="middle" className="topology-node-metric">
+                  {shortLabel(telemetry?.svgMetricText || '—', 14)}
+                </text>
+                {telemetry && telemetry.svgLoadPercent !== null && (
+                  <>
+                    <rect x="-33" y="13" width="66" height="1.8" rx="0.9" className="topology-node-meter-track" />
+                    <rect
+                      x="-33"
+                      y="13"
+                      width={Math.max(2, Math.round((66 * Math.min(100, Math.max(0, telemetry.svgLoadPercent))) / 100))}
+                      height="1.8"
+                      rx="0.9"
+                      className={`topology-node-meter-fill${telemetry.svgLoadPercent >= 85 ? ' is-high' : ''}`}
+                    />
+                  </>
+                )}
               </g>
             );
           })}
         </svg>
-        {!remoteIDs.length && (
-          <p className="live-topology-caption">{t('本机中心')}</p>
-        )}
+        <p className="live-topology-caption">
+          {!remoteIDs.length
+            ? t('本机中心 · 点击节点查看实时负载与控制')
+            : t('点击拓扑节点查看实时负载与快捷控制')}
+        </p>
       </div>
     </div>
   );
@@ -333,26 +619,44 @@ function LiveTopologyCanvas({
 
 function InlineProjectChanges({
   project,
+  canWrite,
+  disabled,
   onOpenFullChanges,
+  onQuoteDiff,
+  onAttachFileReference,
 }: {
   project: Project;
+  canWrite: boolean;
+  disabled: boolean;
   onOpenFullChanges: (project: Project) => void;
+  onQuoteDiff: (quoteText: string) => void;
+  onAttachFileReference: (project: Project, path: string) => void;
 }) {
   const [snapshot, setSnapshot] = useState<ProjectChanges | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [scopeFilter, setScopeFilter] = useState<ChangeScopeFilter>('all');
   const [selected, setSelected] = useState<string | null>(null);
   const [area, setArea] = useState<ProjectDiff['area']>('working');
   const [diff, setDiff] = useState<ProjectDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState(false);
+  const [selectedDiffText, setSelectedDiffText] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionNote, setActionNote] = useState('');
+  const [previewFile, setPreviewFile] = useState<{
+    file: Pick<TaskFileDescriptor, 'name' | 'bytes'>;
+    path: string;
+  } | null>(null);
+  const diffContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(false);
     setDiff(null);
+    setActionNote('');
     void api<ProjectChanges>(`/projects/${encodeURIComponent(project.id)}/changes`, undefined, {
       signal: controller.signal,
       timeoutMilliseconds: 30_000,
@@ -373,12 +677,32 @@ function InlineProjectChanges({
     return () => controller.abort();
   }, [project.id, revision]);
 
+  const partitioned = useMemo(
+    () => partitionProjectChanges(snapshot?.files || []),
+    [snapshot?.files],
+  );
+  const visibleFiles =
+    scopeFilter === 'staged'
+      ? partitioned.staged
+      : scopeFilter === 'working'
+        ? partitioned.working
+        : partitioned.all;
+
+  useEffect(() => {
+    if (!visibleFiles.length) return;
+    if (!selected || !visibleFiles.some((entry) => entry.path === selected)) {
+      setSelected(visibleFiles[0].path);
+    }
+  }, [visibleFiles, selected]);
+
   const file = snapshot?.files.find((entry) => entry.path === selected);
   const staged = !!file && !file.untracked && file.index !== ' ';
   const working = !!file && (file.untracked || file.worktree !== ' ');
-  const effectiveArea = area === 'staged' && staged ? 'staged' : working ? 'working' : 'staged';
+  const effectiveArea = defaultDiffAreaForFile(file, area, scopeFilter);
 
   useEffect(() => {
+    setSelectedDiffText('');
+    setActionNote('');
     if (!selected || loading || error || snapshot?.state !== 'ready') return;
     const controller = new AbortController();
     setDiff(null);
@@ -400,6 +724,64 @@ function InlineProjectChanges({
       });
     return () => controller.abort();
   }, [project.id, selected, effectiveArea, loading, error, revision, snapshot]);
+
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const container = diffContainerRef.current;
+      const selection = window.getSelection();
+      if (
+        !container ||
+        !selection ||
+        selection.isCollapsed ||
+        !selection.anchorNode ||
+        !selection.focusNode ||
+        !container.contains(selection.anchorNode) ||
+        !container.contains(selection.focusNode)
+      ) {
+        setSelectedDiffText('');
+        return;
+      }
+      setSelectedDiffText(selection.toString().slice(0, 3600));
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, []);
+
+  const hunks = useMemo(
+    () => (diff?.state === 'ready' && diff.text ? parseDiffHunks(diff.text, diff.kind) : []),
+    [diff],
+  );
+  const inspectability = canInspectChangedFile(file, diff);
+
+  async function openQuickPreview() {
+    if (!selected || actionBusy || !inspectability.canPreview) return;
+    setActionBusy(true);
+    setActionNote('');
+    try {
+      const entryPath = `/projects/${encodeURIComponent(project.id)}/file/${encodeURIComponent(selected)}`;
+      const meta = await api<Pick<TaskFileDescriptor, 'name' | 'bytes'>>(entryPath);
+      setPreviewFile({ file: meta, path: entryPath });
+    } catch {
+      setActionNote(t('当前无法预览此文件。'));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function revealInFolder() {
+    if (!selected || actionBusy || !inspectability.canReveal || !desktop) return;
+    setActionBusy(true);
+    setActionNote('');
+    try {
+      const entryPath = `/projects/${encodeURIComponent(project.id)}/file/${encodeURIComponent(selected)}`;
+      const location = await api<{ path: string }>(`${entryPath}/location`, {});
+      await revealTaskFile(location.path);
+    } catch {
+      setActionNote(t('无法在文件夹中定位此文件。'));
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   return (
     <section className="inspector-section inspector-git-section" aria-label={t('项目改动')}>
@@ -455,22 +837,52 @@ function InlineProjectChanges({
         </div>
       ) : (
         <>
-          <ul className="inspector-change-files" aria-label={t('改动文件')}>
-            {snapshot.files.slice(0, 30).map((entry) => (
-              <li key={entry.path}>
-                <button
-                  type="button"
-                  className={selected === entry.path ? 'active' : ''}
-                  aria-current={selected === entry.path ? 'true' : undefined}
-                  title={entry.path}
-                  onClick={() => setSelected(entry.path)}
-                >
-                  <File size={12} aria-hidden="true" />
-                  <span>{entry.path}</span>
-                  <code>{`${entry.index}${entry.worktree}`.trim() || '?'}</code>
-                </button>
-              </li>
+          <div className="inspector-scope-pills" role="group" aria-label={t('按暂存状态筛选改动')}>
+            {(
+              [
+                ['all', t('全部'), partitioned.counts.all],
+                ['working', t('未暂存'), partitioned.counts.working],
+                ['staged', t('已暂存'), partitioned.counts.staged],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={scopeFilter === key}
+                disabled={key !== 'all' && count === 0}
+                onClick={() => {
+                  setScopeFilter(key);
+                  if (key === 'staged') setArea('staged');
+                  else if (key === 'working') setArea('working');
+                }}
+              >
+                <span>{label}</span>
+                <b>{count}</b>
+              </button>
             ))}
+          </div>
+
+          <ul className="inspector-change-files" aria-label={t('改动文件')}>
+            {visibleFiles.slice(0, 30).map((entry) => {
+              const badge = changeFileStatusBadge(entry);
+              return (
+                <li key={entry.path}>
+                  <button
+                    type="button"
+                    className={selected === entry.path ? 'active' : ''}
+                    aria-current={selected === entry.path ? 'true' : undefined}
+                    title={`${entry.path} · ${badge.label}`}
+                    onClick={() => setSelected(entry.path)}
+                  >
+                    <File size={12} aria-hidden="true" />
+                    <span>{entry.path}</span>
+                    <em className={`inspector-change-badge is-${badge.tone}`} title={badge.label}>
+                      {badge.label}
+                    </em>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
 
           {selected && (
@@ -498,6 +910,71 @@ function InlineProjectChanges({
                   </div>
                 )}
               </div>
+
+              <div className="inspector-diff-actions" role="toolbar" aria-label={t('差异审核操作')}>
+                <button
+                  type="button"
+                  className="inspector-action-chip"
+                  disabled={!canWrite || disabled}
+                  title={t('作为工作区文件引用附入输入框')}
+                  onClick={() => onAttachFileReference(project, selected)}
+                >
+                  <AtSign size={11.5} aria-hidden="true" />
+                  <span>{t('引用文件')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="inspector-action-chip is-accent"
+                  disabled={!canWrite || disabled || diff?.state !== 'ready' || !diff.text}
+                  onMouseDown={(event) => event.preventDefault()}
+                  title={
+                    selectedDiffText.trim()
+                      ? t('将当前划选的差异片段引用到输入框')
+                      : t('将此文件差异引用到输入框以便追问')
+                  }
+                  onClick={() => {
+                    if (!diff?.text) return;
+                    const snippet = selectedDiffText.trim() || diff.text;
+                    onQuoteDiff(
+                      buildDiffQuoteText({
+                        path: selected,
+                        area: effectiveArea,
+                        snippet,
+                      }),
+                    );
+                  }}
+                >
+                  <Quote size={11.5} aria-hidden="true" />
+                  <span>{selectedDiffText.trim() ? t('引用选区') : t('引用到输入框')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="inspector-icon-btn"
+                  disabled={actionBusy || !inspectability.canPreview}
+                  aria-label={t('快速预览')}
+                  title={t('快速预览')}
+                  onClick={() => void openQuickPreview()}
+                >
+                  <Eye size={13} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="inspector-icon-btn"
+                  disabled={actionBusy || !inspectability.canReveal || !desktop}
+                  aria-label={t('在文件夹中定位')}
+                  title={desktop ? t('在文件夹中定位') : t('请在桌面端操作本机文件。')}
+                  onClick={() => void revealInFolder()}
+                >
+                  <FolderOpen size={13} aria-hidden="true" />
+                </button>
+              </div>
+
+              {actionNote && (
+                <p className="inspector-note is-error" role="status">
+                  {actionNote}
+                </p>
+              )}
+
               {diffLoading ? (
                 <p className="inspector-note" role="status">
                   {t('正在读取差异…')}
@@ -507,39 +984,94 @@ function InlineProjectChanges({
                   {t('读取差异失败，请刷新后重试。')}
                 </p>
               ) : diff?.state === 'ready' && diff.text ? (
-                <pre className="inspector-diff-pre" tabIndex={0}>
-                  <code>
-                    {diff.text
-                      .split('\n')
-                      .slice(0, 140)
-                      .map((line, index) => (
-                        <span
-                          key={index}
-                          className={
-                            diff.kind === 'patch'
-                              ? line.startsWith('+') && !line.startsWith('+++')
-                                ? 'added'
-                                : line.startsWith('-') && !line.startsWith('---')
-                                  ? 'removed'
-                                  : line.startsWith('@@')
-                                    ? 'hunk'
-                                    : undefined
-                              : undefined
-                          }
-                        >
-                          {line || ' '}
-                        </span>
+                <div ref={diffContainerRef} className="inspector-diff-body">
+                  {diff.kind === 'patch' && hunks.length > 0 ? (
+                    <div className="inspector-hunk-list">
+                      {hunks.slice(0, 16).map((hunk) => (
+                        <div className="inspector-diff-hunk" key={hunk.id}>
+                          <div className="inspector-hunk-head">
+                            <code title={hunk.header}>{hunk.header}</code>
+                            <span className="inspector-hunk-stats">
+                              <b className="is-add">+{hunk.additions}</b>
+                              <b className="is-del">−{hunk.deletions}</b>
+                            </span>
+                            <button
+                              type="button"
+                              className="inspector-hunk-quote"
+                              disabled={!canWrite || disabled}
+                              title={t('引用此差异片段到输入框')}
+                              onClick={() =>
+                                onQuoteDiff(
+                                  buildDiffQuoteText({
+                                    path: selected,
+                                    area: effectiveArea,
+                                    header: hunk.header,
+                                    snippet: hunk.raw,
+                                  }),
+                                )
+                              }
+                            >
+                              <Quote size={11} aria-hidden="true" />
+                              <span>{t('引用片段')}</span>
+                            </button>
+                          </div>
+                          <pre className="inspector-diff-pre" tabIndex={0}>
+                            <code>
+                              {hunk.lines.slice(0, 60).map((line, index) => (
+                                <span
+                                  key={index}
+                                  className={
+                                    line.startsWith('+') && !line.startsWith('+++')
+                                      ? 'added'
+                                      : line.startsWith('-') && !line.startsWith('---')
+                                        ? 'removed'
+                                        : undefined
+                                  }
+                                >
+                                  {line || ' '}
+                                </span>
+                              ))}
+                            </code>
+                          </pre>
+                        </div>
                       ))}
-                  </code>
-                </pre>
+                    </div>
+                  ) : (
+                    <pre className="inspector-diff-pre" tabIndex={0}>
+                      <code>
+                        {diff.text
+                          .split('\n')
+                          .slice(0, 140)
+                          .map((line, index) => (
+                            <span key={index}>{line || ' '}</span>
+                          ))}
+                      </code>
+                    </pre>
+                  )}
+                </div>
               ) : (
                 <p className="inspector-note">
-                  {t('此范围没有文本差异，可能只有文件属性发生变化。')}
+                  {diff?.state === 'sensitive'
+                    ? t('此文件可能包含凭据，内容不在这里展示。')
+                    : diff?.state === 'binary'
+                      ? t('二进制或非 UTF-8 文件，请使用本机工具查看。')
+                      : t('此范围没有文本差异，可能只有文件属性发生变化。')}
                 </p>
               )}
             </div>
           )}
         </>
+      )}
+      {previewFile && (
+        <FilePreview
+          file={previewFile.file}
+          path={previewFile.path}
+          source={project.name}
+          close={() => {
+            setPreviewFile(null);
+            setRevision((v) => v + 1);
+          }}
+        />
       )}
     </section>
   );
@@ -556,20 +1088,29 @@ export function LiveInspector({
   peers,
   connected,
   connectionError,
+  activity,
   queueCount,
+  queueSnapshot,
+  queueBusy,
+  queueError,
   queuePanel,
   reviewProject,
   targetNodeID,
   targetMode,
   targetName,
+  canWrite,
   disabled,
   nodeName,
   onRemarkNode,
   onRemoveNode,
   onRouteNode,
+  onPauseQueue,
+  onOpenDiagnostics,
   onOpenFullChanges,
   onOpenNetwork,
   onOpenKnowledgeReads,
+  onQuoteDiff,
+  onAttachFileReference,
   inert,
 }: {
   activeTab: LiveInspectorTab;
@@ -582,22 +1123,38 @@ export function LiveInspector({
   peers: readonly RivloomNode[];
   connected: boolean;
   connectionError: string;
+  activity: NodeActivityState;
   queueCount: number;
+  queueSnapshot: NodeQueueSnapshot | null;
+  queueBusy: boolean;
+  queueError: string;
   queuePanel: ReactNode;
   reviewProject: Project | undefined;
   targetNodeID: string | null;
   targetMode: 'preferred' | 'locked';
   targetName: string;
+  canWrite: boolean;
   disabled: boolean;
   nodeName: (id: string | null) => string;
   onRemarkNode: (id: string) => void;
   onRemoveNode: (id: string) => void;
-  onRouteNode: (node: RivloomNode) => void;
+  onRouteNode: (node: RivloomNode | null, forcedMode?: 'preferred' | 'locked' | null) => void;
+  onPauseQueue: (paused: boolean) => void;
+  onOpenDiagnostics: (nodeID: string) => void;
   onOpenFullChanges: (project: Project) => void;
   onOpenNetwork: () => void;
   onOpenKnowledgeReads?: () => void;
+  onQuoteDiff: (quoteText: string) => void;
+  onAttachFileReference: (project: Project, path: string) => void;
   inert?: boolean;
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const observedAt = Math.max(now, activity.now);
+
   const requests = useTaskFileRequests();
   const routes = useMemo<TaskFileQuery[]>(() => {
     if (!current) return [];
@@ -703,44 +1260,76 @@ export function LiveInspector({
     return { summary: nextSummary, journey: nextJourney };
   }, [current, data, fileStates, liveConnected, local?.id, requests]);
 
-  const workflowDeliveryGroups = useMemo(() => {
-    if (!current?.workflow) return [];
-    const roundSteps = (current.workflow.rounds || []).flatMap((round) =>
-      round.planVersion ? round.steps : [round.planner],
-    );
-    const currentSteps = current.workflow.planVersion
-      ? current.workflow.steps
-      : [current.workflow.planner];
-    const seen = new Set<string>();
-    return [...currentSteps, ...roundSteps].flatMap((step) => {
-      const attempt = step.attempts.at(-1);
-      if (!attempt?.outputFiles.length) return [];
-      const key = `${attempt.kind}:${attempt.executionID}`;
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [
-        {
-          key,
-          stepTitle: step.title,
-          scope: attempt.kind,
-          taskID: attempt.executionID,
-          outputFiles: attempt.outputFiles,
-        },
-      ];
-    });
-  }, [current?.workflow]);
+  const deliverableRounds = useMemo(
+    () => (current?.workflow ? collectWorkflowDeliverableRounds(current.workflow) : []),
+    [current?.workflow],
+  );
+  const [selectedRound, setSelectedRound] = useState<'all' | number>('all');
+  useEffect(() => {
+    setSelectedRound('all');
+  }, [current?.key]);
+
+  const visibleDeliverableRounds = useMemo(
+    () =>
+      selectedRound === 'all'
+        ? deliverableRounds.filter((round) => round.groups.length > 0)
+        : deliverableRounds.filter((round) => round.roundNumber === selectedRound),
+    [deliverableRounds, selectedRound],
+  );
 
   const legacyArtifacts = current?.localTask?.artifacts || current?.remote?.remoteArtifacts || [];
   const deliverableCount =
-    workflowDeliveryGroups.reduce((sum, group) => sum + group.outputFiles.length, 0) +
-    legacyArtifacts.length;
+    deliverableRounds.reduce((sum, round) => sum + round.fileCount, 0) + legacyArtifacts.length;
   const activeTabIndex = activeTab === 'topology' ? 0 : activeTab === 'artifacts' ? 1 : 2;
   const [filterNodeID, setFilterNodeID] = useState<string | null>(null);
+  const [selectedNodeID, setSelectedNodeID] = useState<string | null>(null);
   useEffect(() => {
     setFilterNodeID(null);
   }, [current?.key]);
 
   const localID = local?.id || 'local';
+  const telemetryMap = useMemo(() => {
+    const map = new Map<string, TopologyNodeTelemetry>();
+    map.set(
+      localID,
+      buildTopologyNodeTelemetry({
+        node: local,
+        isLocal: true,
+        now: observedAt,
+        connected: liveConnected,
+        activitySnapshot: activity.snapshot,
+        activityLoading: activity.loading,
+        queueSnapshot,
+      }),
+    );
+    for (const peer of peers) {
+      map.set(
+        peer.id,
+        buildTopologyNodeTelemetry({
+          node: peer,
+          isLocal: false,
+          now: observedAt,
+          connected: liveConnected,
+        }),
+      );
+    }
+    return map;
+  }, [localID, local, peers, observedAt, liveConnected, activity.snapshot, activity.loading, queueSnapshot]);
+
+  const selectedNode =
+    selectedNodeID === localID
+      ? local
+      : peers.find((peer) => peer.id === selectedNodeID) || null;
+  const selectedTelemetry = selectedNodeID
+    ? telemetryMap.get(selectedNodeID) ||
+      buildTopologyNodeTelemetry({
+        node: null,
+        isLocal: false,
+        now: observedAt,
+        connected: liveConnected,
+      })
+    : null;
+
   const filteredJourney = useMemo<ConversationJourney | null>(() => {
     if (!journey || !filterNodeID) return journey;
     const isLocalFilter = filterNodeID === localID;
@@ -866,15 +1455,47 @@ export function LiveInspector({
               journey={journey}
               connected={liveConnected}
               hasConversation={!!current}
-              owner={data.user.owner}
-              disabled={disabled}
               targetNodeID={targetNodeID}
               targetMode={targetMode}
               filterNodeID={filterNodeID}
+              selectedNodeID={selectedNodeID}
+              telemetryMap={telemetryMap}
               nodeName={nodeName}
-              onRouteNode={onRouteNode}
-              onFilterNode={(nodeID) => setFilterNodeID((prev) => (prev === nodeID ? null : nodeID))}
+              onSelectNode={(nodeID) =>
+                setSelectedNodeID((previous) => (previous === nodeID ? null : nodeID))
+              }
             />
+
+            {selectedNodeID && selectedTelemetry && (
+              <TopologyNodeControlCard
+                node={selectedNode}
+                telemetry={selectedTelemetry}
+                nodeLabel={
+                  selectedNode
+                    ? nodeDisplayName(selectedNode)
+                    : selectedNodeID === localID
+                      ? t('本机')
+                      : nodeName(selectedNodeID)
+                }
+                hasConversation={!!current}
+                owner={data.user.owner}
+                disabled={disabled}
+                targetNodeID={targetNodeID}
+                targetMode={targetMode}
+                filterNodeID={filterNodeID}
+                queueSnapshot={queueSnapshot}
+                queueBusy={queueBusy}
+                queueError={queueError}
+                onClose={() => setSelectedNodeID(null)}
+                onRouteNode={onRouteNode}
+                onFilterNode={(nodeID) =>
+                  setFilterNodeID((previous) => (previous === nodeID ? null : nodeID))
+                }
+                onInspectCluster={() => onTabChange('cluster')}
+                onPauseQueue={onPauseQueue}
+                onOpenDiagnostics={onOpenDiagnostics}
+              />
+            )}
 
             {current && filterNodeID && (
               <div className="inspector-filter-bar" role="status">
@@ -963,20 +1584,60 @@ export function LiveInspector({
                   </span>
                 </div>
 
-                {workflowDeliveryGroups.length > 0 && (
+                {deliverableRounds.length > 1 && (
+                  <div className="inspector-round-pills" role="group" aria-label={t('按轮次筛选交付物')}>
+                    <button
+                      type="button"
+                      aria-pressed={selectedRound === 'all'}
+                      onClick={() => setSelectedRound('all')}
+                    >
+                      <Layers size={11} aria-hidden="true" />
+                      <span>{t('全部轮次')}</span>
+                      <b>{deliverableCount}</b>
+                    </button>
+                    {deliverableRounds.map((round) => (
+                      <button
+                        key={round.roundNumber}
+                        type="button"
+                        aria-pressed={selectedRound === round.roundNumber}
+                        title={round.promptSnippet || round.label}
+                        onClick={() => setSelectedRound(round.roundNumber)}
+                      >
+                        <span>{round.label}</span>
+                        <b>{round.fileCount}</b>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {visibleDeliverableRounds.length > 0 && (
                   <div className="inspector-deliverable-groups">
-                    {workflowDeliveryGroups.map((group) => (
-                      <div className="inspector-deliverable-group" key={group.key}>
-                        <small className="inspector-deliverable-step">{group.stepTitle}</small>
-                        <TaskFilesPanel
-                          scope={group.scope}
-                          taskID={group.taskID}
-                          revision={fileRevision}
-                          nodeName={nodeName}
-                          resultsOnly
-                          lazy
-                          manifest={group.outputFiles}
-                        />
+                    {visibleDeliverableRounds.map((round) => (
+                      <div className="inspector-deliverable-round" key={`round-${round.roundNumber}`}>
+                        {deliverableRounds.length > 1 && (
+                          <div className="inspector-deliverable-round-head">
+                            <strong>{round.label}</strong>
+                            {round.promptSnippet && <small title={round.promptSnippet}>{round.promptSnippet}</small>}
+                          </div>
+                        )}
+                        {round.groups.length > 0 ? (
+                          round.groups.map((group) => (
+                            <div className="inspector-deliverable-group" key={group.key}>
+                              <small className="inspector-deliverable-step">{group.stepTitle}</small>
+                              <TaskFilesPanel
+                                scope={group.scope}
+                                taskID={group.taskID}
+                                revision={fileRevision}
+                                nodeName={nodeName}
+                                resultsOnly
+                                lazy
+                                manifest={group.outputFiles}
+                              />
+                            </div>
+                          ))
+                        ) : (
+                          <p className="inspector-note">{t('该轮次暂未产生文件交付物。')}</p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -992,6 +1653,26 @@ export function LiveInspector({
                           <small>
                             +{artifact.additions} −{artifact.deletions}
                           </small>
+                          {canWrite && !disabled && (
+                            <button
+                              type="button"
+                              className="inspector-hunk-quote"
+                              title={t('将此文件差异引用到输入框以便追问')}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onQuoteDiff(
+                                  buildDiffQuoteText({
+                                    path: artifact.file,
+                                    snippet: artifact.patch,
+                                  }),
+                                );
+                              }}
+                            >
+                              <Quote size={11} aria-hidden="true" />
+                              <span>{t('引用')}</span>
+                            </button>
+                          )}
                         </summary>
                         <pre className="inspector-diff-pre">
                           <code>{artifact.patch}</code>
@@ -1021,7 +1702,11 @@ export function LiveInspector({
             {reviewProject && data.user.owner ? (
               <InlineProjectChanges
                 project={reviewProject}
+                canWrite={canWrite}
+                disabled={disabled}
                 onOpenFullChanges={onOpenFullChanges}
+                onQuoteDiff={onQuoteDiff}
+                onAttachFileReference={onAttachFileReference}
               />
             ) : (
               <section className="inspector-section">

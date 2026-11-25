@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Check, Cpu, FolderOpen, Network, Plus, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, Cpu, FolderOpen, Network, Plug, Plus, Sparkles } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
-import type { Project, RivloomNode } from '../shared/types';
+import type { Bootstrap, Project, RivloomNode } from '../shared/types';
+import { evaluateCockpitOnboarding } from './cockpit-onboarding';
 import { isFileTransfer } from './composer-files';
 import { ConversationStarters } from './conversation-starters';
 import { machineStatus } from './machine-status';
@@ -25,9 +26,13 @@ export function MissionCockpit({
   peers,
   projects,
   projectID,
+  engine,
   modelName,
   targetNodeID,
   targetMode,
+  onboardingDismissed,
+  onDismissOnboarding,
+  onOpenConnections,
   onSelectProject,
   onAddFolder,
   onChooseStarter,
@@ -42,9 +47,13 @@ export function MissionCockpit({
   peers: readonly RivloomNode[];
   projects: readonly Project[];
   projectID: string;
+  engine: Bootstrap['engine'];
   modelName: string;
   targetNodeID: string | null;
   targetMode: 'preferred' | 'locked';
+  onboardingDismissed: boolean;
+  onDismissOnboarding: () => void;
+  onOpenConnections: () => void;
   onSelectProject: (id: string) => void;
   onAddFolder: () => void;
   onChooseStarter: (text: string) => void;
@@ -62,6 +71,12 @@ export function MissionCockpit({
   const clusterNodes = [...(local ? [local] : []), ...peers].slice(0, 6);
   const onlineCount = (local && connected ? 1 : 0) + peers.filter((node) => node.online && node.channelReady).length;
   const recentProjects = projects.slice(0, 5);
+  const onboarding = evaluateCockpitOnboarding({
+    owner,
+    dismissed: onboardingDismissed,
+    engine,
+    projects,
+  });
 
   if (awaitingCreatedConversation) {
     return (
@@ -77,6 +92,92 @@ export function MissionCockpit({
 
   return (
     <div className="blank-conversation mission-cockpit">
+      {onboarding.visible && (
+        <section className="mission-onboarding" aria-label={t('快速开始')}>
+          <div className="mission-onboarding-head">
+            <span className="mission-onboarding-title">
+              <Sparkles size={13} aria-hidden="true" />
+              <strong>{t('快速开始')}</strong>
+              <small>
+                {t('已完成 {{done}} / {{total}}', {
+                  done: onboarding.completedSteps,
+                  total: onboarding.totalSteps,
+                })}
+              </small>
+            </span>
+            <button
+              type="button"
+              className="mission-inline-link"
+              onClick={onDismissOnboarding}
+            >
+              {t('稍后配置')}
+            </button>
+          </div>
+          <div className="mission-onboarding-steps">
+            <div
+              className={`mission-onboarding-step${onboarding.modelReady ? ' is-done' : onboarding.activeStep === 1 ? ' is-current' : ''}`}
+            >
+              <span className="mission-onboarding-index" aria-hidden="true">
+                {onboarding.modelReady ? <Check size={12} /> : '1'}
+              </span>
+              <div className="mission-onboarding-copy">
+                <strong>{t('接入模型')}</strong>
+                <small>
+                  {onboarding.modelReady
+                    ? t('已就绪 · {{count}} 个可用模型', { count: engine.models.length })
+                    : !onboarding.engineReady && !onboarding.engineError
+                      ? t('本地引擎启动中，保存连接不会自动发起请求')
+                      : t('保存模型服务地址或账号，不会自动触发连通测试')}
+                </small>
+              </div>
+              {onboarding.modelReady ? (
+                <span className="mission-onboarding-done-tag">{t('已配置')}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="mission-onboarding-cta"
+                  onClick={onOpenConnections}
+                >
+                  <Plug size={12} aria-hidden="true" />
+                  <span>{t('连接模型')}</span>
+                  <ArrowRight size={12} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+
+            <div
+              className={`mission-onboarding-step${onboarding.workspaceReady ? ' is-done' : onboarding.activeStep === 2 ? ' is-current' : ''}`}
+            >
+              <span className="mission-onboarding-index" aria-hidden="true">
+                {onboarding.workspaceReady ? <Check size={12} /> : '2'}
+              </span>
+              <div className="mission-onboarding-copy">
+                <strong>{t('选择首个工作文件夹')}</strong>
+                <small>
+                  {onboarding.workspaceReady
+                    ? t('已登记 · {{name}}', { name: projects[0]?.name || '' })
+                    : t('选择项目目录后即可补全文件与查看工作区改动')}
+                </small>
+              </div>
+              {onboarding.workspaceReady ? (
+                <span className="mission-onboarding-done-tag">{t('已配置')}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="mission-onboarding-cta"
+                  disabled={disabled}
+                  onClick={onAddFolder}
+                >
+                  <FolderOpen size={12} aria-hidden="true" />
+                  <span>{t('选择文件夹')}</span>
+                  <ArrowRight size={12} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       <header className="mission-masthead">
         <div className="mission-masthead-copy">
           <span className="blank-mark">

@@ -33,7 +33,27 @@ import { MessageReuseActions } from './message-reuse-view';
 import { applyMessageReuse, type MessageReuseIntent } from './message-reuse';
 import { TaskTelemetryView } from './task-telemetry-view';
 import { MessageQuoteCard, UserMessageText } from './message-quote-view';
-import { quotedMessageText } from './message-quote';
+import {
+  activeFileMention,
+  activeKnowledgeTrigger,
+  addComposerReference,
+  composeMessageWithContext,
+  fileReferenceFromEntry,
+  filterKnowledgeEntries,
+  filterProjectFileEntries,
+  knowledgeReferenceFromEntry,
+  planProjectFileQuery,
+  removeComposerReference,
+  removeTriggerToken,
+  replaceTriggerQuery,
+  resolveAtScope,
+  type ActiveKnowledgeTrigger,
+  type AtScope,
+  type ComposerReference,
+} from './composer-context';
+import { cockpitOnboardingStorageKey } from './cockpit-onboarding';
+import type { LocalKnowledgeEntry } from '../shared/knowledge';
+import type { ProjectFileEntry, ProjectFileListing } from '../shared/office-files';
 import { MessageTrace, MessageSpeed } from './message-trace';
 import { LegacyConversationActivity, legacyFileRevision } from './legacy-conversation-activity';
 import { conversationIdentityIndex } from './conversation-journey';
@@ -42,7 +62,7 @@ import { ThemeMenu } from './theme-menu';
 import { ProjectChangesView } from './project-changes-view';
 import { ProjectFilesView } from './project-files-view';
 import { ConnectionSettings } from './connection-settings';
-import { SidebarActivityEntries } from './node-activity';
+import { SidebarActivityEntries, useNodeActivity } from './node-activity';
 import { PromptTemplateLibrary } from './prompt-template-library';
 import { CurrentConversationFind, useCurrentConversationFindShortcuts, focusCurrentConversationFind } from './current-conversation-find';
 import './workspace-foundations.css';
@@ -110,7 +130,10 @@ import {
   Square,
   Play,
   Check,
+  FileText,
+  Folder,
   FolderOpen,
+  Hash,
   X,
   LoaderCircle,
   RefreshCw,
@@ -689,21 +712,37 @@ export function ConversationWorkspace({
   const [projectFilesOpen, setProjectFilesOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [connectionOnboarding, setConnectionOnboarding] = useState(false);
+  const cockpitOnboardingKey = cockpitOnboardingStorageKey(data.user.id, data.network.local?.id || 'local');
+  const [cockpitOnboardingDismissed, setCockpitOnboardingDismissed] = useState(() => {
+    try { return localStorage.getItem(cockpitOnboardingKey) === '1'; } catch { return false; }
+  });
   const connectionGuideChecked = useRef(false);
   useEffect(() => {
     if (!data.user.owner || !data.engine.ready || connectionGuideChecked.current) return;
     connectionGuideChecked.current = true;
     void api<{ dismissed: boolean }>('/model-settings/onboarding').then(value => {
-      if (!value.dismissed && !data.engine.models.length) { setConnectionOnboarding(true); setConnectionsOpen(true); }
+      if (value.dismissed) {
+        setCockpitOnboardingDismissed(true);
+        try { localStorage.setItem(cockpitOnboardingKey, '1'); } catch { /* ignore storage restrictions */ }
+      }
     }).catch(() => { connectionGuideChecked.current = false; });
-  }, [data.user.owner, data.engine.ready, data.engine.models.length]);
+  }, [data.user.owner, data.engine.ready, cockpitOnboardingKey]);
+  const dismissCockpitOnboarding = () => {
+    setCockpitOnboardingDismissed(true);
+    try { localStorage.setItem(cockpitOnboardingKey, '1'); } catch { /* ignore storage restrictions */ }
+    void api('/model-settings/onboarding', {}).catch(() => {});
+  };
   const openConnections = () => { setConnectionOnboarding(false); setConnectionsOpen(true); };
+  const openConnectionsFromOnboarding = () => {
+    setConnectionOnboarding(!data.engine.models.length);
+    setConnectionsOpen(true);
+  };
   const closeConnections = () => {
-    if (connectionOnboarding) void api('/model-settings/onboarding', {}).catch(() => {});
     setConnectionsOpen(false); setConnectionOnboarding(false);
   };
   const historySearchRef = useRef<HTMLInputElement>(null);
   const storageKey = draftStorageKey(data.user.id, data.network.local?.id || 'local');
+  const nodeActivity = useNodeActivity(storageKey, data.user.owner);
   const [recovered] = useState(() => { try { return latestDrafts(localStorage.getItem(storageKey), data.conversationDrafts); }
     catch { return latestDrafts(null, data.conversationDrafts); } });
   const draftClock = useRef(recovered.savedAt || 0);
@@ -772,9 +811,21 @@ export function ConversationWorkspace({
   const narrowSidebar = useSidebarDrawer(mobileSidebar, () => setMobileSidebar(false), sidebarRef, sidebarTriggerRef);
   const [retryingConnection, setRetryingConnection] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [mention, setMention] = useState<(ActiveNodeMention & { fromToolbar?: boolean }) | null>(null);
+  const [mention, setMention] = useState<(ActiveNodeMention & { fromToolbar?: boolean; fileEligible?: boolean }) | null>(null);
   const dismissedMention = useRef<{ text: string; cursor: number } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [atScope, setAtScope] = useState<AtScope | null>(null);
+  const [projectFilesEntries, setProjectFilesEntries] = useState<ProjectFileEntry[]>([]);
+  const [projectFilesLoading, setProjectFilesLoading] = useState(false);
+  const [projectFilesError, setProjectFilesError] = useState(false);
+  const [knowledgeTrigger, setKnowledgeTrigger] = useState<(ActiveKnowledgeTrigger & { fromToolbar?: boolean }) | null>(null);
+  const dismissedKnowledge = useRef<{ text: string; cursor: number } | null>(null);
+  const [knowledgeIndex, setKnowledgeIndex] = useState(0);
+  const [knowledgeKind, setKnowledgeKind] = useState<'all' | 'memory' | 'skill'>('all');
+  const [knowledgeCatalog, setKnowledgeCatalog] = useState<LocalKnowledgeEntry[] | null>(null);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState(false);
+  const knowledgeLoadedFor = useRef<string | null>(null);
   const [slash, setSlash] = useState<ActiveSlashCommand | null>(null);
   const dismissedSlash = useRef<{ text: string; cursor: number } | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
@@ -934,7 +985,7 @@ export function ConversationWorkspace({
   }, [current?.key, draftKey, draftModelSeed, draftReasoningSeed]);
   const draft = draftState.text;
   const inputUsage = conversationInputUsage(draftState, !!current);
-  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'model' | 'reasoningEffort' | 'quote'>>) =>
+  const changeDraft = (change: Partial<Pick<ConversationDraft, 'text' | 'routing' | 'model' | 'reasoningEffort' | 'quote' | 'references'>>) =>
     setDrafts((previous) => ({
       ...previous,
       [draftKey]: updateConversationDraft(previous[draftKey] || draftState, change),
@@ -1206,7 +1257,7 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     // Follow message updates before ResizeObserver can reinterpret their added height as scrolling.
     if (transcript.current && scrollPinned.current && !currentMatch && !protectTranscriptReading(transcript.current))
-      transcript.current.scrollTop = !explicitlyFollowingProcess.current && current?.workflow && !workflowStreamRevision && !current.workflow.rounds?.length && !current.workflow.messages?.length ? 0 : transcript.current.scrollHeight;
+      transcript.current.scrollTop = !current || (!explicitlyFollowingProcess.current && current.workflow && !workflowStreamRevision && !current.workflow.rounds?.length && !current.workflow.messages?.length) ? 0 : transcript.current.scrollHeight;
     updateScrollPosition();
   }, [
     selected,
@@ -1237,7 +1288,7 @@ export function ConversationWorkspace({
     const element = transcript.current;
     if (!element) return;
     const observer = new ResizeObserver(() => {
-      if (scrollPinned.current && !current?.workflow && !protectTranscriptReading(element)) element.scrollTop = element.scrollHeight;
+      if (current && scrollPinned.current && !current.workflow && !protectTranscriptReading(element)) element.scrollTop = element.scrollHeight;
       updateScrollPosition();
     });
     observer.observe(element);
@@ -1368,12 +1419,15 @@ export function ConversationWorkspace({
     setAttentionReturnKey(null);
     pendingHistoryReveal.current = null;
     dismissedMention.current = null;
+    dismissedKnowledge.current = null;
     dismissedSlash.current = null;
     setSearchSelection(null);
     setFindOpen(false);
     selectedRef.current = item?.key || null;
     setSelected(item?.key || null);
     setMention(null);
+    setAtScope(null);
+    setKnowledgeTrigger(null);
     setSlash(null);
     setInlineRenaming(false);
     setOptions(false);
@@ -1575,6 +1629,97 @@ export function ConversationWorkspace({
     window.addEventListener('rivloom:file-quote', receive); return () => window.removeEventListener('rivloom:file-quote', receive);
   }, [draftKey, draftState, canWrite]);
   const reviewProject = data.user.owner ? data.projects.find((project) => project.id === reviewProjectID) : undefined;
+  const canAtDevices = !current && data.user.owner;
+  const canAtFiles = Boolean(reviewProject && data.user.owner && canWrite);
+  const effectiveAtScope = mention
+    ? resolveAtScope(atScope, {
+        locked: mention.mode === 'locked',
+        canDevices: canAtDevices,
+        canFiles: canAtFiles && (mention.fromToolbar || mention.fileEligible !== false),
+        query: mention.query,
+        peerCount: peers.length,
+        matchingDeviceCount: mentionNodes.length,
+      })
+    : null;
+  useEffect(() => {
+    if (!mention || effectiveAtScope !== 'files' || !reviewProject) return;
+    const controller = new AbortController();
+    const planned = planProjectFileQuery(mention.query);
+    const timer = setTimeout(() => {
+      setProjectFilesLoading(true);
+      setProjectFilesError(false);
+      void api<ProjectFileListing>(
+        `/projects/${encodeURIComponent(reviewProject.id)}/files?${new URLSearchParams(planned)}`,
+        undefined,
+        { signal: controller.signal, timeoutMilliseconds: 10_000 },
+      )
+        .then((value) => {
+          if (!controller.signal.aborted) setProjectFilesEntries(value.entries || []);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setProjectFilesEntries([]);
+            setProjectFilesError(true);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setProjectFilesLoading(false);
+        });
+    }, mention.query ? 110 : 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [mention?.query, effectiveAtScope, reviewProject?.id]);
+  const mentionFiles = useMemo(
+    () => (mention && effectiveAtScope === 'files' ? filterProjectFileEntries(projectFilesEntries, mention.query, 10) : []),
+    [mention, effectiveAtScope, projectFilesEntries],
+  );
+  const knowledgeOpen = Boolean(knowledgeTrigger);
+  useEffect(() => {
+    if (!knowledgeOpen || !data.user.owner || knowledgeLoadedFor.current === storageKey) return;
+    knowledgeLoadedFor.current = storageKey;
+    const controller = new AbortController();
+    let settled = false;
+    setKnowledgeLoading(true);
+    setKnowledgeError(false);
+    void api<{ entries: LocalKnowledgeEntry[] }>('/knowledge', undefined, {
+      signal: controller.signal,
+      timeoutMilliseconds: 10_000,
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          settled = true;
+          setKnowledgeCatalog(value.entries || []);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          knowledgeLoadedFor.current = null;
+          setKnowledgeError(true);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setKnowledgeLoading(false);
+      });
+    return () => {
+      controller.abort();
+      if (!settled && knowledgeLoadedFor.current === storageKey) {
+        knowledgeLoadedFor.current = null;
+      }
+    };
+  }, [knowledgeOpen, data.user.owner, storageKey]);
+  const knowledgeItems = useMemo(
+    () =>
+      knowledgeTrigger
+        ? filterKnowledgeEntries(knowledgeCatalog || [], knowledgeTrigger.query, {
+            projectID: reviewProject?.id || null,
+            kind: knowledgeKind,
+            limit: 10,
+          })
+        : [],
+    [knowledgeTrigger, knowledgeCatalog, reviewProject?.id, knowledgeKind],
+  );
   const currentDirectory = current ? conversationDirectory(current, data) : null;
   const currentDirectoryName = currentDirectory && currentDirectory.key !== 'unspecified'
     ? directoryDisplayName(currentDirectory, data.directoryAliases) : '';
@@ -1637,6 +1782,64 @@ export function ConversationWorkspace({
     if (current) seenSelected.current = current.key;
     else if (selected && seenSelected.current === selected) { seenSelected.current = null; open(null); }
   }, [current, selected, open]);
+  function detectAtTrigger(text: string, cursor: number): (ActiveNodeMention & { fileEligible?: boolean }) | null {
+    if (!data.user.owner) return null;
+    if (!current) {
+      const nodeMatch = activeNodeMention(text, cursor, peers);
+      if (nodeMatch) {
+        return {
+          ...nodeMatch,
+          fileEligible: nodeMatch.mode !== 'locked' && Boolean(reviewProject && activeFileMention(text, cursor)),
+        };
+      }
+      if (reviewProject && canWrite) {
+        const fileMatch = activeFileMention(text, cursor);
+        if (fileMatch) return { start: fileMatch.start, end: fileMatch.end, query: fileMatch.query, fileEligible: true };
+      }
+      return null;
+    }
+    if (reviewProject && canWrite) {
+      const fileMatch = activeFileMention(text, cursor);
+      if (fileMatch) return { start: fileMatch.start, end: fileMatch.end, query: fileMatch.query, fileEligible: true };
+    }
+    return null;
+  }
+  function detectKnowledgeTrigger(text: string, cursor: number): ActiveKnowledgeTrigger | null {
+    if (!data.user.owner || !canWrite) return null;
+    return activeKnowledgeTrigger(text, cursor);
+  }
+  function attachReferenceToDraft(reference: ComposerReference, nextText?: string) {
+    const added = addComposerReference(draftState.references, reference);
+    if (added.reason === 'limit') setNotice(t('最多同时关联 8 项上下文引用。'));
+    else if (added.reason === 'duplicate') setNotice(t('该引用已在输入框中。'));
+    changeDraft({ ...(nextText !== undefined ? { text: nextText } : {}), references: added.references });
+  }
+  function attachFileReference(project: Project, path: string) {
+    if (!canWrite || operation.current) return;
+    attachReferenceToDraft(fileReferenceFromEntry(project.id, project.name, path));
+    focusComposer();
+  }
+  function removeDraftReference(id: string) {
+    changeDraft({ references: removeComposerReference(draftState.references, id) });
+    focusComposer();
+  }
+  function quoteIntoComposer(quoteText: string) {
+    if (!canWrite || operation.current || !quoteText.trim()) return;
+    const apply = () => {
+      const ok = reuseMessage({
+        text: quoteText,
+        mode: 'quote',
+        placement: 'append',
+        quoteAuthor: 'user',
+        expectedDraft: { text: draftState.text, requestID: draftState.requestID },
+      });
+      if (ok) setView('chat');
+      else setNotice(t('内容超出当前上限，请缩短后再引用。'));
+      return ok;
+    };
+    if (draftState.quote) setQuoteReplacement({ error: '', apply });
+    else apply();
+  }
   function chooseMentionNode(nodeID: string) {
     if (operation.current) return;
     const node = peers.find((candidate) => candidate.id === nodeID);
@@ -1650,22 +1853,62 @@ export function ConversationWorkspace({
     dismissedMention.current = { text: next, cursor };
     changeDraft({ text: next, routing: { kind: 'workflow', target: { mode, nodeID: node.id }, name: node.name } });
     setMention(null);
+    setAtScope(null);
     setMentionIndex(0);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(cursor, cursor);
     });
   }
+  function chooseMentionFile(entry: ProjectFileEntry) {
+    if (operation.current || !reviewProject || !mention) return;
+    if (entry.directory) {
+      const nextQuery = `${entry.path}/`;
+      if (mention.fromToolbar) {
+        setMention({ ...mention, query: nextQuery, fileEligible: true });
+        setMentionIndex(0);
+        return;
+      }
+      const { text: next, cursor } = replaceTriggerQuery(draft, mention, '@', nextQuery);
+      setDraft(next);
+      setMention({ start: mention.start, end: cursor, query: nextQuery, fileEligible: true });
+      setMentionIndex(0);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.setSelectionRange(cursor, cursor);
+      });
+      return;
+    }
+    const updated = mention.fromToolbar
+      ? { text: draft, cursor: Math.min(mention.start, draft.length) }
+      : removeTriggerToken(draft, mention);
+    dismissedMention.current = { text: updated.text, cursor: updated.cursor };
+    attachReferenceToDraft(fileReferenceFromEntry(reviewProject.id, reviewProject.name, entry.path), updated.text);
+    setMention(null);
+    setAtScope(null);
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (input.value === updated.text) input.setSelectionRange(updated.cursor, updated.cursor);
+    });
+  }
   function closeMention() {
     dismissedMention.current = { text: draft, cursor: inputRef.current?.selectionStart ?? draft.length };
     setMention(null);
+    setAtScope(null);
+    setMentionIndex(0);
   }
-  function showMention(mode: 'preferred' | 'locked', fromToolbar = false) {
+  function showMention(mode: 'preferred' | 'locked', fromToolbar = false, preferredScope?: AtScope) {
     if (operation.current) return;
     dismissedMention.current = null;
+    setKnowledgeTrigger(null);
+    setSlash(null);
     const input = inputRef.current; const cursor = input?.selectionStart ?? draft.length;
+    if (preferredScope) setAtScope(preferredScope);
     if (fromToolbar || mention?.fromToolbar) {
-      setMention({ start: cursor, end: cursor, query: '', mode, fromToolbar: true });
+      setMention({ start: cursor, end: cursor, query: '', mode: canAtDevices ? mode : undefined, fromToolbar: true, fileEligible: canAtFiles });
       setMentionIndex(0);
       requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(cursor, cursor); });
       return;
@@ -1675,8 +1918,40 @@ export function ConversationWorkspace({
     const padding = start > 0 && !/\s/.test(draft[start - 1]) ? ' ' : '';
     const replacement = padding + nodeMentionPrefix(mode) + (active?.query || '');
     const next = draft.slice(0, start) + replacement + draft.slice(end); const caret = start + replacement.length;
-    setDraft(next); setMention({ start: start + padding.length, end: caret, query: active?.query || '', mode }); setMentionIndex(0);
+    setDraft(next); setMention({ start: start + padding.length, end: caret, query: active?.query || '', mode, fileEligible: mode !== 'locked' && canAtFiles }); setMentionIndex(0);
     requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(caret, caret); });
+  }
+  function closeKnowledge() {
+    dismissedKnowledge.current = { text: draft, cursor: inputRef.current?.selectionStart ?? draft.length };
+    setKnowledgeTrigger(null);
+    setKnowledgeIndex(0);
+  }
+  function showKnowledgeFromToolbar() {
+    if (operation.current || !data.user.owner || !canWrite) return;
+    dismissedKnowledge.current = null;
+    setMention(null);
+    setAtScope(null);
+    setSlash(null);
+    const input = inputRef.current; const cursor = input?.selectionStart ?? draft.length;
+    setKnowledgeTrigger({ start: cursor, end: cursor, query: '', fromToolbar: true });
+    setKnowledgeIndex(0);
+    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(cursor, cursor); });
+  }
+  function chooseKnowledgeEntry(entry: LocalKnowledgeEntry) {
+    if (operation.current || !knowledgeTrigger) return;
+    const updated = knowledgeTrigger.fromToolbar
+      ? { text: draft, cursor: Math.min(knowledgeTrigger.start, draft.length) }
+      : removeTriggerToken(draft, knowledgeTrigger);
+    dismissedKnowledge.current = { text: updated.text, cursor: updated.cursor };
+    attachReferenceToDraft(knowledgeReferenceFromEntry(entry), updated.text);
+    setKnowledgeTrigger(null);
+    setKnowledgeIndex(0);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (input.value === updated.text) input.setSelectionRange(updated.cursor, updated.cursor);
+    });
   }
   function changeTargetMode(mode: 'preferred' | 'locked' | null) {
     const name = targetNode?.name || ('name' in draftState.routing ? draftState.routing.name : '') || '';
@@ -1756,6 +2031,17 @@ export function ConversationWorkspace({
       body: { ...body, operationID: crypto.randomUUID() },
     });
   }
+  function pauseLocalQueue(paused: boolean) {
+    if (!queueSnapshot || pendingQueueRequest) return;
+    void executeQueueRequest({
+      path: '/node-queue/pause',
+      body: {
+        expectedVersion: queueSnapshot.version,
+        paused,
+        operationID: crypto.randomUUID(),
+      },
+    });
+  }
   const queuePanel = () => (
     <QueuePanel
       remoteConcurrency={data.executionPolicy.maxConcurrent}
@@ -1786,17 +2072,7 @@ export function ConversationWorkspace({
         await api(`/tasks/${task.id}/stop`, {});
         await refreshQueue();
       })}
-      pause={(paused) => {
-        if (!queueSnapshot || pendingQueueRequest) return;
-        void executeQueueRequest({
-          path: '/node-queue/pause',
-          body: {
-            expectedVersion: queueSnapshot.version,
-            paused,
-            operationID: crypto.randomUUID(),
-          },
-        });
-      }}
+      pause={pauseLocalQueue}
     />
   );
   const control = (action: RemoteTaskControlAction) => {
@@ -1847,7 +2123,7 @@ export function ConversationWorkspace({
   }
   async function send(event: FormEvent, continueScheduling = false) {
     event.preventDefault();
-    const text = quotedMessageText(draft.trim(), draftState.quote);
+    const text = composeMessageWithContext(draft.trim(), draftState.quote, draftState.references);
     if (
       !draft.trim() ||
       busy ||
@@ -1893,7 +2169,7 @@ export function ConversationWorkspace({
               await runLocal(updated, text);
           }
         } else await control({ kind: 'supplement', text });
-        changeDraft({ text: '', quote: null });
+        changeDraft({ text: '', quote: null, references: [] });
       } else {
         const title = draft.trim()
           .split('\n')
@@ -1976,12 +2252,72 @@ export function ConversationWorkspace({
         onClick={() => { changeTargetMode(null); setMention(null); focusComposer(); }}><X size={13} /></button>
     </span>
   ) : null;
-  const composerMentionButton = !current && data.user.owner ? (
+  const composerReferenceChips = (draftState.references || []).map((ref) => (
+    <span
+      key={ref.id}
+      className={`composer-context-chip is-${ref.kind}`}
+      title={
+        ref.kind === 'file'
+          ? `${ref.projectName} / ${ref.path}`
+          : `${ref.category}${ref.description ? ` · ${ref.description}` : ''}`
+      }
+    >
+      <span className="composer-context-chip-body">
+        {ref.kind === 'file' ? (
+          <FileText size={11.5} aria-hidden="true" />
+        ) : ref.kind === 'skill' ? (
+          <CodeXml size={11.5} aria-hidden="true" />
+        ) : (
+          <BookMarked size={11.5} aria-hidden="true" />
+        )}
+        {ref.kind === 'file' ? (
+          <>
+            {ref.path.includes('/') && (
+              <small>{ref.path.slice(0, ref.path.lastIndexOf('/') + 1)}</small>
+            )}
+            <strong>{ref.path.split('/').at(-1) || ref.path}</strong>
+          </>
+        ) : (
+          <>
+            <small>{ref.kind === 'skill' ? 'Skill' : t('记忆')}</small>
+            <strong>{ref.name}</strong>
+          </>
+        )}
+      </span>
+      <button
+        type="button"
+        disabled={busy || !canWrite}
+        aria-label={t('移除引用 {{name}}', { name: ref.kind === 'file' ? ref.path : ref.name })}
+        onClick={() => removeDraftReference(ref.id)}
+      >
+        <X size={12} aria-hidden="true" />
+      </button>
+    </span>
+  ));
+  const composerActiveChips =
+    composerTargetChip || composerReferenceChips.length > 0 ? (
+      <>
+        {composerTargetChip}
+        {composerReferenceChips}
+      </>
+    ) : null;
+  const composerMentionButton = data.user.owner && (canAtDevices || canAtFiles) ? (
     <button type="button" className={`composer-tool composer-mention${mention ? ' active' : ''}${targetNodeID ? ' has-target' : ''}`}
-      disabled={busy || !canWrite} aria-label={t('选择执行 Node')} title={t('选择执行 Node')}
+      disabled={busy || !canWrite}
+      aria-label={canAtDevices && canAtFiles ? t('引用设备或工作区文件 (@)') : canAtDevices ? t('选择执行 Node') : t('引用工作区文件 (@)')}
+      title={canAtDevices && canAtFiles ? t('引用设备或工作区文件 (@)') : canAtDevices ? t('选择执行 Node') : t('引用工作区文件 (@)')}
       aria-haspopup="dialog" aria-expanded={!!mention} aria-controls={mention ? 'node-mention-menu' : undefined}
-      onClick={() => mention ? closeMention() : showMention(targetMode === 'locked' ? 'locked' : 'preferred', true)}>
+      onClick={() => mention ? closeMention() : showMention(targetMode === 'locked' ? 'locked' : 'preferred', true, !canAtDevices ? 'files' : undefined)}>
       <AtSign size={14} aria-hidden="true" />
+    </button>
+  ) : null;
+  const composerKnowledgeButton = data.user.owner ? (
+    <button type="button" className={`composer-tool composer-knowledge${knowledgeTrigger ? ' active' : ''}`}
+      disabled={busy || !canWrite}
+      aria-label={t('引用记忆或 Skill (#)')} title={t('引用记忆或 Skill (#)')}
+      aria-haspopup="dialog" aria-expanded={!!knowledgeTrigger} aria-controls={knowledgeTrigger ? 'knowledge-mention-menu' : undefined}
+      onClick={() => knowledgeTrigger ? closeKnowledge() : showKnowledgeFromToolbar()}>
+      <Hash size={14} aria-hidden="true" />
     </button>
   ) : null;
   const renderComposerToolbar = (attachControl: ReactNode) => (
@@ -1989,6 +2325,7 @@ export function ConversationWorkspace({
       <div className={`composer-choices ${current ? 'continuing' : ''}`}>
         {attachControl}
         {composerMentionButton}
+        {composerKnowledgeButton}
         {!current ? (
           <>
             {(!targetNodeID || targetNodeID === local?.id) && (
@@ -2104,6 +2441,7 @@ export function ConversationWorkspace({
       >
         <nav className="workbench-rail conversation-settings" aria-label={t('设置')}>
           <SidebarActivityEntries key={storageKey} layout="rail" identity={storageKey} owner={data.user.owner} connected={connected}
+            activity={nodeActivity}
             network={data.network} attentionItems={attention.snapshot?.items} view={view}
             openConnections={openConnections} openProjectFiles={() => setProjectFilesOpen(true)}
             openKnowledge={() => { setView('knowledge'); setMobileSidebar(false); }}
@@ -2679,9 +3017,13 @@ export function ConversationWorkspace({
                     peers={peers}
                     projects={data.projects}
                     projectID={projectID}
+                    engine={data.engine}
                     modelName={data.engine.models.find((entry) => entry.id === model)?.name || model}
                     targetNodeID={targetNodeID}
                     targetMode={targetMode}
+                    onboardingDismissed={cockpitOnboardingDismissed}
+                    onDismissOnboarding={dismissCockpitOnboarding}
+                    onOpenConnections={openConnectionsFromOnboarding}
                     onSelectProject={(id) => {
                       dismissedMention.current = null;
                       setProjectID(id);
@@ -2721,7 +3063,7 @@ export function ConversationWorkspace({
                   disabled={busy || !canWrite}
                   unavailableReason={current && !current.workflow ? t('此旧版会话不支持消息附件，请新建会话后添加。') : undefined}
                   composer
-                  composerChips={composerTargetChip}
+                  composerChips={composerActiveChips}
                   onChange={(update) =>
                     setDrafts((previous) => {
                       const saved = previous[draftKey] || emptyDraft.current;
@@ -2740,13 +3082,25 @@ export function ConversationWorkspace({
                   aria-label={t('会话消息')}
                   aria-describedby={canWrite ? 'conversation-input-usage conversation-composer-hint' : undefined}
                   aria-invalid={(canWrite && inputUsage.overLimit) || undefined}
-                  aria-controls={mention ? 'node-mention-options' : slash ? 'slash-command-options' : undefined}
+                  aria-controls={
+                    mention && effectiveAtScope
+                      ? 'node-mention-options'
+                      : knowledgeTrigger
+                        ? 'knowledge-mention-options'
+                        : slash
+                          ? 'slash-command-options'
+                          : undefined
+                  }
                   aria-activedescendant={
-                    mention && mentionNodes[mentionIndex]
+                    mention && effectiveAtScope === 'devices' && mentionNodes[mentionIndex]
                       ? `node-mention-${mentionNodes[mentionIndex].id}`
-                      : slash && slashItems[slashIndex]
-                        ? `slash-cmd-${slashItems[slashIndex].id}`
-                        : undefined
+                      : mention && effectiveAtScope === 'files' && mentionFiles[mentionIndex]
+                        ? `file-mention-${mentionIndex}`
+                        : knowledgeTrigger && knowledgeItems[knowledgeIndex]
+                          ? `knowledge-mention-${knowledgeItems[knowledgeIndex].id}`
+                          : slash && slashItems[slashIndex]
+                            ? `slash-cmd-${slashItems[slashIndex].id}`
+                            : undefined
                   }
                   placeholder={
                     queueRejected
@@ -2763,7 +3117,7 @@ export function ConversationWorkspace({
                             ? t('当前只能查看此会话的执行状态')
                             : current
                               ? t('继续对话，补充你的要求…')
-                              : t('描述你想完成的事，也可以添加文件…')
+                              : t('描述你想完成的事，可用 @ 引用设备/文件、# 引用记忆/Skill…')
                   }
                   value={draft}
                   onChange={(event) => {
@@ -2774,28 +3128,42 @@ export function ConversationWorkspace({
                     if (!current && targetNodeID && typedMode && typedMode !== targetMode) changeDraft({ text: next,
                       routing: { kind: 'workflow', target: { mode: typedMode, nodeID: targetNodeID }, name: boundName } });
                     else setDraft(next);
-                    const nextMention = !current && data.user.owner ? activeNodeMention(next, cursor, peers) : null;
+                    const nextMention = detectAtTrigger(next, cursor);
                     setMention(nextMention);
+                    if (!nextMention) setAtScope(null);
                     setMentionIndex(0);
-                    const nextSlash = !nextMention && canWrite ? activeSlashCommand(next, cursor) : null;
+                    const nextKnowledge = !nextMention ? detectKnowledgeTrigger(next, cursor) : null;
+                    setKnowledgeTrigger(nextKnowledge);
+                    setKnowledgeIndex(0);
+                    const nextSlash = !nextMention && !nextKnowledge && canWrite ? activeSlashCommand(next, cursor) : null;
                     setSlash(nextSlash);
                     setSlashIndex(0);
                   }}
                   onSelect={(event) => {
                     const value = event.currentTarget.value;
                     const cursor = event.currentTarget.selectionStart;
-                    let activeM: (ActiveNodeMention & { fromToolbar?: boolean }) | null = null;
+                    let activeM: (ActiveNodeMention & { fromToolbar?: boolean; fileEligible?: boolean }) | null = null;
                     if (mention?.fromToolbar || (dismissedMention.current?.text === value &&
                         dismissedMention.current.cursor === cursor)) {
                       activeM = mention;
-                    } else if (!current && data.user.owner && !composing.current) {
-                      activeM = activeNodeMention(value, cursor, peers);
+                    } else if (!composing.current) {
+                      activeM = detectAtTrigger(value, cursor);
                       setMention(activeM);
+                      if (!activeM) setAtScope(null);
                       setMentionIndex(0);
+                    }
+                    let activeK: (ActiveKnowledgeTrigger & { fromToolbar?: boolean }) | null = null;
+                    if (knowledgeTrigger?.fromToolbar || (dismissedKnowledge.current?.text === value &&
+                        dismissedKnowledge.current.cursor === cursor)) {
+                      activeK = knowledgeTrigger;
+                    } else if (!composing.current) {
+                      activeK = !activeM ? detectKnowledgeTrigger(value, cursor) : null;
+                      setKnowledgeTrigger(activeK);
+                      setKnowledgeIndex(0);
                     }
                     if (dismissedSlash.current?.text === value && dismissedSlash.current.cursor === cursor) return;
                     if (!composing.current) {
-                      const nextSlash = !activeM && canWrite ? activeSlashCommand(value, cursor) : null;
+                      const nextSlash = !activeM && !activeK && canWrite ? activeSlashCommand(value, cursor) : null;
                       setSlash(nextSlash);
                       setSlashIndex(0);
                     }
@@ -2807,36 +3175,81 @@ export function ConversationWorkspace({
                     composing.current = false;
                     const value = event.currentTarget.value;
                     const cursor = event.currentTarget.selectionStart;
-                    const nextMention = !current && data.user.owner ? activeNodeMention(value, cursor, peers) : null;
-                    if (!current && data.user.owner) setMention(nextMention);
-                    setSlash(!nextMention && canWrite ? activeSlashCommand(value, cursor) : null);
+                    const nextMention = detectAtTrigger(value, cursor);
+                    setMention(nextMention);
+                    if (!nextMention) setAtScope(null);
+                    const nextKnowledge = !nextMention ? detectKnowledgeTrigger(value, cursor) : null;
+                    setKnowledgeTrigger(nextKnowledge);
+                    setSlash(!nextMention && !nextKnowledge && canWrite ? activeSlashCommand(value, cursor) : null);
                   }}
                   disabled={!canWrite || busy}
                   rows={1}
                   maxLength={inputUsage.limit}
                   onKeyDown={(event) => {
-                    // IME confirmation must precede mention/slash selection and form submission.
+                    // IME confirmation must precede mention/knowledge/slash selection and form submission.
                     if (isNodeMentionComposing(event.nativeEvent, composing.current)) return;
-                    if (mention && mentionNodes.length) {
-                      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    if (mention && effectiveAtScope) {
+                      const activeListLength = effectiveAtScope === 'files' ? mentionFiles.length : mentionNodes.length;
+                      if (event.key === 'Tab' && event.shiftKey && mention.mode !== 'locked' && canAtDevices && canAtFiles) {
                         event.preventDefault();
-                        setMentionIndex((currentIndex) =>
-                          event.key === 'ArrowDown'
-                            ? (currentIndex + 1) % mentionNodes.length
-                            : (currentIndex - 1 + mentionNodes.length) % mentionNodes.length,
-                        );
+                        setAtScope(effectiveAtScope === 'devices' ? 'files' : 'devices');
+                        setMentionIndex(0);
                         return;
                       }
-                      if (event.key === 'Enter' && !event.shiftKey) {
+                      if (activeListLength > 0) {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault();
+                          setMentionIndex((currentIndex) =>
+                            event.key === 'ArrowDown'
+                              ? (currentIndex + 1) % activeListLength
+                              : (currentIndex - 1 + activeListLength) % activeListLength,
+                          );
+                          return;
+                        }
+                        if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Tab' && !event.shiftKey)) {
+                          event.preventDefault();
+                          if (effectiveAtScope === 'files') {
+                            chooseMentionFile(mentionFiles[mentionIndex] || mentionFiles[0]);
+                          } else {
+                            chooseMentionNode(mentionNodes[mentionIndex]?.id || mentionNodes[0].id);
+                          }
+                          return;
+                        }
+                      }
+                      if (event.key === 'Escape') {
                         event.preventDefault();
-                        chooseMentionNode(mentionNodes[mentionIndex]?.id || mentionNodes[0].id);
+                        closeMention();
                         return;
                       }
                     }
-                    if (event.key === 'Escape' && mention) {
-                      event.preventDefault();
-                      closeMention();
-                      return;
+                    if (knowledgeTrigger) {
+                      if (event.key === 'Tab' && event.shiftKey) {
+                        event.preventDefault();
+                        setKnowledgeKind((prev) => (prev === 'all' ? 'memory' : prev === 'memory' ? 'skill' : 'all'));
+                        setKnowledgeIndex(0);
+                        return;
+                      }
+                      if (knowledgeItems.length > 0) {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault();
+                          setKnowledgeIndex((currentIndex) =>
+                            event.key === 'ArrowDown'
+                              ? (currentIndex + 1) % knowledgeItems.length
+                              : (currentIndex - 1 + knowledgeItems.length) % knowledgeItems.length,
+                          );
+                          return;
+                        }
+                        if ((event.key === 'Enter' && !event.shiftKey) || (event.key === 'Tab' && !event.shiftKey)) {
+                          event.preventDefault();
+                          chooseKnowledgeEntry(knowledgeItems[knowledgeIndex] || knowledgeItems[0]);
+                          return;
+                        }
+                      }
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeKnowledge();
+                        return;
+                      }
                     }
                     if (slash && slashItems.length) {
                       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -2859,7 +3272,7 @@ export function ConversationWorkspace({
                       closeSlash();
                       return;
                     }
-                    if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!mention || !!slash, disabled: !canWrite || busy })) {
+                    if (shouldSendComposer(event.nativeEvent, sendMode, { composing: composing.current, mentionOpen: !!(mention && effectiveAtScope) || !!knowledgeTrigger || !!slash, disabled: !canWrite || busy })) {
                       event.preventDefault();
                       event.currentTarget.form?.requestSubmit();
                     }
@@ -2887,70 +3300,236 @@ export function ConversationWorkspace({
                     </span>
                   </div>
                 )}
-                {mention && (
+                {mention && effectiveAtScope && (
                   <div
-                    className="node-mention-menu"
+                    className="node-mention-menu context-completion-menu"
                     id="node-mention-menu"
                     role="dialog"
-                    aria-label={t('选择执行 Node')}
+                    aria-label={effectiveAtScope === 'files' ? t('工作区文件补全') : t('选择执行 Node')}
                     onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); closeMention(); inputRef.current?.focus(); } }}
                   >
                     <div className="node-mention-heading">
-                      <AtSign size={14} />
-                      <span>{mention.query ? t('匹配的 Node') : t('最近使用的 Node')}</span>
-                      <button type="button" className="node-mention-close" aria-label={t('关闭设备选择')}
+                      {effectiveAtScope === 'files' ? <FileText size={14} /> : <AtSign size={14} />}
+                      <span>
+                        {effectiveAtScope === 'files'
+                          ? t('工作区文件 · {{project}}', { project: reviewProject?.name || '' })
+                          : mention.query
+                            ? t('匹配的 Node')
+                            : t('最近使用的 Node')}
+                      </span>
+                      {mention.mode !== 'locked' && canAtDevices && canAtFiles && (
+                        <div className="context-scope-switch" role="group" aria-label={t('切换补全类型')}>
+                          <button
+                            type="button"
+                            aria-pressed={effectiveAtScope === 'devices'}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => { setAtScope('devices'); setMentionIndex(0); }}
+                          >
+                            {t('设备')}
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={effectiveAtScope === 'files'}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => { setAtScope('files'); setMentionIndex(0); }}
+                          >
+                            {t('文件')}
+                          </button>
+                        </div>
+                      )}
+                      <button type="button" className="node-mention-close" aria-label={t('关闭')}
                         onClick={() => { closeMention(); inputRef.current?.focus(); }}><X size={14} /></button>
                     </div>
-                    <div className="node-mention-mode">{(['preferred', 'locked'] as const).map((mode) => <button type="button" key={mode}
-                      aria-pressed={(mention.mode || 'preferred') === mode} onMouseDown={(e) => e.preventDefault()} onClick={() => showMention(mode)}>
-                      {nodeMentionPrefix(mode)} {mode === 'preferred' ? t('首选') : t('锁定')}</button>)}</div>
-                    <p className="node-mention-mode-help">{mention.mode === 'locked' ? t('全部执行留在此 Node；仍可查询和取回其他节点的材料。') : t('优先使用此 Node；资源或工具不适合时可自动转交。')}</p>
-                    <div role="listbox" id="node-mention-options" aria-label={t('最近使用的 Node')}>
-                    {mentionNodes.map((node, index) => {
-                      const capability = nodeCapabilitySummary(
-                        node,
-                        Date.now(),
-                        connected && !connectionError,
-                      );
-                      return (
-                        <button
-                          type="button"
-                          role="option"
-                          id={`node-mention-${node.id}`}
-                          aria-selected={index === mentionIndex}
-                          className={index === mentionIndex ? 'active' : ''}
-                          key={node.id}
-                          title={capability.detail}
-                          aria-label={`${nodeDisplayName(node)}，${capability.summary}`}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => chooseMentionNode(node.id)}
-                        >
-                          <NodeAvatar small icon={node.icon} name={node.name} />
-                          <span>
-                            <strong className="node-mention-name">{nodeDisplayName(node)}</strong>
-                            <small className="node-mention-capability">{capability.summary}</small>
-                            {(!capability.loadFresh ||
-                              !capability.queueFresh ||
-                              capability.health) && (
-                              <small className="node-mention-freshness">
-                                {capability.health ||
-                                  (!capability.loadFresh
-                                    ? t('负载等待更新')
-                                    : t('队列信息未提供或待更新'))}
-                              </small>
-                            )}
-                          </span>
-                          <i
-                            className={`status-dot ${node.online && node.channelReady ? 'online' : ''}`}
-                          />
-                        </button>
-                      );
-                    })}
-                    {!mentionNodes.length && <p>{t('没有匹配的已配对 Node')}</p>}
+                    {effectiveAtScope === 'devices' ? (
+                      <>
+                        <div className="node-mention-mode">{(['preferred', 'locked'] as const).map((mode) => <button type="button" key={mode}
+                          aria-pressed={(mention.mode || 'preferred') === mode} onMouseDown={(e) => e.preventDefault()} onClick={() => showMention(mode, false, 'devices')}>
+                          {nodeMentionPrefix(mode)} {mode === 'preferred' ? t('首选') : t('锁定')}</button>)}</div>
+                        <p className="node-mention-mode-help">{mention.mode === 'locked' ? t('全部执行留在此 Node；仍可查询和取回其他节点的材料。') : t('优先使用此 Node；资源或工具不适合时可自动转交。')}</p>
+                        <div role="listbox" id="node-mention-options" aria-label={t('最近使用的 Node')}>
+                        {mentionNodes.map((node, index) => {
+                          const capability = nodeCapabilitySummary(
+                            node,
+                            Date.now(),
+                            connected && !connectionError,
+                          );
+                          return (
+                            <button
+                              type="button"
+                              role="option"
+                              id={`node-mention-${node.id}`}
+                              aria-selected={index === mentionIndex}
+                              className={index === mentionIndex ? 'active' : ''}
+                              key={node.id}
+                              title={capability.detail}
+                              aria-label={`${nodeDisplayName(node)}，${capability.summary}`}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onMouseEnter={() => setMentionIndex(index)}
+                              onClick={() => chooseMentionNode(node.id)}
+                            >
+                              <NodeAvatar small icon={node.icon} name={node.name} />
+                              <span>
+                                <strong className="node-mention-name">{nodeDisplayName(node)}</strong>
+                                <small className="node-mention-capability">{capability.summary}</small>
+                                {(!capability.loadFresh ||
+                                  !capability.queueFresh ||
+                                  capability.health) && (
+                                  <small className="node-mention-freshness">
+                                    {capability.health ||
+                                      (!capability.loadFresh
+                                        ? t('负载等待更新')
+                                        : t('队列信息未提供或待更新'))}
+                                  </small>
+                                )}
+                              </span>
+                              <i
+                                className={`status-dot ${node.online && node.channelReady ? 'online' : ''}`}
+                              />
+                            </button>
+                          );
+                        })}
+                        {!mentionNodes.length && <p>{t('没有匹配的已配对 Node')}</p>}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="node-mention-mode-help">
+                          {t('仅搜索当前已选工作区目录内的安全文件；选中后以路径引用附入，不整文件塞入上下文。')}
+                        </p>
+                        <div role="listbox" id="node-mention-options" aria-label={t('工作区文件')}>
+                          {projectFilesLoading && !mentionFiles.length ? (
+                            <p className="slash-command-empty" role="status">{t('正在搜索工作区文件…')}</p>
+                          ) : projectFilesError ? (
+                            <p className="slash-command-empty" role="alert">{t('暂时无法读取当前工作区文件列表。')}</p>
+                          ) : mentionFiles.length > 0 ? (
+                            mentionFiles.map((entry, index) => (
+                              <button
+                                key={entry.path}
+                                type="button"
+                                role="option"
+                                id={`file-mention-${index}`}
+                                aria-selected={index === mentionIndex}
+                                className={`context-option-row${index === mentionIndex ? ' active' : ''}`}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onMouseEnter={() => setMentionIndex(index)}
+                                onClick={() => chooseMentionFile(entry)}
+                              >
+                                <span className="slash-cmd-icon" aria-hidden="true">
+                                  {entry.directory ? <Folder size={13} /> : <FileText size={13} />}
+                                </span>
+                                <span className="slash-cmd-copy">
+                                  <strong><span>{entry.name}</span></strong>
+                                  <small>{entry.path}</small>
+                                </span>
+                                <span className="slash-cmd-tag">
+                                  {entry.directory ? t('进入目录') : t('引用文件')}
+                                </span>
+                              </button>
+                            ))
+                          ) : (
+                            <p className="slash-command-empty">{t('当前工作区没有匹配的文件')}</p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    <div className="slash-command-footer">
+                      {mention.mode !== 'locked' && canAtDevices && canAtFiles
+                        ? t('↑↓ 选择 · Enter/Tab 应用 · Shift+Tab 切换设备/文件 · Esc 关闭')
+                        : t('↑↓ 选择 · Enter/Tab 应用 · Esc 关闭')}
                     </div>
                   </div>
                 )}
-                {slash && !mention && (
+                {knowledgeTrigger && !(mention && effectiveAtScope) && (
+                  <div
+                    className="slash-command-menu knowledge-mention-menu"
+                    id="knowledge-mention-menu"
+                    role="dialog"
+                    aria-label={t('引用记忆与 Skill')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeKnowledge();
+                        inputRef.current?.focus();
+                      }
+                    }}
+                  >
+                    <div className="slash-command-heading">
+                      <Hash size={13} aria-hidden="true" />
+                      <span>{t('Wiki 记忆与 Skills')}</span>
+                      <div className="context-scope-switch" role="group" aria-label={t('筛选知识类型')}>
+                        {(
+                          [
+                            ['all', t('全部')],
+                            ['memory', t('记忆')],
+                            ['skill', 'Skill'],
+                          ] as const
+                        ).map(([kindKey, label]) => (
+                          <button
+                            key={kindKey}
+                            type="button"
+                            aria-pressed={knowledgeKind === kindKey}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => { setKnowledgeKind(kindKey); setKnowledgeIndex(0); }}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="node-mention-close"
+                        aria-label={t('关闭')}
+                        onClick={() => {
+                          closeKnowledge();
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <p className="node-mention-mode-help">
+                      {t('仅附加条目摘要与版本引用，执行时按需渐进式读取正文，不会整库注入。')}
+                    </p>
+                    <div role="listbox" id="knowledge-mention-options" aria-label={t('Wiki 记忆与 Skills')}>
+                      {knowledgeLoading && !knowledgeCatalog ? (
+                        <p className="slash-command-empty" role="status">{t('正在读取知识目录…')}</p>
+                      ) : knowledgeError ? (
+                        <p className="slash-command-empty" role="alert">{t('暂时无法读取知识目录，请稍后重试。')}</p>
+                      ) : knowledgeItems.length > 0 ? (
+                        knowledgeItems.map((entry, index) => (
+                          <button
+                            key={entry.id}
+                            type="button"
+                            role="option"
+                            id={`knowledge-mention-${entry.id}`}
+                            aria-selected={index === knowledgeIndex}
+                            className={index === knowledgeIndex ? 'active' : ''}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setKnowledgeIndex(index)}
+                            onClick={() => chooseKnowledgeEntry(entry)}
+                          >
+                            <span className="slash-cmd-icon" aria-hidden="true">
+                              {entry.kind === 'skill' ? <CodeXml size={13} /> : <BookMarked size={13} />}
+                            </span>
+                            <span className="slash-cmd-copy">
+                              <strong>
+                                <span>{entry.name}</span>
+                              </strong>
+                              <small>{entry.description || entry.category}</small>
+                            </span>
+                            <span className="slash-cmd-tag">
+                              {entry.kind === 'skill' ? 'Skill' : t('记忆')}
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="slash-command-empty">{t('没有匹配的记忆或 Skill')}</p>
+                      )}
+                    </div>
+                    <div className="slash-command-footer">{t('↑↓ 选择 · Enter/Tab 应用 · Shift+Tab 切换分类 · Esc 关闭')}</div>
+                  </div>
+                )}
+                {slash && !(mention && effectiveAtScope) && !knowledgeTrigger && (
                   <div
                     className="slash-command-menu"
                     id="slash-command-menu"
@@ -3367,17 +3946,27 @@ export function ConversationWorkspace({
           peers={peers}
           connected={connected}
           connectionError={connectionError}
+          activity={nodeActivity}
           queueCount={railQueueCount}
+          queueSnapshot={queueSnapshot}
+          queueBusy={busy || !!pendingQueueRequest}
+          queueError={queueError}
           queuePanel={queuePanel()}
           reviewProject={reviewProject}
           targetNodeID={targetNodeID}
           targetMode={targetMode}
           targetName={targetName}
+          canWrite={canWrite}
           disabled={busy || !canWrite}
           nodeName={nodeName}
           onRemarkNode={setRemarkNodeID}
           onRemoveNode={setDeleteNodeID}
-          onRouteNode={(node) => routeNodeFromCockpit(node)}
+          onRouteNode={routeNodeFromCockpit}
+          onPauseQueue={pauseLocalQueue}
+          onOpenDiagnostics={(id) => {
+            setDiagnosticTarget(id);
+            showSettingsPage('diagnostics');
+          }}
           onOpenFullChanges={(project) => setChangesProject(project)}
           onOpenNetwork={() => showSettingsPage('network')}
           onOpenKnowledgeReads={
@@ -3388,6 +3977,8 @@ export function ConversationWorkspace({
                 }
               : undefined
           }
+          onQuoteDiff={quoteIntoComposer}
+          onAttachFileReference={attachFileReference}
           inert={narrowSidebar && mobileSidebar}
         />
       )}

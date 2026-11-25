@@ -4,6 +4,7 @@ import { validTaskFileDescriptor } from '../shared/task-files.ts';
 import { validWorkflowTarget } from '../shared/workflows.ts';
 import { t } from '../shared/i18n.ts';
 import { validMessageQuote } from './message-quote.ts';
+import { composerReferenceLimit, validComposerReference } from './composer-context.ts';
 import type { ApprovalMode } from '../shared/types.ts';
 import { normalizeComposerSendMode, type ComposerSendMode } from './composer-keyboard.ts';
 
@@ -40,9 +41,13 @@ export function decodeDrafts(text: string | null): DraftSnapshot {
           error: f.state === 'complete' && validTaskFileDescriptor(f.descriptor) ? null : t('上传尚未完成，请移除此附件后重新选择。'),
           file: { name: f.file.name, size: f.file.size, type: f.file.type || '' },
         }));
-      const { model, reasoningEffort, quote, ...rest } = draft;
+      const { model, reasoningEffort, quote, references, ...rest } = draft;
       const validModel = model === null || typeof model === 'string' && model.length > 0 && model.length <= 200;
-      drafts[key] = { ...rest, files, ...(validModel ? { model } : {}), ...(validReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
+      const validReferences = Array.isArray(references)
+        ? references.slice(0, composerReferenceLimit).filter(validComposerReference)
+        : [];
+      drafts[key] = { ...rest, files, ...(validReferences.length ? { references: validReferences } : {}),
+        ...(validModel ? { model } : {}), ...(validReasoningEffort(reasoningEffort) ? { reasoningEffort } : {}),
         ...(validMessageQuote(quote) ? { quote: { text: quote.text, author: quote.author } } : quote ? { requestID: crypto.randomUUID(), requestSignature: undefined } : {}) };
     }
     const settings = value.settings;
