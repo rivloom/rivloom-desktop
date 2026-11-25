@@ -8,9 +8,9 @@ Rivloom 现阶段由维护者集中开发，**暂不接受外部 Pull Request（
 
 ## 当前状态
 
-当前 Windows x64 正式版为 **0.1.35**，Linux x64 正式版为 **0.1.30**。Windows 新版新增输入区 `@`/`#` 模糊引用、检查器产物按轮次筛选与差异片段一键回引、多设备拓扑真实遥测与路由切换、任务驾驶舱两步可跳过上手引导，以及会话内一键预填 Wiki/Skill 草稿、知识库左侧分层大纲与单任务知识读取记录。固定核心为 `1.18.33-rivloom.655285f835f8`，SDK/plugin 为 1.18.33，Node.js 为 24.19.0，继续使用原应用内更新公钥。 [Windows 版本说明](docs/releases/0.1.35.md) · [发行验收](docs/releases/0.1.35-verification.md) · [Linux 0.1.30 说明](docs/releases/linux-0.1.30.md)
+当前 Windows x64 与 Linux x64 正式版均为 **0.1.35**。Windows 新版新增输入区 `@`/`#` 模糊引用、检查器产物按轮次筛选与差异片段一键回引、多设备拓扑真实遥测与路由切换、任务驾驶舱两步可跳过上手引导，以及会话内一键预填 Wiki/Skill 草稿、知识库左侧分层大纲与单任务知识读取记录；Linux x64 同步发布无 GUI 执行端 `0.1.35`。固定核心为 `1.18.33-rivloom.655285f835f8`，SDK/plugin 为 1.18.33，Node.js 为 24.19.0，继续使用原应用内更新公钥。 [Windows 版本说明](docs/releases/0.1.35.md) · [Linux 0.1.35 说明](docs/releases/linux-0.1.35.md) · [发行验收](docs/releases/0.1.35-verification.md)
 
-Windows 同源 27 项检查（`Windows official engine checks` 重跑 `context-recovery` 后 21/21 通过）、隔离安装、匿名公开完整下载（102,122,421 B）与应用内更新原公钥验签均已通过；中英文下载页已更新至 0.1.35，官网同步提交 `d662f6d` 已推送 `main`。本轮 R2 只读保留清单检查暂未运行，实际删除 0 个，仓库已提供只读计划与受控人工清理工具，尚未启用无人值守自动清理。 [官网下载](https://rivloom.com/download/) · [R2 保留规则](docs/R2-RETENTION.md)
+Windows 同源 27 项检查（`Windows official engine checks` 重跑 `context-recovery` 后 21/21 通过）、隔离安装、Linux 原生构建与独立发行、双平台匿名公开完整下载（Windows 102,122,421 B / Linux 157,271,519 B）与应用内更新原公钥验签均已通过；中英文下载页与更新日志已同步至双平台 0.1.35（官网提交 `d662f6d`、`74fd115`）。本轮 R2 受控人工清理与删后权威复核已完成：精确删除 56 个过期旧对象（释放 3.10 GiB），桶内保留 48、暂缓 0、待清理 0；仓库仅提供受控人工清理工具，尚未启用无人值守自动清理。 [官网下载](https://rivloom.com/download/) · [R2 保留审计](docs/releases/0.1.35-r2-retention.md)
 
 **历史 0.1.34 发行：** 重构 44px 活动栏与可折叠会话抽屉、任务驾驶舱、`/` 斜杠指令、三页实时检查器（拓扑 / 产物 / 集群）与分组双栏设置工作台。 [0.1.34 说明](docs/releases/0.1.34.md) · [0.1.34 验收](docs/releases/0.1.34-verification.md)
 

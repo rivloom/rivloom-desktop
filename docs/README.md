@@ -1,12 +1,12 @@
 # Rivloom 文档
 
-当前正式版为 **Windows x64 0.1.35** 和 **Linux x64 0.1.30**。 [Windows 版本说明](releases/0.1.35.md) · [本轮验收](releases/0.1.35-verification.md) · [Linux 说明](releases/linux-0.1.30.md) · [R2 保留策略](R2-RETENTION.md)
+当前正式版为 **Windows x64 0.1.35** 和 **Linux x64 0.1.35**。 [Windows 版本说明](releases/0.1.35.md) · [Linux 说明](releases/linux-0.1.35.md) · [本轮验收](releases/0.1.35-verification.md) · [R2 审计](releases/0.1.35-r2-retention.md)
 
 这里保存随源码分发的说明。当前正式版以根目录 [README](../README.md) 和 [官网下载页](https://rivloom.com/download/) 为准；源码中的未发布功能以对应说明标注的状态为准。
 
 ## 使用与功能
 
-- [0.1.35 上下文引用、差异审核闭环与知识主动协作](releases/0.1.35.md)、[发行验收](releases/0.1.35-verification.md)
+- [0.1.35 上下文引用、差异审核闭环与知识主动协作](releases/0.1.35.md)、[Linux 0.1.35](releases/linux-0.1.35.md)、[发行验收](releases/0.1.35-verification.md)、[R2 保留审计](releases/0.1.35-r2-retention.md)
 
 - [0.1.34 工作台重构、实时检查器与双栏设置](releases/0.1.34.md)、[发行验收](releases/0.1.34-verification.md)
 
