@@ -28,6 +28,7 @@ function audit(name: string, workflow: any) {
   const release = name === 'windows-candidate.yml';
   const linuxRelease = name === 'linux-release.yml';
   const inventory = name === 'r2-inventory.yml';
+  const retention = name === 'r2-retention.yml';
   if (release) {
     assert.deepEqual(Object.keys(workflow.on).sort(), [
       'push',
@@ -112,6 +113,35 @@ function audit(name: string, workflow: any) {
       workflow.jobs.inventory.if,
       "github.repository == 'rivloom/rivloom-desktop' && github.ref == 'refs/heads/main'",
     );
+  } else if (retention) {
+    assert.deepEqual(
+      Object.keys(workflow.on),
+      ['workflow_dispatch'],
+      'R2 retention must be manually triggered only; never schedule or push',
+    );
+    assert.deepEqual(
+      Object.keys(workflow.on.workflow_dispatch.inputs).sort(),
+      ['confirm_delete', 'manifest_artifact_id', 'manifest_run_id', 'manifest_sha256', 'mode'],
+    );
+    assert.equal(workflow.on.workflow_dispatch.inputs.mode.default, 'plan');
+    assert.deepEqual(workflow.on.workflow_dispatch.inputs.mode.options, ['plan', 'apply']);
+    assert.deepEqual(
+      workflow.concurrency,
+      { group: 'public-rivloom-download', 'cancel-in-progress': false },
+      'R2 retention must share the publication mutex without cancelling active jobs',
+    );
+    assert.deepEqual(Object.keys(workflow.jobs).sort(), ['apply', 'plan']);
+    assert.equal(
+      compact(workflow.jobs.plan.if),
+      "github.repository == 'rivloom/rivloom-desktop' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.mode == 'plan'",
+    );
+    assert.equal(
+      compact(workflow.jobs.apply.if),
+      "github.repository == 'rivloom/rivloom-desktop' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.mode == 'apply' && inputs.confirm_delete == 'DELETE_EXACT_MANIFEST' && inputs.manifest_sha256 != '' && inputs.manifest_run_id != '' && inputs.manifest_artifact_id != ''",
+    );
+    for (const job of ['plan', 'apply']) {
+      assert(!/always\s*\(|!\s*cancelled\s*\(/.test(workflow.jobs[job].if ?? ''), 'Cannot bypass retention gates');
+    }
   } else {
     assert(
       ['ci.yml', 'windows-services.yml', 'lan-regression.yml', 'linux-ci.yml'].includes(name),
@@ -164,14 +194,21 @@ function audit(name: string, workflow: any) {
       if (step.uses.startsWith('actions/checkout@')) {
         assert.equal(step.with['persist-credentials'], false);
         if (release) assert.equal(step.with.ref, id === 'readiness' ? '${{ github.sha }}' : '${{ env.RIVLOOM_CANDIDATE_SHA }}');
-        if (linuxRelease) assert.equal(step.with.ref, '${{ github.sha }}');
+        if (linuxRelease || retention) assert.equal(step.with.ref, '${{ github.sha }}');
       }
       if (step.uses.startsWith('actions/download-artifact@')) {
-        assert(release || linuxRelease, 'Unreviewed artifact execution');
+        assert(release || linuxRelease || retention, 'Unreviewed artifact execution');
         if (linuxRelease && step.with['artifact-ids'] === '${{ inputs.x64_artifact_id }}') {
           assert.equal(step.with['run-id'], '${{ inputs.build_run_id }}');
           assert.equal(step.with['github-token'], '${{ github.token }}');
           assert.equal(step.with.path, 'test-results/linux/x64');
+          assert(!('repository' in step.with) && !('name' in step.with));
+        } else if (retention) {
+          assert.equal(id, 'apply', 'Only controlled apply downloads a reviewed manifest artifact');
+          assert.equal(step.with['run-id'], '${{ inputs.manifest_run_id }}');
+          assert.equal(step.with['artifact-ids'], '${{ inputs.manifest_artifact_id }}');
+          assert.equal(step.with['github-token'], '${{ github.token }}');
+          assert.equal(step.with.path, 'test-results/r2-retention-input');
           assert(!('repository' in step.with) && !('name' in step.with));
         } else {
           assert(
@@ -283,4 +320,33 @@ test('Linux office coverage cannot be omitted or moved before its pinned engine 
   const office = steps.splice(steps.findIndex((step: any) => step.run === 'node scripts/ci-services.ts office'), 1)[0];
   steps.unshift(office);
   assert.throws(() => audit('linux-ci.yml', workflow), /Linux office parser and service checks/);
+});
+
+test('R2 retention stays manually gated, shares publication concurrency and rejects unattended triggers', () => {
+  const mutate = (change: (workflow: any) => void) => {
+    const workflow = load('r2-retention.yml');
+    change(workflow);
+    assert.throws(() => audit('r2-retention.yml', workflow));
+  };
+  mutate((w) => {
+    w.on.schedule = [{ cron: '0 0 * * *' }];
+  });
+  mutate((w) => {
+    w.on.workflow_dispatch.inputs.mode.default = 'apply';
+  });
+  mutate((w) => {
+    w.concurrency.group = 'other-group';
+  });
+  mutate((w) => {
+    w.concurrency['cancel-in-progress'] = true;
+  });
+  mutate((w) => {
+    w.jobs.apply.if = "inputs.mode == 'apply'";
+  });
+  mutate((w) => {
+    w.jobs.apply.steps.find((s: any) => s.uses?.startsWith('actions/download-artifact@')).with.repository = 'other/repo';
+  });
+  mutate((w) => {
+    w.jobs.apply.env = { SECRET: '${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}' };
+  });
 });

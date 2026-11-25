@@ -1,0 +1,148 @@
+name: Controlled R2 retention audit and cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Execution mode (plan is read-only; apply requires explicit confirmation and exact manifest SHA-256)
+        type: choice
+        required: true
+        default: plan
+        options:
+          - plan
+          - apply
+      manifest_run_id:
+        description: Source plan workflow run ID (required only when mode=apply)
+        type: string
+        required: false
+        default: ''
+      manifest_artifact_id:
+        description: Source plan artifact ID (required only when mode=apply)
+        type: string
+        required: false
+        default: ''
+      manifest_sha256:
+        description: Exact 64-char SHA-256 digest of the reviewed cleanup manifest (required only when mode=apply)
+        type: string
+        required: false
+        default: ''
+      confirm_delete:
+        description: Type DELETE_EXACT_MANIFEST to authorize exact-key deletion (required only when mode=apply)
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-rivloom-download
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'rivloom/rivloom-desktop' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'plan'
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - name: List R2 objects without mutating storage
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RIVLOOM_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_PAGER: ''
+          R2_ACCOUNT: ${{ vars.RIVLOOM_R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.RIVLOOM_R2_BUCKET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:R2_ACCOUNT -notmatch '^[0-9a-f]{32}$' -or $env:R2_BUCKET -notmatch '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$') { throw 'Invalid download storage configuration.' }
+          New-Item -ItemType Directory -Force -Path test-results/r2-retention-plan | Out-Null
+          aws s3api list-objects-v2 --bucket $env:R2_BUCKET --endpoint-url "https://$($env:R2_ACCOUNT).r2.cloudflarestorage.com" --output json > test-results/r2-retention-plan/objects.json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 object inventory failed.' }
+          $objects = Get-Content test-results/r2-retention-plan/objects.json -Raw | ConvertFrom-Json
+          if ($objects.IsTruncated -eq $true -or $objects.NextToken) { throw 'Incomplete R2 inventory.' }
+      - name: Generate read-only retention plan and Markdown audit report
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/r2-retention-cli.ts --mode plan --live --inventory test-results/r2-retention-plan/objects.json --out-dir test-results/r2-retention-plan
+          if ($LASTEXITCODE -ne 0) { throw 'R2 retention planning failed.' }
+      - name: Upload read-only retention plan and audit report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-r2-retention-plan-${{ github.run_id }}
+          path: |
+            test-results/r2-retention-plan/manifest.json
+            test-results/r2-retention-plan/audit.md
+            test-results/r2-retention-plan/objects.json
+          if-no-files-found: error
+          retention-days: 90
+
+  apply:
+    if: >-
+      github.repository == 'rivloom/rivloom-desktop' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'apply' &&
+      inputs.confirm_delete == 'DELETE_EXACT_MANIFEST' &&
+      inputs.manifest_sha256 != '' &&
+      inputs.manifest_run_id != '' &&
+      inputs.manifest_artifact_id != ''
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - name: Download reviewed retention manifest artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          run-id: ${{ inputs.manifest_run_id }}
+          artifact-ids: ${{ inputs.manifest_artifact_id }}
+          github-token: ${{ github.token }}
+          path: test-results/r2-retention-input
+          digest-mismatch: error
+      - name: Execute exact-key deletion after live pointer and object verification
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RIVLOOM_R2_ACCOUNT_ID: ${{ vars.RIVLOOM_R2_ACCOUNT_ID }}
+          RIVLOOM_R2_BUCKET: ${{ vars.RIVLOOM_R2_BUCKET }}
+          RIVLOOM_R2_ACCESS_KEY_ID: ${{ secrets.RIVLOOM_R2_ACCESS_KEY_ID }}
+          RIVLOOM_R2_SECRET_ACCESS_KEY: ${{ secrets.RIVLOOM_R2_SECRET_ACCESS_KEY }}
+          RIVLOOM_R2_CONFIRM_DELETE: ${{ inputs.confirm_delete }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:MANIFEST_SHA256 -notmatch '^[0-9a-f]{64}$') { throw 'Invalid manifest SHA-256 format.' }
+          node scripts/r2-retention-cli.ts --mode apply --live --manifest test-results/r2-retention-input/manifest.json --manifest-sha256 $env:MANIFEST_SHA256 --approve-delete --out-dir test-results/r2-retention-apply
+          if ($LASTEXITCODE -ne 0) { throw 'Controlled R2 retention apply did not complete cleanly.' }
+      - name: Upload controlled cleanup result and post-delete audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rivloom-r2-retention-apply-${{ github.run_id }}
+          path: |
+            test-results/r2-retention-apply/apply-result.json
+            test-results/r2-retention-apply/audit.md
+          if-no-files-found: error
+          retention-days: 90

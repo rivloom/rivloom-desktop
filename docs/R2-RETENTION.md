@@ -1,5 +1,7 @@
 # R2 发行文件保留与清理
 
+**2026-11-25 · 工具与受控工作流补齐（未执行真实桶删除）。** 新增纯逻辑保留判定与清单/审计报告生成模块 `scripts/r2-retention.ts`、默认只读 CLI `scripts/r2-retention-cli.ts` 及手动触发工作流 `.github/workflows/r2-retention.yml`（共用 `public-rivloom-download` 并发组，`plan` 为默认只读模式，`apply` 须人工显式确认并绑定精确清单 `manifestSha256`、删除前二次回读 live 指针与对象状态、删除后复核当前公开下载与原公钥更新签名）。**已提供只读计划与受控人工执行工具，尚未启用无人值守自动清理**，也未设置桶或 `releases/` 生命周期到期规则；本轮仅完成脚本、工作流与单测落地，实际删除 0 个。
+
 **2026-11-24 · Windows 0.1.34 / Linux 0.1.30（只读清单待执行）。** 0.1.34 公开下载与原公钥更新验签已完成；因本轮执行环境未登录 GitHub CLI，尚未在 GitHub Actions 触发 `r2-inventory.yml` 获取权威对象列表，实际删除 0 个，现有 CI 无自动清理功能。按策略并集，当前受保护版本包含 Windows 0.1.34 / 0.1.33 / 0.1.32、Linux 0.1.30 / 0.1.29 / 0.1.28、近 30 天全部发布包及当前下载/更新入口引用对象；待维护者手动运行只读清单后完成逐对象核对。 [本版验收](releases/0.1.34-verification.md)
 
 **2026-11-11 · Windows 0.1.32 / Linux 0.1.30。** 只读保留检查覆盖 93 个对象。43 个符合保留规则，50 个符合清理条件并待处理，实际删除 0 个。清理任务尚未运行。 [本轮检查](releases/0.1.32-r2-retention.md)
@@ -82,7 +84,7 @@ Rivloom 使用完整安装包更新，不依赖逐个中间版本的补丁。每
 
 ## 自动化状态与后续约束
 
-当前 `scripts/ci-website-download.ts` 上传发行文件并推进官网下载记录，`scripts/ci-updater.ts` 发布签名清单。它们没有列举和删除旧 R2 包的逻辑，**本规则目前通过发布工作约定与收尾检查执行，并非无人值守自动清理**。
+当前 `scripts/ci-website-download.ts` 上传发行文件并推进官网下载记录，`scripts/ci-updater.ts` 发布签名清单，它们均不删除旧包。仓库现已提供独立的 `scripts/r2-retention.ts`、`scripts/r2-retention-cli.ts`（默认 `--mode plan` 只读模式）与手动工作流 `.github/workflows/r2-retention.yml`（`workflow_dispatch` 仅限官方 `main`，复用 `public-rivloom-download` 并发组且 `cancel-in-progress: false`），并在 `scripts/r2-retention.test.ts` 与 `scripts/ci-workflow-policy.test.ts` 补齐全部保留与安全边界回归测试。**已提供只读计划与受控人工执行工具，尚未启用无人值守自动清理**；真正删除任何旧对象仍必须先审阅只读清单、经维护者显式批准并绑定精确 `manifestSha256` 后手动触发。
 
 以后接入自动化时，必须实现同一套保留判断、先生成清单、发布互斥、删除前复核和删除后验证，记录失败与实际删除结果。测试至少覆盖：版本数不足 3、30 天边界、最近 3 个版本已很久未更新、当前入口保护排名之外的版本、两个入口不一致、未知对象/时间异常、重复执行、并发发布和部分删除失败。
 

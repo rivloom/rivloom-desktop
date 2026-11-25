@@ -27,7 +27,7 @@ export type R2Configuration = {
 };
 export type ObjectPayload = { bytes: number; sha256: string; path?: string; body?: Buffer };
 export type ObjectRequest = {
-  method: 'GET' | 'HEAD' | 'PUT';
+  method: 'GET' | 'HEAD' | 'PUT' | 'DELETE';
   key: string;
   payload?: ObjectPayload;
   condition?: { absent: true } | { etag: string };
@@ -63,6 +63,18 @@ export function downloadObjectKey(key: string) {
   );
   return key;
 }
+// Restrict deletions to immutable release package/checksum files; never pointers or signed manifests.
+export function deletableReleaseObjectKey(key: string) {
+  downloadObjectKey(key);
+  requireDownload(
+    exact(
+      /^releases\/(?:v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom_[0-9A-Za-z.+_-]{1,100}_x64-setup\.exe|SHA256SUMS\.txt)|linux\/linux-v[0-9A-Za-z.+_-]{1,200}\/(?:Rivloom_[0-9A-Za-z.+_-]{1,100}_linux_(?:x64|arm64)\.tar\.gz|SHA256SUMS\.txt))$/,
+      key,
+    ),
+    'non-deletable-r2-object-key',
+  );
+  return key;
+}
 const uriEncode = (value: string) =>
   encodeURIComponent(value).replace(
     /[!'()*]/g,
@@ -78,7 +90,7 @@ export function strongEtag(value: string | null): string {
 // The small pure signer is also checked against an independently published AWS vector.
 export function signS3Request(input: {
   url: URL;
-  method: 'GET' | 'HEAD' | 'PUT';
+  method: 'GET' | 'HEAD' | 'PUT' | 'DELETE';
   headers?: Record<string, string>;
   payloadSha256: string;
   accessKeyID: string;
@@ -156,7 +168,11 @@ export function r2Transport(
     RIVLOOM_R2_SECRET_ACCESS_KEY: configuration.secretAccessKey,
   });
   return async (request) => {
-    requireDownload(['GET', 'HEAD', 'PUT'].includes(request.method), 'invalid-r2-method');
+    requireDownload(
+      ['GET', 'HEAD', 'PUT', 'DELETE'].includes(request.method),
+      'invalid-r2-method',
+    );
+    if (request.method === 'DELETE') deletableReleaseObjectKey(request.key);
     const url = new URL(
       `https://${config.accountID}.r2.cloudflarestorage.com/${config.bucket}/${encodedObjectKey(request.key)}`,
     );

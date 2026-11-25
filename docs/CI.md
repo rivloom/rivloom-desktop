@@ -1,5 +1,7 @@
 # Windows 基础 CI、测试分层与候选包门槛
 
+**2026-11-25 · 新增受控 R2 保留审计与人工清理工具链（未执行真实删除）。** 新增 `scripts/r2-retention.ts`、`scripts/r2-retention-cli.ts` 与手动工作流 `.github/workflows/r2-retention.yml`（仅 `workflow_dispatch`，共用 `public-rivloom-download` 并发组，默认只读 `plan`，`apply` 必须人工确认并绑定精确清单 `manifestSha256`），同步纳入 `scripts/ci-workflow-policy.test.ts` 与 `ci:selftest`。已提供只读计划与受控人工执行工具，尚未启用无人值守自动清理；本轮未触发新安装包发版或真实 R2 删除。见 [R2 保留策略](R2-RETENTION.md)。
+
 **2026-11-24 · Windows x64 0.1.34 已发布，Linux x64 为 0.1.30。** 主分支 `eaa6456` 同源 27 项检查与 Windows 五个发行环节（`45367848236`）全部首轮通过；匿名完整公开下载（102,029,539 B）及原公钥应用内更新验签通过，中英文下载页已切至 0.1.34（官网同步提交 `47e3b58` 待 Pages 完成部署复核）。本轮因执行环境未登录 GitHub CLI，R2 只读清单检查暂未运行，实际删除 0 个，未启用自动清理。 [发行验收](releases/0.1.34-verification.md)
 
 **2026-11-11 · Windows x64 0.1.32 已发布，Linux x64 为 0.1.30。** 主分支同源 27 项检查和 Windows 五个发行环节通过。首次发行标签回读失败后核对了标签和附件，重试复用已验收的安装包和原 Release。公开完整下载、应用内更新验签及中英文官网已核验。R2 保留检查已完成，50 个旧文件待清理，实际删除 0 个。 [发行验收](releases/0.1.32-verification.md) · [R2 检查](releases/0.1.32-r2-retention.md)

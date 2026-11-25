@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   boundedBytes,
+  deletableReleaseObjectKey,
   digest,
   encodedObjectKey,
   r2Configuration,
@@ -179,4 +180,53 @@ test('transport failures discard raw credential-bearing errors', async () => {
       error.message === 'r2-request-failed' &&
       !error.message.includes(configuration.secretAccessKey),
   );
+});
+
+test('R2 DELETE signs only exact immutable release artifacts/checksums and refuses pointers or manifests', async () => {
+  const calls: Array<{ url: string; method?: string }> = [];
+  const transport = r2Transport(
+    configuration,
+    async (url, init) => {
+      calls.push({ url: String(url), method: init?.method });
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get('x-amz-content-sha256'), digest(''));
+      assert.equal(init?.redirect, 'error');
+      return new Response(null, { status: 204 });
+    },
+    () => new Date('2026-11-25T00:00:00Z'),
+  );
+  const allowedKeys = [
+    'releases/v0.1.5-111111111111-101/Rivloom_0.1.5_x64-setup.exe',
+    'releases/v0.1.5-111111111111-101/SHA256SUMS.txt',
+    'releases/linux/linux-v0.1.18-222222222222-202/Rivloom_0.1.18_linux_x64.tar.gz',
+    'releases/linux/linux-v0.1.18-222222222222-202/SHA256SUMS.txt',
+  ];
+  for (const key of allowedKeys) {
+    assert.equal(deletableReleaseObjectKey(key), key);
+    const res = await transport({ method: 'DELETE', key });
+    assert.equal(res.status, 204);
+  }
+  assert.equal(calls.length, allowedKeys.length);
+
+  for (const protectedKey of [
+    'releases/latest.json',
+    'releases/linux/latest.json',
+    'updates/stable/latest.json',
+    'updates/stable/0.1.34.json',
+    'previews/latest.json',
+    'releases/v0.1.5-111111111111-101/unknown.txt',
+    '../other/file',
+  ]) {
+    assert.throws(() => deletableReleaseObjectKey(protectedKey));
+    await assert.rejects(() => transport({ method: 'DELETE', key: protectedKey }));
+  }
+  const payloadBody = Buffer.from('x');
+  await assert.rejects(() =>
+    transport({
+      method: 'DELETE',
+      key: allowedKeys[0],
+      payload: { body: payloadBody, bytes: 1, sha256: digest(payloadBody) },
+    }),
+  );
+  assert.equal(calls.length, allowedKeys.length);
 });
