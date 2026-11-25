@@ -1,5 +1,7 @@
 # 官网分发与安全更新方案
 
+**2026-11-25 · Windows x64 0.1.35 已发布，Linux x64 为 0.1.30。** 主分支 `0dac0fe` 同源 27 项检查（`Windows official engine checks` 重跑 `context-recovery` 后 21/21 通过）与 Windows 隔离安装、GitHub Release（`v0.1.35-0dac0feae4fa-14989920983`）、R2 公开完整下载（102,122,421 B）及原公钥应用内更新验签均通过；中英文下载页已展示 0.1.35，官网同步提交 `d662f6d` 已推送 `main`。本轮 R2 只读保留清单检查暂未执行（执行环境未登录 GitHub CLI），实际删除 0 个，尚未启用无人值守自动清理。 [发行验收](releases/0.1.35-verification.md)
+
 **2026-11-25 · R2 保留判定与受控清理半自动化落地（未执行真实删除）。** 仓库已提供 `scripts/r2-retention.ts`、`scripts/r2-retention-cli.ts` 与手动工作流 `.github/workflows/r2-retention.yml`，用于按并集规则生成只读清理清单/Markdown 审计报告，并在维护者显式批准与绑定精确 `manifestSha256` 后执行带二次回读和删除后公开验签的精确清理。已提供只读计划与受控人工执行工具，尚未启用无人值守自动清理；公开下载与更新入口保持不变。见 [R2 保留策略](R2-RETENTION.md)。
 
 **2026-11-24 · Windows x64 0.1.34 已发布，Linux x64 为 0.1.30。** Windows 隔离安装、GitHub Release、R2 公开完整下载与应用内更新原公钥验签均首轮通过，中英文下载页已展示 0.1.34，官网同步提交 `47e3b58` 已推送 main。本轮 R2 只读清单检查暂未执行（执行环境未登录 GitHub CLI），实际删除 0 个，未启用自动清理。 [发行验收](releases/0.1.34-verification.md)
