@@ -1,6 +1,6 @@
 import { reasoningLabel } from './reasoning-picker';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, FileText, Pause, Play, ShieldCheck, Square } from 'lucide-react';
+import { BookMarked, ChevronDown, ChevronRight, CodeXml, FileText, Pause, Play, ShieldCheck, Square } from 'lucide-react';
 import { t } from '../shared/i18n.ts';
 import type { Bootstrap, RemoteTaskInvite, Task } from '../shared/types';
 import type { Workflow, WorkflowAttempt, WorkflowStep, WorkflowStepPlan, WorkflowMessage } from '../shared/workflows';
@@ -31,6 +31,8 @@ import { SearchText } from './conversation-search-view';
 import { executionSummaryText } from './system-display';
 import { WorkflowRecovery, type WorkflowDiagnosticNavigation } from './workflow-diagnostics';
 import { workflowMessageRecovery } from './workflow-message-recovery';
+import type { KnowledgeCaptureKind, KnowledgeCaptureSource } from './knowledge-capture';
+import { TaskKnowledgeUsageSection } from './task-knowledge-usage';
 import './workflow.css';
 
 function ExecutionActions({ local, remote, data, busy, perform }: {
@@ -70,6 +72,8 @@ type WorkflowViewProps = {
   activityFiles?: readonly TaskFileState[];
   requestedFiles?: readonly TaskFileQuery[];
   connected?: boolean;
+  onCaptureKnowledge?: (kind: KnowledgeCaptureKind, source: KnowledgeCaptureSource) => void;
+  onOpenKnowledgeReads?: () => void;
 };
 export function WorkflowView(props: WorkflowViewProps) {
   const { value, busy, perform } = props;
@@ -112,7 +116,7 @@ export function WorkflowView(props: WorkflowViewProps) {
       onSaved={() => { void perform(async () => undefined); }} close={() => setEditingMessage(null)} />}
   </>;
 }
-function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagnostics, historical = false, searchMatch, searchQuery = '', searchRevision, reuse, stopControl, activityFiles = [], requestedFiles = [], connected = true }: WorkflowViewProps & { historical?: boolean }) {
+function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagnostics, historical = false, searchMatch, searchQuery = '', searchRevision, reuse, stopControl, activityFiles = [], requestedFiles = [], connected = true, onCaptureKnowledge, onOpenKnowledgeReads }: WorkflowViewProps & { historical?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const processID = useId();
   const selectedDetail = useRef<HTMLElement>(null), navigateToDetail = useRef(false);
@@ -180,6 +184,26 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
     workflow: value, transfers: activity.transfers, requestedRoutes: requestedFiles, fresh: connected, historical });
   const edit = (step: WorkflowStep) => { setEditingVersion(value.version); setEditing({ id: step.id, title: step.title, instructions: step.instructions, dependsOn: [...step.dependsOn],
     nodeID: step.nodeID, resources: step.resources, software: step.software, requirements: step.requirements }); };
+  const roundLocalTaskIDs = [value.planner, ...value.steps].flatMap((step) =>
+    step.attempts.filter((attempt) => attempt.kind === 'local').map((attempt) => attempt.executionID),
+  );
+  const roundHasRemote = [value.planner, ...value.steps].some((step) =>
+    step.attempts.some((attempt) => attempt.kind === 'remote'),
+  );
+  const roundUsageRevision = `${roundID}:${value.state}:${[value.planner, ...value.steps]
+    .map((step) => step.attempts.map((attempt) => `${attempt.executionID}:${attempt.phase}`).join(','))
+    .join('|')}`;
+  const projectName = data.projects.find((project) => project.id === value.projectID)?.name || null;
+  const captureResult = (kind: KnowledgeCaptureKind, stepTitle: string, summary: string) => {
+    onCaptureKnowledge?.(kind, {
+      conversationTitle: value.title,
+      conversationID: value.id,
+      projectID: value.projectID,
+      projectName,
+      originLabel: results.length > 1 ? stepTitle : undefined,
+      excerpt: summary,
+    });
+  };
   const processDetail = <ActivityReadingAnchor navigationKey={`${expanded}:${selection?.stepID || ''}:${selection?.attempt || 0}`}>
     <section className="workflow-map-section conversation-activity-detail" data-activity-identity={journey.identityIndex} hidden={!expanded}>
       <div id={processID} hidden={!expanded}>
@@ -190,6 +214,20 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
           .find(step => step.attempts.some(attempt => attempt.kind === route.scope && attempt.executionID === route.taskID))?.title} />
       {value.target.mode !== 'automatic' && <p className="workflow-detail-meta">{value.target.mode === 'locked' ? '@@' : '@'} {nodeName(value.target.nodeID)} · {value.target.mode === 'locked' ? t('全部执行锁定在此 Node') : t('优先在此 Node 执行')}</p>}
       {value.summary && <div className="workflow-plan-summary" tabIndex={-1} data-search-target={searchTargetID({ kind: 'plan', roundID })}><h3>{t('计划说明')}</h3><p><SearchText text={value.summary} query={searchQuery} /></p></div>}
+      {(roundLocalTaskIDs.length > 0 || roundHasRemote) && (
+        <div className="workflow-knowledge-reads">
+          <TaskKnowledgeUsageSection
+            compact
+            taskIDs={roundLocalTaskIDs}
+            revision={roundUsageRevision}
+            hasRemoteExecutions={roundHasRemote}
+            localNodeID={data.network.local?.id || null}
+            nodeName={nodeName}
+            brainName={(id) => data.network.brains.find((brain) => brain.id === id)?.name || null}
+            onOpenContext={onOpenKnowledgeReads}
+          />
+        </div>
+      )}
       {value.events.some((e) => e.kind === 'query') && <details className="workflow-query-log"><summary><FileText size={14} />{t('资源查询记录')}<span>{value.events.filter((e) => e.kind === 'query').length}</span></summary>
         {value.events.filter((e) => e.kind === 'query').map((event) => <p key={event.id}>{event.text}</p>)}</details>}
     {selectedStep && <section ref={selectedDetail} tabIndex={-1} className="workflow-selected-step" aria-label={selectedPlanning ? t('规划详情') : t('步骤详情')}>
@@ -257,7 +295,35 @@ function WorkflowRoundView({ value, data, busy, perform, nodeName, navigateDiagn
           data-search-target={searchTargetID({ kind: 'response', roundID, stepID: step.id, attempt: attempt.number })}>
           {results.length > 1 && <h3>{step.title}</h3>}
           {summary && <div className="workflow-result-response"><MessageMarkdown text={summary} searchQuery={searchQuery} /></div>}
-          {summary && <div className="message-actions-row">{reuse ? <MessageReuseActions {...reuse} text={summary} existingConversation allowReuse={false} iconOnly /> : <CopyButton text={summary} label={t('复制执行结果')} iconOnly />}</div>}
+          {summary && <div className="message-actions-row">
+            {reuse ? <MessageReuseActions {...reuse} text={summary} existingConversation allowReuse={false} iconOnly /> : <CopyButton text={summary} label={t('复制执行结果')} iconOnly />}
+            {onCaptureKnowledge && (complete || attempt.phase === 'completed') && (
+              <span className="knowledge-capture-actions" role="group" aria-label={t('沉淀经验')}>
+                <button
+                  type="button"
+                  className="message-reuse-button knowledge-capture-action"
+                  disabled={busy}
+                  title={t('存为项目 Wiki')}
+                  aria-label={t('存为项目 Wiki')}
+                  onClick={() => captureResult('memory', step.title, summary)}
+                >
+                  <BookMarked size={13.5} aria-hidden="true" />
+                  <span>{t('存为 Wiki')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="message-reuse-button knowledge-capture-action"
+                  disabled={busy}
+                  title={t('沉淀为 Skill 模板草稿')}
+                  aria-label={t('沉淀为 Skill 模板草稿')}
+                  onClick={() => captureResult('skill', step.title, summary)}
+                >
+                  <CodeXml size={13.5} aria-hidden="true" />
+                  <span>{t('Skill 草稿')}</span>
+                </button>
+              </span>
+            )}
+          </div>}
         </article>)}
         {!results.length && <p className="muted">{t('步骤已完成，可打开执行详情查看记录。')}</p>}
       </div>}

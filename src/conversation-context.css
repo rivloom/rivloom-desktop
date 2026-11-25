@@ -17,6 +17,9 @@
 .context-badge { font-size: 12px; border-radius: 5px; padding: 3px 7px; background: var(--surface); }
 .context-badge.user { color: var(--accent); }
 .context-actions { margin-top: 12px; }
+.context-goal-actions { margin-top: 0; }
+.context-read-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.context-read-desc { color: var(--muted); font-size: 12.5px; }
 .context-editor { display: grid; gap: 12px; }
 .context-editor textarea { min-height: 90px; resize: vertical; }
 .context-error { color: var(--danger); }

@@ -3,9 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, lstatSync, realpathSync, existsSync } from 'node:fs';
 import { lstat, readdir, open } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { knowledgeLimits, knowledgePath, knowledgeID, memoryInputSchema, safeKnowledgePath,
+import { knowledgeLimits, knowledgePath, knowledgeID, memoryInputSchema, skillDraftInputSchema, formatSkillDraftMarkdown, safeKnowledgePath,
   type LocalKnowledgeEntry, type KnowledgeManifest, type KnowledgeFile, type KnowledgeListing,
-  type MemoryInput, type MemoryOrganization, type MemoryProvenance } from '../shared/knowledge.ts';
+  type MemoryInput, type SkillDraftInput, type MemoryOrganization, type MemoryProvenance } from '../shared/knowledge.ts';
 import { OperationActivityRegistry } from './operation-activity.ts';
 
 export const knowledgeHash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -56,7 +56,12 @@ function skillHeader(body: string, fallback: string) {
   const value = (key: string) => {
     const raw = block.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'))?.[1]?.trim() || '';
     if (/^[>|][+-]?$/.test(raw)) return block.match(new RegExp(`^${key}:.*\\r?\\n((?:[ \\t]+.*(?:\\r?\\n|$))+)`, 'm'))?.[1]?.trim().replace(/\s+/g, ' ') || '';
-    return raw.replace(/^(['"])([\s\S]*)\1$/, '$2');
+    if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+      try { const parsed = JSON.parse(raw); if (typeof parsed === 'string') return parsed; } catch { /* fall back to raw slice */ }
+      return raw.slice(1, -1);
+    }
+    return raw;
   };
   const name = value('name') || fallback; const description = value('description');
   if (!name || name.length > 120 || !description || description.length > 600) throw new Error('knowledge_skill_metadata_invalid');
@@ -98,6 +103,7 @@ export class KnowledgeStore {
   }
   private local(value: Stored): LocalKnowledgeEntry {
     return { ...this.meta(value), projectID: value.projectID, sharedBrains: value.sharedBrains, source: value.source, error: value.error,
+      origin: value.origin,
       ...(value.provenance ? { provenance: value.provenance } : {}), ...(value.withdrawnAt ? { withdrawnAt: value.withdrawnAt } : {}) };
   }
   private persist(value: Stored, history = false, action?: MemoryAction) {
@@ -220,6 +226,27 @@ export class KnowledgeStore {
       const value: Stored = { id: randomUUID(), nodeID: this.nodeID, kind: 'skill', ...header, category: 'Skills',
         projectID, source, origin: 'registered-folder', files, body: null, sharedBrains: [], error: null,
         updatedAt: new Date().toISOString(), revision: knowledgeHash(JSON.stringify([header, files])) };
+      this.persist(value); return this.local(value);
+    });
+  }
+  async createSkillDraft(raw: SkillDraftInput) {
+    return this.activity.track('register', async () => {
+      if (this.closed) throw new Error('knowledge_closed');
+      const input = skillDraftInputSchema.parse(raw);
+      if (this.all().length >= knowledgeLimits.entries) throw new Error('knowledge_catalog_full');
+      const id = randomUUID();
+      const target = join(this.root, 'skills', id);
+      const markdown = formatSkillDraftMarkdown(input);
+      if (Buffer.byteLength(markdown, 'utf8') > knowledgeLimits.fileBytes) throw new Error('knowledge_skill_too_large');
+      atomicText(join(target, 'SKILL.md'), markdown);
+      const source = safeKnowledgeDirectory(target);
+      const files = await this.scan(source);
+      const header = skillHeader((await readKnowledgeFile(source, 'SKILL.md')).toString('utf8'), input.name);
+      const value: Stored = {
+        id, nodeID: this.nodeID, kind: 'skill', ...header, category: input.category,
+        projectID: input.projectID, source, origin: 'skill-draft', files, body: null, sharedBrains: [], error: null,
+        updatedAt: new Date().toISOString(), revision: knowledgeHash(JSON.stringify([header, files])),
+      };
       this.persist(value); return this.local(value);
     });
   }

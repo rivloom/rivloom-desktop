@@ -68,6 +68,8 @@ import { SearchNavigation, SearchText, searchMatchLabel } from './conversation-s
 import { latestDrafts, encodeDrafts, draftStorageKey } from './draft-storage';
 import { ResourceDiscovery } from './resource-discovery';
 import { KnowledgeLibrary } from './knowledge-library';
+import { KnowledgeCaptureModal } from './knowledge-capture-modal';
+import type { KnowledgeCaptureKind, KnowledgeCaptureSource } from './knowledge-capture';
 import { ConversationContext } from './conversation-context';
 import type { Workflow } from '../shared/workflows';
 import { workflowAllSteps } from '../shared/workflows';
@@ -99,7 +101,9 @@ import {
   Command,
   Search,
   Settings2,
+  BookMarked,
   BookOpen,
+  CodeXml,
   Network,
   ChevronDown,
   MessageSquare,
@@ -515,6 +519,8 @@ const Transcript = memo(function Transcript({
   nodeName,
   connected,
   localNodeID,
+  projects,
+  onCaptureKnowledge,
 }: {
   item: Conversation;
   source: string;
@@ -526,6 +532,8 @@ const Transcript = memo(function Transcript({
   nodeName: (id: string | null) => string;
   connected: boolean;
   localNodeID: string | null;
+  projects: Project[];
+  onCaptureKnowledge?: (kind: KnowledgeCaptureKind, source: KnowledgeCaptureSource) => void;
 }) {
   const task = item.localTask;
   const messages = task?.messages || [];
@@ -549,6 +557,52 @@ const Transcript = memo(function Transcript({
   const visible = displayed.filter(message => message.role === 'user' || message.text.trim()
     || message.parts?.some(part => part.type === 'text' && part.text.trim()) || searchQuery && (message.tools.length || message.parts?.length));
   const split = Math.max(0, visible.findLastIndex(message => message.role === 'user') + 1);
+  const projectID = item.localTask?.projectID || null;
+  const projectName = projectID ? projects.find((project) => project.id === projectID)?.name || null : null;
+  const assistantSettled = !task || !activeStates.includes(task.state);
+  const captureButtons = (excerpt: string, originLabel?: string) =>
+    onCaptureKnowledge && (
+      <span className="knowledge-capture-actions" role="group" aria-label={t('沉淀经验')}>
+        <button
+          type="button"
+          className="message-reuse-button knowledge-capture-action"
+          title={t('存为项目 Wiki')}
+          aria-label={t('存为项目 Wiki')}
+          onClick={() =>
+            onCaptureKnowledge('memory', {
+              conversationTitle: item.title,
+              conversationID: item.localTask?.id || item.remote?.id || item.brainTask?.id,
+              projectID,
+              projectName,
+              originLabel,
+              excerpt,
+            })
+          }
+        >
+          <BookMarked size={13.5} aria-hidden="true" />
+          <span>{t('存为 Wiki')}</span>
+        </button>
+        <button
+          type="button"
+          className="message-reuse-button knowledge-capture-action"
+          title={t('沉淀为 Skill 模板草稿')}
+          aria-label={t('沉淀为 Skill 模板草稿')}
+          onClick={() =>
+            onCaptureKnowledge('skill', {
+              conversationTitle: item.title,
+              conversationID: item.localTask?.id || item.remote?.id || item.brainTask?.id,
+              projectID,
+              projectName,
+              originLabel,
+              excerpt,
+            })
+          }
+        >
+          <CodeXml size={13.5} aria-hidden="true" />
+          <span>{t('Skill 草稿')}</span>
+        </button>
+      </span>
+    );
   const renderMessages = (items: Message[]) => items.map((message) => {
     const text = message.id === firstUser?.id ? item.description : message.text;
     return <article className={`chat-message ${message.role}`} key={message.id} aria-label={message.role === 'user' ? source : undefined}
@@ -559,6 +613,7 @@ const Transcript = memo(function Transcript({
           completed={!!task && ['review', 'accepted'].includes(task.state)} showProcess={!!searchQuery} searchQuery={searchQuery} />}
       {text.trim() && <div className="message-actions-row"><MessageReuseActions text={text} draft={draft} existingConversation onApply={reuse}
         disabled={reuseDisabled} allowReuse={message.role === 'user'} iconOnly />
+        {message.role === 'assistant' && assistantSettled && captureButtons(text)}
         {message.role === 'assistant' && <MessageSpeed message={message} active={!!task && activeStates.includes(task.state) && task.state !== 'stopping'} />}</div>}
     </article>;
   });
@@ -573,7 +628,7 @@ const Transcript = memo(function Transcript({
             <strong>{t('执行结果')}</strong>
           </div>
           <MessageMarkdown text={summary} searchQuery={searchQuery} />
-          <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} iconOnly /></div>
+          <div className="message-actions-row"><MessageReuseActions text={summary} draft={draft} existingConversation onApply={reuse} disabled={reuseDisabled} allowReuse={false} iconOnly />{captureButtons(summary, t('执行结果'))}</div>
         </article>
       )}
     </>
@@ -665,6 +720,11 @@ export function ConversationWorkspace({
   const [quoteReplacement, setQuoteReplacement] = useState<{ apply: () => boolean; error: string } | null>(null);
   const [notice, setNotice] = useState('');
   const [contextItem, setContextItem] = useState<Conversation | null>(null);
+  const [contextTab, setContextTab] = useState<'state' | 'reads' | 'runs'>('state');
+  const [knowledgeCapture, setKnowledgeCapture] = useState<{
+    kind: KnowledgeCaptureKind;
+    source: KnowledgeCaptureSource;
+  } | null>(null);
   const [modal, setModal] = useState<'profile' | 'folder' | 'queue' | 'about' | 'concurrency' | 'shortcuts' | 'templates' | 'model-guide' | 'language' | null>(null);
   const utilitiesMenu = useContextMenu();
   const conversationMenu = useContextMenu();
@@ -2193,7 +2253,24 @@ export function ConversationWorkspace({
         </div>
       </aside>
       <main className="conversation-center" inert={narrowSidebar && mobileSidebar}>
-        {contextItem && <ConversationContext item={all.find(item => item.key === contextItem.key) || contextItem} tasks={data.tasks} owner={data.user.owner} close={() => setContextItem(null)} />}
+        {contextItem && (
+          <ConversationContext
+            item={all.find((item) => item.key === contextItem.key) || contextItem}
+            tasks={data.tasks}
+            owner={data.user.owner}
+            projects={data.projects}
+            nodeName={nodeName}
+            brains={data.network.brains}
+            initialTab={contextTab}
+            onCaptureKnowledge={
+              data.user.owner ? (kind, source) => setKnowledgeCapture({ kind, source }) : undefined
+            }
+            close={() => {
+              setContextItem(null);
+              setContextTab('state');
+            }}
+          />
+        )}
         <header className={`conversation-header${view === 'chat' ? '' : ' settings-header'}`}>
           <button
             ref={sidebarTriggerRef}
@@ -2364,6 +2441,8 @@ export function ConversationWorkspace({
                     else { if (target === 'diagnostics') setDiagnosticTarget(nodeID || null); setView(target); }
                   }}
                   reuse={{ draft: draftState, onApply: reuseMessage, disabled: busy || !canWrite }}
+                  onCaptureKnowledge={data.user.owner ? (kind, source) => setKnowledgeCapture({ kind, source }) : undefined}
+                  onOpenKnowledgeReads={() => { setContextTab('reads'); setContextItem(current); }}
                   searchMatch={currentMatch} searchQuery={currentMatch ? activeSearchQuery : ''} searchRevision={searchSelection?.revision} /></div> : current ? (
                   <div className="transcript-content">
                     {currentReceipt && !(task?.state === 'accepted' && !task.remoteOrigin) &&
@@ -2400,7 +2479,7 @@ export function ConversationWorkspace({
                         )}
                       </section>
                     )}
-                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} nodeName={nodeName} connected={connected} localNodeID={data.network.local?.id || null} />
+                    <Transcript item={current} source={sourceName} locale={locale} searchQuery={currentMatch ? activeSearchQuery : ''} draft={draftState} reuse={reuseMessage} reuseDisabled={busy || !canWrite} nodeName={nodeName} connected={connected} localNodeID={data.network.local?.id || null} projects={data.projects} onCaptureKnowledge={data.user.owner ? (kind, source) => setKnowledgeCapture({ kind, source }) : undefined} />
                     {task?.error && <p className="error">{systemText(task.error)}</p>}
                     {approvals.map((approval) => (
                       <section className="chat-approval" key={approval.id}>
@@ -3301,7 +3380,31 @@ export function ConversationWorkspace({
           onRouteNode={(node) => routeNodeFromCockpit(node)}
           onOpenFullChanges={(project) => setChangesProject(project)}
           onOpenNetwork={() => showSettingsPage('network')}
+          onOpenKnowledgeReads={
+            current
+              ? () => {
+                  setContextTab('reads');
+                  setContextItem(current);
+                }
+              : undefined
+          }
           inert={narrowSidebar && mobileSidebar}
+        />
+      )}
+      {knowledgeCapture && data.user.owner && (
+        <KnowledgeCaptureModal
+          key={`${knowledgeCapture.kind}:${knowledgeCapture.source.conversationID || ''}:${knowledgeCapture.source.originLabel || ''}`}
+          initialKind={knowledgeCapture.kind}
+          source={knowledgeCapture.source}
+          projects={data.projects}
+          onSaved={(entry) => {
+            setNotice(
+              entry.kind === 'skill'
+                ? t('Skill 模板草稿已保存，当前仅本机私有。')
+                : t('项目 Wiki 已保存，当前仅本机私有。'),
+            );
+          }}
+          close={() => setKnowledgeCapture(null)}
         />
       )}
       {renameConversation && <ConversationRenameEditor key={renameConversation.key} title={renameConversation.title} busy={busy} failureMessage={error}

@@ -29,7 +29,9 @@ import { legacyFileRevision } from './legacy-conversation-activity';
 import { nodeDisplayName } from './node-mentions';
 import { PairedMachines } from './paired-machines';
 import { TaskFileRecovery, TaskFilesPanel } from './task-files';
+import { TaskKnowledgeUsageSection } from './task-knowledge-usage';
 import { useTaskFileRequests, useTaskFileStates, type TaskFileQuery } from './use-task-file-state';
+import { workflowAllSteps } from '../shared/workflows';
 import { workflowLatestExecutions } from './workflow-recent';
 
 export type LiveInspectorTab = 'topology' | 'artifacts' | 'cluster';
@@ -567,6 +569,7 @@ export function LiveInspector({
   onRouteNode,
   onOpenFullChanges,
   onOpenNetwork,
+  onOpenKnowledgeReads,
   inert,
 }: {
   activeTab: LiveInspectorTab;
@@ -592,6 +595,7 @@ export function LiveInspector({
   onRouteNode: (node: RivloomNode) => void;
   onOpenFullChanges: (project: Project) => void;
   onOpenNetwork: () => void;
+  onOpenKnowledgeReads?: () => void;
   inert?: boolean;
 }) {
   const requests = useTaskFileRequests();
@@ -769,6 +773,34 @@ export function LiveInspector({
     !!filteredJourney &&
     (filteredJourney.stages.some((stage) => stage.kind !== 'transfer') || filteredTransfers.length > 0);
 
+  const knowledgeTaskIDs = useMemo(() => {
+    if (!current) return [];
+    if (current.workflow) {
+      return workflowAllSteps(current.workflow).flatMap((step) =>
+        step.attempts.filter((attempt) => attempt.kind === 'local').map((attempt) => attempt.executionID),
+      );
+    }
+    return current.localTask?.id ? [current.localTask.id] : [];
+  }, [current]);
+
+  const hasRemoteKnowledgeScope = useMemo(() => {
+    if (!current) return false;
+    if (current.workflow) {
+      return workflowAllSteps(current.workflow).some((step) =>
+        step.attempts.some((attempt) => attempt.kind === 'remote'),
+      );
+    }
+    return Boolean(current.remote || current.brainTask);
+  }, [current]);
+
+  const knowledgeUsageRevision = useMemo(() => {
+    if (!current) return '';
+    if (current.workflow) {
+      return `${current.key}:${current.workflow.state}:${current.workflow.version}:${fileRevision}`;
+    }
+    return `${current.key}:${current.localTask?.state || ''}:${current.localTask?.messages.length || 0}`;
+  }, [current, fileRevision]);
+
   return (
     <aside
       id="conversation-network-sidebar"
@@ -902,6 +934,19 @@ export function LiveInspector({
                   {t('发送任务后，这里会实时展示多设备拓扑与协作轨迹。')}
                 </p>
               </section>
+            )}
+
+            {current && (knowledgeTaskIDs.length > 0 || hasRemoteKnowledgeScope) && (
+              <TaskKnowledgeUsageSection
+                compact
+                taskIDs={knowledgeTaskIDs}
+                revision={knowledgeUsageRevision}
+                hasRemoteExecutions={hasRemoteKnowledgeScope}
+                localNodeID={local?.id || null}
+                nodeName={nodeName}
+                brainName={(id) => data.network.brains.find((brain) => brain.id === id)?.name || null}
+                onOpenContext={onOpenKnowledgeReads}
+              />
             )}
           </div>
         )}

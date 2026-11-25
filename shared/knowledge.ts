@@ -30,7 +30,7 @@ export const knowledgeManifestSchema = z.object({ entry: knowledgeMetaSchema,
 export type KnowledgeManifest = z.infer<typeof knowledgeManifestSchema>;
 export type LocalKnowledgeEntry = KnowledgeMeta & {
   projectID: string | null; sharedBrains: string[]; source: string; error: string | null;
-  provenance?: MemoryProvenance; withdrawnAt?: string;
+  origin?: string; provenance?: MemoryProvenance; withdrawnAt?: string;
 };
 /** Local, owner-verified provenance; deliberately absent from the peer metadata schema. */
 export type MemoryProvenance = {
@@ -56,6 +56,23 @@ export const memoryInputSchema = z.object({
   projectID: z.string().uuid().nullable(),
 }).strict().refine((v) => !!v.id === !!v.expectedRevision);
 export type MemoryInput = z.infer<typeof memoryInputSchema>;
+export const skillDraftInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).refine((v) => !/[\r\n\u0000]/.test(v)),
+  description: z.string().trim().min(1).max(600).refine((v) => !/[\r\n\u0000]/.test(v)),
+  category: knowledgePath.default('Skills'),
+  body: z.string().trim().min(1).max(knowledgeLimits.bodyChars).refine((v) => !v.includes('\0')),
+  projectID: z.string().uuid().nullable(),
+}).strict();
+export type SkillDraftInput = z.infer<typeof skillDraftInputSchema>;
+function formatSkillFrontmatterValue(value: string) {
+  const clean = value.replace(/[\r\n]+/g, ' ').trim();
+  if (/^[^\s:#{}\[\],&*!|>'"%@`?-][^\r\n:#]*$/.test(clean) && !/^---$/.test(clean)) return clean;
+  return `'${clean.replace(/'/g, "''")}'`;
+}
+export function formatSkillDraftMarkdown(input: Pick<SkillDraftInput, 'name' | 'description' | 'body'>) {
+  const body = input.body.replace(/\r\n/g, '\n').trim();
+  return `---\nname: ${formatSkillFrontmatterValue(input.name)}\ndescription: ${formatSkillFrontmatterValue(input.description)}\n---\n\n${body}\n`;
+}
 export type KnowledgeListing = { entries: KnowledgeMeta[]; next: number | null; generation: string };
 export type KnowledgeSearch = { entries: (KnowledgeMeta & { brainID: string | null; nodeName: string })[];
   unavailable: { nodeID: string; reason: string }[]; next: number | null };
@@ -64,7 +81,8 @@ export type KnowledgeRef = z.infer<typeof knowledgeRefSchema>;
 /** Successful tool delivery metadata, not proof of model comprehension. No body text or local path. */
 export type KnowledgeUsage = {
   id: string; taskID: string; sessionID: string; at: string; reference: KnowledgeRef; revision: string;
-  name: string; kind: 'skill' | 'memory'; file: string; operation: 'read' | 'materialize';
+  name: string; kind: 'skill' | 'memory'; description?: string; category?: string;
+  file: string; operation: 'read' | 'materialize';
   offset: number; nextOffset: number | null; totalCharacters: number | null; contentBytes: number;
 };
 export type KnowledgeUsagePage = { entries: KnowledgeUsage[]; total: number; nextOffset: number | null };

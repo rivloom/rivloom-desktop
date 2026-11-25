@@ -725,31 +725,13 @@
   gap: 14px;
 }
 .workbench-settings-shell .knowledge-tree {
-  flex: 0 0 184px;
-  padding: 6px;
   border-color: var(--hairline);
   border-radius: 9px;
 }
-.workbench-settings-shell .knowledge-tree > button {
-  min-height: 30px;
-  padding: 5px 8px;
-  font-size: 12px;
-}
 .workbench-settings-shell .knowledge-entry,
 .workbench-settings-shell .knowledge-rules-list article {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 11px 8px;
   border-color: var(--hairline);
-  border-radius: 7px;
-}
-.workbench-settings-shell .knowledge-row-icon {
-  width: 20px;
-  height: 20px;
-  margin-top: 2px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
+  border-radius: 9px;
 }
 .workbench-settings-shell .knowledge-title {
   min-height: 22px;

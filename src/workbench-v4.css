@@ -1828,3 +1828,185 @@
   gap: 8px;
   padding: 6px 2px;
 }
+
+/* ============================================================
+ * Phase 3A: Knowledge Capture Actions & Task Knowledge Reads
+ * ============================================================ */
+.knowledge-capture-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--hairline);
+}
+.message-reuse-button.knowledge-capture-action {
+  width: auto;
+  height: 24px;
+  padding: 0 7px;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.message-reuse-button.knowledge-capture-action:hover:enabled {
+  background: var(--hover-wash);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+.message-reuse-button.knowledge-capture-action > span {
+  white-space: nowrap;
+}
+
+.workflow-knowledge-reads {
+  margin: 8px 0 10px;
+}
+
+.inspector-knowledge-section .inspector-collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.inspector-knowledge-section .inspector-collapse-toggle:hover {
+  background: var(--hover-wash);
+  color: var(--ink);
+}
+.inspector-knowledge-disclaimer {
+  margin: 0 0 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.inspector-knowledge-counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.inspector-knowledge-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 99px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.inspector-knowledge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.inspector-knowledge-item {
+  padding: 7px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.inspector-knowledge-item-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.inspector-knowledge-item-head > strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspector-knowledge-item-head > code {
+  font-size: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.inspector-knowledge-summary {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.inspector-knowledge-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.inspector-knowledge-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.inspector-knowledge-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.inspector-knowledge-file > code {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+.inspector-knowledge-file > em {
+  font-style: normal;
+  flex-shrink: 0;
+}
+.inspector-knowledge-remote-note {
+  margin-top: 6px;
+}
+
+@media (max-width: 520px) {
+  .knowledge-capture-actions {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+}

@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { knowledgeID, knowledgeRefSchema, knowledgeRevision, memoryInputSchema } from '../shared/knowledge.ts';
+import { knowledgeID, knowledgeRefSchema, knowledgeRevision, memoryInputSchema, skillDraftInputSchema } from '../shared/knowledge.ts';
 import type { Project, User } from '../shared/types.ts';
 import { KnowledgeStore } from './knowledge-store.ts';
 import { KnowledgeNetwork } from './knowledge-network.ts';
@@ -29,6 +29,10 @@ export function installKnowledgeAPI(app: Express, current: () => { store: Knowle
   app.post('/api/knowledge/skills/register', route(async (req, { store }) => {
     const input = z.object({ directory: z.string().min(1).max(1000), projectID: knowledgeID.nullable() }).strict().parse(req.body);
     directory(input.projectID); return store.registerSkill(input.directory, input.projectID);
+  }));
+  app.post('/api/knowledge/skills/draft', route(async (req, { store }) => {
+    const input = skillDraftInputSchema.parse(req.body);
+    directory(input.projectID); return store.createSkillDraft(input);
   }));
   app.post('/api/knowledge/memory', route((req, { store }) => {
     const input = memoryInputSchema.parse(req.body); directory(input.projectID); return store.saveMemory(input, 'user');

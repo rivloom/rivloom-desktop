@@ -169,8 +169,10 @@ export class KnowledgeTools {
     if (!stored) this.pin(task.id, ref, manifest);
     if (text !== null || localPath) {
       const usage: KnowledgeUsage = { id: randomUUID(), taskID: task.id, sessionID: task.sessionID, at: new Date().toISOString(),
-        reference: ref, revision: manifest.entry.revision, name: manifest.entry.name, kind: manifest.entry.kind, file,
-        operation: localPath ? 'materialize' : 'read', offset: args.offset, nextOffset: result.nextOffset,
+        reference: ref, revision: manifest.entry.revision, name: manifest.entry.name, kind: manifest.entry.kind,
+        ...(manifest.entry.description ? { description: manifest.entry.description } : {}),
+        ...(manifest.entry.category ? { category: manifest.entry.category } : {}),
+        file, operation: localPath ? 'materialize' : 'read', offset: args.offset, nextOffset: result.nextOffset,
         totalCharacters: result.totalCharacters, contentBytes: localPath ? body.length : Buffer.byteLength(result.content || '') };
       this.db.prepare('INSERT INTO knowledge_usage VALUES (?,?,?)').run(usage.id, task.id, JSON.stringify(usage));
     }

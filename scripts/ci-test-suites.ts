@@ -47,6 +47,7 @@ export const logicFiles = [
   'tests/lan-firewall.test.ts',
   'tests/workflow-diagnostics.test.ts',
   'tests/knowledge.test.ts',
+  'tests/knowledge-collab.test.ts',
   'tests/knowledge-network.test.ts',
   'tests/knowledge-tools.test.ts',
   'tests/model-providers.test.ts',
